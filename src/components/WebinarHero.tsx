@@ -55,7 +55,7 @@ const WebinarHero = () => {
             Smart List Zero
           </h1>
           <p className="text-xl md:text-2xl text-gray-600 max-w-3xl mx-auto">
-            Finally see who's claiming leads, their pipeline progress, and smart list 
+            Finally see who&apos;s claiming leads, their pipeline progress, and smart list 
             activity - all in one powerful dashboard.
           </p>
         </motion.div>

@@ -4,7 +4,6 @@ import Image from "next/image";
 import { motion } from "framer-motion";
 import CountdownTimer from '@/components/CountdownTimer';
 import RegistrationForm from '@/components/RegistrationForm';
-import { Button } from "@/components/ui/button";
 import { BarChart2, Users, ArrowRightLeft, Brain, Trophy, ActivitySquare } from 'lucide-react';
 import Navigation from '@/components/Navigation';  // Add this import
 
@@ -84,7 +83,7 @@ export default function Home() {
                 </h1>
                 
                 <p className="text-xl text-white/90 max-w-3xl mx-auto">
-                  Finally see who's claiming leads, their pipeline progress, and smart list 
+                  Finally see who&apos;s claiming leads, their pipeline progress, and smart list 
                   activity - all in one powerful dashboard.
                 </p>
 
@@ -109,7 +108,7 @@ export default function Home() {
     {/* Section Header */}
     <div className="text-center mb-16">
       <h2 className="text-3xl font-bold text-gray-900 mb-4">
-        What You'll Learn
+        What You&apos;ll Learn
       </h2>
       <p className="text-xl text-gray-600 max-w-3xl mx-auto">
         Discover how Smart List Zero helps your team maintain a healthy pipeline and maximize lead engagement

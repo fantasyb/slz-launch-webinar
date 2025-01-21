@@ -1,4 +1,3 @@
-// app/api/register/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 
 const ZOOM_ACCOUNT_ID = process.env.ZOOM_ACCOUNT_ID;
@@ -6,6 +5,20 @@ const ZOOM_CLIENT_ID = process.env.ZOOM_API_KEY;
 const ZOOM_CLIENT_SECRET = process.env.ZOOM_API_SECRET;
 const ZOOM_WEBINAR_ID = process.env.ZOOM_WEBINAR_ID;
 const FUB_API_KEY = process.env.FUB_API_KEY;
+
+interface FubEventPayload {
+  type: string;
+  person: {
+    emails: Array<{ value: string }>;
+    name: string;
+    tags: string[];
+  };
+  message: string;
+  description: string;
+  occurredAt: string;
+  source?: string;
+  system?: string;
+}
 
 async function getZoomAccessToken() {
   try {
@@ -100,7 +113,7 @@ async function createFUBEvent(email: string, name: string, isExisting: boolean) 
   
   try {
     // Prepare the event payload
-    const eventPayload: any = {
+    const eventPayload: FubEventPayload = {
       type: 'Registration',
       person: {
         emails: [{ value: email }],
