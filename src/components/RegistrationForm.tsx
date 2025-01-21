@@ -14,7 +14,6 @@ const RegistrationForm = ({ onSubmit }: RegistrationFormProps) => {
   const [email, setEmail] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSuccess, setIsSuccess] = useState<boolean>(false);
-  const [joinUrl, setJoinUrl] = useState('');
   const { toast } = useToast();
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -36,8 +35,6 @@ const RegistrationForm = ({ onSubmit }: RegistrationFormProps) => {
         throw new Error(data.error || 'Registration failed');
       }
 
-      // Store join URL
-      setJoinUrl(data.join_url);
       setIsSuccess(true);
 
       toast({
@@ -54,7 +51,6 @@ const RegistrationForm = ({ onSubmit }: RegistrationFormProps) => {
         title: "Registration Failed",
         description: error instanceof Error ? error.message : "Please try again later",
         variant: "destructive",
-
       });
       setIsSuccess(false);
     } finally {
@@ -130,7 +126,7 @@ const RegistrationForm = ({ onSubmit }: RegistrationFormProps) => {
             <Card className="border-0 shadow-lg bg-white/90 backdrop-blur-sm">
               <CardHeader className="space-y-1">
                 <CardTitle className="text-2xl font-bold text-center text-[#02524b]">
-                  You're Registered! 🎉
+                  You&apos;re Registered! 🎉
                 </CardTitle>
                 <CardDescription className="text-center">
                   Check your email for confirmation details
@@ -139,7 +135,7 @@ const RegistrationForm = ({ onSubmit }: RegistrationFormProps) => {
               <CardContent className="space-y-4">
                 <div className="text-center space-y-2">
                   <p className="text-gray-600">
-                    We've sent your webinar details to:
+                    We&apos;ve sent your webinar details to:
                   </p>
                   <p className="font-medium text-[#02524b]">{email}</p>
                 </div>
