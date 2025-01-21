@@ -93,9 +93,9 @@ export default function Home() {
                 </div>
 
                 {/* Registration Form */}
-                <div className="max-w-md mx-auto">
-                  <RegistrationForm onSubmit={handleRegistration} />
-                </div>
+                <div id="registration" className="max-w-md mx-auto">
+  <RegistrationForm onSubmit={handleRegistration} />
+</div>
               </motion.div>
             </section>
           </div>
