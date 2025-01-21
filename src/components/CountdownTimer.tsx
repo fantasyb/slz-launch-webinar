@@ -8,7 +8,7 @@ type TimeLeft = {
   isExpired: boolean;
 };
 
-const WEBINAR_DATE = new Date('2025-02-12T13:00:00-05:00'); // Update this to your actual webinar date
+const WEBINAR_DATE = new Date('2025-02-12T13:00:00-05:00');
 
 const CountdownTimer = () => {
   const [timeLeft, setTimeLeft] = useState<TimeLeft>({ 
@@ -35,12 +35,8 @@ const CountdownTimer = () => {
       setTimeLeft({ days, hours, minutes, isExpired: false });
     };
 
-    // Calculate immediately
     calculateTimeLeft();
-    
-    // Then update every minute
     const timer = setInterval(calculateTimeLeft, 60000);
-
     return () => clearInterval(timer);
   }, []);
 
@@ -66,10 +62,10 @@ const CountdownTimer = () => {
   return (
     <div className="w-full max-w-4xl mx-auto">
       <div className="bg-black/20 backdrop-blur-sm rounded-xl p-8">
-        <div className="flex justify-center items-end gap-8">
+        <div className="flex justify-center items-center gap-4">
           {/* Days */}
           <motion.div 
-            className="text-center"
+            className="text-center flex flex-col items-center"
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5 }}
@@ -78,18 +74,19 @@ const CountdownTimer = () => {
               key={timeLeft.days}
               initial={{ y: -20, opacity: 0 }}
               animate={{ y: 0, opacity: 1 }}
-              className="text-6xl md:text-7xl lg:text-8xl font-bold text-white"
+              className="text-6xl md:text-7xl lg:text-8xl font-bold text-white leading-none"
             >
               {padNumber(timeLeft.days)}
             </motion.div>
             <div className="text-sm uppercase tracking-wider text-white/80 mt-2">Days</div>
           </motion.div>
 
-          <div className="text-5xl md:text-6xl lg:text-7xl font-bold text-white">:</div>
+          {/* Colon */}
+          <div className="text-5xl md:text-6xl lg:text-7xl font-bold text-white self-start mt-4">:</div>
 
           {/* Hours */}
           <motion.div 
-            className="text-center"
+            className="text-center flex flex-col items-center"
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5, delay: 0.1 }}
@@ -98,18 +95,19 @@ const CountdownTimer = () => {
               key={timeLeft.hours}
               initial={{ y: -20, opacity: 0 }}
               animate={{ y: 0, opacity: 1 }}
-              className="text-6xl md:text-7xl lg:text-8xl font-bold text-white"
+              className="text-6xl md:text-7xl lg:text-8xl font-bold text-white leading-none"
             >
               {padNumber(timeLeft.hours)}
             </motion.div>
             <div className="text-sm uppercase tracking-wider text-white/80 mt-2">Hours</div>
           </motion.div>
 
-          <div className="text-5xl md:text-6xl lg:text-7xl font-bold text-white">:</div>
+          {/* Colon */}
+          <div className="text-5xl md:text-6xl lg:text-7xl font-bold text-white self-start mt-4">:</div>
 
           {/* Minutes */}
           <motion.div 
-            className="text-center"
+            className="text-center flex flex-col items-center"
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5, delay: 0.2 }}
@@ -118,7 +116,7 @@ const CountdownTimer = () => {
               key={timeLeft.minutes}
               initial={{ y: -20, opacity: 0 }}
               animate={{ y: 0, opacity: 1 }}
-              className="text-6xl md:text-7xl lg:text-8xl font-bold text-white"
+              className="text-6xl md:text-7xl lg:text-8xl font-bold text-white leading-none"
             >
               {padNumber(timeLeft.minutes)}
             </motion.div>
