@@ -13,7 +13,7 @@ const RegistrationForm = ({ onSubmit }: RegistrationFormProps) => {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isSuccess, setIsSuccess] = useState(false);
+  const [isSuccess, setIsSuccess] = useState<boolean>(false);
   const [joinUrl, setJoinUrl] = useState('');
   const { toast } = useToast();
 
