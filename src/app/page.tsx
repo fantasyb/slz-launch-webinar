@@ -5,7 +5,7 @@ import { motion } from "framer-motion";
 import CountdownTimer from '@/components/CountdownTimer';
 import RegistrationForm from '@/components/RegistrationForm';
 import { BarChart2, Users, ArrowRightLeft, Brain, Trophy, ActivitySquare } from 'lucide-react';
-import Navigation from '@/components/Navigation';  // Add this import
+import Navigation from '@/components/Navigation';
 
 export default function Home() {
   const handleRegistration = async (data: { name: string; email: string }) => {
@@ -78,9 +78,24 @@ export default function Home() {
                   </span>
                 </motion.div>
 
-                <h1 className="text-5xl md:text-6xl lg:text-7xl font-bold text-white">
-                  Smart List Zero
-                </h1>
+                {/* Logo instead of text */}
+                <div className="flex justify-center">
+                  <motion.div
+                    initial={{ opacity: 0, scale: 0.95 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    transition={{ duration: 0.5 }}
+                    className="relative w-[600px] h-[180px]"
+                  >
+                    <Image 
+                      src="/SLZ_Logo_V1-01.png"
+                      alt="Smart List Zero Logo"
+                      fill
+                      style={{ objectFit: 'contain' }}
+                      className="brightness-0 invert" // This makes the logo white
+                      priority
+                    />
+                  </motion.div>
+                </div>
                 
                 <p className="text-xl text-white/90 max-w-3xl mx-auto">
                   Finally see who&apos;s claiming leads, their pipeline progress, and smart list 
@@ -94,86 +109,86 @@ export default function Home() {
 
                 {/* Registration Form */}
                 <div id="registration" className="max-w-md mx-auto">
-  <RegistrationForm onSubmit={handleRegistration} />
-</div>
+                  <RegistrationForm onSubmit={handleRegistration} />
+                </div>
               </motion.div>
             </section>
           </div>
         </div>
       </div>
 
-{/* Rest of the content with light theme */}
-<main className="bg-white">
-  <div className="max-w-7xl mx-auto px-8 sm:px-12 lg:px-16 py-24">
-    {/* Section Header */}
-    <div className="text-center mb-16">
-      <h2 className="text-3xl font-bold text-gray-900 mb-4">
-        What You&apos;ll Learn
-      </h2>
-      <p className="text-xl text-gray-600 max-w-3xl mx-auto">
-        Discover how Smart List Zero helps your team maintain a healthy pipeline and maximize lead engagement
-      </p>
-    </div>
-
-    {/* Feature Cards */}
-    <section className="mb-16">
-      <div className="grid md:grid-cols-3 gap-8">
-        {[
-          {
-            icon: BarChart2,
-            title: "Complete Pipeline Visibility",
-            description: "See your entire team's sales activities, response times, and pipeline health all in one dashboard"
-          },
-          {
-            icon: Users,
-            title: "Lead Claims Dashboard",
-            description: "Track who's claiming leads and monitor engagement patterns to ensure no lead falls through the cracks"
-          },
-          {
-            icon: ArrowRightLeft,
-            title: "Smart List Analytics",
-            description: "Monitor smart list counts and identify opportunities needing attention"
-          },
-          {
-            icon: Brain,
-            title: "AI-Powered Insights",
-            description: "Get actionable recommendations based on your team's activity patterns and performance metrics"
-          },
-          {
-            icon: Trophy,
-            title: "Live Leaderboard",
-            description: "Motivate your team with real-time rankings based on engagement scores and pipeline health"
-          },
-          {
-            icon: ActivitySquare,
-            title: "Performance Metrics",
-            description: "Track claim-to-contact ratios, response times, and pipeline progression velocity"
-          }
-        ].map((feature, index) => (
-          <motion.div
-            key={feature.title}
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: index * 0.1 }}
-            className="bg-white rounded-xl p-6 hover:shadow-lg transition-all duration-300"
-          >
-            <div className="flex items-center gap-4 mb-4">
-              <div className="bg-[#02524b]/5 rounded-lg p-2">
-                <feature.icon className="h-6 w-6 text-[#02524b]" />
-              </div>
-              <h3 className="text-lg font-semibold text-gray-900">
-                {feature.title}
-              </h3>
-            </div>
-            <p className="text-gray-600 text-sm leading-relaxed">
-              {feature.description}
+      {/* Rest of the content with light theme */}
+      <main className="bg-white">
+        <div className="max-w-7xl mx-auto px-8 sm:px-12 lg:px-16 py-24">
+          {/* Section Header */}
+          <div className="text-center mb-16">
+            <h2 className="text-3xl font-bold text-gray-900 mb-4">
+              What You&apos;ll Learn
+            </h2>
+            <p className="text-xl text-gray-600 max-w-3xl mx-auto">
+              Discover how Smart List Zero helps your team maintain a healthy pipeline and maximize lead engagement
             </p>
-          </motion.div>
-        ))}
-      </div>
-    </section>
-  </div>
-</main>
+          </div>
+
+          {/* Feature Cards */}
+          <section className="mb-16">
+            <div className="grid md:grid-cols-3 gap-8">
+              {[
+                {
+                  icon: BarChart2,
+                  title: "Complete Pipeline Visibility",
+                  description: "See your entire team's sales activities, response times, and pipeline health all in one dashboard"
+                },
+                {
+                  icon: Users,
+                  title: "Lead Claims Dashboard",
+                  description: "Track who's claiming leads and monitor engagement patterns to ensure no lead falls through the cracks"
+                },
+                {
+                  icon: ArrowRightLeft,
+                  title: "Smart List Analytics",
+                  description: "Monitor smart list counts and identify opportunities needing attention"
+                },
+                {
+                  icon: Brain,
+                  title: "AI-Powered Insights",
+                  description: "Get actionable recommendations based on your team's activity patterns and performance metrics"
+                },
+                {
+                  icon: Trophy,
+                  title: "Live Leaderboard",
+                  description: "Motivate your team with real-time rankings based on engagement scores and pipeline health"
+                },
+                {
+                  icon: ActivitySquare,
+                  title: "Performance Metrics",
+                  description: "Track claim-to-contact ratios, response times, and pipeline progression velocity"
+                }
+              ].map((feature, index) => (
+                <motion.div
+                  key={feature.title}
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: index * 0.1 }}
+                  className="bg-white rounded-xl p-6 hover:shadow-lg transition-all duration-300"
+                >
+                  <div className="flex items-center gap-4 mb-4">
+                    <div className="bg-[#02524b]/5 rounded-lg p-2">
+                      <feature.icon className="h-6 w-6 text-[#02524b]" />
+                    </div>
+                    <h3 className="text-lg font-semibold text-gray-900">
+                      {feature.title}
+                    </h3>
+                  </div>
+                  <p className="text-gray-600 text-sm leading-relaxed">
+                    {feature.description}
+                  </p>
+                </motion.div>
+              ))}
+            </div>
+          </section>
+        </div>
+      </main>
 
       {/* Footer */}
       <footer className="bg-white border-t border-gray-200">
