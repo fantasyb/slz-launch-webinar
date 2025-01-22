@@ -186,30 +186,30 @@ export default function Home() {
               ))}
             </div>
 
-            {/* Last 2 Features Centered Below */}
-            <div className="flex justify-center gap-8 mt-8">
-              {lastTwoFeatures.map((feature, index) => (
-                <motion.div
-                  key={feature.title}
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.2, delay: (index + 3) * 0.05 }}
-                  className="bg-white rounded-xl p-6 shadow-sm hover:shadow-lg transform hover:-translate-y-1 transition-transform duration-100 w-full max-w-md"
-                >
-                  <div className="flex items-center gap-4 mb-4">
-                    <div className="bg-[#02524b]/5 rounded-lg p-2">
-                      <feature.icon className="h-6 w-6 text-[#02524b]" />
-                    </div>
-                    <h3 className="text-lg font-semibold text-gray-900">
-                      {feature.title}
-                    </h3>
-                  </div>
-                  <p className="text-gray-600 text-sm leading-relaxed">
-                    {feature.description}
-                  </p>
-                </motion.div>
-              ))}
-            </div>
+           {/* Last 2 Features Centered Below */}
+<div className="grid grid-cols-1 md:grid-cols-2 gap-8 mt-8 max-w-4xl mx-auto">
+  {lastTwoFeatures.map((feature, index) => (
+    <motion.div
+      key={feature.title}
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.2, delay: (index + 3) * 0.05 }}
+      className="bg-white rounded-xl p-6 shadow-sm hover:shadow-lg transform hover:-translate-y-1 transition-transform duration-100"
+    >
+      <div className="flex items-center gap-4 mb-4">
+        <div className="bg-[#02524b]/5 rounded-lg p-2">
+          <feature.icon className="h-6 w-6 text-[#02524b]" />
+        </div>
+        <h3 className="text-lg font-semibold text-gray-900">
+          {feature.title}
+        </h3>
+      </div>
+      <p className="text-gray-600 text-sm leading-relaxed">
+        {feature.description}
+      </p>
+    </motion.div>
+  ))}
+</div>
           </section>
         </div>
       </main>
