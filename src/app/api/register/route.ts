@@ -38,7 +38,7 @@ interface ZoomRegistrationResponse {
 async function safeParseJSON(response: Response) {
   try {
     return await response.json();
-  } catch (e) {
+  } catch {  // Remove the unused parameter entirely
     return null;
   }
 }
@@ -330,16 +330,16 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Parse request body
-    let body;
-    try {
-      body = await request.json();
-    } catch (_) {
-      return NextResponse.json(
-        { error: 'Invalid request body' },
-        { status: 400 }
-      );
-    }
+// Parse request body
+let body;
+try {
+  body = await request.json();
+} catch {  // Remove the unused parameter entirely
+  return NextResponse.json(
+    { error: 'Invalid request body' },
+    { status: 400 }
+  );
+}
 
     const { email, name } = body;
 
