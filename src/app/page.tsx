@@ -26,7 +26,7 @@ export default function Home() {
               x: [-200, 0, -200],
               y: [-200, 0, -200]
             }}
-            transition={{ duration: 15, repeat: Infinity, repeatType: "reverse" }}
+            transition={{ duration: 8, repeat: Infinity, repeatType: "reverse" }}
           />
           <motion.div 
             className="absolute top-0 right-0 w-[800px] h-[800px] rounded-full bg-gradient-to-r from-emerald-500/20 to-teal-500/20 blur-3xl"
@@ -65,7 +65,7 @@ export default function Home() {
                 <motion.div
                   initial={{ opacity: 0, scale: 0.95 }}
                   animate={{ opacity: 1, scale: 1 }}
-                  transition={{ duration: 0.5 }}
+                  transition={{ duration: 0.3 }}
                   className="relative w-[600px] h-[180px]"
                 >
                   <Image 
@@ -87,7 +87,9 @@ export default function Home() {
               {/* Countdown and Registration */}
               <div className="max-w-xl mx-auto space-y-8">
                 <CountdownTimer />
-                <RegistrationForm onSubmit={handleRegistration} />
+                <div id="registration">
+                  <RegistrationForm onSubmit={handleRegistration} />
+                </div>
               </div>
             </section>
           </div>
@@ -164,8 +166,8 @@ export default function Home() {
                   key={feature.title}
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: index * 0.1 }}
-                  className="bg-white rounded-xl p-6 hover:shadow-lg transition-all duration-300"
+                  transition={{ duration: 0.2, delay: index * 0.05 }}
+                  className="bg-white rounded-xl p-6 shadow-sm hover:shadow-lg transform hover:-translate-y-1 transition-transform duration-100"
                 >
                   <div className="flex items-center gap-4 mb-4">
                     <div className="bg-[#02524b]/5 rounded-lg p-2">

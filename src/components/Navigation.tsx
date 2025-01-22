@@ -17,7 +17,6 @@ const Navigation = () => {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // Create smooth transitions for various properties
   const backgroundColor = useTransform(
     scrollY,
     [0, scrollThreshold - 200, scrollThreshold],
@@ -42,11 +41,24 @@ const Navigation = () => {
     ["rgb(2, 82, 75)", "rgb(255, 255, 255)", "rgb(255, 255, 255)"]
   );
 
+  const handleScrollToRegistration = () => {
+    const registrationElement = document.getElementById('registration');
+    if (registrationElement) {
+      const elementPosition = registrationElement.getBoundingClientRect().top;
+      const offsetPosition = elementPosition + window.pageYOffset - 100; // Adjusted offset
+      
+      window.scrollTo({
+        top: offsetPosition,
+        behavior: 'smooth'
+      });
+    }
+  };
+
   return (
     <motion.header 
       initial={{ y: -20, opacity: 0 }}
       animate={{ y: 0, opacity: 1 }}
-      transition={{ duration: 0.5 }}
+      transition={{ duration: 0.2 }}
       style={{
         backgroundColor,
         borderBottom: "1px solid",
@@ -80,7 +92,7 @@ const Navigation = () => {
         </motion.div>
         
         <motion.button
-          onClick={() => document.getElementById('registration')?.scrollIntoView({ behavior: 'smooth' })}
+          onClick={handleScrollToRegistration}
           className="px-8 py-2 rounded-full font-medium"
           style={{
             backgroundColor: buttonBackground,
