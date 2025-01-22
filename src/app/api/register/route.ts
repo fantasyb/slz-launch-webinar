@@ -34,11 +34,6 @@ interface ZoomRegistrationResponse {
   registrants: ZoomRegistrant[];
 }
 
-interface CustomError extends Error {
-  message: string;
-}
-
-
 // Helper function for safe JSON parsing
 async function safeParseJSON(response: Response) {
   try {
@@ -339,7 +334,7 @@ export async function POST(request: NextRequest) {
     let body;
     try {
       body = await request.json();
-    } catch (e) {
+    } catch (_) {
       return NextResponse.json(
         { error: 'Invalid request body' },
         { status: 400 }
