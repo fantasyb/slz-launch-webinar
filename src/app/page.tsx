@@ -12,6 +12,39 @@ export default function Home() {
     console.log('Registration data:', data);
   };
 
+  // Define the features array
+  const features = [
+    {
+      icon: BarChart2,
+      title: "Complete Pipeline Visibility",
+      description: "See your entire team's sales activities and pipeline health all in one dashboard"
+    },
+    {
+      icon: Users,
+      title: "Lead Claims Dashboard",
+      description: "Monitor lead claims and reassignments across FTC and Ponds teams to ensure optimal lead distribution and follow-up"
+    },
+    {
+      icon: ArrowRightLeft,
+      title: "Smart List and Stage Analytics",
+      description: "Get real-time visibility into smart list activity and pipeline stage progression across your team"
+    },
+    {
+      icon: Brain,
+      title: "AI-Powered Insights",
+      description: "Get actionable recommendations based on your team's activity patterns and performance metrics"
+    },
+    {
+      icon: Trophy,
+      title: "Live Leaderboard",
+      description: "Motivate your team with real-time rankings based on your selected smart list counts"
+    }
+  ];
+
+  // Split the features into first three and last two
+  const firstThreeFeatures = features.slice(0, 3);
+  const lastTwoFeatures = features.slice(3);
+
   return (
     <div className="relative min-h-screen">
       {/* Hero Section with Rich Background */}
@@ -129,45 +162,40 @@ export default function Home() {
           </div>
 
           <section className="mb-16">
+            {/* First 3 Features in a 3-Column Grid */}
             <div className="grid md:grid-cols-3 gap-8">
-              {[
-                {
-                  icon: BarChart2,
-                  title: "Complete Pipeline Visibility",
-                  description: "See your entire team's sales activities, response times, and pipeline health all in one dashboard"
-                },
-                {
-                  icon: Users,
-                  title: "Lead Claims Dashboard",
-                  description: "Track who's claiming leads and monitor engagement patterns to ensure no lead falls through the cracks"
-                },
-                {
-                  icon: ArrowRightLeft,
-                  title: "Smart List Analytics",
-                  description: "Monitor smart list counts and identify opportunities needing attention"
-                },
-                {
-                  icon: Brain,
-                  title: "AI-Powered Insights",
-                  description: "Get actionable recommendations based on your team's activity patterns and performance metrics"
-                },
-                {
-                  icon: Trophy,
-                  title: "Live Leaderboard",
-                  description: "Motivate your team with real-time rankings based on engagement scores and pipeline health"
-                },
-                {
-                  icon: ActivitySquare,
-                  title: "Performance Metrics",
-                  description: "Track claim-to-contact ratios, response times, and pipeline progression velocity"
-                }
-              ].map((feature, index) => (
+              {firstThreeFeatures.map((feature, index) => (
                 <motion.div
                   key={feature.title}
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.2, delay: index * 0.05 }}
                   className="bg-white rounded-xl p-6 shadow-sm hover:shadow-lg transform hover:-translate-y-1 transition-transform duration-100"
+                >
+                  <div className="flex items-center gap-4 mb-4">
+                    <div className="bg-[#02524b]/5 rounded-lg p-2">
+                      <feature.icon className="h-6 w-6 text-[#02524b]" />
+                    </div>
+                    <h3 className="text-lg font-semibold text-gray-900">
+                      {feature.title}
+                    </h3>
+                  </div>
+                  <p className="text-gray-600 text-sm leading-relaxed">
+                    {feature.description}
+                  </p>
+                </motion.div>
+              ))}
+            </div>
+
+            {/* Last 2 Features Centered Below */}
+            <div className="flex justify-center gap-8 mt-8">
+              {lastTwoFeatures.map((feature, index) => (
+                <motion.div
+                  key={feature.title}
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.2, delay: (index + 3) * 0.05 }}
+                  className="bg-white rounded-xl p-6 shadow-sm hover:shadow-lg transform hover:-translate-y-1 transition-transform duration-100 w-full max-w-md"
                 >
                   <div className="flex items-center gap-4 mb-4">
                     <div className="bg-[#02524b]/5 rounded-lg p-2">
