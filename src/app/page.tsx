@@ -4,7 +4,7 @@ import Image from "next/image";
 import { motion } from "framer-motion";
 import CountdownTimer from '@/components/CountdownTimer';
 import RegistrationForm from '@/components/RegistrationForm';
-import { BarChart2, Users, ArrowRightLeft, Brain, Trophy, ActivitySquare } from 'lucide-react';
+import { BarChart2, Users, ArrowRightLeft, Brain, Trophy } from 'lucide-react';
 import Navigation from '@/components/Navigation';
 
 export default function Home() {
@@ -12,7 +12,6 @@ export default function Home() {
     console.log('Registration data:', data);
   };
 
-  // Define the features array
   const features = [
     {
       icon: BarChart2,
