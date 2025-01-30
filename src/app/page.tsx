@@ -74,7 +74,7 @@ export default function Home() {
         <Navigation />
 
         {/* Hero Content */}
-        <div className="relative pt-24 pb-16">
+        <div className="relative pt-40 pb-16">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <section className="text-center relative space-y-8">
               {/* Premium Label */}
