@@ -207,7 +207,7 @@ export default function Home() {
               whileHover={{ scale: 1.02 }}
             >
               <Image 
-                src="/SLZ_Logo_v1-01.png"
+                src="/SLZ_Logo_V1-01.png"
                 alt="Smart List Zero"
                 width={144}
                 height={48}
