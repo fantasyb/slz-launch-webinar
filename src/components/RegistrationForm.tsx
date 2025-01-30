@@ -4,6 +4,7 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { motion, AnimatePresence } from 'framer-motion';
 import { useToast } from "@/components/ui/use-toast";
+import { trackEvent } from '@/utils/analytics';
 
 interface RegistrationFormProps {
   onSubmit?: (data: { name: string; email: string; join_url?: string }) => void;
@@ -20,6 +21,13 @@ const RegistrationForm = ({ onSubmit }: RegistrationFormProps) => {
     e.preventDefault();
     setIsSubmitting(true);
 
+    // Track form submission attempt
+    trackEvent(
+      'registration_start',
+      'webinar',
+      'form_submit_attempt',
+    );
+
     try {
       const response = await fetch('/api/register', {
         method: 'POST',
@@ -35,6 +43,14 @@ const RegistrationForm = ({ onSubmit }: RegistrationFormProps) => {
         throw new Error(data.error || 'Registration failed');
       }
 
+      // Track successful registration
+      trackEvent(
+        'registration_complete',
+        'webinar',
+        'registration_success',
+        1
+      );
+
       setIsSuccess(true);
 
       toast({
@@ -46,6 +62,13 @@ const RegistrationForm = ({ onSubmit }: RegistrationFormProps) => {
         onSubmit({ name, email, join_url: data.join_url });
       }
     } catch (error) {
+      // Track registration failure
+      trackEvent(
+        'registration_error',
+        'webinar',
+        error instanceof Error ? error.message : 'unknown_error'
+      );
+
       console.error('Registration error:', error);
       toast({
         title: "Registration Failed",
