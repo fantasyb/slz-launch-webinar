@@ -81,8 +81,8 @@ const Navigation = () => {
             }}
           >
             <Image 
-              src="/AmplifiedSolutions_Logo-V2_Main.png"
-              alt="Amplified Solutions Logo"
+              src="/SLZ_Logo_V1-01.png"
+              alt="Smart List Zero"
               width={144}
               height={48}
               className="h-12 w-auto"

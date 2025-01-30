@@ -92,29 +92,13 @@ export default function Home() {
                 </span>
               </motion.div>
 
-              {/* Logo */}
-              <div className="flex justify-center">
-                <motion.div
-                  initial={{ opacity: 0, scale: 0.95 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  transition={{ duration: 0.3 }}
-                  className="relative w-[600px] h-[180px]"
-                >
-                  <Image 
-                    src="/SLZ_Logo_V1-01.png"
-                    alt="Smart List Zero Logo"
-                    fill
-                    style={{ objectFit: 'contain' }}
-                    className="brightness-0 invert"
-                    priority
-                  />
-                </motion.div>
-              </div>
-              
-              <p className="text-xl text-white/90 max-w-3xl mx-auto">
-                Finally see who&apos;s claiming leads, their pipeline progress, and smart list 
-                activity - all in one powerful dashboard.
-              </p>
+              <h1 className="text-4xl md:text-5xl lg:text-7xl font-bold text-white mb-4">
+  See Which Agents Are Actually Working Their Leads
+</h1>
+
+<p className="text-xl md:text-2xl text-white/80 max-w-3xl mx-auto mb-16">
+  Track smart list counts, lead claims, and pipeline stages to instantly spot your most engaged agents — and those who need help.
+</p>
 
               {/* Countdown and Registration */}
               <div className="max-w-xl mx-auto space-y-8">
@@ -223,8 +207,8 @@ export default function Home() {
               whileHover={{ scale: 1.02 }}
             >
               <Image 
-                src="/AmplifiedSolutions_Logo-V2_Main.png"
-                alt="Amplified Solutions Logo"
+                src="/SLZ_Logo_v1-01.png"
+                alt="Smart List Zero"
                 width={144}
                 height={48}
                 className="h-12 w-auto"
