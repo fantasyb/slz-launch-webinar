@@ -10,7 +10,7 @@ import { ListingCard } from '@/components/ListingCard';
 import {
   CheckCircle2, Zap, Activity,
   ArrowUpRight, Terminal, Send, Copy, Check,
-  MessageSquare, Package
+  MessageSquare, Package, Star
 } from 'lucide-react';
 
 function formatNumber(n: number): string {
@@ -44,7 +44,7 @@ const MOCK_RESPONSES: Record<string, string> = {
 
 export default function AgentProfilePage() {
   const params = useParams();
-  const { getAgent, getListingsByAgent } = useApp();
+  const { getAgent, getListingsByAgent, getHandoffsForAgent } = useApp();
   const [testResult, setTestResult] = useState<string | null>(null);
   const [testing, setTesting] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -60,6 +60,7 @@ export default function AgentProfilePage() {
   }
 
   const listings = getListingsByAgent(agent.id);
+  const handoffs = getHandoffsForAgent(agent.id);
 
   const handleTest = () => {
     setTesting(true);
@@ -236,7 +237,9 @@ export default function AgentProfilePage() {
           {/* Peer Reviews */}
           {agent.peerReviews.length > 0 && (
             <div className="border border-zinc-800 rounded-lg p-5">
-              <h2 className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-4">Peer Reviews</h2>
+              <h2 className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-4">
+                Peer Reviews ({agent.peerReviews.length})
+              </h2>
               <div className="space-y-3">
                 {agent.peerReviews.map((review, i) => (
                   <div key={i} className="p-3 rounded-lg bg-zinc-900/50">
@@ -245,14 +248,56 @@ export default function AgentProfilePage() {
                         {review.agentName}
                       </Link>
                       <div className="flex gap-0.5">
-                        {Array.from({ length: review.rating }).map((_, j) => (
-                          <span key={j} className="text-amber-400 text-xs">*</span>
+                        {Array.from({ length: 5 }).map((_, j) => (
+                          <Star
+                            key={j}
+                            size={10}
+                            className={j < review.rating ? 'text-amber-400 fill-amber-400' : 'text-zinc-700'}
+                          />
                         ))}
                       </div>
                     </div>
                     <p className="text-xs text-zinc-400">{review.comment}</p>
                   </div>
                 ))}
+              </div>
+            </div>
+          )}
+
+          {/* Handoff History */}
+          {handoffs.length > 0 && (
+            <div className="border border-zinc-800 rounded-lg p-5">
+              <h2 className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-4">
+                Handoff History ({handoffs.length})
+              </h2>
+              <div className="space-y-2">
+                {handoffs.slice(0, 10).map(h => {
+                  const isWorker = h.toAgentId === agent.id;
+                  const statusColors: Record<string, string> = {
+                    completed: 'text-emerald-400 bg-emerald-500/10',
+                    in_progress: 'text-blue-400 bg-blue-500/10',
+                    delivered: 'text-purple-400 bg-purple-500/10',
+                    proposed: 'text-amber-400 bg-amber-500/10',
+                    accepted: 'text-cyan-400 bg-cyan-500/10',
+                    rejected: 'text-red-400 bg-red-500/10',
+                  };
+                  return (
+                    <div key={h.id} className="flex items-center gap-3 p-3 rounded-lg bg-zinc-900/50">
+                      <div className="flex-1 min-w-0">
+                        <div className="text-xs font-medium text-zinc-200 truncate">
+                          {h.task.title}
+                        </div>
+                        <div className="text-[10px] text-zinc-500 mt-0.5">
+                          {isWorker ? `From ${h.fromAgentName}` : `To ${h.toAgentName}`}
+                          {' · '}{timeAgo(h.updatedAt || h.createdAt)}
+                        </div>
+                      </div>
+                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${statusColors[h.status] || 'text-zinc-400 bg-zinc-800'}`}>
+                        {h.status}
+                      </span>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}

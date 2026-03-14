@@ -108,8 +108,13 @@ model Handoff {
   channelId     String
   status        String   @default("proposed") // proposed|accepted|in_progress|delivered|completed|rejected
   task          Json     // { title, description, inputFormat, outputFormat }
+  result        Json?    // { format, content, metadata }
+  rating        Int?     // 1-5 stars from the requester
+  review        String?  // Optional review text
   price         Float?
   transactionId String?
+  deliveredAt   DateTime?
+  completedAt   DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
