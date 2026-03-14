@@ -7,6 +7,15 @@ export interface AgentSkill {
   outputFormat: string;
 }
 
+export type TrustTier = 'unverified' | 'verified' | 'trusted' | 'enterprise';
+
+export interface SecurityPolicy {
+  dataRetention: 'delete_on_complete' | '30_days' | '90_days' | 'indefinite';
+  encryption: boolean;
+  auditLog: boolean;
+  compliance: string[]; // e.g. ['SOC2', 'HIPAA', 'GDPR']
+}
+
 export interface Agent {
   id: string;
   name: string;
@@ -35,6 +44,8 @@ export interface Agent {
   price: number | null;
   walletAddress: string | null;
   reputationScore: number;
+  trustTier: TrustTier;
+  securityPolicy: SecurityPolicy | null;
 }
 
 export type ListingSection = 'services' | 'gigs' | 'data' | 'tools' | 'partnerships' | 'discussion';
@@ -110,6 +121,15 @@ export interface HandoffPayload {
   status?: HandoffStatus;
 }
 
+export type HandoffSecurityTier = 'standard' | 'sensitive' | 'confidential';
+
+export interface HandoffDataPolicy {
+  retention: 'delete_on_complete' | '30_days' | '90_days';
+  deleteOnComplete: boolean;
+  encryption: boolean;
+  audit: boolean;
+}
+
 export interface Handoff {
   id: string;
   fromAgentId: string;
@@ -128,6 +148,9 @@ export interface Handoff {
   updatedAt: string;
   price: number | null;
   transactionId: string | null;
+  securityTier: HandoffSecurityTier;
+  dataPolicy: HandoffDataPolicy | null;
+  requiredTrust: TrustTier;
 }
 
 const AVATAR_COLORS = [
@@ -1307,7 +1330,23 @@ export const seedAgents: Agent[] = [
     walletAddress: null,
     reputationScore: 73,
   },
-];
+].map(agent => ({
+  ...agent,
+  trustTier: (
+    agent.ownerVerified && agent.reputationScore >= 90 ? 'enterprise' :
+    agent.ownerVerified && agent.reputationScore >= 70 ? 'trusted' :
+    agent.ownerVerified ? 'verified' : 'unverified'
+  ) as TrustTier,
+  securityPolicy: agent.ownerVerified ? {
+    dataRetention: agent.reputationScore >= 90 ? 'delete_on_complete' as const : '30_days' as const,
+    encryption: agent.reputationScore >= 80,
+    auditLog: agent.reputationScore >= 70,
+    compliance: [
+      ...(agent.reputationScore >= 95 ? ['SOC2'] : []),
+      ...(agent.categories.includes('legal') || agent.categories.includes('finance') ? ['GDPR'] : []),
+    ],
+  } as SecurityPolicy : null,
+})) as Agent[];
 
 export const seedListings: Listing[] = [
   // SERVICES
@@ -2347,6 +2386,9 @@ export const seedHandoffs: Handoff[] = [
     updatedAt: hoursAgo(2),
     price: null,
     transactionId: null,
+    securityTier: 'standard',
+    dataPolicy: null,
+    requiredTrust: 'unverified',
   },
   {
     id: 'handoff-002',
@@ -2366,6 +2408,14 @@ export const seedHandoffs: Handoff[] = [
     updatedAt: hoursAgo(1),
     price: null,
     transactionId: null,
+    securityTier: 'confidential',
+    dataPolicy: {
+      retention: 'delete_on_complete',
+      deleteOnComplete: true,
+      encryption: true,
+      audit: true,
+    },
+    requiredTrust: 'trusted',
   },
   {
     id: 'handoff-003',
@@ -2385,6 +2435,14 @@ export const seedHandoffs: Handoff[] = [
     updatedAt: hoursAgo(3),
     price: null,
     transactionId: null,
+    securityTier: 'sensitive',
+    dataPolicy: {
+      retention: '30_days',
+      deleteOnComplete: false,
+      encryption: true,
+      audit: true,
+    },
+    requiredTrust: 'verified',
   },
 ];
 

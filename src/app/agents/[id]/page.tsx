@@ -8,10 +8,17 @@ import { AgentAvatar } from '@/components/AgentAvatar';
 import { StatusBadge } from '@/components/StatusBadge';
 import { ListingCard } from '@/components/ListingCard';
 import {
-  CheckCircle2, Zap, Activity,
+  Zap, Activity,
   ArrowUpRight, Terminal, Send, Copy, Check,
-  MessageSquare, Package, Star
+  MessageSquare, Package, Star, Shield, ShieldCheck, ShieldAlert
 } from 'lucide-react';
+
+const TRUST_BADGE: Record<string, { label: string; color: string; icon: typeof Shield }> = {
+  enterprise: { label: 'Enterprise', color: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30', icon: ShieldCheck },
+  trusted: { label: 'Trusted', color: 'text-blue-400 bg-blue-500/10 border-blue-500/30', icon: ShieldCheck },
+  verified: { label: 'Verified', color: 'text-indigo-400 bg-indigo-500/10 border-indigo-500/30', icon: Shield },
+  unverified: { label: 'Unverified', color: 'text-zinc-500 bg-zinc-800 border-zinc-700', icon: ShieldAlert },
+};
 
 function formatNumber(n: number): string {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
@@ -87,12 +94,17 @@ export default function AgentProfilePage() {
         <div className="flex-1">
           <div className="flex items-center gap-3 mb-1">
             <h1 className="text-2xl font-bold text-white">{agent.name}</h1>
-            {agent.ownerVerified && (
-              <span className="flex items-center gap-1 text-[10px] text-indigo-400">
-                <CheckCircle2 size={14} />
-                Verified via {agent.verificationMethod}
-              </span>
-            )}
+            {(() => {
+              const tier = TRUST_BADGE[agent.trustTier || 'unverified'] || TRUST_BADGE.unverified;
+              const TierIcon = tier.icon;
+              return (
+                <span className={`flex items-center gap-1 px-2 py-0.5 rounded border text-[10px] font-medium ${tier.color}`}>
+                  <TierIcon size={12} />
+                  {tier.label}
+                  {agent.verificationMethod && ` · ${agent.verificationMethod}`}
+                </span>
+              );
+            })()}
             <StatusBadge status={agent.status} />
           </div>
           <p className="text-sm text-zinc-400">{agent.entity} &middot; {agent.owner}</p>
@@ -349,6 +361,64 @@ export default function AgentProfilePage() {
                   <span className="text-[10px] text-zinc-500">Last seen {timeAgo(agent.lastSeen)}</span>
                 </div>
               </div>
+            </div>
+          </div>
+
+          {/* Trust & Security */}
+          <div className="border border-zinc-800 rounded-lg p-5">
+            <h2 className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-4">Trust & Security</h2>
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] text-zinc-500">Trust Tier</span>
+                {(() => {
+                  const tier = TRUST_BADGE[agent.trustTier || 'unverified'] || TRUST_BADGE.unverified;
+                  const TierIcon = tier.icon;
+                  return (
+                    <span className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium ${tier.color}`}>
+                      <TierIcon size={10} />
+                      {tier.label}
+                    </span>
+                  );
+                })()}
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] text-zinc-500">Identity</span>
+                <span className="text-xs text-zinc-300">
+                  {agent.ownerVerified ? `Verified (${agent.verificationMethod})` : 'Not verified'}
+                </span>
+              </div>
+              {agent.securityPolicy && (
+                <>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] text-zinc-500">Encryption</span>
+                    <span className={`text-xs ${agent.securityPolicy.encryption ? 'text-emerald-400' : 'text-zinc-500'}`}>
+                      {agent.securityPolicy.encryption ? 'Yes' : 'No'}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] text-zinc-500">Audit Log</span>
+                    <span className={`text-xs ${agent.securityPolicy.auditLog ? 'text-emerald-400' : 'text-zinc-500'}`}>
+                      {agent.securityPolicy.auditLog ? 'Enabled' : 'No'}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] text-zinc-500">Data Retention</span>
+                    <span className="text-xs text-zinc-300">{agent.securityPolicy.dataRetention}</span>
+                  </div>
+                  {agent.securityPolicy.compliance.length > 0 && (
+                    <div>
+                      <div className="text-[10px] text-zinc-500 mb-1">Compliance</div>
+                      <div className="flex gap-1">
+                        {agent.securityPolicy.compliance.map(c => (
+                          <span key={c} className="px-1.5 py-0.5 rounded bg-emerald-500/10 text-[10px] text-emerald-400 font-medium border border-emerald-500/20">
+                            {c}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           </div>
 

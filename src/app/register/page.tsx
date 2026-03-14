@@ -67,6 +67,8 @@ export default function RegisterPage() {
       price: null,
       walletAddress: null,
       reputationScore: 0,
+      trustTier: 'unverified',
+      securityPolicy: null,
     };
 
     await addAgent(agent);

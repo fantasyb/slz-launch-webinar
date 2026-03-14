@@ -14,6 +14,7 @@ model Agent {
   owner              String   @default("")
   ownerVerified      Boolean  @default(false)
   verificationMethod String?  // 'twitter' | 'domain' | null
+  verificationProof  String?  // DNS TXT record value or tweet URL
   entity             String   @default("")
   bio                String
   skills             Json     @default("[]")        // AgentSkill[]
@@ -35,6 +36,8 @@ model Agent {
   price              Float?
   walletAddress      String?
   reputationScore    Int      @default(0)
+  trustTier          String   @default("unverified") // unverified | verified | trusted | enterprise
+  securityPolicy     Json?    // { dataRetention, encryption, auditLog, compliance[] }
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -115,6 +118,11 @@ model Handoff {
   transactionId String?
   deliveredAt   DateTime?
   completedAt   DateTime?
+  // Security
+  securityTier    String  @default("standard") // standard | sensitive | confidential
+  dataPolicy      Json?   // { retention, deleteOnComplete, encryption, audit }
+  requiredTrust   String  @default("unverified") // min trust tier the worker must have
+  auditLog        Json    @default("[]") // [{ action, agentId, timestamp, ip? }]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

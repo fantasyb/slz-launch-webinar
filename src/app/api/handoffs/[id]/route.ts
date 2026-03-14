@@ -1,6 +1,18 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 
+// Trust tier hierarchy (higher index = more trusted)
+const TRUST_LEVELS: Record<string, number> = {
+  unverified: 0,
+  verified: 1,
+  trusted: 2,
+  enterprise: 3,
+};
+
+function meetsMinTrust(agentTier: string, requiredTier: string): boolean {
+  return (TRUST_LEVELS[agentTier] ?? 0) >= (TRUST_LEVELS[requiredTier] ?? 0);
+}
+
 // Valid status transitions
 const TRANSITIONS: Record<string, string[]> = {
   proposed: ['accepted', 'rejected'],
@@ -8,6 +20,20 @@ const TRANSITIONS: Record<string, string[]> = {
   in_progress: ['delivered', 'rejected'],
   delivered: ['completed', 'rejected'],
 };
+
+// Append an entry to a handoff's audit log
+async function appendAuditLog(handoffId: string, action: string, agentId: string) {
+  const handoff = await db.handoff.findUnique({
+    where: { id: handoffId },
+    select: { auditLog: true },
+  });
+  const log = Array.isArray(handoff?.auditLog) ? handoff.auditLog as Array<Record<string, unknown>> : [];
+  log.push({ action, agentId, timestamp: new Date().toISOString() });
+  await db.handoff.update({
+    where: { id: handoffId },
+    data: { auditLog: log as unknown as import('@prisma/client').Prisma.InputJsonValue },
+  });
+}
 
 // Recalculate and update an agent's reputation from all their completed handoffs
 async function updateAgentReputation(agentId: string) {
@@ -107,10 +133,27 @@ export async function PATCH(
           return NextResponse.json({ error: `Cannot accept from status: ${handoff.status}` }, { status: 400 });
         }
 
+        // Enforce trust tier requirements
+        const requiredTrust = (handoff.requiredTrust as string) || 'unverified';
+        if (requiredTrust !== 'unverified') {
+          const workerAgent = await db.agent.findUnique({ where: { id: agentId } });
+          const workerTier = (workerAgent?.trustTier as string) || 'unverified';
+          if (!meetsMinTrust(workerTier, requiredTrust)) {
+            return NextResponse.json({
+              error: `This handoff requires trust tier "${requiredTrust}" but your agent is "${workerTier}"`,
+              hint: 'Verify your identity via /api/agents/verify to upgrade your trust tier',
+              requiredTrust,
+              currentTrust: workerTier,
+            }, { status: 403 });
+          }
+        }
+
         const updated = await db.handoff.update({
           where: { id },
           data: { status: 'accepted' },
         });
+
+        await appendAuditLog(id, 'accepted', agentId);
 
         await db.directMessage.create({
           data: {
@@ -140,6 +183,8 @@ export async function PATCH(
           where: { id },
           data: { status: 'in_progress' },
         });
+
+        await appendAuditLog(id, 'started', agentId);
 
         await db.directMessage.create({
           data: {
@@ -173,6 +218,8 @@ export async function PATCH(
             deliveredAt: new Date(),
           },
         });
+
+        await appendAuditLog(id, 'delivered', agentId);
 
         await db.directMessage.create({
           data: {
@@ -247,6 +294,8 @@ export async function PATCH(
           },
         });
 
+        await appendAuditLog(id, 'completed', agentId);
+
         // Update reputation for both agents
         await updateAgentReputation(handoff.toAgentId);
         await updateAgentReputation(handoff.fromAgentId);
@@ -264,6 +313,8 @@ export async function PATCH(
           where: { id },
           data: { status: 'rejected' },
         });
+
+        await appendAuditLog(id, 'rejected', agentId);
 
         const rejecterName = isRequester ? handoff.fromAgentName : handoff.toAgentName;
         const otherAgentId = isRequester ? handoff.toAgentId : handoff.fromAgentId;

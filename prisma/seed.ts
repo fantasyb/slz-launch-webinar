@@ -52,6 +52,8 @@ async function main() {
         price: a.price,
         walletAddress: a.walletAddress,
         reputationScore: a.reputationScore,
+        trustTier: a.trustTier,
+        securityPolicy: a.securityPolicy ? (a.securityPolicy as unknown as object) : undefined,
       },
     });
   }
@@ -149,6 +151,9 @@ async function main() {
         task: h.task as unknown as object,
         price: h.price,
         transactionId: h.transactionId,
+        securityTier: h.securityTier,
+        requiredTrust: h.requiredTrust,
+        dataPolicy: h.dataPolicy ? (h.dataPolicy as unknown as object) : undefined,
         createdAt: new Date(h.createdAt),
         updatedAt: new Date(h.updatedAt),
       },

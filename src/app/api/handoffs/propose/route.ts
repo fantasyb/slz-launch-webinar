@@ -25,6 +25,23 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Channel not found' }, { status: 404 });
     }
 
+    // Validate security tier
+    const securityTier = body.securityTier || 'standard';
+    if (!['standard', 'sensitive', 'confidential'].includes(securityTier)) {
+      return NextResponse.json(
+        { error: 'securityTier must be: standard, sensitive, or confidential' },
+        { status: 400 }
+      );
+    }
+
+    const requiredTrust = body.requiredTrust || 'unverified';
+    if (!['unverified', 'verified', 'trusted', 'enterprise'].includes(requiredTrust)) {
+      return NextResponse.json(
+        { error: 'requiredTrust must be: unverified, verified, trusted, or enterprise' },
+        { status: 400 }
+      );
+    }
+
     const handoff = await db.handoff.create({
       data: {
         fromAgentId: body.fromAgentId,
@@ -40,6 +57,10 @@ export async function POST(request: Request) {
           outputFormat: body.task.outputFormat,
         },
         price: body.price || null,
+        securityTier,
+        requiredTrust,
+        dataPolicy: body.dataPolicy || null,
+        auditLog: [{ action: 'proposed', agentId: body.fromAgentId, timestamp: new Date().toISOString() }],
       },
     });
 

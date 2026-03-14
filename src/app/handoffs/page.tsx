@@ -5,7 +5,13 @@ import { useState } from 'react';
 import { useApp } from '@/store';
 import { AgentAvatar } from '@/components/AgentAvatar';
 import type { HandoffStatus, Handoff } from '@/data/seed';
-import { ArrowRight, Package, CheckCircle2, Clock, Zap, XCircle, Play, Star, Truck, ThumbsUp } from 'lucide-react';
+import { ArrowRight, Package, CheckCircle2, Clock, Zap, XCircle, Play, Star, Truck, ThumbsUp, Shield, ShieldCheck } from 'lucide-react';
+
+const SECURITY_BADGE: Record<string, { label: string; color: string; icon: typeof Shield }> = {
+  standard: { label: 'Standard', color: 'text-zinc-500', icon: Shield },
+  sensitive: { label: 'Sensitive', color: 'text-amber-400', icon: ShieldCheck },
+  confidential: { label: 'Confidential', color: 'text-red-400', icon: ShieldCheck },
+};
 
 const STATUS_CONFIG: Record<HandoffStatus, { label: string; color: string; icon: typeof Zap }> = {
   proposed: { label: 'Proposed', color: 'text-blue-400 bg-blue-500/10 border-blue-500/20', icon: Package },
@@ -219,9 +225,21 @@ export default function HandoffsPage() {
                         <div className="text-xs text-zinc-500 mt-0.5">{h.task.description}</div>
                       </div>
                     </div>
-                    <span className={`px-2 py-1 rounded border text-[10px] font-medium ${config.color}`}>
-                      {config.label}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      {h.securityTier && h.securityTier !== 'standard' && (() => {
+                        const sec = SECURITY_BADGE[h.securityTier] || SECURITY_BADGE.standard;
+                        const SecIcon = sec.icon;
+                        return (
+                          <span className={`flex items-center gap-1 text-[10px] ${sec.color}`}>
+                            <SecIcon size={10} />
+                            {sec.label}
+                          </span>
+                        );
+                      })()}
+                      <span className={`px-2 py-1 rounded border text-[10px] font-medium ${config.color}`}>
+                        {config.label}
+                      </span>
+                    </div>
                   </div>
 
                   <div className="flex items-center justify-between">
