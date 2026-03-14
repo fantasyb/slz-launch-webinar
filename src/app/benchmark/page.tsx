@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Play,
@@ -17,6 +17,10 @@ import {
   ArrowRight,
   TrendingUp,
   TrendingDown,
+  Save,
+  Trash2,
+  History,
+  Cpu,
 } from 'lucide-react';
 
 interface RunResult {
@@ -62,6 +66,7 @@ interface Summary {
   totalOrchestratorCost: number;
   avgCostSavings: number;
   avgQualityGain: number;
+  model?: string;
 }
 
 interface Scenario {
@@ -69,6 +74,46 @@ interface Scenario {
   name: string;
   description: string;
   testCaseCount: number;
+}
+
+interface ModelOption {
+  id: string;
+  label: string;
+  inputCostPer1M: number;
+  outputCostPer1M: number;
+}
+
+interface SavedRun {
+  id: string;
+  timestamp: string;
+  model: string;
+  results: BenchmarkResult[];
+  summary: Summary;
+}
+
+const STORAGE_KEY = 'agentnet_benchmark_runs';
+
+function loadSavedRuns(): SavedRun[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    return stored ? JSON.parse(stored) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveRun(run: SavedRun) {
+  const runs = loadSavedRuns();
+  runs.unshift(run);
+  // Keep last 10 runs
+  if (runs.length > 10) runs.length = 10;
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(runs));
+}
+
+function deleteRun(id: string) {
+  const runs = loadSavedRuns().filter(r => r.id !== id);
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(runs));
 }
 
 const AGENT_COLORS = {
@@ -317,29 +362,105 @@ function ScenarioCard({ result }: { result: BenchmarkResult }) {
   );
 }
 
+function ProgressBar({ completed, total }: { completed: number; total: number }) {
+  const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
+  return (
+    <div className="w-full">
+      <div className="flex justify-between text-xs text-zinc-500 mb-1">
+        <span>{completed}/{total} API calls</span>
+        <span>{pct}%</span>
+      </div>
+      <div className="h-2 bg-zinc-800 rounded-full overflow-hidden">
+        <motion.div
+          className="h-full bg-indigo-500 rounded-full"
+          initial={{ width: 0 }}
+          animate={{ width: `${pct}%` }}
+          transition={{ duration: 0.3 }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function SavedRunCard({ run, onLoad, onDelete }: {
+  run: SavedRun;
+  onLoad: () => void;
+  onDelete: () => void;
+}) {
+  const date = new Date(run.timestamp);
+  const modelLabel = run.model || 'Unknown model';
+
+  return (
+    <div className="flex items-center justify-between p-3 bg-zinc-900/50 border border-zinc-800 rounded-lg">
+      <div className="flex items-center gap-3">
+        <History size={14} className="text-zinc-500" />
+        <div>
+          <div className="text-xs text-zinc-300">
+            {date.toLocaleDateString()} {date.toLocaleTimeString()}
+          </div>
+          <div className="text-xs text-zinc-500">
+            {run.summary.totalScenarios} scenarios, {modelLabel} — Specialist: {Math.round(run.summary.avgSpecialistScore * 100)}% vs Gen: {Math.round(run.summary.avgGeneralistScore * 100)}%
+          </div>
+        </div>
+      </div>
+      <div className="flex items-center gap-2">
+        <button
+          onClick={onLoad}
+          className="text-xs px-2 py-1 rounded bg-indigo-500/10 text-indigo-400 hover:bg-indigo-500/20 transition-colors"
+        >
+          Load
+        </button>
+        <button
+          onClick={onDelete}
+          className="text-xs p-1 rounded text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors"
+        >
+          <Trash2 size={12} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function BenchmarkPage() {
   const [scenarios, setScenarios] = useState<Scenario[]>([]);
+  const [models, setModels] = useState<ModelOption[]>([]);
   const [selectedScenarios, setSelectedScenarios] = useState<Set<string>>(new Set());
+  const [selectedModel, setSelectedModel] = useState<string>('claude-haiku-4-5-20251001');
   const [results, setResults] = useState<BenchmarkResult[] | null>(null);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadingScenarios, setLoadingScenarios] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState<string>('');
+  const [progressCount, setProgressCount] = useState<{ completed: number; total: number }>({ completed: 0, total: 0 });
+  const [savedRuns, setSavedRuns] = useState<SavedRun[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
 
-  const loadScenarios = async () => {
+  useEffect(() => {
+    setSavedRuns(loadSavedRuns());
+  }, []);
+
+  const loadScenarios = useCallback(async () => {
     setLoadingScenarios(true);
     try {
       const res = await fetch('/api/benchmark');
       const data = await res.json();
       setScenarios(data.scenarios);
+      setModels(data.models || []);
       setSelectedScenarios(new Set(data.scenarios.map((s: Scenario) => s.id)));
+      if (data.models?.length > 0) {
+        setSelectedModel(data.models[0].id);
+      }
     } catch {
       setError('Failed to load scenarios');
     } finally {
       setLoadingScenarios(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    loadScenarios();
+  }, [loadScenarios]);
 
   const toggleScenario = (id: string) => {
     setSelectedScenarios(prev => {
@@ -356,16 +477,16 @@ export default function BenchmarkPage() {
     setError(null);
     setResults(null);
     setSummary(null);
-    setProgress('Initializing benchmark...');
+    setProgress('Connecting...');
+    setProgressCount({ completed: 0, total: 0 });
 
     try {
       const scenarioIds = Array.from(selectedScenarios);
-      setProgress(`Running ${scenarioIds.length} scenario(s) with 3 agent types each...`);
 
       const res = await fetch('/api/benchmark', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ scenarioIds }),
+        body: JSON.stringify({ scenarioIds, model: selectedModel }),
       });
 
       if (!res.ok) {
@@ -373,22 +494,92 @@ export default function BenchmarkPage() {
         throw new Error(err.error || 'Benchmark failed');
       }
 
-      const data = await res.json();
-      setResults(data.results);
-      setSummary(data.summary);
-      setProgress('');
+      const reader = res.body?.getReader();
+      if (!reader) throw new Error('No response stream');
+
+      const decoder = new TextDecoder();
+      let buffer = '';
+      const streamResults: BenchmarkResult[] = [];
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+
+        // Parse SSE events from buffer
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        let currentEvent = '';
+        for (const line of lines) {
+          if (line.startsWith('event: ')) {
+            currentEvent = line.slice(7);
+          } else if (line.startsWith('data: ') && currentEvent) {
+            try {
+              const data = JSON.parse(line.slice(6));
+
+              switch (currentEvent) {
+                case 'start':
+                  setProgress(`Running benchmark with ${data.totalCalls} API calls...`);
+                  setProgressCount({ completed: 0, total: data.totalCalls });
+                  break;
+                case 'progress':
+                  setProgress(data.message);
+                  setProgressCount({ completed: data.completed, total: data.total });
+                  break;
+                case 'scenario_start':
+                  setProgress(`Running: ${data.scenarioName}...`);
+                  break;
+                case 'scenario_complete':
+                  streamResults.push(data);
+                  setResults([...streamResults]);
+                  break;
+                case 'complete':
+                  setResults(data.results);
+                  setSummary(data.summary);
+                  setProgress('');
+
+                  // Auto-save
+                  const run: SavedRun = {
+                    id: Date.now().toString(),
+                    timestamp: new Date().toISOString(),
+                    model: selectedModel,
+                    results: data.results,
+                    summary: data.summary,
+                  };
+                  saveRun(run);
+                  setSavedRuns(loadSavedRuns());
+                  break;
+                case 'error':
+                  throw new Error(data.error);
+              }
+            } catch (parseErr) {
+              if (currentEvent === 'error') throw parseErr;
+            }
+            currentEvent = '';
+          }
+        }
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Benchmark failed');
       setProgress('');
     } finally {
       setLoading(false);
+      setProgressCount({ completed: 0, total: 0 });
     }
   };
 
-  // Load scenarios on mount
-  if (scenarios.length === 0 && !loadingScenarios && !error) {
-    loadScenarios();
-  }
+  const loadSavedRun = (run: SavedRun) => {
+    setResults(run.results);
+    setSummary(run.summary);
+    setShowHistory(false);
+  };
+
+  const deleteSavedRun = (id: string) => {
+    deleteRun(id);
+    setSavedRuns(loadSavedRuns());
+  };
 
   return (
     <div className="min-h-screen bg-zinc-950">
@@ -427,7 +618,7 @@ export default function BenchmarkPage() {
         </div>
 
         {/* Scenario selector */}
-        <div className="mb-8">
+        <div className="mb-6">
           <h2 className="text-sm font-medium text-zinc-400 mb-3">Select Scenarios</h2>
           {loadingScenarios ? (
             <div className="flex items-center gap-2 text-sm text-zinc-500">
@@ -463,8 +654,37 @@ export default function BenchmarkPage() {
           )}
         </div>
 
-        {/* Run button */}
-        <div className="mb-10">
+        {/* Model selector */}
+        {models.length > 0 && (
+          <div className="mb-8">
+            <h2 className="text-sm font-medium text-zinc-400 mb-3 flex items-center gap-2">
+              <Cpu size={14} />
+              Model
+            </h2>
+            <div className="flex flex-wrap gap-2">
+              {models.map(model => (
+                <button
+                  key={model.id}
+                  onClick={() => setSelectedModel(model.id)}
+                  disabled={loading}
+                  className={`px-4 py-2 rounded-lg border text-sm transition-all ${
+                    selectedModel === model.id
+                      ? 'bg-indigo-500/10 border-indigo-500/30 text-indigo-300'
+                      : 'bg-zinc-900/50 border-zinc-800 text-zinc-400 hover:border-zinc-700'
+                  } ${loading ? 'opacity-50 cursor-not-allowed' : ''}`}
+                >
+                  <div className="font-medium">{model.label}</div>
+                  <div className="text-xs text-zinc-500 mt-0.5">
+                    ${model.inputCostPer1M}/M in, ${model.outputCostPer1M}/M out
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Run button + history */}
+        <div className="mb-10 flex items-start gap-3">
           <button
             onClick={runBenchmark}
             disabled={loading || selectedScenarios.size === 0}
@@ -486,18 +706,63 @@ export default function BenchmarkPage() {
               </>
             )}
           </button>
-          {progress && (
-            <div className="mt-3 flex items-center gap-2 text-sm text-zinc-500">
+
+          {savedRuns.length > 0 && (
+            <button
+              onClick={() => setShowHistory(!showHistory)}
+              className="flex items-center gap-2 px-4 py-3 rounded-xl text-sm bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-zinc-300 hover:border-zinc-700 transition-all"
+            >
+              <History size={16} />
+              History ({savedRuns.length})
+            </button>
+          )}
+        </div>
+
+        {/* Progress */}
+        {loading && (
+          <div className="mb-6 space-y-2">
+            <div className="flex items-center gap-2 text-sm text-zinc-500">
               <Clock size={14} className="animate-pulse" />
               {progress}
             </div>
+            {progressCount.total > 0 && (
+              <ProgressBar completed={progressCount.completed} total={progressCount.total} />
+            )}
+          </div>
+        )}
+
+        {error && (
+          <div className="mb-6 p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-sm text-red-400">
+            {error}
+          </div>
+        )}
+
+        {/* Saved runs history */}
+        <AnimatePresence>
+          {showHistory && savedRuns.length > 0 && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              className="mb-8 overflow-hidden"
+            >
+              <h2 className="text-sm font-medium text-zinc-400 mb-3 flex items-center gap-2">
+                <Save size={14} />
+                Previous Runs (auto-saved)
+              </h2>
+              <div className="space-y-2">
+                {savedRuns.map(run => (
+                  <SavedRunCard
+                    key={run.id}
+                    run={run}
+                    onLoad={() => loadSavedRun(run)}
+                    onDelete={() => deleteSavedRun(run.id)}
+                  />
+                ))}
+              </div>
+            </motion.div>
           )}
-          {error && (
-            <div className="mt-3 p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-sm text-red-400">
-              {error}
-            </div>
-          )}
-        </div>
+        </AnimatePresence>
 
         {/* Summary cards */}
         <AnimatePresence>
@@ -510,6 +775,11 @@ export default function BenchmarkPage() {
               <h2 className="text-sm font-medium text-zinc-400 mb-3 flex items-center gap-2">
                 <BarChart3 size={14} />
                 Aggregate Results
+                {summary.model && (
+                  <span className="text-xs text-zinc-600 font-normal">
+                    ({models.find(m => m.id === summary.model)?.label || summary.model})
+                  </span>
+                )}
               </h2>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 <StatCard
