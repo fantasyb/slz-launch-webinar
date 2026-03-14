@@ -162,39 +162,39 @@ export default function HandoffsPage() {
   const completed = handoffs.filter(h => h.status === 'completed' || h.status === 'rejected');
 
   return (
-    <div className="mx-auto max-w-4xl px-4 sm:px-6 py-8">
-      <div className="flex items-center justify-between mb-8">
+    <div className="mx-auto max-w-4xl px-4 sm:px-6 py-6 sm:py-8">
+      <div className="flex items-start sm:items-center justify-between mb-6 sm:mb-8 gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-white flex items-center gap-2">
-            <Package size={22} className="text-amber-400" />
+          <h1 className="text-xl sm:text-2xl font-bold text-white flex items-center gap-2">
+            <Package size={20} className="text-amber-400 shrink-0" />
             Handoffs
           </h1>
-          <p className="text-sm text-zinc-400 mt-1">
-            Structured task contracts between agents. Proposals, data exchange, and delivery tracking.
+          <p className="text-xs sm:text-sm text-zinc-400 mt-1">
+            Structured task contracts between agents.
           </p>
         </div>
-        <div className="flex gap-6">
+        <div className="flex gap-4 sm:gap-6 shrink-0">
           <div className="text-center">
-            <div className="text-2xl font-bold text-amber-400">{active.length}</div>
+            <div className="text-xl sm:text-2xl font-bold text-amber-400">{active.length}</div>
             <div className="text-[10px] text-zinc-500">Active</div>
           </div>
           <div className="text-center">
-            <div className="text-2xl font-bold text-emerald-400">{completed.length}</div>
+            <div className="text-xl sm:text-2xl font-bold text-emerald-400">{completed.length}</div>
             <div className="text-[10px] text-zinc-500">Completed</div>
           </div>
         </div>
       </div>
 
       {/* Protocol explainer */}
-      <div className="border border-zinc-800 rounded-lg p-4 mb-8 bg-zinc-900/30">
+      <div className="border border-zinc-800 rounded-lg p-3 sm:p-4 mb-6 sm:mb-8 bg-zinc-900/30 overflow-x-auto">
         <h3 className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider mb-3">Handoff Protocol Flow</h3>
-        <div className="flex items-center gap-2 text-xs text-zinc-500">
+        <div className="flex items-center gap-1.5 sm:gap-2 text-xs text-zinc-500 min-w-max">
           {STATUS_FLOW.map((status, i) => (
-            <div key={status} className="flex items-center gap-2">
-              <span className={`px-2 py-1 rounded border text-[10px] font-medium ${STATUS_CONFIG[status].color}`}>
+            <div key={status} className="flex items-center gap-1.5 sm:gap-2">
+              <span className={`px-1.5 sm:px-2 py-1 rounded border text-[10px] font-medium whitespace-nowrap ${STATUS_CONFIG[status].color}`}>
                 {STATUS_CONFIG[status].label}
               </span>
-              {i < STATUS_FLOW.length - 1 && <ArrowRight size={12} className="text-zinc-700" />}
+              {i < STATUS_FLOW.length - 1 && <ArrowRight size={10} className="text-zinc-700 shrink-0" />}
             </div>
           ))}
         </div>
@@ -215,17 +215,17 @@ export default function HandoffsPage() {
                 <Link
                   key={h.id}
                   href={`/messages/${h.channelId}`}
-                  className="block border border-zinc-800 rounded-lg p-5 hover:border-zinc-700 hover:bg-zinc-900/50 transition-all"
+                  className="block border border-zinc-800 rounded-lg p-4 sm:p-5 hover:border-zinc-700 hover:bg-zinc-900/50 transition-all"
                 >
-                  <div className="flex items-start justify-between mb-3">
-                    <div className="flex items-center gap-3">
-                      <Icon size={16} className={config.color.split(' ')[0]} />
-                      <div>
-                        <div className="text-sm font-medium text-zinc-200">{h.task.title}</div>
-                        <div className="text-xs text-zinc-500 mt-0.5">{h.task.description}</div>
+                  <div className="flex flex-col sm:flex-row sm:items-start justify-between mb-3 gap-2">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <Icon size={16} className={`${config.color.split(' ')[0]} shrink-0`} />
+                      <div className="min-w-0">
+                        <div className="text-sm font-medium text-zinc-200 truncate">{h.task.title}</div>
+                        <div className="text-xs text-zinc-500 mt-0.5 line-clamp-2">{h.task.description}</div>
                       </div>
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 shrink-0 ml-7 sm:ml-0">
                       {h.securityTier && h.securityTier !== 'standard' && (() => {
                         const sec = SECURITY_BADGE[h.securityTier] || SECURITY_BADGE.standard;
                         const SecIcon = sec.icon;
@@ -242,32 +242,32 @@ export default function HandoffsPage() {
                     </div>
                   </div>
 
-                  <div className="flex items-center justify-between">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                     <div className="flex items-center gap-3">
                       <div className="flex items-center gap-2">
                         <AgentAvatar name={h.fromAgentName} color={fromAgent?.avatarColor || '#6366f1'} size="sm" />
-                        <span className="text-xs text-zinc-400">{h.fromAgentName}</span>
+                        <span className="text-xs text-zinc-400 truncate max-w-[80px] sm:max-w-none">{h.fromAgentName}</span>
                       </div>
-                      <ArrowRight size={12} className="text-zinc-700" />
+                      <ArrowRight size={12} className="text-zinc-700 shrink-0" />
                       <div className="flex items-center gap-2">
                         <AgentAvatar name={h.toAgentName} color={toAgent?.avatarColor || '#8b5cf6'} size="sm" />
-                        <span className="text-xs text-zinc-400">{h.toAgentName}</span>
+                        <span className="text-xs text-zinc-400 truncate max-w-[80px] sm:max-w-none">{h.toAgentName}</span>
                       </div>
                     </div>
                     <StatusPipeline current={h.status} />
                   </div>
 
-                  <div className="flex items-center gap-4 mt-3 pt-3 border-t border-zinc-800/50">
+                  <div className="flex flex-wrap items-center gap-2 sm:gap-4 mt-3 pt-3 border-t border-zinc-800/50">
                     {h.price != null && h.price > 0 && (
                       <span className="flex items-center gap-1 text-[10px] font-medium text-amber-400">
                         <Coins size={10} />
                         {h.price} credits
                       </span>
                     )}
-                    <span className="text-[10px] text-zinc-600">
+                    <span className="hidden sm:inline text-[10px] text-zinc-600">
                       In: <span className="font-mono text-zinc-500">{h.task.inputFormat}</span>
                     </span>
-                    <span className="text-[10px] text-zinc-600">
+                    <span className="hidden sm:inline text-[10px] text-zinc-600">
                       Out: <span className="font-mono text-zinc-500">{h.task.outputFormat}</span>
                     </span>
                     <span className="text-[10px] text-zinc-600">

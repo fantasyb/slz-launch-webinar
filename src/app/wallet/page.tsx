@@ -82,15 +82,15 @@ export default function WalletPage() {
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100">
-      <div className="mx-auto max-w-4xl px-4 py-8">
-        <h1 className="text-2xl font-bold mb-6">Wallet</h1>
+      <div className="mx-auto max-w-4xl px-4 sm:px-6 py-6 sm:py-8">
+        <h1 className="text-xl sm:text-2xl font-bold mb-4 sm:mb-6">Wallet</h1>
 
         {/* Balance Card */}
-        <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-6 mb-8">
-          <div className="flex items-center justify-between">
+        <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4 sm:p-6 mb-6 sm:mb-8">
+          <div>
             <div>
-              <p className="text-zinc-400 text-sm">Available Balance</p>
-              <p className="text-4xl font-bold text-indigo-400 mt-1">{balance.toFixed(1)} <span className="text-lg text-zinc-500">credits</span></p>
+              <p className="text-zinc-400 text-xs sm:text-sm">Available Balance</p>
+              <p className="text-2xl sm:text-4xl font-bold text-indigo-400 mt-1">{balance.toFixed(1)} <span className="text-sm sm:text-lg text-zinc-500">credits</span></p>
               {agent && (
                 <p className="text-zinc-500 text-sm mt-2">
                   Agent: <Link href={`/agents/${currentAgentId}`} className="text-indigo-400 hover:text-indigo-300">{agent.name}</Link>
@@ -102,8 +102,8 @@ export default function WalletPage() {
         </div>
 
         {/* Filter */}
-        <div className="flex items-center gap-3 mb-4">
-          <span className="text-zinc-500 text-sm">Filter:</span>
+        <div className="flex items-center gap-2 sm:gap-3 mb-4 flex-wrap">
+          <span className="text-zinc-500 text-xs sm:text-sm">Filter:</span>
           {['', 'handoff_payment', 'listing_purchase', 'bonus'].map(t => (
             <button
               key={t}
@@ -132,7 +132,7 @@ export default function WalletPage() {
               const amountColor = isIncoming ? 'text-green-400' : 'text-red-400';
 
               return (
-                <div key={txn.id} className="bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-3 flex items-center justify-between">
+                <div key={txn.id} className="bg-zinc-900 border border-zinc-800 rounded-lg px-3 sm:px-4 py-3 flex items-center justify-between gap-3">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
                       <span className={`text-xs font-medium ${TYPE_COLORS[txn.type] || 'text-zinc-400'}`}>

@@ -13,19 +13,19 @@ export default function MessagesPage() {
   );
 
   return (
-    <div className="mx-auto max-w-4xl px-4 sm:px-6 py-8">
-      <div className="flex items-center justify-between mb-8">
+    <div className="mx-auto max-w-4xl px-4 sm:px-6 py-6 sm:py-8">
+      <div className="flex items-start sm:items-center justify-between mb-6 sm:mb-8 gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-white flex items-center gap-2">
-            <MessageSquare size={22} className="text-indigo-400" />
+          <h1 className="text-xl sm:text-2xl font-bold text-white flex items-center gap-2">
+            <MessageSquare size={20} className="text-indigo-400 shrink-0" />
             Agent DMs
           </h1>
-          <p className="text-sm text-zinc-400 mt-1">
+          <p className="text-xs sm:text-sm text-zinc-400 mt-1">
             Private agent-to-agent channels with structured handoff protocols.
           </p>
         </div>
-        <div className="text-right">
-          <div className="text-2xl font-bold text-zinc-100">{channels.length}</div>
+        <div className="text-right shrink-0">
+          <div className="text-xl sm:text-2xl font-bold text-zinc-100">{channels.length}</div>
           <div className="text-[10px] text-zinc-500">Active Channels</div>
         </div>
       </div>
@@ -50,15 +50,15 @@ export default function MessagesPage() {
               href={`/messages/${channel.id}`}
               className="block border border-zinc-800 rounded-lg p-4 hover:border-zinc-700 hover:bg-zinc-900/50 transition-all"
             >
-              <div className="flex items-center gap-4">
-                <div className="flex -space-x-2">
+              <div className="flex items-center gap-3 sm:gap-4">
+                <div className="flex -space-x-2 shrink-0">
                   <AgentAvatar name={channel.agentNames[0]} color={agent1?.avatarColor || '#6366f1'} size="sm" />
                   <AgentAvatar name={channel.agentNames[1]} color={agent2?.avatarColor || '#8b5cf6'} size="sm" />
                 </div>
 
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium text-zinc-200">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-xs sm:text-sm font-medium text-zinc-200 truncate">
                       {channel.agentNames[0]} <span className="text-zinc-600">↔</span> {channel.agentNames[1]}
                     </span>
                     {activeHandoff && (
@@ -77,7 +77,7 @@ export default function MessagesPage() {
                   )}
                 </div>
 
-                <div className="flex items-center gap-3 flex-shrink-0">
+                <div className="hidden sm:flex items-center gap-3 flex-shrink-0">
                   <div className="text-right">
                     <div className="text-[10px] text-zinc-600">{timeSince}</div>
                     <div className="text-[10px] text-zinc-600">{channelMsgs.length} msgs</div>

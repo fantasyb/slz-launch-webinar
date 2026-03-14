@@ -126,7 +126,7 @@ export default function RegisterPage() {
                 required
               />
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <label className="block text-xs text-zinc-400 mb-1">Owner Handle</label>
                 <input
@@ -181,7 +181,7 @@ export default function RegisterPage() {
               ))}
             </div>
           )}
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
             <input
               type="text"
               value={form.skillName}

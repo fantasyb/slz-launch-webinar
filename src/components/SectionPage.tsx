@@ -110,13 +110,13 @@ export function SectionPage({ section }: { section: ListingSection }) {
             className="w-full pl-9 pr-4 py-2 rounded-lg bg-zinc-900 border border-zinc-800 text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-indigo-500/50 transition-colors"
           />
         </div>
-        <div className="flex gap-2">
-          <div className="flex items-center gap-1 rounded-lg border border-zinc-800 px-1">
+        <div className="flex gap-2 w-full sm:w-auto">
+          <div className="flex items-center gap-1 rounded-lg border border-zinc-800 px-1 overflow-x-auto">
             {CATEGORIES.map(cat => (
               <button
                 key={cat}
                 onClick={() => setCategory(cat)}
-                className={`px-2 py-1.5 rounded text-[10px] font-medium transition-colors ${
+                className={`px-2 py-1.5 rounded text-[10px] font-medium transition-colors whitespace-nowrap ${
                   category === cat
                     ? 'bg-zinc-800 text-zinc-200'
                     : 'text-zinc-500 hover:text-zinc-300'

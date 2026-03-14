@@ -48,7 +48,7 @@ function PayloadCard({ payload }: { payload: HandoffPayload }) {
         <div className="space-y-1 text-xs">
           <div className="text-zinc-200 font-medium">{payload.task.title}</div>
           <div className="text-zinc-500">{payload.task.description}</div>
-          <div className="flex gap-3 mt-1">
+          <div className="flex flex-wrap gap-2 sm:gap-3 mt-1">
             <span className="text-zinc-600">In: <span className="text-zinc-400 font-mono">{payload.task.inputFormat}</span></span>
             <span className="text-zinc-600">Out: <span className="text-zinc-400 font-mono">{payload.task.outputFormat}</span></span>
           </div>
@@ -126,18 +126,18 @@ export default function ChannelPage() {
   const agent2 = agents.find(a => a.id === channel.agentIds[1]);
 
   return (
-    <div className="mx-auto max-w-3xl px-4 sm:px-6 py-8">
+    <div className="mx-auto max-w-3xl px-4 sm:px-6 py-6 sm:py-8">
       {/* Header */}
-      <div className="flex items-center gap-4 mb-6">
-        <Link href="/messages" className="text-zinc-500 hover:text-zinc-300 transition-colors">
+      <div className="flex items-center gap-3 sm:gap-4 mb-6">
+        <Link href="/messages" className="text-zinc-500 hover:text-zinc-300 transition-colors shrink-0">
           <ArrowLeft size={18} />
         </Link>
-        <div className="flex -space-x-2">
+        <div className="flex -space-x-2 shrink-0">
           <AgentAvatar name={channel.agentNames[0]} color={agent1?.avatarColor || '#6366f1'} size="sm" />
           <AgentAvatar name={channel.agentNames[1]} color={agent2?.avatarColor || '#8b5cf6'} size="sm" />
         </div>
-        <div>
-          <div className="text-sm font-medium text-zinc-200">
+        <div className="min-w-0">
+          <div className="text-xs sm:text-sm font-medium text-zinc-200 truncate">
             <Link href={`/agents/${channel.agentIds[0]}`} className="hover:text-indigo-400 transition-colors">
               {channel.agentNames[0]}
             </Link>
@@ -159,12 +159,12 @@ export default function ChannelPage() {
         <div className="mb-6 border border-zinc-800 rounded-lg p-4">
           <h3 className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider mb-3">Handoff Pipeline</h3>
           {channelHandoffs.map(h => (
-            <div key={h.id} className="flex items-center gap-3 py-2">
+            <div key={h.id} className="flex flex-wrap items-center gap-2 sm:gap-3 py-2">
               <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${STATUS_COLORS[h.status]}`}>
                 {h.status}
               </span>
-              <span className="text-xs text-zinc-300">{h.task.title}</span>
-              <ArrowRight size={10} className="text-zinc-700" />
+              <span className="text-xs text-zinc-300 truncate">{h.task.title}</span>
+              <ArrowRight size={10} className="text-zinc-700 shrink-0 hidden sm:block" />
               <span className="text-[10px] text-zinc-500">{h.fromAgentName} → {h.toAgentName}</span>
             </div>
           ))}
@@ -188,7 +188,7 @@ export default function ChannelPage() {
                   </Link>
                 )}
               </div>
-              <div className={`max-w-[80%] ${isLeft ? '' : 'text-right'}`}>
+              <div className={`max-w-[85%] sm:max-w-[80%] ${isLeft ? '' : 'text-right'}`}>
                 {showAvatar && (
                   <div className={`flex items-center gap-2 mb-0.5 ${isLeft ? '' : 'justify-end'}`}>
                     <span className="text-[10px] font-medium text-zinc-400">{msg.fromAgentName}</span>

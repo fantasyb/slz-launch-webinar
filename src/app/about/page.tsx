@@ -120,7 +120,7 @@ export default function AboutPage() {
 
         <div className="border border-zinc-800 rounded-lg p-6 text-center mt-8">
           <p className="text-zinc-200 font-medium mb-4">Ready to join the agent internet?</p>
-          <div className="flex justify-center gap-3">
+          <div className="flex flex-col sm:flex-row justify-center gap-3">
             <Link
               href="/register"
               className="px-5 py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium transition-colors"

@@ -181,10 +181,10 @@ function TestCaseDetail({ run, agentType }: { run: RunResult; agentType: string 
         onClick={() => setExpanded(!expanded)}
         className="w-full flex items-center justify-between px-4 py-2.5 bg-zinc-900/50 hover:bg-zinc-900 transition-colors"
       >
-        <div className="flex items-center gap-3">
-          {expanded ? <ChevronDown size={14} className="text-zinc-500" /> : <ChevronRight size={14} className="text-zinc-500" />}
-          <span className="text-xs font-mono text-zinc-400">{run.testCaseId}</span>
-          <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+          {expanded ? <ChevronDown size={14} className="text-zinc-500 shrink-0" /> : <ChevronRight size={14} className="text-zinc-500 shrink-0" />}
+          <span className="text-xs font-mono text-zinc-400 truncate">{run.testCaseId}</span>
+          <span className={`text-xs px-2 py-0.5 rounded-full font-medium shrink-0 ${
             run.score >= 0.8 ? 'bg-emerald-500/10 text-emerald-400' :
             run.score >= 0.5 ? 'bg-yellow-500/10 text-yellow-400' :
             'bg-red-500/10 text-red-400'
@@ -192,7 +192,7 @@ function TestCaseDetail({ run, agentType }: { run: RunResult; agentType: string 
             {Math.round(run.score * 100)}%
           </span>
         </div>
-        <div className="flex items-center gap-4 text-xs text-zinc-500">
+        <div className="hidden sm:flex items-center gap-4 text-xs text-zinc-500">
           <span>{run.inputTokens + run.outputTokens} tokens</span>
           <span>{run.latencyMs}ms</span>
           <span>${run.costUsd.toFixed(6)}</span>
@@ -268,7 +268,7 @@ function ScenarioCard({ result }: { result: BenchmarkResult }) {
         </div>
 
         {/* Metrics grid */}
-        <div className="grid grid-cols-3 gap-3 mb-4">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
           {agents.map(({ key, label }) => (
             <div key={key} className={`rounded-lg border ${AGENT_COLORS[key].border} bg-zinc-900 p-3`}>
               <div className="text-xs text-zinc-500 mb-2">{label}</div>
@@ -306,16 +306,16 @@ function ScenarioCard({ result }: { result: BenchmarkResult }) {
         </div>
 
         {/* Savings callout */}
-        <div className="flex items-center gap-4 p-3 rounded-lg bg-indigo-500/5 border border-indigo-500/20">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-4 p-3 rounded-lg bg-indigo-500/5 border border-indigo-500/20">
           <div className="flex items-center gap-2">
-            <DollarSign size={14} className="text-indigo-400" />
+            <DollarSign size={14} className="text-indigo-400 shrink-0" />
             <span className="text-xs text-indigo-300">
               Specialist saves <strong>{result.costSavings > 0 ? result.costSavings.toFixed(1) : '0'}%</strong> cost
             </span>
           </div>
-          <div className="w-px h-4 bg-indigo-500/30" />
+          <div className="hidden sm:block w-px h-4 bg-indigo-500/30" />
           <div className="flex items-center gap-2">
-            <Target size={14} className="text-indigo-400" />
+            <Target size={14} className="text-indigo-400 shrink-0" />
             <span className="text-xs text-indigo-300">
               <strong>{result.qualityGain > 0 ? '+' : ''}{result.qualityGain.toFixed(1)}%</strong> quality vs generalist
             </span>
@@ -391,14 +391,14 @@ function SavedRunCard({ run, onLoad, onDelete }: {
   const modelLabel = run.model || 'Unknown model';
 
   return (
-    <div className="flex items-center justify-between p-3 bg-zinc-900/50 border border-zinc-800 rounded-lg">
-      <div className="flex items-center gap-3">
-        <History size={14} className="text-zinc-500" />
-        <div>
+    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 sm:gap-3 p-3 bg-zinc-900/50 border border-zinc-800 rounded-lg">
+      <div className="flex items-center gap-3 min-w-0">
+        <History size={14} className="text-zinc-500 shrink-0" />
+        <div className="min-w-0">
           <div className="text-xs text-zinc-300">
             {date.toLocaleDateString()} {date.toLocaleTimeString()}
           </div>
-          <div className="text-xs text-zinc-500">
+          <div className="text-xs text-zinc-500 truncate">
             {run.summary.totalScenarios} scenarios, {modelLabel} — Specialist: {Math.round(run.summary.avgSpecialistScore * 100)}% vs Gen: {Math.round(run.summary.avgGeneralistScore * 100)}%
           </div>
         </div>
@@ -600,17 +600,17 @@ export default function BenchmarkPage() {
             <p>
               This benchmark runs <strong className="text-zinc-300">three agent types</strong> against identical tasks and measures quality, cost, and latency:
             </p>
-            <div className="flex flex-wrap gap-4 mt-3">
-              <div className="flex items-center gap-2">
-                <div className="w-3 h-3 rounded-full bg-zinc-600" />
+            <div className="flex flex-col sm:flex-row flex-wrap gap-3 sm:gap-4 mt-3">
+              <div className="flex items-start sm:items-center gap-2">
+                <div className="w-3 h-3 rounded-full bg-zinc-600 shrink-0 mt-0.5 sm:mt-0" />
                 <span><strong className="text-zinc-300">Generalist</strong> — generic system prompt, does everything okay</span>
               </div>
-              <div className="flex items-center gap-2">
-                <div className="w-3 h-3 rounded-full bg-indigo-500" />
+              <div className="flex items-start sm:items-center gap-2">
+                <div className="w-3 h-3 rounded-full bg-indigo-500 shrink-0 mt-0.5 sm:mt-0" />
                 <span><strong className="text-indigo-300">Specialist</strong> — task-specific prompt with strict output format</span>
               </div>
-              <div className="flex items-center gap-2">
-                <div className="w-3 h-3 rounded-full bg-emerald-500" />
+              <div className="flex items-start sm:items-center gap-2">
+                <div className="w-3 h-3 rounded-full bg-emerald-500 shrink-0 mt-0.5 sm:mt-0" />
                 <span><strong className="text-emerald-300">Orchestrator</strong> — routes to specialist (2 API calls)</span>
               </div>
             </div>
@@ -684,7 +684,7 @@ export default function BenchmarkPage() {
         )}
 
         {/* Run button + history */}
-        <div className="mb-10 flex items-start gap-3">
+        <div className="mb-10 flex flex-col sm:flex-row items-stretch sm:items-start gap-3">
           <button
             onClick={runBenchmark}
             disabled={loading || selectedScenarios.size === 0}
