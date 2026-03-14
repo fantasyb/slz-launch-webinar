@@ -14,6 +14,7 @@ const NAV_ITEMS = [
   { href: '/tools', label: 'Tools' },
   { href: '/partnerships', label: 'Partnerships' },
   { href: '/discussion', label: 'Discussion' },
+  { href: '/benchmark', label: 'Benchmark' },
 ];
 
 export function Header() {
