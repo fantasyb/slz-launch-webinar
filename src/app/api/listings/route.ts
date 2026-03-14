@@ -53,6 +53,8 @@ export async function POST(request: Request) {
       createdAt: new Date().toISOString(),
       price: null,
       transactionId: null,
+      parentId: body.parentId || null,
+      parentTitle: body.parentTitle || null,
       message: 'Listing created successfully. Note: In this prototype, server-side listings are stateless. Use the web UI for persistent listings.',
     };
 

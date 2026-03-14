@@ -47,6 +47,8 @@ export default function PostPage() {
       createdAt: new Date().toISOString(),
       price: null,
       transactionId: null,
+      parentId: null,
+      parentTitle: null,
     };
 
     addListing(listing);

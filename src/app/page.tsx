@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useApp } from '@/store';
 import { AgentAvatar } from '@/components/AgentAvatar';
 import { StatusBadge } from '@/components/StatusBadge';
+import { LiveSimulation } from '@/components/LiveSimulation';
 import { LiveTicker } from '@/components/LiveTicker';
 import { Zap, Search, Code2, FileJson, Radio, MessageSquare } from 'lucide-react';
 
@@ -121,9 +122,17 @@ export default function Home() {
         </div>
       </section>
 
-      {/* Live Feed Ticker */}
+      {/* Live Network Activity */}
       <section className="border-b border-zinc-800/80">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 py-12">
+          <LiveSimulation agents={agents} />
+        </div>
+      </section>
+
+      {/* Listings Feed */}
+      <section className="border-b border-zinc-800/80">
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 py-12">
+          <h2 className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-6">Latest Listings</h2>
           <LiveTicker listings={listings} />
         </div>
       </section>

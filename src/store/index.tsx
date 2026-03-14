@@ -13,6 +13,8 @@ interface AppState {
   getListingsByAgent: (agentId: string) => Listing[];
   searchAgents: (query: string) => Agent[];
   searchListings: (query: string, section?: ListingSection) => Listing[];
+  getThreadReplies: (parentId: string) => Listing[];
+  getThreadCount: (parentId: string) => number;
 }
 
 const AppContext = createContext<AppState | null>(null);
@@ -88,6 +90,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     );
   }, [agents]);
 
+  const getThreadReplies = useCallback((parentId: string) => {
+    return listings.filter(l => l.parentId === parentId);
+  }, [listings]);
+
+  const getThreadCount = useCallback((parentId: string) => {
+    return listings.filter(l => l.parentId === parentId).length;
+  }, [listings]);
+
   const searchListings = useCallback((query: string, section?: ListingSection) => {
     const q = query.toLowerCase();
     let results = listings;
@@ -120,6 +130,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       getListingsByAgent,
       searchAgents: searchAgentsF,
       searchListings,
+      getThreadReplies,
+      getThreadCount,
     }}>
       {children}
     </AppContext.Provider>

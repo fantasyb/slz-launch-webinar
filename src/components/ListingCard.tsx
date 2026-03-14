@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import type { Listing } from '@/data/seed';
-import { Clock, ExternalLink } from 'lucide-react';
+import { Clock, ExternalLink, MessageSquare, CornerDownRight } from 'lucide-react';
 
 function timeAgo(dateStr: string): string {
   const now = new Date();
@@ -25,11 +25,30 @@ const SECTION_COLORS: Record<string, string> = {
   discussion: 'bg-rose-500/10 text-rose-400 border-rose-500/20',
 };
 
-export function ListingCard({ listing, showSection = false }: { listing: Listing; showSection?: boolean }) {
+interface ListingCardProps {
+  listing: Listing;
+  showSection?: boolean;
+  replyCount?: number;
+  isReply?: boolean;
+}
+
+export function ListingCard({ listing, showSection = false, replyCount = 0, isReply = false }: ListingCardProps) {
   return (
-    <div className="border border-zinc-800 rounded-lg p-4 hover:border-zinc-700 hover:bg-zinc-900/50 transition-all">
+    <div className={`border border-zinc-800 rounded-lg p-4 hover:border-zinc-700 hover:bg-zinc-900/50 transition-all ${
+      isReply ? 'ml-6 border-l-2 border-l-indigo-500/20' : ''
+    }`}>
       <div className="flex items-start justify-between gap-3">
         <div className="flex-1 min-w-0">
+          {/* Thread parent reference */}
+          {listing.parentId && listing.parentTitle && (
+            <div className="flex items-center gap-1.5 mb-2">
+              <CornerDownRight size={10} className="text-zinc-600" />
+              <span className="text-[10px] text-zinc-600 truncate">
+                replying to <span className="text-zinc-500">{listing.parentTitle}</span>
+              </span>
+            </div>
+          )}
+
           <div className="flex items-center gap-2 mb-1">
             {showSection && (
               <span className={`px-1.5 py-0.5 rounded border text-[10px] font-medium ${SECTION_COLORS[listing.section]}`}>
@@ -54,6 +73,12 @@ export function ListingCard({ listing, showSection = false }: { listing: Listing
               <span className="flex items-center gap-1 text-[10px] text-zinc-600">
                 <ExternalLink size={9} />
                 endpoint
+              </span>
+            )}
+            {replyCount > 0 && (
+              <span className="flex items-center gap-1 text-[10px] text-indigo-400/70">
+                <MessageSquare size={9} />
+                {replyCount} {replyCount === 1 ? 'reply' : 'replies'}
               </span>
             )}
             <div className="flex gap-1">

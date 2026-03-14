@@ -4,7 +4,7 @@ import { useState, useMemo } from 'react';
 import { useApp } from '@/store';
 import { ListingCard } from '@/components/ListingCard';
 import type { ListingSection } from '@/data/seed';
-import { Search } from 'lucide-react';
+import { Search, ChevronDown, ChevronUp } from 'lucide-react';
 
 const SECTION_INFO: Record<ListingSection, { title: string; description: string }> = {
   services: { title: 'Services', description: '"I can do X." Agents listing capabilities and endpoints.' },
@@ -17,26 +17,80 @@ const SECTION_INFO: Record<ListingSection, { title: string; description: string 
 
 const CATEGORIES = ['all', 'code', 'data', 'design', 'research', 'writing'];
 
+function ThreadedListing({ listing, replies }: { listing: typeof import('@/data/seed').seedListings[0]; replies: typeof import('@/data/seed').seedListings }) {
+  const [expanded, setExpanded] = useState(false);
+
+  return (
+    <div>
+      <ListingCard listing={listing} replyCount={replies.length} />
+      {replies.length > 0 && (
+        <div className="ml-2 mt-1">
+          <button
+            onClick={() => setExpanded(!expanded)}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-[10px] text-zinc-500 hover:text-zinc-300 transition-colors"
+          >
+            {expanded ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
+            {expanded ? 'Hide' : 'Show'} {replies.length} {replies.length === 1 ? 'reply' : 'replies'}
+          </button>
+          {expanded && (
+            <div className="space-y-2 mt-1">
+              {replies
+                .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+                .map(reply => (
+                  <ListingCard key={reply.id} listing={reply} isReply />
+                ))
+              }
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function SectionPage({ section }: { section: ListingSection }) {
-  const { searchListings } = useApp();
+  const { searchListings, getThreadReplies } = useApp();
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState('all');
   const [sort, setSort] = useState<'newest' | 'oldest'>('newest');
 
   const info = SECTION_INFO[section];
 
-  const results = useMemo(() => {
+  const { parentListings, replyMap } = useMemo(() => {
     let items = searchListings(query, section);
     if (category !== 'all') {
       items = items.filter(l => l.categories.includes(category));
     }
-    items.sort((a, b) => {
-      const da = new Date(a.createdAt).getTime();
-      const db = new Date(b.createdAt).getTime();
-      return sort === 'newest' ? db - da : da - db;
+
+    // Separate parent listings from replies
+    const parents = items.filter(l => !l.parentId);
+    const rMap: Record<string, typeof items> = {};
+
+    // For each parent, get its replies (from the full listing set, not filtered)
+    for (const parent of parents) {
+      const replies = getThreadReplies(parent.id).filter(r => r.section === section);
+      if (replies.length > 0) {
+        rMap[parent.id] = replies;
+      }
+    }
+
+    // Also include replies that match the search but whose parents don't
+    const orphanReplies = items.filter(l => l.parentId && !parents.find(p => p.id === l.parentId));
+
+    const allParents = [...parents, ...orphanReplies];
+    allParents.sort((a, b) => {
+      // Sort by latest activity (including replies)
+      const aLatest = rMap[a.id]
+        ? Math.max(new Date(a.createdAt).getTime(), ...rMap[a.id].map(r => new Date(r.createdAt).getTime()))
+        : new Date(a.createdAt).getTime();
+      const bLatest = rMap[b.id]
+        ? Math.max(new Date(b.createdAt).getTime(), ...rMap[b.id].map(r => new Date(r.createdAt).getTime()))
+        : new Date(b.createdAt).getTime();
+      return sort === 'newest' ? bLatest - aLatest : aLatest - bLatest;
     });
-    return items;
-  }, [query, category, sort, section, searchListings]);
+
+    return { parentListings: allParents, replyMap: rMap };
+  }, [query, category, sort, section, searchListings, getThreadReplies]);
 
   return (
     <div className="mx-auto max-w-7xl px-4 sm:px-6 py-8">
@@ -77,16 +131,20 @@ export function SectionPage({ section }: { section: ListingSection }) {
             onChange={e => setSort(e.target.value as 'newest' | 'oldest')}
             className="px-3 py-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-xs text-zinc-300 focus:outline-none"
           >
-            <option value="newest">Newest</option>
-            <option value="oldest">Oldest</option>
+            <option value="newest">Most Active</option>
+            <option value="oldest">Oldest First</option>
           </select>
         </div>
       </div>
 
-      <div className="grid gap-3">
-        {results.length > 0 ? (
-          results.map(listing => (
-            <ListingCard key={listing.id} listing={listing} />
+      <div className="space-y-4">
+        {parentListings.length > 0 ? (
+          parentListings.map(listing => (
+            <ThreadedListing
+              key={listing.id}
+              listing={listing}
+              replies={replyMap[listing.id] || []}
+            />
           ))
         ) : (
           <div className="text-center py-16">
