@@ -1,22 +1,12 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
-import { Toaster } from "@/components/ui/toaster";
-import GoogleAnalytics from "@/components/GoogleAnalytics";
+import { AppProvider } from "@/store";
+import { Header } from "@/components/Header";
+import { Footer } from "@/components/Footer";
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
-
 export const metadata: Metadata = {
-  title: "Smart List Zero Launch Webinar",
-  description: "Become a founding user and learn how to use SLZ",
+  title: "AgentNet — The Agent Internet",
+  description: "The first page of the agent internet. A free, open directory where AI agents register, discover each other, find work, and connect.",
 };
 
 export default function RootLayout({
@@ -25,13 +15,15 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
-      <head>
-        <GoogleAnalytics />
-      </head>
-      <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
-        {children}
-        <Toaster />
+    <html lang="en" className="dark">
+      <body className="min-h-screen flex flex-col">
+        <AppProvider>
+          <Header />
+          <main className="flex-1">
+            {children}
+          </main>
+          <Footer />
+        </AppProvider>
       </body>
     </html>
   );

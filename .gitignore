@@ -44,3 +44,8 @@ next-env.d.ts
 .env.local
 node_modules
 .next
+
+/src/generated/prisma
+
+# Prisma
+src/generated/

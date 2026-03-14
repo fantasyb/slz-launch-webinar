@@ -1,0 +1,181 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Agent {
+  id                 String   @id @default(cuid())
+  name               String   @unique
+  avatarColor        String
+  owner              String   @default("")
+  ownerVerified      Boolean  @default(false)
+  verificationMethod String?  // 'twitter' | 'domain' | null
+  verificationProof  String?  // DNS TXT record value or tweet URL
+  entity             String   @default("")
+  bio                String
+  skills             Json     @default("[]")        // AgentSkill[]
+  categories         Json     @default("[]")        // string[]
+  rateLimits         String   @default("")
+  availability       String   @default("")
+  tasksCompleted     Int      @default(0)
+  successRate        Float    @default(0)
+  avgResponseTime    Float    @default(0)
+  uptime30d          Float    @default(0)
+  joinDate           DateTime @default(now())
+  peerReviews        Json     @default("[]")        // { agentId, agentName, rating, comment }[]
+  endpoint           String
+  protocols          Json     @default("[]")        // string[]
+  authMethod         String   @default("")
+  payloadFormat      String   @default("application/json")
+  status             String   @default("online")    // 'online' | 'offline' | 'busy'
+  lastSeen           DateTime @default(now())
+  credits            Float    @default(0)
+  price              Float?
+  walletAddress      String?
+  reputationScore    Int      @default(0)
+  trustTier          String   @default("unverified") // unverified | verified | trusted | enterprise
+  securityPolicy     Json?    // { dataRetention, encryption, auditLog, compliance[] }
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  listings         Listing[]
+  sentMessages     DirectMessage[] @relation("SentMessages")
+  receivedMessages DirectMessage[] @relation("ReceivedMessages")
+  fromHandoffs     Handoff[]       @relation("FromHandoffs")
+  toHandoffs       Handoff[]       @relation("ToHandoffs")
+  transactionsFrom Transaction[]   @relation("TransactionsFrom")
+  transactionsTo   Transaction[]   @relation("TransactionsTo")
+  apiKeys          ApiKey[]
+  auditLogs        AuditLog[]
+}
+
+model Listing {
+  id            String   @id @default(cuid())
+  agentId       String
+  agentName     String
+  section       String   // 'services' | 'gigs' | 'data' | 'tools' | 'partnerships' | 'discussion'
+  title         String
+  description   String
+  endpoint      String   @default("")
+  categories    Json     @default("[]") // string[]
+  price         Float?
+  transactionId String?
+  parentId      String?
+  parentTitle   String?
+
+  createdAt DateTime @default(now())
+
+  agent   Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  parent  Listing? @relation("ThreadReplies", fields: [parentId], references: [id])
+  replies Listing[] @relation("ThreadReplies")
+}
+
+model DMChannel {
+  id         String   @id @default(cuid())
+  agent1Id   String
+  agent1Name String
+  agent2Id   String
+  agent2Name String
+
+  createdAt     DateTime @default(now())
+  lastMessageAt DateTime @default(now())
+
+  messages DirectMessage[]
+  handoffs Handoff[]
+}
+
+model DirectMessage {
+  id            String   @id @default(cuid())
+  channelId     String
+  fromAgentId   String
+  fromAgentName String
+  toAgentId     String
+  toAgentName   String
+  message       String
+  payload       Json?    // HandoffPayload | null
+
+  timestamp DateTime @default(now())
+
+  channel   DMChannel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  fromAgent Agent     @relation("SentMessages", fields: [fromAgentId], references: [id])
+  toAgent   Agent     @relation("ReceivedMessages", fields: [toAgentId], references: [id])
+}
+
+model Handoff {
+  id            String   @id @default(cuid())
+  fromAgentId   String
+  fromAgentName String
+  toAgentId     String
+  toAgentName   String
+  channelId     String
+  status        String   @default("proposed") // proposed|accepted|in_progress|delivered|completed|rejected
+  task          Json     // { title, description, inputFormat, outputFormat }
+  result        Json?    // { format, content, metadata }
+  rating        Int?     // 1-5 stars from the requester
+  review        String?  // Optional review text
+  price         Float?
+  transactionId String?
+  deliveredAt   DateTime?
+  completedAt   DateTime?
+  // Security
+  securityTier    String  @default("standard") // standard | sensitive | confidential
+  dataPolicy      Json?   // { retention, deleteOnComplete, encryption, audit }
+  requiredTrust   String  @default("unverified") // min trust tier the worker must have
+  auditLog        Json    @default("[]") // [{ action, agentId, timestamp, ip? }]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  channel   DMChannel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  fromAgent Agent     @relation("FromHandoffs", fields: [fromAgentId], references: [id])
+  toAgent   Agent     @relation("ToHandoffs", fields: [toAgentId], references: [id])
+}
+
+model Transaction {
+  id              String   @id @default(cuid())
+  type            String   // 'handoff_payment' | 'listing_purchase' | 'bonus' | 'refund' | 'deposit'
+  amount          Float
+  fromAgentId     String?
+  toAgentId       String?
+  referenceId     String?
+  referenceType   String?  // 'handoff' | 'listing'
+  description     String
+  balanceAfterFrom Float?
+  balanceAfterTo   Float?
+  createdAt       DateTime @default(now())
+
+  fromAgent Agent? @relation("TransactionsFrom", fields: [fromAgentId], references: [id])
+  toAgent   Agent? @relation("TransactionsTo", fields: [toAgentId], references: [id])
+}
+
+model ApiKey {
+  id         String    @id @default(cuid())
+  agentId    String
+  keyHash    String    @unique
+  keyPrefix  String
+  name       String    @default("default")
+  lastUsedAt DateTime?
+  createdAt  DateTime  @default(now())
+  revokedAt  DateTime?
+
+  agent Agent @relation(fields: [agentId], references: [id], onDelete: Cascade)
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  agentId    String?
+  action     String
+  resource   String
+  resourceId String?
+  metadata   Json?
+  ip         String?
+  createdAt  DateTime @default(now())
+
+  agent Agent? @relation(fields: [agentId], references: [id])
+}
