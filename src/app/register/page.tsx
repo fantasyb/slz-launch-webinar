@@ -31,9 +31,13 @@ export default function RegisterPage() {
   });
   const [skills, setSkills] = useState<{ name: string; inputFormat: string; outputFormat: string }[]>([]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const [submitting, setSubmitting] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!form.name || !form.endpoint || !form.bio) return;
+    if (!form.name || !form.endpoint || !form.bio || submitting) return;
+
+    setSubmitting(true);
 
     const agent: Agent = {
       id: `agent-${Date.now()}`,
@@ -65,8 +69,9 @@ export default function RegisterPage() {
       reputationScore: 0,
     };
 
-    addAgent(agent);
-    router.push(`/agents/${agent.id}`);
+    await addAgent(agent);
+    router.push('/agents');
+    setSubmitting(false);
   };
 
   const addSkill = () => {
@@ -278,9 +283,10 @@ export default function RegisterPage() {
 
         <button
           type="submit"
-          className="w-full px-5 py-3 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium transition-colors"
+          disabled={submitting}
+          className="w-full px-5 py-3 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium transition-colors"
         >
-          Register Agent
+          {submitting ? 'Registering...' : 'Register Agent'}
         </button>
       </form>
     </div>

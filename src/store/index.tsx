@@ -12,8 +12,8 @@ interface AppState {
   channels: DMChannel[];
   messages: DirectMessage[];
   handoffs: Handoff[];
-  addAgent: (agent: Agent) => void;
-  addListing: (listing: Listing) => void;
+  addAgent: (agent: Agent) => Promise<void>;
+  addListing: (listing: Listing) => Promise<void>;
   getAgent: (id: string) => Agent | undefined;
   getListingsBySection: (section: ListingSection) => Listing[];
   getListingsByAgent: (agentId: string) => Listing[];
@@ -23,20 +23,26 @@ interface AppState {
   getThreadCount: (parentId: string) => number;
   getChannelsForAgent: (agentId: string) => DMChannel[];
   getChannelMessages: (channelId: string) => DirectMessage[];
-  sendMessage: (msg: DirectMessage) => void;
-  getOrCreateChannel: (agentId1: string, agentName1: string, agentId2: string, agentName2: string) => DMChannel;
+  sendMessage: (msg: DirectMessage) => Promise<void>;
+  getOrCreateChannel: (agentId1: string, agentName1: string, agentId2: string, agentName2: string) => Promise<DMChannel>;
   getHandoffsForAgent: (agentId: string) => Handoff[];
-  addHandoff: (handoff: Handoff) => void;
+  addHandoff: (handoff: Handoff) => Promise<void>;
   updateHandoffStatus: (handoffId: string, status: Handoff['status']) => void;
+  refreshData: () => Promise<void>;
 }
 
 const AppContext = createContext<AppState | null>(null);
 
-const STORAGE_KEY_AGENTS = 'agentlist_agents';
-const STORAGE_KEY_LISTINGS = 'agentlist_listings';
-const STORAGE_KEY_CHANNELS = 'agentnet_channels';
-const STORAGE_KEY_MESSAGES = 'agentnet_messages';
-const STORAGE_KEY_HANDOFFS = 'agentnet_handoffs';
+// Fetch from API with seed data fallback
+async function fetchJSON<T>(url: string, fallback: T): Promise<T> {
+  try {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(res.statusText);
+    return await res.json();
+  } catch {
+    return fallback;
+  }
+}
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [agents, setAgents] = useState<Agent[]>([]);
@@ -46,83 +52,154 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [handoffs, setHandoffs] = useState<Handoff[]>([]);
   const [loaded, setLoaded] = useState(false);
 
+  const loadFromAPI = useCallback(async () => {
+    const [dbAgents, dbListings, dbChannels, dbHandoffs] = await Promise.all([
+      fetchJSON<Agent[]>('/api/agents', seedAgents),
+      fetchJSON<Listing[]>('/api/listings', seedListings),
+      fetchJSON<DMChannel[]>('/api/dm/channels', seedChannels),
+      fetchJSON<Handoff[]>('/api/handoffs', seedHandoffs),
+    ]);
+
+    setAgents(dbAgents);
+    setListings(dbListings);
+    setChannels(dbChannels);
+    setHandoffs(dbHandoffs);
+
+    // Load messages for all channels
+    const allMessages: DirectMessage[] = [];
+    for (const ch of dbChannels) {
+      const channelMsgs = await fetchJSON<DirectMessage[]>(
+        `/api/dm/messages?channelId=${ch.id}`,
+        []
+      );
+      allMessages.push(...channelMsgs);
+    }
+    if (allMessages.length > 0) {
+      setMessages(allMessages);
+    } else {
+      setMessages(seedMessages);
+    }
+  }, []);
+
   useEffect(() => {
+    loadFromAPI().finally(() => setLoaded(true));
+  }, [loadFromAPI]);
+
+  // --- Mutations: API first, then update local state ---
+
+  const addAgent = useCallback(async (agent: Agent) => {
+    // Optimistic update
+    setAgents(prev => [agent, ...prev]);
+
     try {
-      const storedAgents = localStorage.getItem(STORAGE_KEY_AGENTS);
-      const storedListings = localStorage.getItem(STORAGE_KEY_LISTINGS);
-      const storedChannels = localStorage.getItem(STORAGE_KEY_CHANNELS);
-      const storedMessages = localStorage.getItem(STORAGE_KEY_MESSAGES);
-      const storedHandoffs = localStorage.getItem(STORAGE_KEY_HANDOFFS);
-
-      if (storedAgents && storedListings) {
-        setAgents(JSON.parse(storedAgents));
-        setListings(JSON.parse(storedListings));
-      } else {
-        setAgents(seedAgents);
-        setListings(seedListings);
-        localStorage.setItem(STORAGE_KEY_AGENTS, JSON.stringify(seedAgents));
-        localStorage.setItem(STORAGE_KEY_LISTINGS, JSON.stringify(seedListings));
-      }
-
-      if (storedChannels && storedMessages && storedHandoffs) {
-        setChannels(JSON.parse(storedChannels));
-        setMessages(JSON.parse(storedMessages));
-        setHandoffs(JSON.parse(storedHandoffs));
-      } else {
-        setChannels(seedChannels);
-        setMessages(seedMessages);
-        setHandoffs(seedHandoffs);
-        localStorage.setItem(STORAGE_KEY_CHANNELS, JSON.stringify(seedChannels));
-        localStorage.setItem(STORAGE_KEY_MESSAGES, JSON.stringify(seedMessages));
-        localStorage.setItem(STORAGE_KEY_HANDOFFS, JSON.stringify(seedHandoffs));
+      const res = await fetch('/api/register-agent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(agent),
+      });
+      if (res.ok) {
+        const saved = await res.json();
+        // Replace optimistic entry with server response (has real ID)
+        setAgents(prev => [saved, ...prev.filter(a => a.id !== agent.id)]);
       }
     } catch {
-      setAgents(seedAgents);
-      setListings(seedListings);
-      setChannels(seedChannels);
-      setMessages(seedMessages);
-      setHandoffs(seedHandoffs);
+      // Keep optimistic update
     }
-    setLoaded(true);
   }, []);
 
-  useEffect(() => {
-    if (loaded) {
-      localStorage.setItem(STORAGE_KEY_AGENTS, JSON.stringify(agents));
-    }
-  }, [agents, loaded]);
-
-  useEffect(() => {
-    if (loaded) {
-      localStorage.setItem(STORAGE_KEY_LISTINGS, JSON.stringify(listings));
-    }
-  }, [listings, loaded]);
-
-  useEffect(() => {
-    if (loaded) {
-      localStorage.setItem(STORAGE_KEY_CHANNELS, JSON.stringify(channels));
-    }
-  }, [channels, loaded]);
-
-  useEffect(() => {
-    if (loaded) {
-      localStorage.setItem(STORAGE_KEY_MESSAGES, JSON.stringify(messages));
-    }
-  }, [messages, loaded]);
-
-  useEffect(() => {
-    if (loaded) {
-      localStorage.setItem(STORAGE_KEY_HANDOFFS, JSON.stringify(handoffs));
-    }
-  }, [handoffs, loaded]);
-
-  const addAgent = useCallback((agent: Agent) => {
-    setAgents(prev => [agent, ...prev]);
-  }, []);
-
-  const addListing = useCallback((listing: Listing) => {
+  const addListing = useCallback(async (listing: Listing) => {
     setListings(prev => [listing, ...prev]);
+
+    try {
+      const res = await fetch('/api/listings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(listing),
+      });
+      if (res.ok) {
+        const saved = await res.json();
+        setListings(prev => [saved, ...prev.filter(l => l.id !== listing.id)]);
+      }
+    } catch {
+      // Keep optimistic update
+    }
   }, []);
+
+  const sendMessage = useCallback(async (msg: DirectMessage) => {
+    // Optimistic update
+    setMessages(prev => [...prev, msg]);
+    setChannels(prev => prev.map(c =>
+      c.id === msg.channelId ? { ...c, lastMessageAt: msg.timestamp } : c
+    ));
+
+    try {
+      await fetch('/api/dm/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(msg),
+      });
+    } catch {
+      // Keep optimistic update
+    }
+  }, []);
+
+  const getOrCreateChannel = useCallback(async (agentId1: string, agentName1: string, agentId2: string, agentName2: string): Promise<DMChannel> => {
+    const existing = channels.find(c =>
+      c.agentIds.includes(agentId1) && c.agentIds.includes(agentId2)
+    );
+    if (existing) return existing;
+
+    try {
+      const res = await fetch('/api/dm/channels', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agentId1, agentName1, agentId2, agentName2 }),
+      });
+      if (res.ok) {
+        const channel = await res.json();
+        setChannels(prev => [channel, ...prev]);
+        return channel;
+      }
+    } catch {
+      // Fall through to local creation
+    }
+
+    const newChannel: DMChannel = {
+      id: `channel-${Date.now()}`,
+      agentIds: [agentId1, agentId2],
+      agentNames: [agentName1, agentName2],
+      createdAt: new Date().toISOString(),
+      lastMessageAt: new Date().toISOString(),
+    };
+    setChannels(prev => [newChannel, ...prev]);
+    return newChannel;
+  }, [channels]);
+
+  const addHandoff = useCallback(async (handoff: Handoff) => {
+    setHandoffs(prev => [handoff, ...prev]);
+
+    try {
+      const res = await fetch('/api/handoffs/propose', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(handoff),
+      });
+      if (res.ok) {
+        const saved = await res.json();
+        setHandoffs(prev => [saved, ...prev.filter(h => h.id !== handoff.id)]);
+      }
+    } catch {
+      // Keep optimistic update
+    }
+  }, []);
+
+  const updateHandoffStatus = useCallback((handoffId: string, status: Handoff['status']) => {
+    setHandoffs(prev => prev.map(h =>
+      h.id === handoffId ? { ...h, status, updatedAt: new Date().toISOString() } : h
+    ));
+  }, []);
+
+  // --- Read helpers (from local state, which mirrors DB) ---
 
   const getAgent = useCallback((id: string) => {
     return agents.find(a => a.id === id);
@@ -141,8 +218,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return agents.filter(a =>
       a.name.toLowerCase().includes(q) ||
       a.bio.toLowerCase().includes(q) ||
-      a.skills.some(s => s.name.toLowerCase().includes(q)) ||
-      a.categories.some(c => c.toLowerCase().includes(q))
+      (Array.isArray(a.skills) && a.skills.some((s: { name: string }) => s.name.toLowerCase().includes(q))) ||
+      (Array.isArray(a.categories) && a.categories.some((c: string) => c.toLowerCase().includes(q)))
     );
   }, [agents]);
 
@@ -163,7 +240,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       l.title.toLowerCase().includes(q) ||
       l.description.toLowerCase().includes(q) ||
       l.agentName.toLowerCase().includes(q) ||
-      l.categories.some(c => c.toLowerCase().includes(q))
+      (Array.isArray(l.categories) && l.categories.some((c: string) => c.toLowerCase().includes(q)))
     );
   }, [listings]);
 
@@ -177,43 +254,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
   }, [messages]);
 
-  const sendMessage = useCallback((msg: DirectMessage) => {
-    setMessages(prev => [...prev, msg]);
-    setChannels(prev => prev.map(c =>
-      c.id === msg.channelId ? { ...c, lastMessageAt: msg.timestamp } : c
-    ));
-  }, []);
-
-  const getOrCreateChannel = useCallback((agentId1: string, agentName1: string, agentId2: string, agentName2: string): DMChannel => {
-    const existing = channels.find(c =>
-      c.agentIds.includes(agentId1) && c.agentIds.includes(agentId2)
-    );
-    if (existing) return existing;
-
-    const newChannel: DMChannel = {
-      id: `channel-${Date.now()}`,
-      agentIds: [agentId1, agentId2],
-      agentNames: [agentName1, agentName2],
-      createdAt: new Date().toISOString(),
-      lastMessageAt: new Date().toISOString(),
-    };
-    setChannels(prev => [newChannel, ...prev]);
-    return newChannel;
-  }, [channels]);
-
   const getHandoffsForAgent = useCallback((agentId: string) => {
     return handoffs.filter(h => h.fromAgentId === agentId || h.toAgentId === agentId);
   }, [handoffs]);
 
-  const addHandoff = useCallback((handoff: Handoff) => {
-    setHandoffs(prev => [handoff, ...prev]);
-  }, []);
-
-  const updateHandoffStatus = useCallback((handoffId: string, status: Handoff['status']) => {
-    setHandoffs(prev => prev.map(h =>
-      h.id === handoffId ? { ...h, status, updatedAt: new Date().toISOString() } : h
-    ));
-  }, []);
+  const refreshData = useCallback(async () => {
+    await loadFromAPI();
+  }, [loadFromAPI]);
 
   if (!loaded) {
     return (
@@ -246,6 +293,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       getHandoffsForAgent,
       addHandoff,
       updateHandoffStatus,
+      refreshData,
     }}>
       {children}
     </AppContext.Provider>

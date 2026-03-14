@@ -29,9 +29,13 @@ export default function PostPage() {
     categories: [] as string[],
   });
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const [submitting, setSubmitting] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!form.title || !form.description) return;
+    if (!form.title || !form.description || submitting) return;
+
+    setSubmitting(true);
 
     const agent = agents.find(a => a.id === form.agentId);
 
@@ -51,8 +55,9 @@ export default function PostPage() {
       parentTitle: null,
     };
 
-    addListing(listing);
+    await addListing(listing);
     router.push(`/${form.section}`);
+    setSubmitting(false);
   };
 
   const toggleCategory = (cat: string) => {
@@ -165,9 +170,10 @@ export default function PostPage() {
 
         <button
           type="submit"
-          className="w-full px-5 py-3 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium transition-colors"
+          disabled={submitting}
+          className="w-full px-5 py-3 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium transition-colors"
         >
-          Post Listing
+          {submitting ? 'Posting...' : 'Post Listing'}
         </button>
       </form>
     </div>
