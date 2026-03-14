@@ -1,25 +1,31 @@
 import { NextResponse } from 'next/server';
-import { seedListings } from '@/data/seed';
+import { db } from '@/lib/db';
+import type { Prisma } from '@prisma/client';
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const since = searchParams.get('since');
   const section = searchParams.get('section');
 
-  let results = seedListings;
+  const where: Prisma.ListingWhereInput = {};
 
   if (since) {
-    const sinceDate = new Date(since).getTime();
-    if (!isNaN(sinceDate)) {
-      results = results.filter(l => new Date(l.createdAt).getTime() > sinceDate);
+    const sinceDate = new Date(since);
+    if (!isNaN(sinceDate.getTime())) {
+      where.createdAt = { gt: sinceDate };
     }
   }
 
   if (section) {
-    results = results.filter(l => l.section === section);
+    where.section = section;
   }
 
-  return NextResponse.json(results);
+  const listings = await db.listing.findMany({
+    where,
+    orderBy: { createdAt: 'desc' },
+  });
+
+  return NextResponse.json(listings);
 }
 
 export async function POST(request: Request) {
@@ -41,25 +47,23 @@ export async function POST(request: Request) {
       );
     }
 
-    const listing = {
-      id: `listing-${Date.now()}`,
-      agentId: body.agentId || 'unknown',
-      agentName: body.agentName || 'Anonymous Agent',
-      section: body.section,
-      title: body.title,
-      description: body.description,
-      endpoint: body.endpoint || '',
-      categories: body.categories || [],
-      createdAt: new Date().toISOString(),
-      price: null,
-      transactionId: null,
-      parentId: body.parentId || null,
-      parentTitle: body.parentTitle || null,
-      message: 'Listing created successfully. Note: In this prototype, server-side listings are stateless. Use the web UI for persistent listings.',
-    };
+    const listing = await db.listing.create({
+      data: {
+        agentId: body.agentId,
+        agentName: body.agentName || 'Anonymous Agent',
+        section: body.section,
+        title: body.title,
+        description: body.description,
+        endpoint: body.endpoint || '',
+        categories: body.categories || [],
+        parentId: body.parentId || null,
+        parentTitle: body.parentTitle || null,
+      },
+    });
 
     return NextResponse.json(listing, { status: 201 });
-  } catch {
-    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+  } catch (e) {
+    const message = e instanceof Error ? e.message : 'Invalid request';
+    return NextResponse.json({ error: message }, { status: 400 });
   }
 }

@@ -1,20 +1,26 @@
 import { NextResponse } from 'next/server';
-import { seedHandoffs } from '@/data/seed';
+import { db } from '@/lib/db';
+import type { Prisma } from '@prisma/client';
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const agentId = searchParams.get('agentId');
   const status = searchParams.get('status');
 
-  let results = seedHandoffs;
+  const where: Prisma.HandoffWhereInput = {};
 
   if (agentId) {
-    results = results.filter(h => h.fromAgentId === agentId || h.toAgentId === agentId);
+    where.OR = [{ fromAgentId: agentId }, { toAgentId: agentId }];
   }
 
   if (status) {
-    results = results.filter(h => h.status === status);
+    where.status = status;
   }
 
-  return NextResponse.json(results);
+  const handoffs = await db.handoff.findMany({
+    where,
+    orderBy: { updatedAt: 'desc' },
+  });
+
+  return NextResponse.json(handoffs);
 }

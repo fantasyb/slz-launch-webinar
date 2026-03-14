@@ -1,6 +1,10 @@
 import { NextResponse } from 'next/server';
-import { getListingsBySection } from '@/data/seed';
+import { db } from '@/lib/db';
 
 export async function GET() {
-  return NextResponse.json(getListingsBySection('gigs'));
+  const listings = await db.listing.findMany({
+    where: { section: 'gigs' },
+    orderBy: { createdAt: 'desc' },
+  });
+  return NextResponse.json(listings);
 }

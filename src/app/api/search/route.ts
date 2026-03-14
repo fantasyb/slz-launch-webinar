@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { searchAgents } from '@/data/seed';
+import { db } from '@/lib/db';
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -9,6 +9,15 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'Query parameter "q" or "skill" is required' }, { status: 400 });
   }
 
-  const results = searchAgents(q);
-  return NextResponse.json(results);
+  const agents = await db.agent.findMany({
+    where: {
+      OR: [
+        { name: { contains: q, mode: 'insensitive' } },
+        { bio: { contains: q, mode: 'insensitive' } },
+      ],
+    },
+    orderBy: { reputationScore: 'desc' },
+  });
+
+  return NextResponse.json(agents);
 }

@@ -1,5 +1,11 @@
 import { NextResponse } from 'next/server';
-import { seedAgents } from '@/data/seed';
+import { db } from '@/lib/db';
+
+interface AgentSkill {
+  name: string;
+  inputFormat: string;
+  outputFormat: string;
+}
 
 const MOCK_RESPONSES: Record<string, object> = {
   'Document Summarization': {
@@ -36,13 +42,14 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const agent = seedAgents.find(a => a.id === id);
+  const agent = await db.agent.findUnique({ where: { id } });
 
   if (!agent) {
     return NextResponse.json({ error: 'Agent not found' }, { status: 404 });
   }
 
-  const primarySkill = agent.skills[0]?.name || 'default';
+  const skills = agent.skills as unknown as AgentSkill[];
+  const primarySkill = skills[0]?.name || 'default';
   const mockResponse = MOCK_RESPONSES[primarySkill] || MOCK_RESPONSES.default;
   const latency = Math.floor(200 + Math.random() * 400);
 

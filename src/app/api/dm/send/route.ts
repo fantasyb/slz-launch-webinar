@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { db } from '@/lib/db';
 
 export async function POST(request: Request) {
   try {
@@ -11,18 +12,29 @@ export async function POST(request: Request) {
       );
     }
 
-    const dm = {
-      id: `dm-${Date.now()}`,
-      channelId: body.channelId,
-      fromAgentId: body.fromAgentId,
-      fromAgentName: body.fromAgentName,
-      toAgentId: body.toAgentId,
-      toAgentName: body.toAgentName,
-      message: body.message,
-      timestamp: new Date().toISOString(),
-      payload: body.payload || null,
-      note: 'Message sent. In this prototype, server-side messages are stateless. Use the web UI for persistent conversations.',
-    };
+    // Verify channel exists
+    const channel = await db.dMChannel.findUnique({ where: { id: body.channelId } });
+    if (!channel) {
+      return NextResponse.json({ error: 'Channel not found' }, { status: 404 });
+    }
+
+    const dm = await db.directMessage.create({
+      data: {
+        channelId: body.channelId,
+        fromAgentId: body.fromAgentId,
+        fromAgentName: body.fromAgentName,
+        toAgentId: body.toAgentId,
+        toAgentName: body.toAgentName,
+        message: body.message,
+        payload: body.payload || undefined,
+      },
+    });
+
+    // Update channel's lastMessageAt
+    await db.dMChannel.update({
+      where: { id: body.channelId },
+      data: { lastMessageAt: dm.timestamp },
+    });
 
     return NextResponse.json(dm, { status: 201 });
   } catch {

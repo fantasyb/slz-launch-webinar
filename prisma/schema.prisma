@@ -1,0 +1,120 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Agent {
+  id                 String   @id @default(cuid())
+  name               String   @unique
+  avatarColor        String
+  owner              String   @default("")
+  ownerVerified      Boolean  @default(false)
+  verificationMethod String?  // 'twitter' | 'domain' | null
+  entity             String   @default("")
+  bio                String
+  skills             Json     @default("[]")        // AgentSkill[]
+  categories         Json     @default("[]")        // string[]
+  rateLimits         String   @default("")
+  availability       String   @default("")
+  tasksCompleted     Int      @default(0)
+  successRate        Float    @default(0)
+  avgResponseTime    Float    @default(0)
+  uptime30d          Float    @default(0)
+  joinDate           DateTime @default(now())
+  peerReviews        Json     @default("[]")        // { agentId, agentName, rating, comment }[]
+  endpoint           String
+  protocols          Json     @default("[]")        // string[]
+  authMethod         String   @default("")
+  payloadFormat      String   @default("application/json")
+  status             String   @default("online")    // 'online' | 'offline' | 'busy'
+  lastSeen           DateTime @default(now())
+  price              Float?
+  walletAddress      String?
+  reputationScore    Int      @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  listings         Listing[]
+  sentMessages     DirectMessage[] @relation("SentMessages")
+  receivedMessages DirectMessage[] @relation("ReceivedMessages")
+  fromHandoffs     Handoff[]       @relation("FromHandoffs")
+  toHandoffs       Handoff[]       @relation("ToHandoffs")
+}
+
+model Listing {
+  id            String   @id @default(cuid())
+  agentId       String
+  agentName     String
+  section       String   // 'services' | 'gigs' | 'data' | 'tools' | 'partnerships' | 'discussion'
+  title         String
+  description   String
+  endpoint      String   @default("")
+  categories    Json     @default("[]") // string[]
+  price         Float?
+  transactionId String?
+  parentId      String?
+  parentTitle   String?
+
+  createdAt DateTime @default(now())
+
+  agent   Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  parent  Listing? @relation("ThreadReplies", fields: [parentId], references: [id])
+  replies Listing[] @relation("ThreadReplies")
+}
+
+model DMChannel {
+  id         String   @id @default(cuid())
+  agent1Id   String
+  agent1Name String
+  agent2Id   String
+  agent2Name String
+
+  createdAt     DateTime @default(now())
+  lastMessageAt DateTime @default(now())
+
+  messages DirectMessage[]
+  handoffs Handoff[]
+}
+
+model DirectMessage {
+  id            String   @id @default(cuid())
+  channelId     String
+  fromAgentId   String
+  fromAgentName String
+  toAgentId     String
+  toAgentName   String
+  message       String
+  payload       Json?    // HandoffPayload | null
+
+  timestamp DateTime @default(now())
+
+  channel   DMChannel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  fromAgent Agent     @relation("SentMessages", fields: [fromAgentId], references: [id])
+  toAgent   Agent     @relation("ReceivedMessages", fields: [toAgentId], references: [id])
+}
+
+model Handoff {
+  id            String   @id @default(cuid())
+  fromAgentId   String
+  fromAgentName String
+  toAgentId     String
+  toAgentName   String
+  channelId     String
+  status        String   @default("proposed") // proposed|accepted|in_progress|delivered|completed|rejected
+  task          Json     // { title, description, inputFormat, outputFormat }
+  price         Float?
+  transactionId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  channel   DMChannel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  fromAgent Agent     @relation("FromHandoffs", fields: [fromAgentId], references: [id])
+  toAgent   Agent     @relation("ToHandoffs", fields: [toAgentId], references: [id])
+}

@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { db } from '@/lib/db';
 
 export async function POST(request: Request) {
   try {
@@ -18,29 +19,50 @@ export async function POST(request: Request) {
       );
     }
 
-    const handoff = {
-      id: `handoff-${Date.now()}`,
-      fromAgentId: body.fromAgentId,
-      fromAgentName: body.fromAgentName || 'Unknown Agent',
-      toAgentId: body.toAgentId,
-      toAgentName: body.toAgentName || 'Unknown Agent',
-      channelId: body.channelId,
-      status: 'proposed',
-      task: {
-        title: body.task.title,
-        description: body.task.description,
-        inputFormat: body.task.inputFormat,
-        outputFormat: body.task.outputFormat,
+    // Verify channel exists
+    const channel = await db.dMChannel.findUnique({ where: { id: body.channelId } });
+    if (!channel) {
+      return NextResponse.json({ error: 'Channel not found' }, { status: 404 });
+    }
+
+    const handoff = await db.handoff.create({
+      data: {
+        fromAgentId: body.fromAgentId,
+        fromAgentName: body.fromAgentName || 'Unknown Agent',
+        toAgentId: body.toAgentId,
+        toAgentName: body.toAgentName || 'Unknown Agent',
+        channelId: body.channelId,
+        status: 'proposed',
+        task: {
+          title: body.task.title,
+          description: body.task.description,
+          inputFormat: body.task.inputFormat,
+          outputFormat: body.task.outputFormat,
+        },
+        price: body.price || null,
       },
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      price: body.price || null,
-      transactionId: null,
-      message: 'Handoff proposed. The target agent will receive this proposal via DM. Use POST /api/dm/send to follow up.',
-    };
+    });
+
+    // Send a DM with the proposal payload
+    await db.directMessage.create({
+      data: {
+        channelId: body.channelId,
+        fromAgentId: body.fromAgentId,
+        fromAgentName: body.fromAgentName || 'Unknown Agent',
+        toAgentId: body.toAgentId,
+        toAgentName: body.toAgentName || 'Unknown Agent',
+        message: `Handoff proposed: ${body.task.title}`,
+        payload: {
+          type: 'task_proposal',
+          handoffId: handoff.id,
+          task: body.task,
+        },
+      },
+    });
 
     return NextResponse.json(handoff, { status: 201 });
-  } catch {
-    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+  } catch (e) {
+    const message = e instanceof Error ? e.message : 'Invalid request';
+    return NextResponse.json({ error: message }, { status: 400 });
   }
 }

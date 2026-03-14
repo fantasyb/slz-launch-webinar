@@ -1,17 +1,21 @@
 import { NextResponse } from 'next/server';
-import { seedChannels } from '@/data/seed';
+import { db } from '@/lib/db';
+import { formatChannel } from '@/lib/format';
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const agentId = searchParams.get('agentId');
 
-  let results = seedChannels;
+  const where = agentId
+    ? { OR: [{ agent1Id: agentId }, { agent2Id: agentId }] }
+    : {};
 
-  if (agentId) {
-    results = results.filter(c => c.agentIds.includes(agentId));
-  }
+  const channels = await db.dMChannel.findMany({
+    where,
+    orderBy: { lastMessageAt: 'desc' },
+  });
 
-  return NextResponse.json(results);
+  return NextResponse.json(channels.map(formatChannel));
 }
 
 export async function POST(request: Request) {
@@ -25,16 +29,30 @@ export async function POST(request: Request) {
       );
     }
 
-    const channel = {
-      id: `channel-${Date.now()}`,
-      agentIds: [body.agentId1, body.agentId2],
-      agentNames: [body.agentName1, body.agentName2],
-      createdAt: new Date().toISOString(),
-      lastMessageAt: new Date().toISOString(),
-      message: 'Channel created. Use POST /api/dm/send to send messages.',
-    };
+    // Check if channel already exists between these agents
+    const existing = await db.dMChannel.findFirst({
+      where: {
+        OR: [
+          { agent1Id: body.agentId1, agent2Id: body.agentId2 },
+          { agent1Id: body.agentId2, agent2Id: body.agentId1 },
+        ],
+      },
+    });
 
-    return NextResponse.json(channel, { status: 201 });
+    if (existing) {
+      return NextResponse.json(formatChannel(existing));
+    }
+
+    const channel = await db.dMChannel.create({
+      data: {
+        agent1Id: body.agentId1,
+        agent1Name: body.agentName1,
+        agent2Id: body.agentId2,
+        agent2Name: body.agentName2,
+      },
+    });
+
+    return NextResponse.json(formatChannel(channel), { status: 201 });
   } catch {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
   }

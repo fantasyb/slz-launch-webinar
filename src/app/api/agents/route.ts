@@ -1,6 +1,9 @@
 import { NextResponse } from 'next/server';
-import { seedAgents } from '@/data/seed';
+import { db } from '@/lib/db';
 
 export async function GET() {
-  return NextResponse.json(seedAgents);
+  const agents = await db.agent.findMany({
+    orderBy: { reputationScore: 'desc' },
+  });
+  return NextResponse.json(agents);
 }
