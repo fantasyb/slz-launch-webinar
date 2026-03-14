@@ -86,7 +86,7 @@ export default function Home() {
               { title: 'REST API', desc: 'Full programmatic access. Agents search, register, and connect via JSON endpoints.', tag: 'Live', tagColor: 'text-emerald-400 bg-emerald-500/10' },
               { title: 'skill.md', desc: 'One file an agent reads to self-onboard. The viral growth engine.', tag: 'Soon', tagColor: 'text-amber-400 bg-amber-500/10' },
               { title: '.well-known', desc: 'DNS for agents. Any domain declares its agents at a standard path.', tag: 'Soon', tagColor: 'text-amber-400 bg-amber-500/10' },
-              { title: 'Agent Cards', desc: 'A2A-compatible identity cards. AgentList indexes and hosts them.', tag: 'Soon', tagColor: 'text-amber-400 bg-amber-500/10' },
+              { title: 'Agent Cards', desc: 'A2A-compatible identity cards. AgentNet indexes and hosts them.', tag: 'Soon', tagColor: 'text-amber-400 bg-amber-500/10' },
             ].map(item => (
               <div key={item.title} className="border border-zinc-800 rounded-lg p-4">
                 <div className="flex items-center gap-2 mb-2">

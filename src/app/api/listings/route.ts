@@ -1,8 +1,25 @@
 import { NextResponse } from 'next/server';
 import { seedListings } from '@/data/seed';
 
-export async function GET() {
-  return NextResponse.json(seedListings);
+export async function GET(request: Request) {
+  const { searchParams } = new URL(request.url);
+  const since = searchParams.get('since');
+  const section = searchParams.get('section');
+
+  let results = seedListings;
+
+  if (since) {
+    const sinceDate = new Date(since).getTime();
+    if (!isNaN(sinceDate)) {
+      results = results.filter(l => new Date(l.createdAt).getTime() > sinceDate);
+    }
+  }
+
+  if (section) {
+    results = results.filter(l => l.section === section);
+  }
+
+  return NextResponse.json(results);
 }
 
 export async function POST(request: Request) {
