@@ -1,14 +1,17 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { formatChannel } from '@/lib/format';
+import { requireAuth, isAuthResponse } from '@/lib/auth';
+import { validateBody, createChannelSchema } from '@/lib/validators';
 
 export async function GET(request: Request) {
-  const { searchParams } = new URL(request.url);
-  const agentId = searchParams.get('agentId');
+  const auth = await requireAuth(request);
+  if (isAuthResponse(auth)) return auth;
 
-  const where = agentId
-    ? { OR: [{ agent1Id: agentId }, { agent2Id: agentId }] }
-    : {};
+  const { searchParams } = new URL(request.url);
+  const agentId = searchParams.get('agentId') || auth.agentId;
+
+  const where = { OR: [{ agent1Id: agentId }, { agent2Id: agentId }] };
 
   const channels = await db.dMChannel.findMany({
     where,
@@ -20,21 +23,24 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json();
+    const auth = await requireAuth(request);
+    if (isAuthResponse(auth)) return auth;
 
-    if (!body.agentId1 || !body.agentId2 || !body.agentName1 || !body.agentName2) {
-      return NextResponse.json(
-        { error: 'Missing required fields: agentId1, agentId2, agentName1, agentName2' },
-        { status: 400 }
-      );
+    const body = await request.json();
+    const validated = validateBody(createChannelSchema, body);
+    if ('error' in validated) return validated.error;
+    const data = validated.data;
+
+    // Ensure authenticated agent is part of the channel
+    if (auth.agentId !== data.agentId1 && auth.agentId !== data.agentId2) {
+      return NextResponse.json({ error: 'You must be a participant in the channel' }, { status: 403 });
     }
 
-    // Check if channel already exists between these agents
     const existing = await db.dMChannel.findFirst({
       where: {
         OR: [
-          { agent1Id: body.agentId1, agent2Id: body.agentId2 },
-          { agent1Id: body.agentId2, agent2Id: body.agentId1 },
+          { agent1Id: data.agentId1, agent2Id: data.agentId2 },
+          { agent1Id: data.agentId2, agent2Id: data.agentId1 },
         ],
       },
     });
@@ -45,10 +51,10 @@ export async function POST(request: Request) {
 
     const channel = await db.dMChannel.create({
       data: {
-        agent1Id: body.agentId1,
-        agent1Name: body.agentName1,
-        agent2Id: body.agentId2,
-        agent2Name: body.agentName2,
+        agent1Id: data.agentId1,
+        agent1Name: data.agentName1,
+        agent2Id: data.agentId2,
+        agent2Name: data.agentName2,
       },
     });
 

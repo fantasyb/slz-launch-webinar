@@ -1,8 +1,10 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
+import { requireAuth, isAuthResponse } from '@/lib/auth';
+import { validateBody, verifyAgentSchema } from '@/lib/validators';
+import { logAudit, getClientIp } from '@/lib/audit';
 import type { TrustTier } from '@/data/seed';
 
-// Trust tier thresholds
 const TRUST_TIERS: { tier: TrustTier; minReputation: number; requiresVerification: boolean }[] = [
   { tier: 'enterprise', minReputation: 90, requiresVerification: true },
   { tier: 'trusted', minReputation: 70, requiresVerification: true },
@@ -19,38 +21,19 @@ function calculateTrustTier(verified: boolean, reputation: number): TrustTier {
   return 'unverified';
 }
 
-/**
- * POST /api/agents/verify
- *
- * Verify agent ownership via domain DNS TXT record or Twitter proof.
- *
- * Domain verification:
- *   The agent owner adds a DNS TXT record to their domain:
- *     agentnet-verify=AGENT_ID
- *   Then calls this endpoint with method: "domain" and proof: "example.com"
- *
- * Twitter verification:
- *   The agent owner tweets or puts in their bio:
- *     "Verifying @AgentName on AgentNet: AGENT_ID"
- *   Then calls this endpoint with method: "twitter" and proof: "https://twitter.com/..."
- */
 export async function POST(request: Request) {
   try {
+    const auth = await requireAuth(request);
+    if (isAuthResponse(auth)) return auth;
+
     const body = await request.json();
-    const { agentId, method, proof } = body;
+    const validated = validateBody(verifyAgentSchema, body);
+    if ('error' in validated) return validated.error;
+    const { agentId, method, proof } = validated.data;
 
-    if (!agentId || !method || !proof) {
-      return NextResponse.json(
-        { error: 'Missing required fields: agentId, method, proof' },
-        { status: 400 }
-      );
-    }
-
-    if (!['domain', 'twitter'].includes(method)) {
-      return NextResponse.json(
-        { error: 'method must be "domain" or "twitter"' },
-        { status: 400 }
-      );
+    // Ensure authenticated agent matches the agent being verified
+    if (auth.agentId !== agentId) {
+      return NextResponse.json({ error: 'You can only verify your own agent' }, { status: 403 });
     }
 
     const agent = await db.agent.findUnique({ where: { id: agentId } });
@@ -62,8 +45,6 @@ export async function POST(request: Request) {
     let verificationDetail = '';
 
     if (method === 'domain') {
-      // In production: DNS TXT lookup for agentnet-verify=AGENT_ID
-      // For demo: verify that the proof matches the agent's endpoint domain
       try {
         const endpointDomain = new URL(agent.endpoint).hostname;
         const proofDomain = proof.replace(/^https?:\/\//, '').replace(/\/.*$/, '');
@@ -83,8 +64,6 @@ export async function POST(request: Request) {
     }
 
     if (method === 'twitter') {
-      // In production: Twitter API lookup to verify the tweet/bio
-      // For demo: verify the proof contains the agent ID
       if (typeof proof === 'string' && proof.includes(agentId)) {
         verified = true;
         verificationDetail = `Twitter verified via proof containing agent ID`;
@@ -100,7 +79,6 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Verification failed' }, { status: 400 });
     }
 
-    // Calculate new trust tier
     const trustTier = calculateTrustTier(true, agent.reputationScore);
 
     const updated = await db.agent.update({
@@ -111,6 +89,15 @@ export async function POST(request: Request) {
         verificationProof: proof,
         trustTier,
       },
+    });
+
+    logAudit({
+      agentId,
+      action: 'agent.verify',
+      resource: 'agent',
+      resourceId: agentId,
+      metadata: { method, trustTier },
+      ip: getClientIp(request),
     });
 
     return NextResponse.json({
@@ -133,10 +120,6 @@ export async function POST(request: Request) {
   }
 }
 
-/**
- * GET /api/agents/verify?agentId=xxx
- * Returns the verification status and what's needed to verify
- */
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const agentId = searchParams.get('agentId');

@@ -49,6 +49,10 @@ model Agent {
   receivedMessages DirectMessage[] @relation("ReceivedMessages")
   fromHandoffs     Handoff[]       @relation("FromHandoffs")
   toHandoffs       Handoff[]       @relation("ToHandoffs")
+  transactionsFrom Transaction[]   @relation("TransactionsFrom")
+  transactionsTo   Transaction[]   @relation("TransactionsTo")
+  apiKeys          ApiKey[]
+  auditLogs        AuditLog[]
 }
 
 model Listing {
@@ -131,4 +135,47 @@ model Handoff {
   channel   DMChannel @relation(fields: [channelId], references: [id], onDelete: Cascade)
   fromAgent Agent     @relation("FromHandoffs", fields: [fromAgentId], references: [id])
   toAgent   Agent     @relation("ToHandoffs", fields: [toAgentId], references: [id])
+}
+
+model Transaction {
+  id              String   @id @default(cuid())
+  type            String   // 'handoff_payment' | 'listing_purchase' | 'bonus' | 'refund' | 'deposit'
+  amount          Float
+  fromAgentId     String?
+  toAgentId       String?
+  referenceId     String?
+  referenceType   String?  // 'handoff' | 'listing'
+  description     String
+  balanceAfterFrom Float?
+  balanceAfterTo   Float?
+  createdAt       DateTime @default(now())
+
+  fromAgent Agent? @relation("TransactionsFrom", fields: [fromAgentId], references: [id])
+  toAgent   Agent? @relation("TransactionsTo", fields: [toAgentId], references: [id])
+}
+
+model ApiKey {
+  id         String    @id @default(cuid())
+  agentId    String
+  keyHash    String    @unique
+  keyPrefix  String
+  name       String    @default("default")
+  lastUsedAt DateTime?
+  createdAt  DateTime  @default(now())
+  revokedAt  DateTime?
+
+  agent Agent @relation(fields: [agentId], references: [id], onDelete: Cascade)
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  agentId    String?
+  action     String
+  resource   String
+  resourceId String?
+  metadata   Json?
+  ip         String?
+  createdAt  DateTime @default(now())
+
+  agent Agent? @relation(fields: [agentId], references: [id])
 }

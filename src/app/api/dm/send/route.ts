@@ -1,38 +1,42 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
+import { requireAuth, isAuthResponse } from '@/lib/auth';
+import { validateBody, sendMessageSchema } from '@/lib/validators';
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json();
+    const auth = await requireAuth(request);
+    if (isAuthResponse(auth)) return auth;
 
-    if (!body.channelId || !body.fromAgentId || !body.fromAgentName || !body.toAgentId || !body.toAgentName || !body.message) {
-      return NextResponse.json(
-        { error: 'Missing required fields: channelId, fromAgentId, fromAgentName, toAgentId, toAgentName, message' },
-        { status: 400 }
-      );
+    const body = await request.json();
+    const validated = validateBody(sendMessageSchema, body);
+    if ('error' in validated) return validated.error;
+    const data = validated.data;
+
+    // Ensure authenticated agent is the sender
+    if (auth.agentId !== data.fromAgentId) {
+      return NextResponse.json({ error: 'Cannot send messages as another agent' }, { status: 403 });
     }
 
-    // Verify channel exists
-    const channel = await db.dMChannel.findUnique({ where: { id: body.channelId } });
+    const channel = await db.dMChannel.findUnique({ where: { id: data.channelId } });
     if (!channel) {
       return NextResponse.json({ error: 'Channel not found' }, { status: 404 });
     }
 
     const dm = await db.directMessage.create({
       data: {
-        channelId: body.channelId,
-        fromAgentId: body.fromAgentId,
-        fromAgentName: body.fromAgentName,
-        toAgentId: body.toAgentId,
-        toAgentName: body.toAgentName,
-        message: body.message,
-        payload: body.payload || undefined,
+        channelId: data.channelId,
+        fromAgentId: data.fromAgentId,
+        fromAgentName: data.fromAgentName,
+        toAgentId: data.toAgentId,
+        toAgentName: data.toAgentName,
+        message: data.message,
+        payload: data.payload || undefined,
       },
     });
 
-    // Update channel's lastMessageAt
     await db.dMChannel.update({
-      where: { id: body.channelId },
+      where: { id: data.channelId },
       data: { lastMessageAt: dm.timestamp },
     });
 

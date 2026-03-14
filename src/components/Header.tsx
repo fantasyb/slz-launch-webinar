@@ -4,6 +4,8 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useState } from 'react';
 import { Menu, X } from 'lucide-react';
+import { AgentLogin } from './AgentLogin';
+import { useApp } from '@/store';
 
 const NAV_ITEMS = [
   { href: '/services', label: 'Services' },
@@ -17,6 +19,7 @@ const NAV_ITEMS = [
 export function Header() {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const { currentAgentId } = useApp();
 
   return (
     <header className="sticky top-0 z-50 border-b border-zinc-800/80 bg-zinc-950/90 backdrop-blur-md">
@@ -76,6 +79,18 @@ export function Header() {
             >
               Handoffs
             </Link>
+            {currentAgentId && (
+              <Link
+                href="/wallet"
+                className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
+                  pathname === '/wallet'
+                    ? 'bg-zinc-800 text-zinc-100'
+                    : 'text-zinc-400 hover:text-zinc-200'
+                }`}
+              >
+                Wallet
+              </Link>
+            )}
             <Link
               href="/api-docs"
               className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
@@ -86,6 +101,7 @@ export function Header() {
             >
               API
             </Link>
+            <AgentLogin />
             <Link
               href="/register"
               className="px-3 py-1.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium transition-colors"
@@ -120,6 +136,9 @@ export function Header() {
               <Link href="/agents" onClick={() => setMobileOpen(false)} className="block px-3 py-2 rounded text-sm text-zinc-400">Browse Agents</Link>
               <Link href="/messages" onClick={() => setMobileOpen(false)} className="block px-3 py-2 rounded text-sm text-zinc-400">DMs</Link>
               <Link href="/handoffs" onClick={() => setMobileOpen(false)} className="block px-3 py-2 rounded text-sm text-zinc-400">Handoffs</Link>
+              {currentAgentId && (
+                <Link href="/wallet" onClick={() => setMobileOpen(false)} className="block px-3 py-2 rounded text-sm text-zinc-400">Wallet</Link>
+              )}
               <Link href="/api-docs" onClick={() => setMobileOpen(false)} className="block px-3 py-2 rounded text-sm text-zinc-400">API</Link>
               <Link href="/register" onClick={() => setMobileOpen(false)} className="block px-3 py-2 rounded text-sm text-indigo-400">Register Agent</Link>
             </div>

@@ -1,7 +1,10 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
+import { requireAuth, isAuthResponse } from '@/lib/auth';
+import { validateBody, updateHandoffSchema } from '@/lib/validators';
+import { transferCredits, validateBalance, checkAndAwardMilestones, InsufficientCreditsError } from '@/lib/credits';
+import { logAudit, getClientIp } from '@/lib/audit';
 
-// Trust tier hierarchy (higher index = more trusted)
 const TRUST_LEVELS: Record<string, number> = {
   unverified: 0,
   verified: 1,
@@ -13,7 +16,6 @@ function meetsMinTrust(agentTier: string, requiredTier: string): boolean {
   return (TRUST_LEVELS[agentTier] ?? 0) >= (TRUST_LEVELS[requiredTier] ?? 0);
 }
 
-// Valid status transitions
 const TRANSITIONS: Record<string, string[]> = {
   proposed: ['accepted', 'rejected'],
   accepted: ['in_progress', 'rejected'],
@@ -21,7 +23,6 @@ const TRANSITIONS: Record<string, string[]> = {
   delivered: ['completed', 'rejected'],
 };
 
-// Append an entry to a handoff's audit log
 async function appendAuditLog(handoffId: string, action: string, agentId: string) {
   const handoff = await db.handoff.findUnique({
     where: { id: handoffId },
@@ -35,22 +36,18 @@ async function appendAuditLog(handoffId: string, action: string, agentId: string
   });
 }
 
-// Recalculate and update an agent's reputation from all their completed handoffs
 async function updateAgentReputation(agentId: string) {
-  // Get all handoffs where this agent was the worker (toAgent)
   const completedAsWorker = await db.handoff.findMany({
     where: { toAgentId: agentId, status: 'completed' },
     select: { rating: true, createdAt: true, completedAt: true },
   });
 
-  // Get all handoffs where this agent was the requester (fromAgent)
   const completedAsRequester = await db.handoff.findMany({
     where: { fromAgentId: agentId, status: 'completed' },
   });
 
   const totalCompleted = completedAsWorker.length + completedAsRequester.length;
 
-  // Get rejected/failed handoffs for this agent as worker
   const rejectedAsWorker = await db.handoff.findMany({
     where: { toAgentId: agentId, status: 'rejected' },
   });
@@ -60,7 +57,6 @@ async function updateAgentReputation(agentId: string) {
     ? Math.round((completedAsWorker.length / totalAttempted) * 100)
     : 0;
 
-  // Average response time (time from creation to completion) in ms
   const responseTimes = completedAsWorker
     .filter(h => h.completedAt)
     .map(h => h.completedAt!.getTime() - h.createdAt.getTime());
@@ -68,9 +64,6 @@ async function updateAgentReputation(agentId: string) {
     ? Math.round(responseTimes.reduce((a, b) => a + b, 0) / responseTimes.length)
     : 0;
 
-  // Reputation score: weighted formula
-  // - Base: 10 points per completed task (as worker), max 50 from volume
-  // - Rating: average rating * 10, max 50 from quality
   const ratings = completedAsWorker
     .filter(h => h.rating != null)
     .map(h => h.rating!);
@@ -79,11 +72,10 @@ async function updateAgentReputation(agentId: string) {
     : 0;
 
   const volumeScore = Math.min(completedAsWorker.length * 10, 50);
-  const qualityScore = Math.round(avgRating * 10); // 0-50
+  const qualityScore = Math.round(avgRating * 10);
   const reliabilityBonus = successRate >= 90 ? 10 : successRate >= 75 ? 5 : 0;
   const reputationScore = Math.min(volumeScore + qualityScore + reliabilityBonus, 100);
 
-  // Determine trust tier based on verification status and reputation
   const agent = await db.agent.findUnique({
     where: { id: agentId },
     select: { ownerVerified: true },
@@ -107,6 +99,8 @@ async function updateAgentReputation(agentId: string) {
       trustTier,
     },
   });
+
+  return reputationScore;
 }
 
 export async function PATCH(
@@ -114,15 +108,18 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const auth = await requireAuth(request);
+    if (isAuthResponse(auth)) return auth;
+
     const { id } = await params;
     const body = await request.json();
-    const { action, agentId } = body;
+    const validated = validateBody(updateHandoffSchema, body);
+    if ('error' in validated) return validated.error;
+    const { action, agentId } = validated.data;
 
-    if (!action || !agentId) {
-      return NextResponse.json(
-        { error: 'Missing required fields: action, agentId' },
-        { status: 400 }
-      );
+    // Ensure authenticated agent matches
+    if (auth.agentId !== agentId) {
+      return NextResponse.json({ error: 'Agent ID mismatch' }, { status: 403 });
     }
 
     const handoff = await db.handoff.findUnique({ where: { id } });
@@ -130,7 +127,6 @@ export async function PATCH(
       return NextResponse.json({ error: 'Handoff not found' }, { status: 404 });
     }
 
-    // Validate who can do what
     const isRequester = agentId === handoff.fromAgentId;
     const isWorker = agentId === handoff.toAgentId;
 
@@ -140,7 +136,6 @@ export async function PATCH(
 
     switch (action) {
       case 'accept': {
-        // Worker accepts the proposal
         if (!isWorker) {
           return NextResponse.json({ error: 'Only the receiving agent can accept' }, { status: 403 });
         }
@@ -148,7 +143,6 @@ export async function PATCH(
           return NextResponse.json({ error: `Cannot accept from status: ${handoff.status}` }, { status: 400 });
         }
 
-        // Enforce trust tier requirements
         const requiredTrust = (handoff.requiredTrust as string) || 'unverified';
         if (requiredTrust !== 'unverified') {
           const workerAgent = await db.agent.findUnique({ where: { id: agentId } });
@@ -160,6 +154,16 @@ export async function PATCH(
               requiredTrust,
               currentTrust: workerTier,
             }, { status: 403 });
+          }
+        }
+
+        // Re-validate requester balance on accept
+        if (handoff.price && handoff.price > 0) {
+          const hasBalance = await validateBalance(handoff.fromAgentId, handoff.price);
+          if (!hasBalance) {
+            return NextResponse.json({
+              error: 'Requester has insufficient credits for this handoff',
+            }, { status: 402 });
           }
         }
 
@@ -182,11 +186,18 @@ export async function PATCH(
           },
         });
 
+        logAudit({
+          agentId,
+          action: 'handoff.accept',
+          resource: 'handoff',
+          resourceId: id,
+          ip: getClientIp(request),
+        });
+
         return NextResponse.json(updated);
       }
 
       case 'start': {
-        // Worker starts working
         if (!isWorker) {
           return NextResponse.json({ error: 'Only the receiving agent can start work' }, { status: 403 });
         }
@@ -217,7 +228,6 @@ export async function PATCH(
       }
 
       case 'deliver': {
-        // Worker delivers result
         if (!isWorker) {
           return NextResponse.json({ error: 'Only the receiving agent can deliver' }, { status: 403 });
         }
@@ -229,7 +239,7 @@ export async function PATCH(
           where: { id },
           data: {
             status: 'delivered',
-            result: body.result || null,
+            result: validated.data.result || null,
             deliveredAt: new Date(),
           },
         });
@@ -243,11 +253,11 @@ export async function PATCH(
             fromAgentName: handoff.toAgentName,
             toAgentId: handoff.fromAgentId,
             toAgentName: handoff.fromAgentName,
-            message: body.message || `Result delivered for: ${(handoff.task as { title: string }).title}`,
+            message: validated.data.message || `Result delivered for: ${(handoff.task as { title: string }).title}`,
             payload: {
               type: 'result_delivery',
               handoffId: id,
-              result: body.result || null,
+              result: validated.data.result || null,
             },
           },
         });
@@ -256,7 +266,6 @@ export async function PATCH(
       }
 
       case 'complete': {
-        // Requester confirms completion + rates
         if (!isRequester) {
           return NextResponse.json({ error: 'Only the requesting agent can confirm completion' }, { status: 403 });
         }
@@ -264,19 +273,19 @@ export async function PATCH(
           return NextResponse.json({ error: `Cannot complete from status: ${handoff.status}` }, { status: 400 });
         }
 
-        const rating = body.rating ? Math.min(5, Math.max(1, Math.round(body.rating))) : null;
+        const rating = validated.data.rating ? Math.min(5, Math.max(1, Math.round(validated.data.rating))) : null;
 
         await db.handoff.update({
           where: { id },
           data: {
             status: 'completed',
             rating,
-            review: body.review || null,
+            review: validated.data.review || null,
             completedAt: new Date(),
           },
         });
 
-        // Add peer review to the worker's profile
+        // Add peer review
         if (rating) {
           const worker = await db.agent.findUnique({ where: { id: handoff.toAgentId } });
           if (worker) {
@@ -285,7 +294,7 @@ export async function PATCH(
               agentId: handoff.fromAgentId,
               agentName: handoff.fromAgentName,
               rating,
-              comment: body.review || `Completed: ${(handoff.task as { title: string }).title}`,
+              comment: validated.data.review || `Completed: ${(handoff.task as { title: string }).title}`,
               handoffId: id,
               date: new Date().toISOString(),
             });
@@ -311,35 +320,58 @@ export async function PATCH(
 
         await appendAuditLog(id, 'completed', agentId);
 
-        // Process mock payment: transfer credits from requester to worker
+        // ATOMIC credit transfer (replaces the old non-atomic two-update approach)
         let transactionId: string | null = null;
         if (handoff.price && handoff.price > 0) {
-          transactionId = `txn-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-          await db.agent.update({
-            where: { id: handoff.fromAgentId },
-            data: { credits: { decrement: handoff.price } },
-          });
-          await db.agent.update({
-            where: { id: handoff.toAgentId },
-            data: { credits: { increment: handoff.price } },
-          });
-          await db.handoff.update({
-            where: { id },
-            data: { transactionId },
-          });
-          await appendAuditLog(id, `payment_processed:${handoff.price}credits:${transactionId}`, 'system');
+          try {
+            const txn = await transferCredits({
+              fromAgentId: handoff.fromAgentId,
+              toAgentId: handoff.toAgentId,
+              amount: handoff.price,
+              type: 'handoff_payment',
+              referenceId: id,
+              referenceType: 'handoff',
+              description: `Payment for handoff: ${(handoff.task as { title: string }).title}`,
+            });
+            transactionId = txn.id;
+            await db.handoff.update({
+              where: { id },
+              data: { transactionId },
+            });
+            await appendAuditLog(id, `payment_processed:${handoff.price}credits:${transactionId}`, 'system');
+          } catch (e) {
+            if (e instanceof InsufficientCreditsError) {
+              return NextResponse.json({
+                error: 'Payment failed: insufficient credits',
+                balance: e.balance,
+                required: e.required,
+              }, { status: 402 });
+            }
+            throw e;
+          }
         }
 
         // Update reputation for both agents
-        await updateAgentReputation(handoff.toAgentId);
+        const workerRep = await updateAgentReputation(handoff.toAgentId);
         await updateAgentReputation(handoff.fromAgentId);
+
+        // Check and award reputation milestone bonuses
+        await checkAndAwardMilestones(handoff.toAgentId, workerRep);
+
+        logAudit({
+          agentId,
+          action: 'handoff.complete',
+          resource: 'handoff',
+          resourceId: id,
+          metadata: { rating, transactionId, price: handoff.price },
+          ip: getClientIp(request),
+        });
 
         const finalHandoff = await db.handoff.findUnique({ where: { id } });
         return NextResponse.json(finalHandoff);
       }
 
       case 'reject': {
-        // Either party can reject
         if (!TRANSITIONS[handoff.status]?.includes('rejected')) {
           return NextResponse.json({ error: `Cannot reject from status: ${handoff.status}` }, { status: 400 });
         }
@@ -362,15 +394,22 @@ export async function PATCH(
             fromAgentName: rejecterName,
             toAgentId: otherAgentId,
             toAgentName: otherAgentName,
-            message: body.reason || `Handoff rejected: ${(handoff.task as { title: string }).title}`,
+            message: validated.data.reason || `Handoff rejected: ${(handoff.task as { title: string }).title}`,
             payload: { type: 'status_update', handoffId: id, status: 'rejected' },
           },
         });
 
-        // Update reputation (rejection counts against worker)
         if (handoff.status === 'in_progress' || handoff.status === 'delivered') {
           await updateAgentReputation(handoff.toAgentId);
         }
+
+        logAudit({
+          agentId,
+          action: 'handoff.reject',
+          resource: 'handoff',
+          resourceId: id,
+          ip: getClientIp(request),
+        });
 
         return NextResponse.json(updated);
       }
@@ -387,16 +426,23 @@ export async function PATCH(
   }
 }
 
-// GET a single handoff
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const auth = await requireAuth(request);
+  if (isAuthResponse(auth)) return auth;
+
   const { id } = await params;
   const handoff = await db.handoff.findUnique({ where: { id } });
 
   if (!handoff) {
     return NextResponse.json({ error: 'Handoff not found' }, { status: 404 });
+  }
+
+  // Ensure authenticated agent is a participant
+  if (handoff.fromAgentId !== auth.agentId && handoff.toAgentId !== auth.agentId) {
+    return NextResponse.json({ error: 'Access denied' }, { status: 403 });
   }
 
   return NextResponse.json(handoff);

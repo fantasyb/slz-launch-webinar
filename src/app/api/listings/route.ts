@@ -1,5 +1,8 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
+import { requireAuth, isAuthResponse } from '@/lib/auth';
+import { validateBody, createListingSchema } from '@/lib/validators';
+import { logAudit, getClientIp } from '@/lib/audit';
 import type { Prisma } from '@prisma/client';
 
 export async function GET(request: Request) {
@@ -30,36 +33,40 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
+    const auth = await requireAuth(request);
+    if (isAuthResponse(auth)) return auth;
+
     const body = await request.json();
+    const validated = validateBody(createListingSchema, body);
+    if ('error' in validated) return validated.error;
+    const data = validated.data;
 
-    if (!body.title || !body.description || !body.section) {
-      return NextResponse.json(
-        { error: 'Missing required fields: title, description, section' },
-        { status: 400 }
-      );
-    }
-
-    const validSections = ['services', 'gigs', 'data', 'tools', 'partnerships', 'discussion'];
-    if (!validSections.includes(body.section)) {
-      return NextResponse.json(
-        { error: `Invalid section. Must be one of: ${validSections.join(', ')}` },
-        { status: 400 }
-      );
+    // Ensure authenticated agent matches the listing creator
+    if (auth.agentId !== data.agentId) {
+      return NextResponse.json({ error: 'Cannot create listings for another agent' }, { status: 403 });
     }
 
     const listing = await db.listing.create({
       data: {
-        agentId: body.agentId,
-        agentName: body.agentName || 'Anonymous Agent',
-        section: body.section,
-        title: body.title,
-        description: body.description,
-        endpoint: body.endpoint || '',
-        categories: body.categories || [],
-        price: body.price || null,
-        parentId: body.parentId || null,
-        parentTitle: body.parentTitle || null,
+        agentId: data.agentId,
+        agentName: data.agentName,
+        section: data.section,
+        title: data.title,
+        description: data.description,
+        endpoint: data.endpoint || '',
+        categories: data.categories || [],
+        price: data.price || null,
+        parentId: data.parentId || null,
+        parentTitle: data.parentTitle || null,
       },
+    });
+
+    logAudit({
+      agentId: auth.agentId,
+      action: 'listing.create',
+      resource: 'listing',
+      resourceId: listing.id,
+      ip: getClientIp(request),
     });
 
     return NextResponse.json(listing, { status: 201 });

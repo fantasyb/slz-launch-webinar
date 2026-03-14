@@ -12,6 +12,10 @@ interface AppState {
   channels: DMChannel[];
   messages: DirectMessage[];
   handoffs: Handoff[];
+  currentAgentId: string | null;
+  apiKey: string | null;
+  login: (agentId: string, apiKey: string) => void;
+  logout: () => void;
   addAgent: (agent: Agent) => Promise<void>;
   addListing: (listing: Listing) => Promise<void>;
   getAgent: (id: string) => Agent | undefined;
@@ -33,10 +37,30 @@ interface AppState {
 
 const AppContext = createContext<AppState | null>(null);
 
-// Fetch from API with seed data fallback
-async function fetchJSON<T>(url: string, fallback: T): Promise<T> {
+function getStoredAuth(): { agentId: string | null; apiKey: string | null } {
+  if (typeof window === 'undefined') return { agentId: null, apiKey: null };
   try {
-    const res = await fetch(url);
+    return {
+      agentId: localStorage.getItem('agentnet_agent_id'),
+      apiKey: localStorage.getItem('agentnet_api_key'),
+    };
+  } catch {
+    return { agentId: null, apiKey: null };
+  }
+}
+
+function authHeaders(apiKey: string | null): Record<string, string> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+  return headers;
+}
+
+// Fetch from API with seed data fallback
+async function fetchJSON<T>(url: string, fallback: T, apiKey?: string | null): Promise<T> {
+  try {
+    const headers: Record<string, string> = {};
+    if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+    const res = await fetch(url, { headers });
     if (!res.ok) throw new Error(res.statusText);
     return await res.json();
   } catch {
@@ -52,12 +76,35 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [handoffs, setHandoffs] = useState<Handoff[]>([]);
   const [loaded, setLoaded] = useState(false);
 
+  const stored = getStoredAuth();
+  const [currentAgentId, setCurrentAgentId] = useState<string | null>(stored.agentId);
+  const [apiKey, setApiKey] = useState<string | null>(stored.apiKey);
+
+  const login = useCallback((agentId: string, key: string) => {
+    setCurrentAgentId(agentId);
+    setApiKey(key);
+    try {
+      localStorage.setItem('agentnet_agent_id', agentId);
+      localStorage.setItem('agentnet_api_key', key);
+    } catch {}
+  }, []);
+
+  const logout = useCallback(() => {
+    setCurrentAgentId(null);
+    setApiKey(null);
+    try {
+      localStorage.removeItem('agentnet_agent_id');
+      localStorage.removeItem('agentnet_api_key');
+    } catch {}
+  }, []);
+
   const loadFromAPI = useCallback(async () => {
+    const key = apiKey;
     const [dbAgents, dbListings, dbChannels, dbHandoffs] = await Promise.all([
       fetchJSON<Agent[]>('/api/agents', seedAgents),
       fetchJSON<Listing[]>('/api/listings', seedListings),
-      fetchJSON<DMChannel[]>('/api/dm/channels', seedChannels),
-      fetchJSON<Handoff[]>('/api/handoffs', seedHandoffs),
+      fetchJSON<DMChannel[]>('/api/dm/channels', seedChannels, key),
+      fetchJSON<Handoff[]>('/api/handoffs', seedHandoffs, key),
     ]);
 
     setAgents(dbAgents);
@@ -70,7 +117,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     for (const ch of dbChannels) {
       const channelMsgs = await fetchJSON<DirectMessage[]>(
         `/api/dm/messages?channelId=${ch.id}`,
-        []
+        [],
+        key
       );
       allMessages.push(...channelMsgs);
     }
@@ -79,7 +127,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     } else {
       setMessages(seedMessages);
     }
-  }, []);
+  }, [apiKey]);
 
   useEffect(() => {
     loadFromAPI().finally(() => setLoaded(true));
@@ -101,11 +149,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         const saved = await res.json();
         // Replace optimistic entry with server response (has real ID)
         setAgents(prev => [saved, ...prev.filter(a => a.id !== agent.id)]);
+        // Auto-login with the returned API key
+        if (saved.apiKey) {
+          login(saved.id, saved.apiKey);
+        }
+        return saved;
       }
     } catch {
       // Keep optimistic update
     }
-  }, []);
+  }, [login]);
 
   const addListing = useCallback(async (listing: Listing) => {
     setListings(prev => [listing, ...prev]);
@@ -113,7 +166,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     try {
       const res = await fetch('/api/listings', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(apiKey),
         body: JSON.stringify(listing),
       });
       if (res.ok) {
@@ -123,7 +176,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     } catch {
       // Keep optimistic update
     }
-  }, []);
+  }, [apiKey]);
 
   const sendMessage = useCallback(async (msg: DirectMessage) => {
     // Optimistic update
@@ -135,13 +188,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     try {
       await fetch('/api/dm/send', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(apiKey),
         body: JSON.stringify(msg),
       });
     } catch {
       // Keep optimistic update
     }
-  }, []);
+  }, [apiKey]);
 
   const getOrCreateChannel = useCallback(async (agentId1: string, agentName1: string, agentId2: string, agentName2: string): Promise<DMChannel> => {
     const existing = channels.find(c =>
@@ -152,7 +205,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     try {
       const res = await fetch('/api/dm/channels', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(apiKey),
         body: JSON.stringify({ agentId1, agentName1, agentId2, agentName2 }),
       });
       if (res.ok) {
@@ -173,7 +226,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     };
     setChannels(prev => [newChannel, ...prev]);
     return newChannel;
-  }, [channels]);
+  }, [channels, apiKey]);
 
   const addHandoff = useCallback(async (handoff: Handoff) => {
     setHandoffs(prev => [handoff, ...prev]);
@@ -181,7 +234,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     try {
       const res = await fetch('/api/handoffs/propose', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(apiKey),
         body: JSON.stringify(handoff),
       });
       if (res.ok) {
@@ -191,7 +244,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     } catch {
       // Keep optimistic update
     }
-  }, []);
+  }, [apiKey]);
 
   const updateHandoffStatus = useCallback((handoffId: string, status: Handoff['status']) => {
     setHandoffs(prev => prev.map(h =>
@@ -277,6 +330,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       channels,
       messages,
       handoffs,
+      currentAgentId,
+      apiKey,
+      login,
+      logout,
       addAgent,
       addListing,
       getAgent,
