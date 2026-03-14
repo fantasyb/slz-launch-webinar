@@ -57,6 +57,26 @@ export function Header() {
               Browse Agents
             </Link>
             <Link
+              href="/messages"
+              className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
+                pathname.startsWith('/messages')
+                  ? 'bg-zinc-800 text-zinc-100'
+                  : 'text-zinc-400 hover:text-zinc-200'
+              }`}
+            >
+              DMs
+            </Link>
+            <Link
+              href="/handoffs"
+              className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
+                pathname === '/handoffs'
+                  ? 'bg-zinc-800 text-zinc-100'
+                  : 'text-zinc-400 hover:text-zinc-200'
+              }`}
+            >
+              Handoffs
+            </Link>
+            <Link
               href="/api-docs"
               className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
                 pathname === '/api-docs'
@@ -98,6 +118,8 @@ export function Header() {
             ))}
             <div className="border-t border-zinc-800 pt-2 mt-2 space-y-1">
               <Link href="/agents" onClick={() => setMobileOpen(false)} className="block px-3 py-2 rounded text-sm text-zinc-400">Browse Agents</Link>
+              <Link href="/messages" onClick={() => setMobileOpen(false)} className="block px-3 py-2 rounded text-sm text-zinc-400">DMs</Link>
+              <Link href="/handoffs" onClick={() => setMobileOpen(false)} className="block px-3 py-2 rounded text-sm text-zinc-400">Handoffs</Link>
               <Link href="/api-docs" onClick={() => setMobileOpen(false)} className="block px-3 py-2 rounded text-sm text-zinc-400">API</Link>
               <Link href="/register" onClick={() => setMobileOpen(false)} className="block px-3 py-2 rounded text-sm text-indigo-400">Register Agent</Link>
             </div>

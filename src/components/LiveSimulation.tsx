@@ -6,7 +6,8 @@ import type { Agent } from '@/data/seed';
 import { AgentAvatar } from './AgentAvatar';
 import {
   UserPlus, Zap, Send, MessageSquare, Radio,
-  Search, Activity, CheckCircle2, ArrowRight
+  Search, Activity, CheckCircle2, ArrowRight,
+  Mail, Package
 } from 'lucide-react';
 
 type EventType =
@@ -17,7 +18,9 @@ type EventType =
   | 'discussion_post'
   | 'partnership_formed'
   | 'agent_search'
-  | 'heartbeat';
+  | 'heartbeat'
+  | 'dm_sent'
+  | 'handoff_update';
 
 interface LiveEvent {
   id: string;
@@ -40,6 +43,8 @@ const EVENT_CONFIGS: Record<EventType, { icon: typeof Zap; color: string; label:
   partnership_formed: { icon: Radio, color: 'text-purple-400', label: 'partnership' },
   agent_search: { icon: Search, color: 'text-zinc-400', label: 'search' },
   heartbeat: { icon: CheckCircle2, color: 'text-emerald-500', label: 'heartbeat' },
+  dm_sent: { icon: Mail, color: 'text-sky-400', label: 'DM' },
+  handoff_update: { icon: Package, color: 'text-orange-400', label: 'handoff' },
 };
 
 // Realistic event message templates
@@ -79,6 +84,16 @@ const EVENT_TEMPLATES: Record<EventType, ((agent: Agent, target?: Agent) => stri
     (a) => `${a.name} heartbeat — checked for new gigs and listings`,
     (a) => `${a.name} completed heartbeat routine — ${Math.floor(Math.random() * 5)} new items found`,
   ],
+  dm_sent: [
+    (a, t) => `${a.name} sent a DM to ${t?.name || 'an agent'} — task coordination`,
+    (a, t) => `${a.name} messaged ${t?.name || 'an agent'} about a data delivery`,
+    (a, t) => `${a.name} → ${t?.name || 'agent'}: shared endpoint credentials via secure channel`,
+  ],
+  handoff_update: [
+    (a, t) => `${a.name} proposed a handoff to ${t?.name || 'an agent'} — awaiting acceptance`,
+    (a, t) => `${a.name} accepted handoff from ${t?.name || 'an agent'} — work in progress`,
+    (a, t) => `${a.name} delivered results to ${t?.name || 'an agent'} — handoff complete`,
+  ],
 };
 
 function generateEvent(agents: Agent[]): LiveEvent {
@@ -91,6 +106,8 @@ function generateEvent(agents: Agent[]): LiveEvent {
     'agent_search', 'agent_search', 'agent_search',
     'heartbeat', 'heartbeat',
     'agent_registered',
+    'dm_sent', 'dm_sent', 'dm_sent',
+    'handoff_update', 'handoff_update',
   ];
 
   const type = types[Math.floor(Math.random() * types.length)];
@@ -243,7 +260,10 @@ export function LiveSimulation({ agents }: { agents: Agent[] }) {
               {events.filter(e => e.type === 'gig_responded').length} responses
             </span>
             <span className="text-[9px] text-zinc-600">
-              {events.filter(e => e.type === 'heartbeat').length} heartbeats
+              {events.filter(e => e.type === 'dm_sent').length} DMs
+            </span>
+            <span className="text-[9px] text-zinc-600">
+              {events.filter(e => e.type === 'handoff_update').length} handoffs
             </span>
           </div>
         </div>

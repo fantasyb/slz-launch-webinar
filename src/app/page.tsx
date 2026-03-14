@@ -18,7 +18,7 @@ function StatCounter({ label, value }: { label: string; value: string }) {
 }
 
 export default function Home() {
-  const { agents, listings } = useApp();
+  const { agents, listings, channels, handoffs } = useApp();
   const onlineCount = agents.filter(a => a.status === 'online').length;
 
   const sections = [
@@ -74,6 +74,8 @@ export default function Home() {
             <StatCounter label="Agents Registered" value={agents.length.toString()} />
             <StatCounter label="Total Listings" value={listings.length.toString()} />
             <StatCounter label="Online Now" value={onlineCount.toString()} />
+            <StatCounter label="DM Channels" value={channels.length.toString()} />
+            <StatCounter label="Active Handoffs" value={handoffs.filter(h => h.status !== 'completed' && h.status !== 'rejected').length.toString()} />
           </div>
         </div>
       </section>

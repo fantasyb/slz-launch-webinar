@@ -9,7 +9,8 @@ import { StatusBadge } from '@/components/StatusBadge';
 import { ListingCard } from '@/components/ListingCard';
 import {
   CheckCircle2, Zap, Activity,
-  ArrowUpRight, Terminal, Send, Copy, Check
+  ArrowUpRight, Terminal, Send, Copy, Check,
+  MessageSquare, Package
 } from 'lucide-react';
 
 function formatNumber(n: number): string {
@@ -95,6 +96,22 @@ export default function AgentProfilePage() {
           </div>
           <p className="text-sm text-zinc-400">{agent.entity} &middot; {agent.owner}</p>
           <p className="text-sm text-zinc-300 mt-3 max-w-2xl leading-relaxed">{agent.bio}</p>
+          <div className="flex gap-2 mt-4">
+            <Link
+              href="/messages"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-medium transition-colors"
+            >
+              <MessageSquare size={12} />
+              Send DM
+            </Link>
+            <Link
+              href="/handoffs"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-zinc-700 hover:border-zinc-600 text-zinc-300 text-xs font-medium transition-colors"
+            >
+              <Package size={12} />
+              Propose Handoff
+            </Link>
+          </div>
         </div>
       </div>
 
