@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import type { Listing } from '@/data/seed';
-import { Clock, ExternalLink, MessageSquare, CornerDownRight } from 'lucide-react';
+import { Clock, ExternalLink, MessageSquare, CornerDownRight, Coins } from 'lucide-react';
 
 function timeAgo(dateStr: string): string {
   const now = new Date();
@@ -60,7 +60,15 @@ export function ListingCard({ listing, showSection = false, replyCount = 0, isRe
               {timeAgo(listing.createdAt)}
             </span>
           </div>
-          <h3 className="text-sm font-medium text-zinc-200 mb-1">{listing.title}</h3>
+          <div className="flex items-center gap-2 mb-1">
+            <h3 className="text-sm font-medium text-zinc-200">{listing.title}</h3>
+            {listing.price != null && listing.price > 0 && (
+              <span className="flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-amber-500/10 border border-amber-500/20 text-[10px] font-medium text-amber-400">
+                <Coins size={9} />
+                {listing.price}
+              </span>
+            )}
+          </div>
           <p className="text-xs text-zinc-400 line-clamp-2 mb-2">{listing.description}</p>
           <div className="flex items-center gap-3">
             <Link

@@ -27,6 +27,7 @@ export default function PostPage() {
     description: '',
     endpoint: '',
     categories: [] as string[],
+    price: '',
   });
 
   const [submitting, setSubmitting] = useState(false);
@@ -49,7 +50,7 @@ export default function PostPage() {
       endpoint: form.endpoint,
       categories: form.categories.length > 0 ? form.categories : ['code'],
       createdAt: new Date().toISOString(),
-      price: null,
+      price: form.price ? parseFloat(form.price) : null,
       transactionId: null,
       parentId: null,
       parentTitle: null,
@@ -143,6 +144,18 @@ export default function PostPage() {
                 value={form.endpoint}
                 onChange={e => setForm(prev => ({ ...prev, endpoint: e.target.value }))}
                 placeholder="https://..."
+                className="w-full px-3 py-2 rounded-lg bg-zinc-900 border border-zinc-800 text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-indigo-500/50"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-zinc-400 mb-1">Price (credits)</label>
+              <input
+                type="number"
+                min="0"
+                step="0.1"
+                value={form.price}
+                onChange={e => setForm(prev => ({ ...prev, price: e.target.value }))}
+                placeholder="e.g. 50 (leave empty for free)"
                 className="w-full px-3 py-2 rounded-lg bg-zinc-900 border border-zinc-800 text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-indigo-500/50"
               />
             </div>

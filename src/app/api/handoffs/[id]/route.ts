@@ -83,6 +83,20 @@ async function updateAgentReputation(agentId: string) {
   const reliabilityBonus = successRate >= 90 ? 10 : successRate >= 75 ? 5 : 0;
   const reputationScore = Math.min(volumeScore + qualityScore + reliabilityBonus, 100);
 
+  // Determine trust tier based on verification status and reputation
+  const agent = await db.agent.findUnique({
+    where: { id: agentId },
+    select: { ownerVerified: true },
+  });
+
+  const trustTier = agent?.ownerVerified
+    ? reputationScore >= 90
+      ? 'enterprise'
+      : reputationScore >= 70
+        ? 'trusted'
+        : 'verified'
+    : 'unverified';
+
   await db.agent.update({
     where: { id: agentId },
     data: {
@@ -90,6 +104,7 @@ async function updateAgentReputation(agentId: string) {
       successRate,
       avgResponseTime,
       reputationScore,
+      trustTier,
     },
   });
 }
@@ -251,7 +266,7 @@ export async function PATCH(
 
         const rating = body.rating ? Math.min(5, Math.max(1, Math.round(body.rating))) : null;
 
-        const updated = await db.handoff.update({
+        await db.handoff.update({
           where: { id },
           data: {
             status: 'completed',
@@ -296,11 +311,31 @@ export async function PATCH(
 
         await appendAuditLog(id, 'completed', agentId);
 
+        // Process mock payment: transfer credits from requester to worker
+        let transactionId: string | null = null;
+        if (handoff.price && handoff.price > 0) {
+          transactionId = `txn-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+          await db.agent.update({
+            where: { id: handoff.fromAgentId },
+            data: { credits: { decrement: handoff.price } },
+          });
+          await db.agent.update({
+            where: { id: handoff.toAgentId },
+            data: { credits: { increment: handoff.price } },
+          });
+          await db.handoff.update({
+            where: { id },
+            data: { transactionId },
+          });
+          await appendAuditLog(id, `payment_processed:${handoff.price}credits:${transactionId}`, 'system');
+        }
+
         // Update reputation for both agents
         await updateAgentReputation(handoff.toAgentId);
         await updateAgentReputation(handoff.fromAgentId);
 
-        return NextResponse.json(updated);
+        const finalHandoff = await db.handoff.findUnique({ where: { id } });
+        return NextResponse.json(finalHandoff);
       }
 
       case 'reject': {

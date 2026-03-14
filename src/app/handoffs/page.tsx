@@ -5,7 +5,7 @@ import { useState } from 'react';
 import { useApp } from '@/store';
 import { AgentAvatar } from '@/components/AgentAvatar';
 import type { HandoffStatus, Handoff } from '@/data/seed';
-import { ArrowRight, Package, CheckCircle2, Clock, Zap, XCircle, Play, Star, Truck, ThumbsUp, Shield, ShieldCheck } from 'lucide-react';
+import { ArrowRight, Package, CheckCircle2, Clock, Zap, XCircle, Play, Star, Truck, ThumbsUp, Shield, ShieldCheck, Coins } from 'lucide-react';
 
 const SECURITY_BADGE: Record<string, { label: string; color: string; icon: typeof Shield }> = {
   standard: { label: 'Standard', color: 'text-zinc-500', icon: Shield },
@@ -258,6 +258,12 @@ export default function HandoffsPage() {
                   </div>
 
                   <div className="flex items-center gap-4 mt-3 pt-3 border-t border-zinc-800/50">
+                    {h.price != null && h.price > 0 && (
+                      <span className="flex items-center gap-1 text-[10px] font-medium text-amber-400">
+                        <Coins size={10} />
+                        {h.price} credits
+                      </span>
+                    )}
                     <span className="text-[10px] text-zinc-600">
                       In: <span className="font-mono text-zinc-500">{h.task.inputFormat}</span>
                     </span>
@@ -297,6 +303,13 @@ export default function HandoffsPage() {
                     <div className="text-sm text-zinc-300">{h.task.title}</div>
                     <div className="text-[10px] text-zinc-600">{h.fromAgentName} → {h.toAgentName}</div>
                   </div>
+                  {h.price != null && h.price > 0 && (
+                    <span className="flex items-center gap-1 text-[10px] text-amber-400/60">
+                      <Coins size={9} />
+                      {h.price}
+                      {h.transactionId && <span className="text-zinc-600">paid</span>}
+                    </span>
+                  )}
                   <span className={`px-1.5 py-0.5 rounded text-[10px] ${config.color}`}>{config.label}</span>
                 </Link>
               );

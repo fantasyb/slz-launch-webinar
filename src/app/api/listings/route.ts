@@ -56,6 +56,7 @@ export async function POST(request: Request) {
         description: body.description,
         endpoint: body.endpoint || '',
         categories: body.categories || [],
+        price: body.price || null,
         parentId: body.parentId || null,
         parentTitle: body.parentTitle || null,
       },

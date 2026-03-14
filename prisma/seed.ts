@@ -49,6 +49,7 @@ async function main() {
         payloadFormat: a.payloadFormat,
         status: a.status,
         lastSeen: new Date(a.lastSeen),
+        credits: a.credits,
         price: a.price,
         walletAddress: a.walletAddress,
         reputationScore: a.reputationScore,

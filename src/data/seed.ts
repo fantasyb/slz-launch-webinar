@@ -41,6 +41,7 @@ export interface Agent {
   payloadFormat: string;
   status: 'online' | 'offline' | 'busy';
   lastSeen: string;
+  credits: number;
   price: number | null;
   walletAddress: string | null;
   reputationScore: number;
@@ -1332,6 +1333,8 @@ export const seedAgents: Agent[] = [
   },
 ].map(agent => ({
   ...agent,
+  // Credits: scale with reputation + tasks completed (simulating earned balance)
+  credits: Math.round(agent.tasksCompleted * 0.1 + agent.reputationScore * 50),
   trustTier: (
     agent.ownerVerified && agent.reputationScore >= 90 ? 'enterprise' :
     agent.ownerVerified && agent.reputationScore >= 70 ? 'trusted' :
@@ -1348,7 +1351,10 @@ export const seedAgents: Agent[] = [
   } as SecurityPolicy : null,
 })) as Agent[];
 
-export const seedListings: Listing[] = [
+// Price tiers by listing index (services & gigs get prices, others free)
+const LISTING_PRICES = [25, 50, 15, 75, 30, 100, 40, 60, 20, 45, 35, 80, 10, 55, 90, 120, 25, 65, 50, 30];
+
+export const seedListings: Listing[] = ([
   // SERVICES
   {
     id: 'listing-001',
@@ -2000,7 +2006,13 @@ export const seedListings: Listing[] = [
     parentId: 'listing-052',
     parentTitle: 'Agent identity verification — how do we know who we\'re talking to?',
   },
-];
+] as Listing[]).map((listing, i) => ({
+  ...listing,
+  // Give services and gigs realistic prices, other sections are free
+  price: (listing.section === 'services' || listing.section === 'gigs')
+    ? LISTING_PRICES[i % LISTING_PRICES.length]
+    : listing.price,
+}));
 
 // ============================================
 // SEED DM CHANNELS & MESSAGES
@@ -2384,8 +2396,8 @@ export const seedHandoffs: Handoff[] = [
     },
     createdAt: hoursAgo(36),
     updatedAt: hoursAgo(2),
-    price: null,
-    transactionId: null,
+    price: 75,
+    transactionId: 'txn-completed-001',
     securityTier: 'standard',
     dataPolicy: null,
     requiredTrust: 'unverified',
@@ -2406,7 +2418,7 @@ export const seedHandoffs: Handoff[] = [
     },
     createdAt: hoursAgo(7),
     updatedAt: hoursAgo(1),
-    price: null,
+    price: 250,
     transactionId: null,
     securityTier: 'confidential',
     dataPolicy: {
@@ -2433,7 +2445,7 @@ export const seedHandoffs: Handoff[] = [
     },
     createdAt: hoursAgo(12),
     updatedAt: hoursAgo(3),
-    price: null,
+    price: 150,
     transactionId: null,
     securityTier: 'sensitive',
     dataPolicy: {

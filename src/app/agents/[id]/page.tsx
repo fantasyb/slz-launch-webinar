@@ -10,7 +10,8 @@ import { ListingCard } from '@/components/ListingCard';
 import {
   Zap, Activity,
   ArrowUpRight, Terminal, Send, Copy, Check,
-  MessageSquare, Package, Star, Shield, ShieldCheck, ShieldAlert
+  MessageSquare, Package, Star, Shield, ShieldCheck, ShieldAlert,
+  Coins, BadgeCheck, Globe, Twitter
 } from 'lucide-react';
 
 const TRUST_BADGE: Record<string, { label: string; color: string; icon: typeof Shield }> = {
@@ -51,10 +52,13 @@ const MOCK_RESPONSES: Record<string, string> = {
 
 export default function AgentProfilePage() {
   const params = useParams();
-  const { getAgent, getListingsByAgent, getHandoffsForAgent } = useApp();
+  const { getAgent, getListingsByAgent, getHandoffsForAgent, refreshData } = useApp();
   const [testResult, setTestResult] = useState<string | null>(null);
   const [testing, setTesting] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [verifying, setVerifying] = useState(false);
+  const [verifyMethod, setVerifyMethod] = useState<'domain' | 'twitter' | null>(null);
+  const [verifyResult, setVerifyResult] = useState<{ success: boolean; message: string } | null>(null);
 
   const agent = getAgent(params.id as string);
   if (!agent) {
@@ -84,6 +88,33 @@ export default function AgentProfilePage() {
     navigator.clipboard.writeText(agent.endpoint);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleVerify = async (method: 'domain' | 'twitter') => {
+    setVerifying(true);
+    setVerifyResult(null);
+    try {
+      // For demo: auto-generate proof based on method
+      const proof = method === 'domain'
+        ? new URL(agent.endpoint).hostname
+        : `https://twitter.com/${agent.owner}/status/verify-${agent.id}`;
+      const res = await fetch('/api/agents/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agentId: agent.id, method, proof }),
+      });
+      const data = await res.json();
+      if (data.verified) {
+        setVerifyResult({ success: true, message: `Verified via ${method}! Trust tier: ${data.trustTier}` });
+        await refreshData();
+      } else {
+        setVerifyResult({ success: false, message: data.error || 'Verification failed' });
+      }
+    } catch {
+      setVerifyResult({ success: false, message: 'Network error' });
+    }
+    setVerifying(false);
+    setVerifyMethod(null);
   };
 
   return (
@@ -381,11 +412,67 @@ export default function AgentProfilePage() {
                   );
                 })()}
               </div>
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] text-zinc-500">Identity</span>
-                <span className="text-xs text-zinc-300">
-                  {agent.ownerVerified ? `Verified (${agent.verificationMethod})` : 'Not verified'}
-                </span>
+              <div>
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] text-zinc-500">Identity</span>
+                  <span className="text-xs text-zinc-300">
+                    {agent.ownerVerified ? (
+                      <span className="flex items-center gap-1 text-emerald-400">
+                        <BadgeCheck size={12} />
+                        Verified ({agent.verificationMethod})
+                      </span>
+                    ) : 'Not verified'}
+                  </span>
+                </div>
+                {!agent.ownerVerified && !verifyMethod && (
+                  <div className="flex gap-2 mt-2">
+                    <button
+                      onClick={() => setVerifyMethod('domain')}
+                      disabled={verifying}
+                      className="flex items-center gap-1 px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-[10px] text-zinc-400 transition-colors"
+                    >
+                      <Globe size={10} />
+                      Verify Domain
+                    </button>
+                    <button
+                      onClick={() => setVerifyMethod('twitter')}
+                      disabled={verifying}
+                      className="flex items-center gap-1 px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-[10px] text-zinc-400 transition-colors"
+                    >
+                      <Twitter size={10} />
+                      Verify Twitter
+                    </button>
+                  </div>
+                )}
+                {verifyMethod && (
+                  <div className="mt-2 p-2 rounded bg-zinc-900 border border-zinc-800">
+                    <p className="text-[10px] text-zinc-500 mb-2">
+                      {verifyMethod === 'domain'
+                        ? `We'll verify ownership of the domain in your endpoint URL.`
+                        : `We'll check for a tweet containing your agent ID.`}
+                    </p>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => handleVerify(verifyMethod)}
+                        disabled={verifying}
+                        className="px-2 py-1 rounded bg-indigo-600 hover:bg-indigo-500 text-[10px] text-white font-medium transition-colors disabled:opacity-50"
+                      >
+                        {verifying ? 'Verifying...' : 'Confirm'}
+                      </button>
+                      <button
+                        onClick={() => { setVerifyMethod(null); setVerifyResult(null); }}
+                        className="px-2 py-1 rounded bg-zinc-800 text-[10px] text-zinc-400 transition-colors"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
+                {verifyResult && (
+                  <div className={`mt-2 text-[10px] ${verifyResult.success ? 'text-emerald-400' : 'text-red-400'}`}>
+                    {verifyResult.message}
+                  </div>
+                )}
               </div>
               {agent.securityPolicy && (
                 <>
@@ -418,6 +505,32 @@ export default function AgentProfilePage() {
                     </div>
                   )}
                 </>
+              )}
+            </div>
+          </div>
+
+          {/* Credits & Pricing */}
+          <div className="border border-zinc-800 rounded-lg p-5">
+            <h2 className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-4 flex items-center gap-1.5">
+              <Coins size={12} className="text-amber-400" />
+              Credits & Pricing
+            </h2>
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] text-zinc-500">Balance</span>
+                <span className="text-lg font-bold text-amber-400">{formatNumber(agent.credits || 0)}</span>
+              </div>
+              {agent.price && (
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] text-zinc-500">Base Price</span>
+                  <span className="text-xs text-zinc-300">{agent.price} credits/task</span>
+                </div>
+              )}
+              {agent.walletAddress && (
+                <div>
+                  <div className="text-[10px] text-zinc-500 mb-1">Wallet</div>
+                  <code className="text-[10px] text-zinc-400 font-mono break-all">{agent.walletAddress}</code>
+                </div>
               )}
             </div>
           </div>

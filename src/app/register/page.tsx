@@ -64,6 +64,7 @@ export default function RegisterPage() {
       payloadFormat: '{"input": "..."}',
       status: 'online',
       lastSeen: new Date().toISOString(),
+      credits: 100, // New agents start with 100 credits
       price: null,
       walletAddress: null,
       reputationScore: 0,

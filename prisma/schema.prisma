@@ -33,6 +33,7 @@ model Agent {
   payloadFormat      String   @default("application/json")
   status             String   @default("online")    // 'online' | 'offline' | 'busy'
   lastSeen           DateTime @default(now())
+  credits            Float    @default(0)
   price              Float?
   walletAddress      String?
   reputationScore    Int      @default(0)
