@@ -2,8 +2,20 @@
 // Defines agent roles, system prompts, tool definitions, and orchestration logic
 
 import Anthropic from '@anthropic-ai/sdk';
+import Stripe from 'stripe';
+import { db } from './db';
 
 const anthropic = new Anthropic();
+
+// Lazy-init Stripe client (only when key is available)
+let _stripe: Stripe | null = null;
+function getStripe(): Stripe | null {
+  if (_stripe) return _stripe;
+  const key = process.env.STRIPE_SECRET_KEY;
+  if (!key) return null;
+  _stripe = new Stripe(key);
+  return _stripe;
+}
 
 // ─── Tool Definitions ───────────────────────────────────
 
@@ -307,179 +319,678 @@ export interface RoleDef {
   toolHandler?: ToolHandler;
 }
 
-// Default tool handler — returns placeholder data (replace with real API calls)
 async function handleStripeTools(name: string, input: Record<string, unknown>): Promise<string> {
-  // TODO: Replace with real Stripe SDK calls using process.env.STRIPE_SECRET_KEY
+  const stripe = getStripe();
+  if (!stripe) {
+    return JSON.stringify({ error: 'STRIPE_SECRET_KEY not configured. Add it to your environment variables to enable financial data.' });
+  }
+
   switch (name) {
-    case 'stripe_get_balance':
+    case 'stripe_get_balance': {
+      const balance = await stripe.balance.retrieve();
       return JSON.stringify({
-        available: [{ amount: 0, currency: 'usd' }],
-        pending: [{ amount: 0, currency: 'usd' }],
-        _note: 'Connect your Stripe API key (STRIPE_SECRET_KEY) to get real data',
+        available: balance.available.map(b => ({ amount: b.amount / 100, currency: b.currency })),
+        pending: balance.pending.map(b => ({ amount: b.amount / 100, currency: b.currency })),
       });
-    case 'stripe_list_charges':
+    }
+    case 'stripe_list_charges': {
+      const limit = Math.min((input.limit as number) || 10, 100);
+      const params: Stripe.ChargeListParams = { limit };
+      const charges = await stripe.charges.list(params);
       return JSON.stringify({
-        charges: [],
-        has_more: false,
-        _note: `No Stripe key configured. Requested: limit=${input.limit || 10}, status=${input.status || 'all'}`,
+        charges: charges.data.map(c => ({
+          id: c.id,
+          amount: c.amount / 100,
+          currency: c.currency,
+          status: c.status,
+          description: c.description,
+          customer: c.customer,
+          created: new Date(c.created * 1000).toISOString(),
+          receipt_email: c.receipt_email,
+        })),
+        has_more: charges.has_more,
+        total_count: charges.data.length,
       });
-    case 'stripe_get_mrr':
+    }
+    case 'stripe_get_mrr': {
+      const subs = await stripe.subscriptions.list({ status: 'active', limit: 100 });
+      let mrr = 0;
+      for (const sub of subs.data) {
+        for (const item of sub.items.data) {
+          const price = item.price;
+          const amount = price.unit_amount || 0;
+          if (price.recurring?.interval === 'month') {
+            mrr += amount;
+          } else if (price.recurring?.interval === 'year') {
+            mrr += amount / 12;
+          }
+        }
+      }
       return JSON.stringify({
-        mrr: 0,
+        mrr: mrr / 100,
         currency: 'usd',
-        active_subscriptions: 0,
-        _note: 'Connect your Stripe API key to calculate real MRR from active subscriptions',
+        active_subscriptions: subs.data.length,
+        has_more: subs.has_more,
       });
-    case 'stripe_list_subscriptions':
+    }
+    case 'stripe_list_subscriptions': {
+      const limit = Math.min((input.limit as number) || 10, 100);
+      const params: Stripe.SubscriptionListParams = { limit };
+      if (input.status) params.status = input.status as Stripe.SubscriptionListParams['status'];
+      const subs = await stripe.subscriptions.list(params);
       return JSON.stringify({
-        subscriptions: [],
-        _note: `No Stripe key configured. Filter: status=${input.status || 'all'}`,
+        subscriptions: subs.data.map(s => ({
+          id: s.id,
+          status: s.status,
+          customer: s.customer,
+          created: new Date(s.created * 1000).toISOString(),
+          start_date: new Date(s.start_date * 1000).toISOString(),
+          items: s.items.data.map(i => ({
+            price_id: i.price.id,
+            amount: (i.price.unit_amount || 0) / 100,
+            currency: i.price.currency,
+            interval: i.price.recurring?.interval,
+          })),
+          cancel_at_period_end: s.cancel_at_period_end,
+        })),
+        total: subs.data.length,
+        has_more: subs.has_more,
       });
-    case 'stripe_get_customer':
+    }
+    case 'stripe_get_customer': {
+      let customer: Stripe.Customer | Stripe.DeletedCustomer | null = null;
+      if (input.customer_id) {
+        customer = await stripe.customers.retrieve(input.customer_id as string);
+      } else if (input.email) {
+        const list = await stripe.customers.list({ email: input.email as string, limit: 1 });
+        customer = list.data[0] || null;
+      }
+      if (!customer || customer.deleted) {
+        return JSON.stringify({ customer: null, message: 'Customer not found' });
+      }
+      const charges = await stripe.charges.list({ customer: customer.id, limit: 5 });
+      const subs = await stripe.subscriptions.list({ customer: customer.id, limit: 5 });
       return JSON.stringify({
-        customer: null,
-        _note: `No Stripe key configured. Lookup: ${input.customer_id || input.email || 'no identifier'}`,
+        customer: {
+          id: customer.id,
+          email: customer.email,
+          name: customer.name,
+          created: new Date(customer.created * 1000).toISOString(),
+          balance: customer.balance / 100,
+          currency: customer.currency,
+          metadata: customer.metadata,
+        },
+        recent_charges: charges.data.map(c => ({
+          id: c.id, amount: c.amount / 100, status: c.status,
+          created: new Date(c.created * 1000).toISOString(),
+        })),
+        subscriptions: subs.data.map(s => ({
+          id: s.id, status: s.status,
+          amount: s.items.data.reduce((sum, i) => sum + ((i.price.unit_amount || 0) / 100), 0),
+        })),
       });
-    case 'stripe_list_invoices':
+    }
+    case 'stripe_list_invoices': {
+      const limit = Math.min((input.limit as number) || 10, 100);
+      const params: Stripe.InvoiceListParams = { limit };
+      if (input.status) params.status = input.status as Stripe.InvoiceListParams['status'];
+      const invoices = await stripe.invoices.list(params);
       return JSON.stringify({
-        invoices: [],
-        _note: `No Stripe key configured. Filter: status=${input.status || 'all'}`,
+        invoices: invoices.data.map(inv => ({
+          id: inv.id,
+          number: inv.number,
+          customer: inv.customer,
+          customer_email: inv.customer_email,
+          status: inv.status,
+          amount_due: (inv.amount_due || 0) / 100,
+          amount_paid: (inv.amount_paid || 0) / 100,
+          currency: inv.currency,
+          due_date: inv.due_date ? new Date(inv.due_date * 1000).toISOString() : null,
+          created: new Date(inv.created * 1000).toISOString(),
+          hosted_invoice_url: inv.hosted_invoice_url,
+        })),
+        total: invoices.data.length,
+        has_more: invoices.has_more,
       });
+    }
     default:
       return JSON.stringify({ error: `Unknown Stripe tool: ${name}` });
   }
 }
 
+async function qbFetch(endpoint: string): Promise<Record<string, unknown> | null> {
+  const token = process.env.QB_ACCESS_TOKEN;
+  const realmId = process.env.QB_REALM_ID;
+  if (!token || !realmId) return null;
+
+  const baseUrl = process.env.QB_SANDBOX === 'true'
+    ? 'https://sandbox-quickbooks.api.intuit.com'
+    : 'https://quickbooks.api.intuit.com';
+
+  const res = await fetch(`${baseUrl}/v3/company/${realmId}/${endpoint}`, {
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Accept': 'application/json',
+    },
+  });
+  if (!res.ok) throw new Error(`QuickBooks API error ${res.status}: ${await res.text()}`);
+  return res.json() as Promise<Record<string, unknown>>;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function extractReportRows(report: any): { name: string; amount: number }[] {
+  const rows: { name: string; amount: number }[] = [];
+  if (!report?.Rows?.Row) return rows;
+  for (const row of report.Rows.Row) {
+    if (row.Summary?.ColData) {
+      const cols = row.Summary.ColData;
+      rows.push({ name: row.group || cols[0]?.value || 'Unknown', amount: parseFloat(cols[cols.length - 1]?.value || '0') });
+    } else if (row.ColData) {
+      const cols = row.ColData;
+      rows.push({ name: cols[0]?.value || 'Unknown', amount: parseFloat(cols[cols.length - 1]?.value || '0') });
+    }
+  }
+  return rows;
+}
+
 async function handleQuickBooksTools(name: string, input: Record<string, unknown>): Promise<string> {
-  // TODO: Replace with real QuickBooks API calls using process.env.QB_ACCESS_TOKEN
+  if (!process.env.QB_ACCESS_TOKEN || !process.env.QB_REALM_ID) {
+    return JSON.stringify({ error: 'QB_ACCESS_TOKEN and QB_REALM_ID not configured. Add them to your environment variables.' });
+  }
+
   switch (name) {
-    case 'qb_get_profit_loss':
+    case 'qb_get_profit_loss': {
+      const today = new Date().toISOString().split('T')[0];
+      const monthStart = today.slice(0, 7) + '-01';
+      const start = (input.start_date as string) || monthStart;
+      const end = (input.end_date as string) || today;
+      const data = await qbFetch(`reports/ProfitAndLoss?start_date=${start}&end_date=${end}`);
+      const report = (data as Record<string, unknown>)?.['QueryResponse'] || data;
+      const rows = extractReportRows(report);
+      const revenue = rows.find(r => r.name === 'Income' || r.name === 'Total Income')?.amount || 0;
+      const expenses = rows.find(r => r.name === 'Expenses' || r.name === 'Total Expenses')?.amount || 0;
       return JSON.stringify({
         report: 'profit_and_loss',
-        period: { start: input.start_date || 'month_start', end: input.end_date || 'today' },
-        total_revenue: 0,
-        total_expenses: 0,
-        net_income: 0,
-        _note: 'Connect your QuickBooks API credentials (QB_ACCESS_TOKEN, QB_REALM_ID) to get real data',
+        period: { start, end },
+        total_revenue: revenue,
+        total_expenses: expenses,
+        net_income: revenue - expenses,
+        line_items: rows,
       });
-    case 'qb_get_balance_sheet':
+    }
+    case 'qb_get_balance_sheet': {
+      const asOf = (input.as_of as string) || new Date().toISOString().split('T')[0];
+      const data = await qbFetch(`reports/BalanceSheet?date_macro=Today`);
+      const rows = extractReportRows(data);
+      const assets = rows.find(r => r.name.includes('Asset'))?.amount || 0;
+      const liabilities = rows.find(r => r.name.includes('Liabilit'))?.amount || 0;
+      const equity = rows.find(r => r.name.includes('Equity'))?.amount || 0;
       return JSON.stringify({
         report: 'balance_sheet',
-        as_of: input.as_of || 'today',
-        total_assets: 0,
-        total_liabilities: 0,
-        total_equity: 0,
-        _note: 'Connect QuickBooks to get real balance sheet data',
+        as_of: asOf,
+        total_assets: assets,
+        total_liabilities: liabilities,
+        total_equity: equity,
+        line_items: rows,
       });
-    case 'qb_get_cash_flow':
+    }
+    case 'qb_get_cash_flow': {
+      const today = new Date().toISOString().split('T')[0];
+      const start = (input.start_date as string) || today.slice(0, 7) + '-01';
+      const end = (input.end_date as string) || today;
+      const data = await qbFetch(`reports/CashFlow?start_date=${start}&end_date=${end}`);
+      const rows = extractReportRows(data);
+      const operating = rows.find(r => r.name.includes('Operating'))?.amount || 0;
+      const investing = rows.find(r => r.name.includes('Investing'))?.amount || 0;
+      const financing = rows.find(r => r.name.includes('Financing'))?.amount || 0;
       return JSON.stringify({
         report: 'cash_flow',
-        operating: 0,
-        investing: 0,
-        financing: 0,
-        net_change: 0,
-        _note: 'Connect QuickBooks to get real cash flow data',
+        period: { start, end },
+        operating,
+        investing,
+        financing,
+        net_change: operating + investing + financing,
+        line_items: rows,
       });
-    case 'qb_list_outstanding_invoices':
+    }
+    case 'qb_list_outstanding_invoices': {
+      const data = await qbFetch(`query?query=${encodeURIComponent("SELECT * FROM Invoice WHERE Balance > '0' ORDERBY DueDate")}`);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const qr = data as any;
+      const invoices = (qr?.QueryResponse?.Invoice || []).map((inv: Record<string, unknown>) => {
+        const dueDate = inv.DueDate as string;
+        const now = new Date();
+        const due = new Date(dueDate);
+        const daysOverdue = Math.floor((now.getTime() - due.getTime()) / (1000 * 60 * 60 * 24));
+        return {
+          id: inv.Id,
+          customer: (inv.CustomerRef as Record<string, unknown>)?.name,
+          amount: inv.TotalAmt,
+          balance: inv.Balance,
+          due_date: dueDate,
+          days_overdue: daysOverdue > 0 ? daysOverdue : 0,
+          is_overdue: daysOverdue > 0,
+        };
+      });
+      const filtered = input.overdue_only
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        ? invoices.filter((i: any) => i.is_overdue)
+        : invoices;
       return JSON.stringify({
-        invoices: [],
-        total_outstanding: 0,
-        _note: `Connect QuickBooks. Filter: overdue_only=${input.overdue_only || false}`,
+        invoices: filtered,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        total_outstanding: filtered.reduce((s: number, i: any) => s + (i.balance || 0), 0),
+        count: filtered.length,
       });
-    case 'qb_list_expenses':
+    }
+    case 'qb_list_expenses': {
+      const today = new Date().toISOString().split('T')[0];
+      const start = (input.start_date as string) || today.slice(0, 7) + '-01';
+      const limit = (input.limit as number) || 20;
+      let query = `SELECT * FROM Purchase WHERE TxnDate >= '${start}' ORDERBY TxnDate DESC MAXRESULTS ${limit}`;
+      if (input.category) {
+        query = `SELECT * FROM Purchase WHERE TxnDate >= '${start}' AND AccountRef = '${input.category}' ORDERBY TxnDate DESC MAXRESULTS ${limit}`;
+      }
+      const data = await qbFetch(`query?query=${encodeURIComponent(query)}`);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const qr = data as any;
+      const expenses = (qr?.QueryResponse?.Purchase || []).map((exp: Record<string, unknown>) => ({
+        id: exp.Id,
+        amount: exp.TotalAmt,
+        date: exp.TxnDate,
+        account: (exp.AccountRef as Record<string, unknown>)?.name,
+        vendor: (exp.EntityRef as Record<string, unknown>)?.name,
+        memo: exp.PrivateNote,
+      }));
       return JSON.stringify({
-        expenses: [],
-        total: 0,
-        _note: `Connect QuickBooks. Filter: category=${input.category || 'all'}`,
+        expenses,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        total: expenses.reduce((s: number, e: any) => s + (e.amount || 0), 0),
+        count: expenses.length,
       });
+    }
     default:
       return JSON.stringify({ error: `Unknown QuickBooks tool: ${name}` });
   }
 }
 
 async function handleSupportTools(name: string, input: Record<string, unknown>): Promise<string> {
-  // TODO: Replace with real ticketing system integration (Intercom, Zendesk, or custom DB)
   switch (name) {
-    case 'support_list_tickets':
-      return JSON.stringify({
-        tickets: [],
-        total: 0,
-        _note: `Connect your ticketing system. Filter: status=${input.status || 'all'}, priority=${input.priority || 'all'}`,
+    case 'support_list_tickets': {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const where: any = {};
+      if (input.status) where.status = input.status;
+      if (input.priority) where.priority = input.priority;
+      const tickets = await db.supportTicket.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        take: (input.limit as number) || 20,
+        include: { responses: { take: 1, orderBy: { createdAt: 'desc' } } },
       });
-    case 'support_get_ticket':
       return JSON.stringify({
-        ticket: null,
-        _note: `No ticketing system configured. Requested ticket: ${input.ticket_id}`,
+        tickets: tickets.map(t => ({
+          id: t.id,
+          subject: t.subject,
+          status: t.status,
+          priority: t.priority,
+          category: t.category,
+          customerEmail: t.customerEmail,
+          customerName: t.customerName,
+          escalated: t.escalated,
+          tags: t.tags,
+          createdAt: t.createdAt.toISOString(),
+          lastResponse: t.responses[0]?.createdAt?.toISOString() || null,
+        })),
+        total: tickets.length,
       });
-    case 'support_search_tickets':
+    }
+    case 'support_get_ticket': {
+      const ticket = await db.supportTicket.findUnique({
+        where: { id: input.ticket_id as string },
+        include: { responses: { orderBy: { createdAt: 'asc' } } },
+      });
+      if (!ticket) return JSON.stringify({ ticket: null, message: 'Ticket not found' });
       return JSON.stringify({
-        results: [],
-        query: input.query,
-        _note: 'Connect your ticketing system to search tickets',
+        ticket: {
+          id: ticket.id,
+          subject: ticket.subject,
+          body: ticket.body,
+          status: ticket.status,
+          priority: ticket.priority,
+          category: ticket.category,
+          tags: ticket.tags,
+          customerEmail: ticket.customerEmail,
+          customerName: ticket.customerName,
+          escalated: ticket.escalated,
+          createdAt: ticket.createdAt.toISOString(),
+          resolvedAt: ticket.resolvedAt?.toISOString() || null,
+          conversation: ticket.responses.map(r => ({
+            id: r.id,
+            message: r.message,
+            author: r.author,
+            isInternal: r.isInternal,
+            isDraft: r.isDraft,
+            createdAt: r.createdAt.toISOString(),
+          })),
+        },
       });
-    case 'support_draft_response':
+    }
+    case 'support_search_tickets': {
+      const query = input.query as string;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const where: any = {
+        OR: [
+          { subject: { contains: query, mode: 'insensitive' } },
+          { body: { contains: query, mode: 'insensitive' } },
+          { customerEmail: { contains: query, mode: 'insensitive' } },
+        ],
+      };
+      if (input.category) where.category = input.category;
+      const tickets = await db.supportTicket.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        take: 20,
+      });
+      return JSON.stringify({
+        results: tickets.map(t => ({
+          id: t.id,
+          subject: t.subject,
+          status: t.status,
+          priority: t.priority,
+          category: t.category,
+          customerEmail: t.customerEmail,
+          createdAt: t.createdAt.toISOString(),
+        })),
+        query,
+        total: tickets.length,
+      });
+    }
+    case 'support_draft_response': {
+      const response = await db.ticketResponse.create({
+        data: {
+          ticketId: input.ticket_id as string,
+          message: input.response as string,
+          isDraft: true,
+          isInternal: false,
+          author: 'agent',
+        },
+      });
+      if (input.internal_note) {
+        await db.ticketResponse.create({
+          data: {
+            ticketId: input.ticket_id as string,
+            message: input.internal_note as string,
+            isDraft: false,
+            isInternal: true,
+            author: 'agent',
+          },
+        });
+      }
+      // Move ticket to pending (agent has responded, awaiting human review)
+      await db.supportTicket.update({
+        where: { id: input.ticket_id as string },
+        data: { status: 'pending' },
+      });
       return JSON.stringify({
         drafted: true,
+        response_id: response.id,
         ticket_id: input.ticket_id,
-        _note: 'Response drafted (not sent). Connect ticketing system to queue real drafts.',
+        message: 'Response drafted and queued for human review. NOT sent to customer.',
       });
-    case 'support_classify_ticket':
-      return JSON.stringify({
-        classified: true,
-        ticket_id: input.ticket_id,
+    }
+    case 'support_classify_ticket': {
+      const updateData: Record<string, unknown> = {
         category: input.category,
         priority: input.priority,
-        _note: 'Classification saved. Connect ticketing system to apply in real system.',
+      };
+      if (input.tags) updateData.tags = input.tags;
+      if (input.escalate) updateData.escalated = true;
+      const updated = await db.supportTicket.update({
+        where: { id: input.ticket_id as string },
+        data: updateData,
       });
-    case 'support_get_kb_article':
       return JSON.stringify({
-        articles: [],
-        query: input.query,
-        _note: 'No knowledge base configured. Add KB articles to help agents draft better responses.',
+        classified: true,
+        ticket_id: updated.id,
+        category: updated.category,
+        priority: updated.priority,
+        tags: updated.tags,
+        escalated: updated.escalated,
       });
+    }
+    case 'support_get_kb_article': {
+      const query = input.query as string;
+      const articles = await db.kBArticle.findMany({
+        where: {
+          OR: [
+            { title: { contains: query, mode: 'insensitive' } },
+            { content: { contains: query, mode: 'insensitive' } },
+            { tags: { hasSome: query.toLowerCase().split(/\s+/) } },
+          ],
+        },
+        take: 5,
+      });
+      return JSON.stringify({
+        articles: articles.map(a => ({
+          id: a.id,
+          title: a.title,
+          content: a.content,
+          category: a.category,
+          tags: a.tags,
+        })),
+        query,
+        total: articles.length,
+      });
+    }
     default:
       return JSON.stringify({ error: `Unknown support tool: ${name}` });
   }
 }
 
 async function handleClientCareTools(name: string, input: Record<string, unknown>): Promise<string> {
-  // TODO: Replace with real CRM integration (Notion API, Airtable, HubSpot, or custom DB)
   switch (name) {
-    case 'client_list':
-      return JSON.stringify({
-        clients: [],
-        total: 0,
-        _note: `Connect your CRM. Filter: status=${input.status || 'all'}, health=${input.health || 'all'}`,
+    case 'client_list': {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const where: any = {};
+      if (input.status) where.status = input.status;
+      if (input.health) where.health = input.health;
+      const clients = await db.client.findMany({
+        where,
+        orderBy: { updatedAt: 'desc' },
+        include: {
+          contacts: { where: { isPrimary: true }, take: 1 },
+          _count: { select: { deliverables: true, engagementLog: true } },
+        },
       });
-    case 'client_get_profile':
       return JSON.stringify({
-        client: null,
-        _note: `No CRM configured. Lookup: ${input.client_id || input.company_name || 'no identifier'}`,
+        clients: clients.map(c => ({
+          id: c.id,
+          companyName: c.companyName,
+          status: c.status,
+          plan: c.plan,
+          health: c.health,
+          healthScore: c.healthScore,
+          mrr: c.mrr,
+          primaryContact: c.contacts[0]?.name || null,
+          primaryEmail: c.contacts[0]?.email || null,
+          deliverableCount: c._count.deliverables,
+          engagementCount: c._count.engagementLog,
+          contractEnd: c.contractEnd?.toISOString() || null,
+        })),
+        total: clients.length,
       });
-    case 'client_list_deliverables':
+    }
+    case 'client_get_profile': {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const where: any = {};
+      if (input.client_id) where.id = input.client_id;
+      else if (input.company_name) where.companyName = { contains: input.company_name, mode: 'insensitive' };
+      else return JSON.stringify({ error: 'Provide client_id or company_name' });
+
+      const client = await db.client.findFirst({
+        where,
+        include: {
+          contacts: true,
+          deliverables: { orderBy: { createdAt: 'desc' }, take: 10 },
+          engagementLog: { orderBy: { createdAt: 'desc' }, take: 10 },
+        },
+      });
+      if (!client) return JSON.stringify({ client: null, message: 'Client not found' });
+
+      const overdueDeliverables = client.deliverables.filter(
+        d => d.status !== 'delivered' && d.status !== 'approved' && d.dueDate && d.dueDate < new Date()
+      );
       return JSON.stringify({
-        deliverables: [],
+        client: {
+          id: client.id,
+          companyName: client.companyName,
+          status: client.status,
+          plan: client.plan,
+          health: client.health,
+          healthScore: client.healthScore,
+          mrr: client.mrr,
+          contractStart: client.contractStart?.toISOString() || null,
+          contractEnd: client.contractEnd?.toISOString() || null,
+          notes: client.notes,
+          contacts: client.contacts.map(c => ({
+            name: c.name, email: c.email, role: c.role, isPrimary: c.isPrimary,
+          })),
+          recentDeliverables: client.deliverables.map(d => ({
+            id: d.id, title: d.title, status: d.status,
+            dueDate: d.dueDate?.toISOString() || null,
+            deliveredAt: d.deliveredAt?.toISOString() || null,
+          })),
+          overdueCount: overdueDeliverables.length,
+          recentEngagement: client.engagementLog.map(e => ({
+            type: e.type, content: e.content, author: e.author,
+            createdAt: e.createdAt.toISOString(),
+          })),
+          lastEngagement: client.engagementLog[0]?.createdAt?.toISOString() || null,
+        },
+      });
+    }
+    case 'client_list_deliverables': {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const where: any = { clientId: input.client_id as string };
+      if (input.status) where.status = input.status;
+      const deliverables = await db.deliverable.findMany({
+        where,
+        orderBy: { dueDate: 'asc' },
+      });
+      return JSON.stringify({
+        deliverables: deliverables.map(d => ({
+          id: d.id,
+          title: d.title,
+          description: d.description,
+          status: d.status,
+          dueDate: d.dueDate?.toISOString() || null,
+          deliveredAt: d.deliveredAt?.toISOString() || null,
+          isOverdue: d.status !== 'delivered' && d.status !== 'approved' && d.dueDate && d.dueDate < new Date(),
+        })),
         client_id: input.client_id,
-        _note: 'Connect your CRM/project tracker to list real deliverables',
+        total: deliverables.length,
       });
-    case 'client_get_engagement_log':
+    }
+    case 'client_get_engagement_log': {
+      const entries = await db.engagementEntry.findMany({
+        where: { clientId: input.client_id as string },
+        orderBy: { createdAt: 'desc' },
+        take: (input.limit as number) || 20,
+      });
       return JSON.stringify({
-        entries: [],
+        entries: entries.map(e => ({
+          id: e.id,
+          type: e.type,
+          content: e.content,
+          author: e.author,
+          createdAt: e.createdAt.toISOString(),
+        })),
         client_id: input.client_id,
-        _note: 'Connect your CRM to pull engagement history',
+        total: entries.length,
       });
-    case 'client_add_note':
+    }
+    case 'client_add_note': {
+      const entry = await db.engagementEntry.create({
+        data: {
+          clientId: input.client_id as string,
+          type: input.type as string,
+          content: input.note as string,
+          author: 'agent',
+        },
+      });
       return JSON.stringify({
         saved: true,
+        entry_id: entry.id,
         client_id: input.client_id,
         type: input.type,
-        _note: 'Note logged. Connect your CRM to persist notes.',
       });
-    case 'client_health_check':
+    }
+    case 'client_health_check': {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const where: any = input.client_id ? { id: input.client_id } : {};
+      const clients = await db.client.findMany({
+        where,
+        include: {
+          deliverables: true,
+          engagementLog: { orderBy: { createdAt: 'desc' }, take: 1 },
+        },
+      });
+
+      const now = new Date();
+      const results = clients.map(client => {
+        const overdueDeliverables = client.deliverables.filter(
+          d => d.status !== 'delivered' && d.status !== 'approved' && d.dueDate && d.dueDate < now
+        );
+        const lastEngagement = client.engagementLog[0]?.createdAt;
+        const daysSinceEngagement = lastEngagement
+          ? Math.floor((now.getTime() - lastEngagement.getTime()) / (1000 * 60 * 60 * 24))
+          : 999;
+        const contractEnding = client.contractEnd
+          ? Math.floor((client.contractEnd.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
+          : null;
+
+        // Compute health
+        let health = 'healthy';
+        let score = client.healthScore;
+        if (daysSinceEngagement > 30 || overdueDeliverables.length > 2) {
+          health = 'critical';
+          score = Math.min(score, 30);
+        } else if (daysSinceEngagement > 14 || overdueDeliverables.length > 0) {
+          health = 'at_risk';
+          score = Math.min(score, 60);
+        }
+
+        // Update health in DB (fire and forget)
+        db.client.update({
+          where: { id: client.id },
+          data: { health, healthScore: score },
+        }).catch(() => {});
+
+        return {
+          id: client.id,
+          companyName: client.companyName,
+          status: client.status,
+          health,
+          healthScore: score,
+          daysSinceEngagement,
+          lastEngagement: lastEngagement?.toISOString() || null,
+          overdueDeliverables: overdueDeliverables.length,
+          contractEndingInDays: contractEnding,
+          flags: [
+            ...(daysSinceEngagement > 14 ? [`No engagement in ${daysSinceEngagement} days`] : []),
+            ...(overdueDeliverables.length > 0 ? [`${overdueDeliverables.length} overdue deliverables`] : []),
+            ...(contractEnding !== null && contractEnding < 30 ? [`Contract ending in ${contractEnding} days`] : []),
+          ],
+        };
+      });
+
       return JSON.stringify({
-        results: [],
-        _note: `Connect your CRM to run health checks. Target: ${input.client_id || 'all clients'}`,
+        results,
+        total: results.length,
+        at_risk: results.filter(r => r.health === 'at_risk').length,
+        critical: results.filter(r => r.health === 'critical').length,
       });
+    }
     default:
       return JSON.stringify({ error: `Unknown client care tool: ${name}` });
   }

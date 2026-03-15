@@ -281,3 +281,122 @@ model Task {
   assignedRole AgentRole? @relation("AssignedToRole", fields: [assignedTo], references: [slug])
   createdByRole AgentRole? @relation("CreatedByRole", fields: [createdBy], references: [slug])
 }
+
+// ─── Support System ─────────────────────────────────────
+
+model SupportTicket {
+  id          String   @id @default(cuid())
+  subject     String
+  body        String
+  status      String   @default("open") // open | pending | in_progress | resolved | closed
+  priority    String   @default("medium") // critical | high | medium | low
+  category    String?  // bug | feature_request | billing | account | how_to | security | other
+  tags        String[] // e.g. ["login", "api", "urgent"]
+  customerEmail String
+  customerName  String?
+  escalated   Boolean  @default(false)
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  resolvedAt  DateTime?
+
+  responses   TicketResponse[]
+
+  @@index([status])
+  @@index([priority])
+  @@index([customerEmail])
+}
+
+model TicketResponse {
+  id          String   @id @default(cuid())
+  ticketId    String
+  message     String
+  isInternal  Boolean  @default(false) // internal note vs customer-facing
+  isDraft     Boolean  @default(true)  // drafts need human approval before sending
+  author      String   @default("agent") // "agent" | "human" | "customer"
+
+  createdAt   DateTime @default(now())
+
+  ticket SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+}
+
+model KBArticle {
+  id          String   @id @default(cuid())
+  title       String
+  content     String
+  category    String?
+  tags        String[]
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// ─── Client Care / CRM System ───────────────────────────
+
+model Client {
+  id            String   @id @default(cuid())
+  companyName   String   @unique
+  status        String   @default("active") // active | onboarding | churned | paused
+  plan          String?  // e.g. "growth", "enterprise", "starter"
+  health        String   @default("healthy") // healthy | at_risk | critical
+  healthScore   Int      @default(80) // 0-100
+  mrr           Float    @default(0)
+  contractStart DateTime?
+  contractEnd   DateTime?
+  notes         String?
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  contacts      ClientContact[]
+  deliverables  Deliverable[]
+  engagementLog EngagementEntry[]
+
+  @@index([status])
+  @@index([health])
+}
+
+model ClientContact {
+  id        String   @id @default(cuid())
+  clientId  String
+  name      String
+  email     String
+  role      String?  // "CEO", "CTO", "PM", etc.
+  isPrimary Boolean  @default(false)
+
+  createdAt DateTime @default(now())
+
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+}
+
+model Deliverable {
+  id          String   @id @default(cuid())
+  clientId    String
+  title       String
+  description String?
+  status      String   @default("pending") // pending | in_progress | delivered | approved | overdue
+  dueDate     DateTime?
+  deliveredAt DateTime?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@index([clientId])
+  @@index([status])
+}
+
+model EngagementEntry {
+  id        String   @id @default(cuid())
+  clientId  String
+  type      String   // meeting | email | call | internal | action_item | concern
+  content   String
+  author    String   @default("agent") // who logged this
+
+  createdAt DateTime @default(now())
+
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@index([clientId])
+}
