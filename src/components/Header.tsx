@@ -8,6 +8,7 @@ import { AgentLogin } from './AgentLogin';
 import { useApp } from '@/store';
 
 const NAV_ITEMS = [
+  { href: '/agentcy', label: 'Agentcy' },
   { href: '/services', label: 'Services' },
   { href: '/gigs', label: 'Gigs' },
   { href: '/data', label: 'Data' },
