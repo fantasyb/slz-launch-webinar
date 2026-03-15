@@ -326,8 +326,8 @@ export default function AgentcyPage() {
   // Load data
   const loadData = useCallback(async () => {
     const [rolesRes, sprintsRes] = await Promise.all([
-      fetch('/api/agentcy/roster').then(r => r.json()).catch(() => []),
-      fetch('/api/agentcy/sprints').then(r => r.json()).catch(() => []),
+      fetch('/api/agentcy/roster').then(r => r.json()).then(d => Array.isArray(d) ? d : []).catch(() => []),
+      fetch('/api/agentcy/sprints').then(r => r.json()).then(d => Array.isArray(d) ? d : []).catch(() => []),
     ]);
     setRoles(rolesRes);
     setSprints(sprintsRes);

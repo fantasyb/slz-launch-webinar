@@ -27,9 +27,22 @@ export async function GET() {
     }
 
     return NextResponse.json(roles);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    return NextResponse.json({ error: message }, { status: 500 });
+  } catch {
+    // DB tables may not exist yet — fall back to static role definitions
+    const fallback = AGENT_ROLES.map((r, i) => ({
+      id: `static-${i}`,
+      name: r.name,
+      slug: r.slug,
+      description: r.description,
+      systemPrompt: r.systemPrompt,
+      model: r.model,
+      avatarColor: r.avatarColor,
+      isActive: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      agentId: null,
+    }));
+    return NextResponse.json(fallback);
   }
 }
 

@@ -22,8 +22,8 @@ export async function GET(request: NextRequest) {
     });
 
     return NextResponse.json(sprints);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    return NextResponse.json({ error: message }, { status: 500 });
+  } catch {
+    // DB tables may not exist yet — return empty array
+    return NextResponse.json([]);
   }
 }
