@@ -452,6 +452,7 @@ export default function OpsHub() {
         if (event === 'status') setStatusMessage(d.message as string);
         if (event === 'agent_done') setStatusMessage(`Done — ${d.toolCalls || 0} tool calls, $${(d.cost as number).toFixed(4)}`);
         if (event === 'qa_done') setStatusMessage(`QA: ${d.verdict} (${d.score}/5) — ${d.summary}`);
+        if (event === 'memory_saved') setStatusMessage(`Saved ${d.count} memories`);
         if (event === 'complete') setStatusMessage('');
         if (event === 'error') setStatusMessage(`Error: ${d.error}`);
       });

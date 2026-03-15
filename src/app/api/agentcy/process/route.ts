@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server';
 import { db } from '@/lib/db';
 import { AGENT_ROLES, executeAgent, type ExecutionResult } from '@/lib/agentcy';
 import { getAgentIdMap } from '@/lib/agentcy-setup';
+import { buildMemoryContext, extractMemories, writeMemories, appendDailyNote, type MemoryWrite } from '@/lib/memory';
 
 // POST /api/agentcy/process — Process a handoff: accept → start → execute with Claude → deliver
 // This is the internal "brain" that makes agentcy agents work
@@ -68,10 +69,23 @@ export async function POST(request: NextRequest) {
           `Working on: ${task.title}`, { type: 'status_update', handoffId, status: 'in_progress' });
         send('status', { message: `${role.name} is working on: ${task.title}...` });
 
-        // Step 3: Execute with Claude (with tools if the role has them)
+        // Step 3: Retrieve relevant memories for context
+        send('status', { message: `${role.name} is recalling relevant context...` });
+        let memoryContext = '';
+        try {
+          memoryContext = await buildMemoryContext(role.slug, task.title, task.description);
+        } catch {
+          // Memory retrieval is non-critical — proceed without it
+        }
+
+        // Step 4: Execute with Claude (with tools if the role has them)
+        const taskMessage = memoryContext
+          ? `${memoryContext}\n\n---\n\n## Task: ${task.title}\n\n${task.description}`
+          : `## Task: ${task.title}\n\n${task.description}`;
+
         const result = await executeAgent(
           role.systemPrompt,
-          `## Task: ${task.title}\n\n${task.description}`,
+          taskMessage,
           role.model,
           4096,
           role.tools,
@@ -159,6 +173,32 @@ export async function POST(request: NextRequest) {
         } else {
           // Complete without QA
           await completeHandoff(handoffId, handoff, null, null, result, null);
+        }
+
+        // Memory flush: extract key facts and write to persistent memory
+        send('status', { message: 'Saving to memory...' });
+        try {
+          const extracted = await extractMemories(task.title, task.description, result.output, role.slug);
+          if (extracted.length > 0) {
+            const memWrites: MemoryWrite[] = extracted.map(m => ({
+              agentId: handoff.toAgentId,
+              agentSlug: role.slug,
+              type: m.type,
+              content: m.content,
+              tags: m.tags,
+              source: handoffId,
+              importance: m.importance,
+              expiresAt: m.expiresInDays ? new Date(Date.now() + m.expiresInDays * 86400000) : undefined,
+            }));
+            await writeMemories(memWrites);
+            send('memory_saved', { count: extracted.length, memories: extracted.map(m => m.content) });
+          }
+
+          // Append to daily notes
+          await appendDailyNote(role.slug, `Completed: ${task.title}`, handoffId, 'work');
+          await appendDailyNote('system', `${role.name} completed handoff: ${task.title}`, handoffId, 'handoff');
+        } catch {
+          // Memory extraction is non-critical
         }
 
         send('complete', { handoffId });

@@ -54,6 +54,7 @@ model Agent {
   apiKeys          ApiKey[]
   auditLogs        AuditLog[]
   agentRoles       AgentRole[]
+  memories         Memory[]
 }
 
 model Listing {
@@ -179,6 +180,43 @@ model AuditLog {
   createdAt  DateTime @default(now())
 
   agent Agent? @relation(fields: [agentId], references: [id])
+}
+
+// ─── Agent Memory System ─────────────────────────────────
+
+model Memory {
+  id        String   @id @default(cuid())
+  agentId   String   // Which agent created this memory
+  agentSlug String   // Role slug for fast filtering (e.g. "cfo", "client-care")
+  type      String   @default("fact") // fact | decision | metric | client | pattern | preference
+  content   String   // The actual memory content (curated, concise)
+  tags      String[] // Searchable tags: ["mrr", "stripe", "march-2026"]
+  source    String?  // What produced this: handoff ID, brief text, etc.
+  importance Int     @default(5) // 1-10, higher = more important, affects retrieval priority
+  expiresAt DateTime? // Optional TTL — some facts are time-sensitive
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  agent Agent @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@index([agentSlug])
+  @@index([type])
+  @@index([tags])
+}
+
+// Daily context log — append-only, like OpenClaw daily notes
+model DailyNote {
+  id        String   @id @default(cuid())
+  date      String   // "2026-03-15"
+  agentSlug String   // Which agent this note belongs to (or "system" for shared)
+  entries   Json     @default("[]") // Array of { timestamp, content, handoffId?, type }
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([date, agentSlug])
+  @@index([agentSlug])
 }
 
 // ─── Agentcy System ─────────────────────────────────────
