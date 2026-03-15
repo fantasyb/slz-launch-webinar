@@ -1,101 +1,162 @@
 import { NextRequest } from 'next/server';
 import { db } from '@/lib/db';
-import { parseBreif } from '@/lib/agentcy';
+import { parseBreif, AGENT_ROLES } from '@/lib/agentcy';
+import { getAgentIdMap, setupAgentcyTeam } from '@/lib/agentcy-setup';
 
-// POST /api/agentcy/brief — Submit a brief, Chief of Staff breaks it into tasks
+// POST /api/agentcy/brief — Submit a brief → Chief of Staff breaks it down → creates handoffs
 export async function POST(request: NextRequest) {
-  try {
-    const body = await request.json();
-    const { brief, sprintName } = body as { brief: string; sprintName?: string };
+  const encoder = new TextEncoder();
 
-    if (!brief || brief.trim().length === 0) {
-      return new Response(JSON.stringify({ error: 'Brief is required' }), {
-        status: 400,
-        headers: { 'Content-Type': 'application/json' },
-      });
-    }
+  const stream = new ReadableStream({
+    async start(controller) {
+      const send = (event: string, data: unknown) => {
+        controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+      };
 
-    // Stream the response with SSE
-    const encoder = new TextEncoder();
-    const stream = new ReadableStream({
-      async start(controller) {
-        const send = (event: string, data: unknown) => {
-          controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
-        };
+      try {
+        const body = await request.json();
+        const { brief } = body as { brief: string };
 
-        try {
-          send('status', { message: 'Chief of Staff is analyzing your brief...' });
+        if (!brief || brief.trim().length === 0) {
+          send('error', { error: 'Brief is required' });
+          controller.close();
+          return;
+        }
 
-          // 1. Have Chief of Staff parse the brief into tasks
-          const { tasks, execution } = await parseBreif(brief);
+        // Ensure agentcy agents are registered
+        let agentIdMap = await getAgentIdMap();
+        if (Object.keys(agentIdMap).length === 0) {
+          send('status', { message: 'Setting up your team in the directory...' });
+          await setupAgentcyTeam();
+          agentIdMap = await getAgentIdMap();
+        }
 
-          send('chief_done', {
-            taskCount: tasks.length,
-            cost: execution.costUsd,
-            latency: execution.latencyMs,
-          });
+        const chiefId = agentIdMap['chief-of-staff'];
+        if (!chiefId) {
+          send('error', { error: 'Chief of Staff not found in directory. Run setup first.' });
+          controller.close();
+          return;
+        }
 
-          // 2. Create the sprint
-          const name = sprintName || `Brief — ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`;
-          const sprint = await db.sprint.create({
-            data: {
-              name,
-              brief,
-              status: 'active',
+        send('status', { message: 'Chief of Staff is analyzing your brief...' });
+
+        // 1. Chief of Staff parses the brief into tasks
+        const { tasks, execution } = await parseBreif(brief);
+
+        send('chief_done', {
+          taskCount: tasks.length,
+          cost: execution.costUsd,
+          latency: execution.latencyMs,
+        });
+
+        // 2. For each task, create a DM channel + handoff to the assigned agent
+        const handoffIds: string[] = [];
+        for (const task of tasks) {
+          const workerAgentId = agentIdMap[task.assignedTo];
+          if (!workerAgentId) {
+            send('status', { message: `Skipping task "${task.title}" — no agent found for role: ${task.assignedTo}` });
+            continue;
+          }
+
+          const workerRole = AGENT_ROLES.find(r => r.slug === task.assignedTo);
+          const workerName = `Agentcy: ${workerRole?.name || task.assignedTo}`;
+          const chiefName = 'Agentcy: Chief of Staff';
+
+          // Find or create DM channel between Chief and worker
+          let channel = await db.dMChannel.findFirst({
+            where: {
+              OR: [
+                { agent1Id: chiefId, agent2Id: workerAgentId },
+                { agent1Id: workerAgentId, agent2Id: chiefId },
+              ],
             },
           });
 
-          // 3. Create tasks in the database
-          const createdTasks = [];
-          for (const task of tasks) {
-            const created = await db.task.create({
+          if (!channel) {
+            channel = await db.dMChannel.create({
               data: {
-                sprintId: sprint.id,
-                title: task.title,
-                description: task.description,
-                status: 'pending',
-                priority: task.priority,
-                assignedTo: task.assignedTo,
-                createdBy: 'chief-of-staff',
+                agent1Id: chiefId,
+                agent1Name: chiefName,
+                agent2Id: workerAgentId,
+                agent2Name: workerName,
               },
-            });
-            createdTasks.push(created);
-            send('task_created', {
-              id: created.id,
-              title: created.title,
-              assignedTo: created.assignedTo,
-              priority: created.priority,
             });
           }
 
-          send('complete', {
-            sprintId: sprint.id,
-            sprintName: sprint.name,
-            taskCount: createdTasks.length,
-            tasks: createdTasks,
+          // Create the handoff
+          const handoff = await db.handoff.create({
+            data: {
+              fromAgentId: chiefId,
+              fromAgentName: chiefName,
+              toAgentId: workerAgentId,
+              toAgentName: workerName,
+              channelId: channel.id,
+              status: 'proposed',
+              task: {
+                title: task.title,
+                description: task.description,
+                priority: task.priority,
+              },
+              securityTier: 'standard',
+              requiredTrust: 'unverified',
+              auditLog: [{ action: 'proposed', agentId: chiefId, timestamp: new Date().toISOString(), source: 'brief' }],
+            },
           });
 
-          controller.close();
-        } catch (error) {
-          const message = error instanceof Error ? error.message : 'Unknown error';
-          send('error', { error: message });
-          controller.close();
-        }
-      },
-    });
+          // Chief sends a DM about the handoff
+          await db.directMessage.create({
+            data: {
+              channelId: channel.id,
+              fromAgentId: chiefId,
+              fromAgentName: chiefName,
+              toAgentId: workerAgentId,
+              toAgentName: workerName,
+              message: `New task from brief: ${task.title}\n\n${task.description}`,
+              payload: {
+                type: 'task_proposal',
+                handoffId: handoff.id,
+                task: { title: task.title, description: task.description },
+                priority: task.priority,
+              },
+            },
+          });
 
-    return new Response(stream, {
-      headers: {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        'Connection': 'keep-alive',
-      },
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    return new Response(JSON.stringify({ error: message }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  }
+          await db.dMChannel.update({
+            where: { id: channel.id },
+            data: { lastMessageAt: new Date() },
+          });
+
+          handoffIds.push(handoff.id);
+
+          send('handoff_created', {
+            handoffId: handoff.id,
+            title: task.title,
+            assignedTo: task.assignedTo,
+            priority: task.priority,
+            workerName,
+          });
+        }
+
+        send('complete', {
+          handoffCount: handoffIds.length,
+          handoffIds,
+          briefCost: execution.costUsd,
+        });
+
+        controller.close();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        send('error', { error: message });
+        controller.close();
+      }
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+    },
+  });
 }
