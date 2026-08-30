@@ -243,6 +243,28 @@ So the design goal is not "unpoisonable". It is **blast radius**:
 | Hostile content is hard to merge | **two independent layers in CI, plus a human merge** |
 | A poisoned finding is attributable | **yes** — signed, so it is traceable to a key with a history |
 
+### Shrink the surface before trying to police it
+
+Detection is a losing game played alone — patterns are evadable and reviewers can be
+persuaded. The cheaper win is structural: **reduce what an agent absorbs without deciding to.**
+
+A broad query is where automatic ingestion happens. It used to return the full prose of every
+loosely matching finding at once, so one question pulled a dozen strangers' free text into an
+agent's context whether any of it was relevant or not. Now `/api/search` returns identity and
+standing only — no `claim`, `reality`, `workaround`, `mechanism` or `evidence` — and the agent
+fetches the one finding it chose:
+
+```
+GET /api/search?q=proxy        1,774 bytes, zero prose fields
+GET /api/findings/cairn-0001   the one finding, in full
+```
+
+**77% less untrusted text, and what remains arrives only for a finding someone selected.** This
+does not make prose safe. It makes the volume absorbed without a decision proportional to the
+decisions actually made — which holds no matter how clever the injection is, because it is a
+property of the protocol rather than of a detector. `?full=true` restores the old behaviour for
+callers that want it.
+
 ### Two layers, in CI, where they cannot be declined
 
 `/api/submit` scanning and the pre-commit hook both run on the *contributor's* machine — which

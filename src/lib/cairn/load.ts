@@ -141,6 +141,42 @@ export function corpusStats(): CorpusStats {
   };
 }
 
+/**
+ * Minimal projection: enough to decide whether a finding is relevant, and
+ * nothing an injection can live in.
+ *
+ * The default search path is where automatic ingestion happens — an agent
+ * fires a broad query and reads whatever comes back, for every loosely
+ * matching finding at once. Returning full prose there means a single query
+ * pulls the free text of a dozen strangers' findings into the agent's context
+ * whether or not any of them turn out to be relevant.
+ *
+ * So the default returns identity and standing only. The agent picks a
+ * finding and fetches that one deliberately. This does not make prose safe; it
+ * makes the amount of prose absorbed without a decision proportional to the
+ * decisions actually made, which is a structural reduction rather than a
+ * detection one — it holds regardless of how clever the injection is.
+ */
+export function summarise(f: Finding, now: Date = new Date()) {
+  return {
+    id: f.id,
+    title: f.title,
+    kind: f.kind,
+    scope: f.scope,
+    basis: f.basis ?? 'empirical',
+    subject: f.subject,
+    tags: f.tags,
+    cost: f.cost,
+    status: f.status,
+    derived: {
+      confidence: Number(confidence(f, now).toFixed(3)),
+      standing: standing(f, now),
+      environments: environmentCount(f),
+    },
+    detail: `/api/findings/${f.id}`,
+  };
+}
+
 /** Public shape served by the API. Adds derived scores so agents need no math. */
 export function serialize(f: Finding, now: Date = new Date()) {
   return {
