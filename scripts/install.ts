@@ -31,6 +31,7 @@ import {
   INSTRUCTION_FILES,
 } from '../src/lib/cairn/block';
 import { loadKeys } from '../src/lib/cairn/keys';
+import { checkPin, keyFingerprint, MIN_PIN_HEX } from '../src/lib/cairn/signing';
 
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
@@ -54,16 +55,9 @@ async function resolveBlock(): Promise<{ base: string; block: string; provenance
   }
 
   if (!pinnedKey) {
-    console.error('--from requires --key <keyId>.');
-    console.error('Fetching a block without pinning a key is the failure recorded as cairn-0014:');
-    console.error('it authorises whoever controls that URL, indefinitely.');
-    process.exit(2);
-  }
-
-  const known = loadKeys().get(pinnedKey);
-  if (!known) {
-    console.error(`key ${pinnedKey} is not in keys/. Obtain the public key out of band`);
-    console.error('and add it before trusting a fetched block — never take it from the same host.');
+    console.error('--from requires --key <fingerprint>.');
+    console.error('Fetching without pinning is the failure recorded as cairn-0014: it');
+    console.error('authorises whoever controls that URL, indefinitely.');
     process.exit(2);
   }
 
@@ -75,7 +69,7 @@ async function resolveBlock(): Promise<{ base: string; block: string; provenance
   const payload = (await res.json()) as {
     base?: string;
     block?: string;
-    signature?: { keyId: string; value: string } | null;
+    signature?: { keyId: string; value: string; publicKey?: string } | null;
   };
 
   if (!payload.base || !payload.block) {
@@ -86,11 +80,39 @@ async function resolveBlock(): Promise<{ base: string; block: string; provenance
     console.error('block is unsigned. You pinned a key, so this is refused.');
     process.exit(1);
   }
-  if (payload.signature.keyId !== pinnedKey) {
-    console.error(`block is signed by ${payload.signature.keyId}, not ${pinnedKey}. Refusing.`);
+  // The key may come from the host. The FINGERPRINT must not: it is pinned by
+  // the adopter from an independent channel, and it is what makes a substituted
+  // key detectable. Local keys/ is only a fallback for an offline clone.
+  const servedKey = payload.signature.publicKey;
+  const localKey = loadKeys().get(pinnedKey.slice(0, 16))?.publicKey;
+  const publicKey = servedKey ?? localKey;
+
+  if (!publicKey) {
+    console.error('response carried no public key and none is held locally. Refusing.');
     process.exit(1);
   }
-  if (!verifyBlockSignature(payload.base, payload.block, payload.signature.value, known.publicKey)) {
+
+  const pin = checkPin(publicKey, pinnedKey);
+  if (!pin.ok) {
+    console.error(`PIN CHECK FAILED: ${pin.reason}`);
+    if (pin.fingerprint) {
+      console.error(`  served key fingerprint: ${pin.fingerprint}`);
+      console.error(`  you pinned:             ${pinnedKey}`);
+      console.error('\nEither this host is not who you think, or you have the wrong');
+      console.error('fingerprint. Do not resolve this by copying the value above —');
+      console.error('that is the value under attack. Nothing written.');
+    } else {
+      console.error(`\nUse the full ${MIN_PIN_HEX}+ character fingerprint, not the short keyId.`);
+    }
+    process.exit(1);
+  }
+
+  if (localKey && localKey.trim() !== publicKey.trim()) {
+    console.error('served key differs from the one held locally for this id. Refusing.');
+    process.exit(1);
+  }
+
+  if (!verifyBlockSignature(payload.base, payload.block, payload.signature.value, publicKey)) {
     console.error('SIGNATURE DOES NOT VERIFY. The block was altered in transit or the host');
     console.error('is not who you think. Nothing written.');
     process.exit(1);
@@ -99,7 +121,9 @@ async function resolveBlock(): Promise<{ base: string; block: string; provenance
   return {
     base: payload.base,
     block: payload.block,
-    provenance: `fetched from ${from}, signature verified against ${pinnedKey} (${known.label})`,
+    provenance:
+      `fetched from ${from}; key fingerprint ${keyFingerprint(publicKey).slice(0, 32)}… ` +
+      `matches pin; signature verified`,
   };
 }
 

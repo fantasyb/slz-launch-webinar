@@ -3,6 +3,7 @@ import path from 'path';
 import { NextResponse } from 'next/server';
 import { installBlock, signBlock, validateBlockShape } from '@/lib/cairn/block';
 import { loadKeys } from '@/lib/cairn/keys';
+import { keyFingerprint } from '@/lib/cairn/signing';
 
 export const dynamic = 'force-dynamic';
 
@@ -66,9 +67,16 @@ export async function GET(request: Request) {
       algorithm: 'ed25519',
       keyId: signer.keyId,
       value: signBlock(base, block, privateKey),
+      // Served deliberately. A client cannot be harmed by receiving the public
+      // key, because it pins a FINGERPRINT obtained elsewhere and checks that
+      // this key hashes to it. Serving the key removes the need to have the
+      // repository cloned; the pin removes the circularity of trusting it.
+      publicKey: signer.publicKey,
+      fingerprint: keyFingerprint(signer.publicKey),
     },
     verify:
-      'Recompute over JSON.stringify(["cairn-block-v1", base, block]) with the ed25519 ' +
-      'public key for keyId, which you should already hold — do not fetch it from here.',
+      'Do not trust `fingerprint` from this response — it is here for display. Pin the ' +
+      'fingerprint you obtained elsewhere, confirm sha256(publicKey) starts with it, then ' +
+      'verify the signature over JSON.stringify(["cairn-block-v1", base, block]).',
   });
 }

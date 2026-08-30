@@ -7,7 +7,7 @@
  */
 import fs from 'fs';
 import path from 'path';
-import { generateKeypair } from '../src/lib/cairn/signing';
+import { generateKeypair, keyFingerprint } from '../src/lib/cairn/signing';
 
 const label = process.argv.slice(2).join(' ').trim();
 if (!label) {
@@ -26,7 +26,15 @@ fs.mkdirSync(secretDir, { recursive: true });
 const privFile = path.join(secretDir, `${record.keyId}.key`);
 fs.writeFileSync(privFile, privateKey, { mode: 0o600 });
 
-console.log(`keyId  ${record.keyId}`);
+const fingerprint = keyFingerprint(record.publicKey);
+console.log(`keyId       ${record.keyId}   (short handle, for display)`);
+console.log(`fingerprint ${fingerprint}`);
+console.log('');
+console.log('Publish the FINGERPRINT wherever people learn about this corpus — a README,');
+console.log('a package, a talk. It is what adopters pin, and it must reach them through a');
+console.log('channel other than the host they will fetch the key from. That is the whole');
+console.log('point: the host may serve the key, it cannot substitute one.');
+console.log('');
 console.log(`label  ${record.label}`);
 console.log(`public  ${path.relative(process.cwd(), keyFile)}  (commit this)`);
 console.log(`private ${path.relative(process.cwd(), privFile)}  (gitignored, never commit)`);

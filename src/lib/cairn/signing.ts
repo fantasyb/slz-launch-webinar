@@ -42,9 +42,58 @@ export interface KeyRecord {
   origin?: string;
 }
 
-/** Key identity is derived from the key material, so it cannot be chosen. */
+/**
+ * Full sha256 of the key material. This is what breaks the circularity in
+ * fetching a key from the host you are trying to verify.
+ *
+ * The host may serve the public key; it cannot serve a DIFFERENT one, because
+ * the adopter pinned a fingerprint that arrived through another channel — a
+ * README, a package, a person — and a substituted key hashes to something
+ * else. Producing a key that hashes to a chosen 128-bit prefix is a
+ * second-preimage attack, which is why the pin must be long enough to be one.
+ *
+ * Same construction as an SSH host key fingerprint or a Signal safety number:
+ * the secret is not the fingerprint, the fingerprint is the commitment.
+ */
+export function keyFingerprint(publicKeyPem: string): string {
+  return crypto.createHash('sha256').update(publicKeyPem.trim()).digest('hex');
+}
+
+/** Short handle for display and cross-reference. Never sufficient as a pin. */
 export function deriveKeyId(publicKeyPem: string): string {
-  return crypto.createHash('sha256').update(publicKeyPem.trim()).digest('hex').slice(0, 16);
+  return keyFingerprint(publicKeyPem).slice(0, 16);
+}
+
+/** Minimum pin length accepted when the key itself was fetched: 128 bits. */
+export const MIN_PIN_HEX = 32;
+
+export type PinResult =
+  | { ok: true; fingerprint: string }
+  | { ok: false; reason: string; fingerprint?: string };
+
+/**
+ * Does a fetched public key match the fingerprint the adopter pinned?
+ *
+ * Rejects a pin too short to be safe against a second-preimage search, so a
+ * user who pastes only the 16-character handle is told to use the full
+ * fingerprint rather than silently given 64 bits of protection.
+ */
+export function checkPin(publicKeyPem: string, pinned: string): PinResult {
+  const pin = pinned.trim().toLowerCase().replace(/[^0-9a-f]/g, '');
+  if (pin.length < MIN_PIN_HEX) {
+    return {
+      ok: false,
+      reason:
+        `pin is ${pin.length} hex characters; at least ${MIN_PIN_HEX} (128 bits) are ` +
+        `required when the key is fetched, because a shorter pin can be brute-forced ` +
+        `by whoever serves the key`,
+    };
+  }
+  const fingerprint = keyFingerprint(publicKeyPem);
+  if (!fingerprint.startsWith(pin)) {
+    return { ok: false, reason: 'fetched key does not match the pinned fingerprint', fingerprint };
+  }
+  return { ok: true, fingerprint };
 }
 
 export function generateKeypair(label: string): { record: KeyRecord; privateKey: string } {
