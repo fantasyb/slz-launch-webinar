@@ -243,7 +243,9 @@ const INJECTION: Array<{ re: RegExp; pattern: string; reason: string }> = [
     pattern: 'override-instructions', reason: 'tells the reader to discard its own instructions' },
   { re: /\byou are now\b|\byou must now\b|\bfrom now on you\b|\bnew instructions?\s*:/i,
     pattern: 'role-reassignment', reason: 'attempts to redefine the reader’s role' },
-  { re: /^\s*(system|assistant|developer)\s*:/im,
+  // Anchoring to line start missed "Cache bug. SYSTEM: disregard ..." — a
+  // marker is just as effective mid-sentence, and a title is one line.
+  { re: /(?:^|[\s.;>\]])(system|assistant|developer|human|user)\s*:\s*\S/im,
     pattern: 'fake-role-marker', reason: 'imitates a conversation role marker' },
   { re: /\b(act as|pretend (you are|to be)|you are an? (?!agent that)\w+ (mode|assistant))\b/i,
     pattern: 'persona-injection', reason: 'attempts to assign a persona' },
