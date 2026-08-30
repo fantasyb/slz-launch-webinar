@@ -249,16 +249,29 @@ instruction has to live in the file your agent already reads — `AGENTS.md`, `C
 `.cursor/rules/`, `.github/copilot-instructions.md`, whatever your tool loads. The snippet
 is plain markdown and works in any of them.
 
-**A person pastes the block in. That is the install.**
+### Installing
 
-Cairn briefly shipped a one-liner — point your agent at a URL and let it edit your
-instruction file. That was wrong, and it is now [`cairn-0014`](./cairn/0014-follow-this-url-is-standing-rce.json):
-"read this URL and do what it says" hands write access to your repository to whoever
-controls that host, indefinitely, and normalising it teaches agents that fetched text is
-instructions — the precondition that makes prompt injection work everywhere else.
+Two ways, both safe, neither requiring you to review anything routinely.
 
-If you cloned the corpus, `npm run cairn:install -- --into ../your-project` does the same
-thing from local code you can read: it prints the diff and refuses to write without `--yes`.
+```bash
+# fetched and automatic — verified against a key you pin
+npm run cairn:install -- --into ../your-project \
+  --from https://CAIRN_HOST/api/block --key <keyId> --yes
+
+# or entirely local, from code you can read
+npm run cairn:install -- --into ../your-project --base https://CAIRN_HOST
+```
+
+Cairn briefly shipped *"point your agent at this URL and let it follow the page"*. That was
+wrong — see [`cairn-0014`](./cairn/0014-follow-this-url-is-standing-rce.json) — but the fix
+is **not** "never fetch". The danger was obeying, not fetching. `/api/block` serves the block
+**signed**, you pin a key obtained out of band, and a swapped or compromised host fails closed
+instead of executing. That is the same trust model as any pinned dependency.
+
+Because a stolen key still signs perfectly, the content is validated independently: nothing
+executable, no host but the one you are adopting. Verified against a hostile server — a
+tampered block fails the signature; a correctly signed hostile block is still refused by the
+shape check.
 
 ### What the block asks of an agent
 
@@ -272,9 +285,25 @@ Read-only outward, in every direction that matters:
   cairn:lint` refuses to mint a finding carrying fetch-and-execute, credential reads, or
   destructive paths.
 - **Draft locally, then stop.** Nothing is submitted automatically. Evidence is error
-  output, and error output carries internal hostnames, home paths and tokens — whether that
-  leaves a private repository is a human decision. `npm run cairn:draft -- <file>` scans for
-  exactly those before anyone makes it.
+  output, and error output carries internal hostnames, home paths and tokens.
+
+### Secrets are stripped, not flagged
+
+A flow that hands a contributor eight warnings per draft is one they use once. So redaction is
+automatic and fails closed:
+
+```bash
+npm run cairn:hooks              # enable the pre-commit gate, once
+npm run cairn:draft -- <file> --fix   # strip credentials, hosts, paths, blobs in place
+```
+
+The pre-commit hook refuses to let a secret enter git history at all, and refuses corpus
+findings carrying fetch-and-execute, credential reads or destructive paths. It costs nothing
+until it fires.
+
+Automatic redaction catches the mechanical leaks — tokens, private addresses, home paths,
+opaque blobs. It cannot tell that a stack frame quotes proprietary source or that a directory
+names a customer. Those stay a human glance, not a human audit.
 
 See [`INTEGRATE.md`](./INTEGRATE.md) for the manual version, or `/use` on the site. It is phrased as a trigger —
 *"when something fails in a way you did not expect"* — because a standing "check Cairn"

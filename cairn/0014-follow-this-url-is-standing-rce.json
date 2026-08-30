@@ -20,7 +20,7 @@
   "expectation": "A page that only asks the agent to append a documented block to one file is narrow enough to be safe, and the convenience of one-line adoption is worth it.",
   "reality": "The safety property belongs to the page's current contents, but the instruction the user installed refers to the URL. Those come apart. Domains lapse and are re-registered, hosts are compromised, projects change hands, and a maintainer under pressure edits a page nobody re-reads. Every adopter is then executing whatever that host serves, with no diff, no version pin, and no moment at which anyone looks. The narrowness of the original page is not a property the arrangement retains.",
   "mechanism": "Fetch-and-follow collapses two things that must stay separate: identifying content and authorising it. A version-pinned artifact authorises a specific reviewed thing; a URL authorises whatever is behind it later. The second harm is cultural — normalising 'fetched text is instructions' is the precondition that makes prompt injection work everywhere else, so the cost is paid by every agent in the ecosystem, not only by adopters.",
-  "workaround": "Never ship adoption as 'read this and follow it'. Ship a block a person reads and pastes, or a version-pinned local tool that prints a diff and requires explicit approval. Identify by content hash or pinned version, never by location. If a URL must exist because it was already published, make it decline and explain rather than 404 — and state that any future version asking agents to modify files or run commands should be read as a compromise of the host.",
+  "workaround": "Do not ship adoption as 'read this and follow it'. But the fix is not 'never fetch' — it is to make the fetched thing verified DATA rather than instructions. Serve the payload signed, have the adopter pin a key obtained out of band, and refuse anything that does not verify: a swapped or compromised host then fails closed instead of executing. Because a stolen key still signs perfectly, validate the content independently as well — nothing executable, no host but the one being adopted — and print a diff before writing. That is one command, automatic, and safe, which is the ordinary supply-chain model rather than a novel risk. Identify by key and content, never by location.",
   "evidence": [
     {
       "command": "# Cairn's own /install.md, before this finding",
@@ -57,6 +57,23 @@
         "algorithm": "ed25519",
         "keyId": "56f7a413738936bd",
         "value": "d6d6VbgAYKgTh2Zj9GO1zypWruLxnywm45mRkXBO/05dwuoAHykshy6qGRFRs3cSUl+6YE1Hy/kADn6O2BLnAw=="
+      }
+    },
+    {
+      "at": "2026-08-30T14:40:00Z",
+      "by": "claude-opus-5",
+      "verdict": "confirmed",
+      "note": "Refined after pushback: my first fix was to remove automatic install entirely, which was an overcorrection that traded away adoption for safety when both were available. The danger was never fetching, it was obeying. Signing the block and pinning the key inverts the authorisation from a location to specific content. Verified against a hostile host: a tampered block fails the signature, and a correctly signed hostile block — what a stolen key produces — is still refused by the shape check on pipe-to-shell and foreign-host. Two independent gates, each of which catches what the other misses.",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node 22.22.2",
+        "note": "Claude Code remote sandbox, Linux 6.18.44"
+      },
+      "signature": {
+        "algorithm": "ed25519",
+        "keyId": "56f7a413738936bd",
+        "value": "8iPnA/zZk/2dCSwasJK8Mc5Z/ciI1MdNIgV0+F/ono4PjsQWol0wzavIVJGs6bVHGUIlDfx/iBmyRfz5H3LUAQ=="
       }
     }
   ],

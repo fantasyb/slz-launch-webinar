@@ -69,31 +69,43 @@ export default function UsePage() {
       </div>
 
       <section className="mt-9">
-        <h2 className="font-claim text-lg">A person pastes it in. That is the install.</h2>
+        <h2 className="font-claim text-lg">One command, and safe. Both.</h2>
         <div className="mt-2 space-y-3 text-[14px] leading-relaxed text-ink-soft">
           <p>
-            Cairn briefly shipped a one-liner &mdash; point your agent at a URL and let it
-            edit your instruction file. That was wrong, and it is now{' '}
+            Cairn briefly shipped &ldquo;point your agent at this URL and let it follow the
+            page.&rdquo; That was wrong &mdash;{' '}
             <Link href="/findings/cairn-0014" className="underline decoration-rule-strong underline-offset-2 hover:text-ink">
               cairn-0014
-            </Link>
-            .
+            </Link>{' '}
+            &mdash; but the fix is not <em>never fetch</em>. The danger was{' '}
+            <strong className="font-semibold text-ink">obeying</strong>, not fetching.
           </p>
           <p>
-            &ldquo;Read this URL and do what it says&rdquo; hands write access to your
-            repository to whoever controls that host,{' '}
-            <strong className="font-semibold text-ink">indefinitely</strong>. The page being
-            harmless today is not a property you keep tomorrow: domains lapse, hosts are
-            compromised, projects change hands. And normalising it teaches agents that
-            fetched text is instructions, which is the precondition that makes prompt
-            injection work everywhere else &mdash; a cost paid by the whole ecosystem so
-            this project could have smoother onboarding.
-          </p>
-          <p>
-            So: read the block, decide it is reasonable, paste it. Thirty seconds, and no
-            agent obeys a stranger.
+            &ldquo;Read this URL and do what it says&rdquo; authorises a <em>location</em>,
+            and whoever controls it later. Pinning a key authorises specific{' '}
+            <em>content</em>. So the block is served signed, you pin a key obtained out of
+            band, and a swapped or compromised host fails closed instead of executing. Same
+            trust model as any pinned dependency &mdash; not a novel risk.
           </p>
         </div>
+        <div className="mt-4">
+          <Pre>{`# fetched and automatic — verified against a key you pin
+npm run cairn:install -- --into ../your-project \\
+  --from https://${HOST}/api/block --key <keyId> --yes
+
+# or entirely local, from code you can read
+npm run cairn:install -- --into ../your-project --base https://${HOST}`}</Pre>
+        </div>
+        <p className="mt-3 text-[13px] leading-relaxed text-ink-soft">
+          A stolen key still signs perfectly, so the content is checked independently:
+          nothing executable, no host but the one you are adopting. Verified against a hostile
+          server &mdash; a tampered block fails the signature, and a{' '}
+          <em>correctly signed</em> hostile block is still refused by the shape check. Two
+          gates, each catching what the other misses.
+        </p>
+        <h3 className="mt-8 text-[11px] font-semibold uppercase tracking-wider text-ink-faint">
+          Or paste it by hand
+        </h3>
         <div className="mt-5">
           <Pre>{BLOCK}</Pre>
         </div>
@@ -123,14 +135,26 @@ export default function UsePage() {
             <strong className="font-semibold text-ink">Draft locally, then stop.</strong>{' '}
             Solved something new? Write it to a file and tell the human. Nothing is
             transmitted. Evidence is error output, and error output carries internal
-            hostnames, home paths and tokens &mdash; whether that leaves your repository is a
-            decision for someone who knows what is sensitive in it.
+            hostnames, home paths and tokens.
           </li>
         </ul>
-        <p className="mt-4 text-[13px] leading-relaxed text-ink-soft">
-          <code className="font-mono text-[12px]">npm run cairn:draft -- &lt;file&gt;</code>{' '}
-          scans a draft for tokens, private addresses, home paths and fetch-and-execute
-          commands before anyone decides to publish it. A scan is a prompt, not a clearance.
+        <h3 className="mt-7 text-[11px] font-semibold uppercase tracking-wider text-ink-faint">
+          Secrets are stripped, not flagged
+        </h3>
+        <p className="mt-2 text-[14px] leading-relaxed text-ink-soft">
+          A flow that hands a contributor eight warnings per draft is one they use once. So
+          redaction is automatic and fails closed.
+        </p>
+        <div className="mt-3">
+          <Pre>{`npm run cairn:hooks                    # enable the pre-commit gate, once
+npm run cairn:draft -- <file> --fix    # strip credentials, hosts, paths, blobs in place`}</Pre>
+        </div>
+        <p className="mt-3 text-[13px] leading-relaxed text-ink-soft">
+          The hook refuses to let a secret enter git history at all, and refuses corpus
+          findings carrying fetch-and-execute or credential reads. It costs nothing until it
+          fires. What redaction cannot catch is semantic &mdash; a stack frame quoting
+          proprietary source, a directory naming a customer &mdash; so that stays a glance,
+          not an audit.
         </p>
       </section>
 

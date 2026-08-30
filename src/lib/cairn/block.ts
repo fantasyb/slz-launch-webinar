@@ -1,3 +1,6 @@
+import crypto from 'crypto';
+import { scanExecutable } from './safety';
+
 /**
  * The block a person pastes into their project's agent instruction file.
  *
@@ -78,3 +81,93 @@ export const INSTRUCTION_FILES = [
   'CLAUDE.md',
   '.github/copilot-instructions.md',
 ] as const;
+
+/**
+ * Signed distribution of the block.
+ *
+ * "Read this URL and follow it" is unsafe because the user authorises a
+ * LOCATION and the content behind it can change. Signing inverts that: the
+ * user pins a KEY, the endpoint serves data, and a swapped page fails closed.
+ * The instruction then comes from the user, and the network supplies verified
+ * material rather than orders — which is the ordinary supply-chain model, the
+ * same one that makes installing a pinned dependency acceptable.
+ *
+ * So adoption can be one command and still safe, provided three things hold:
+ * the payload is signed, the key is supplied by the user rather than by the
+ * server, and the content is shape-checked so that even a correctly signed
+ * block cannot smuggle an instruction. A compromised key is the residual risk,
+ * and it is the same risk every signed package carries.
+ */
+export const BLOCK_PAYLOAD_VERSION = 'cairn-block-v1';
+
+export function blockPayload(base: string, block: string): string {
+  return JSON.stringify([BLOCK_PAYLOAD_VERSION, base, block]);
+}
+
+export function signBlock(base: string, block: string, privateKeyPem: string): string {
+  return crypto
+    .sign(null, Buffer.from(blockPayload(base, block), 'utf8'), crypto.createPrivateKey(privateKeyPem))
+    .toString('base64');
+}
+
+export function verifyBlockSignature(
+  base: string,
+  block: string,
+  signature: string,
+  publicKeyPem: string,
+): boolean {
+  try {
+    return crypto.verify(
+      null,
+      Buffer.from(blockPayload(base, block), 'utf8'),
+      crypto.createPublicKey(publicKeyPem),
+      Buffer.from(signature, 'base64'),
+    );
+  } catch {
+    return false;
+  }
+}
+
+export interface ShapeProblem {
+  reason: string;
+  detail: string;
+}
+
+/**
+ * A valid signature proves who sent the block, not that the block is harmless
+ * — a compromised key would produce perfectly valid signatures. So the content
+ * is constrained independently: nothing executable, and no host but the one
+ * the user is knowingly adopting.
+ */
+export function validateBlockShape(base: string, block: string): ShapeProblem[] {
+  const problems: ShapeProblem[] = [];
+
+  if (block.length > 8000) {
+    problems.push({ reason: 'oversized', detail: `${block.length} bytes; a block should be under 8000` });
+  }
+  if (!block.startsWith(BLOCK_BEGIN) || !block.trimEnd().endsWith(BLOCK_END)) {
+    problems.push({ reason: 'missing-markers', detail: 'block must be delimited by cairn:begin / cairn:end' });
+  }
+
+  for (const flag of scanExecutable(block)) {
+    problems.push({ reason: `executable:${flag.pattern}`, detail: flag.sample });
+  }
+
+  let host: string;
+  try {
+    host = new URL(base).host;
+  } catch {
+    return [...problems, { reason: 'bad-base', detail: base }];
+  }
+  for (const m of block.matchAll(/https?:\/\/[^\s"'`)\]]+/g)) {
+    try {
+      const u = new URL(m[0]);
+      if (u.host !== host) {
+        problems.push({ reason: 'foreign-host', detail: `${u.host} is not ${host}` });
+      }
+    } catch {
+      problems.push({ reason: 'unparseable-url', detail: m[0].slice(0, 80) });
+    }
+  }
+  return problems;
+}

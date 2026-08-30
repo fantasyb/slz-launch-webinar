@@ -99,7 +99,7 @@ const SENSITIVE: Array<{ re: RegExp; pattern: string; reason: string }> = [
   { re: /\b[A-Za-z0-9._%+-]+@(?!example\.|test\.)[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/, pattern: 'email', reason: 'an email address' },
   { re: /\b(?:password|passwd|secret|api[_-]?key|authorization)\s*[:=]\s*\S{6,}/i, pattern: 'credential-assignment', reason: 'a credential assignment' },
   { re: /\/(?:home|Users)\/(?!user\b|runner\b)[A-Za-z0-9._-]+/, pattern: 'home-path', reason: 'a home directory naming a real user' },
-  { re: /\bhttps?:\/\/(?![^\s]*(?:example\.com|localhost))[a-z0-9-]+\.(?:internal|corp|local|intranet)\b/i, pattern: 'internal-host', reason: 'an internal hostname' },
+  { re: /\bhttps?:\/\/(?![^\s]*(?:example\.com|localhost))(?:[a-z0-9-]+\.)*[a-z0-9-]+\.(?:internal|corp|local|intranet|lan)\b/i, pattern: 'internal-host', reason: 'an internal hostname' },
   { re: /\b(?:10|192\.168|172\.(?:1[6-9]|2\d|3[01]))\.\d{1,3}\.\d{1,3}\b/, pattern: 'private-ip', reason: 'a private network address' },
   { re: /\b[A-Za-z0-9+/]{40,}={0,2}\b/, pattern: 'opaque-blob', reason: 'a long opaque string that may be encoded data' },
 ];
@@ -121,4 +121,71 @@ export function draftSurface(d: Record<string, unknown>): string {
   };
   walk(d);
   return parts.join('\n');
+}
+
+export interface Redaction {
+  pattern: string;
+  original: string;
+  replacement: string;
+}
+
+/**
+ * Strip, do not warn.
+ *
+ * A flow that hands a person eight warnings per draft and asks them to
+ * adjudicate each one guarantees nobody contributes twice. Redaction has to be
+ * automatic and fail closed, so the default path is safe and the human decision
+ * shrinks to a single yes at the moment of publishing.
+ *
+ * Ordered deliberately: key blocks and tokens first, so that a later, broader
+ * rule cannot partially rewrite a secret and leave a recognisable remnant.
+ *
+ * WHAT THIS CANNOT DO. It catches mechanical leaks — credentials, addresses,
+ * paths, opaque blobs. It cannot tell that a stack frame quotes proprietary
+ * source, that a table name reveals a product, or that a directory is a
+ * customer. Those are semantic and need a person. Redaction shrinks the
+ * judgement call; it does not remove it.
+ */
+const REDACTIONS: Array<{ re: RegExp; pattern: string; to: string }> = [
+  { re: /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g, pattern: 'private-key', to: '<redacted:private-key>' },
+  { re: /\b(?:sk|pk|ghp|gho|ghs|ghu|xox[baprs])[-_][A-Za-z0-9_-]{16,}/g, pattern: 'api-token', to: '<redacted:token>' },
+  { re: /\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{12,}/gi, pattern: 'auth-header', to: '$1 <redacted:credential>' },
+  { re: /((?:password|passwd|secret|api[_-]?key|token)\s*[:=]\s*)("|')?[^\s"',}]{6,}\2?/gi, pattern: 'credential-assignment', to: '$1<redacted:credential>' },
+  { re: /\b[A-Za-z0-9._%+-]+@(?!example\.|test\.)[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g, pattern: 'email', to: '<redacted:email>' },
+  { re: /\b(https?:\/\/)(?:[a-z0-9-]+\.)*[a-z0-9-]+(\.(?:internal|corp|local|intranet|lan))\b/gi, pattern: 'internal-host', to: '$1<redacted:host>$2' },
+  { re: /\/(home|Users)\/(?!user\b|runner\b|root\b)[A-Za-z0-9._-]+/g, pattern: 'home-path', to: '/$1/<redacted:user>' },
+  { re: /\b(?:10|192\.168|172\.(?:1[6-9]|2\d|3[01]))\.\d{1,3}\.\d{1,3}\.?\d{0,3}\b/g, pattern: 'private-ip', to: '<redacted:private-ip>' },
+  { re: /\b[A-Za-z0-9+/]{60,}={0,2}\b/g, pattern: 'opaque-blob', to: '<redacted:blob>' },
+];
+
+export function redact(text: string): { text: string; redactions: Redaction[] } {
+  const redactions: Redaction[] = [];
+  let out = text;
+  for (const r of REDACTIONS) {
+    out = out.replace(r.re, (...args: unknown[]) => {
+      const match = args[0] as string;
+      const replacement = (r.to as string).replace(/\$(\d)/g, (_, d: string) => (args[Number(d)] as string) ?? '');
+      redactions.push({ pattern: r.pattern, original: match.slice(0, 60), replacement });
+      return replacement;
+    });
+  }
+  return { text: out, redactions };
+}
+
+/** Redact every string in a nested structure, in place-equivalent form. */
+export function redactDeep<T>(value: T): { value: T; redactions: Redaction[] } {
+  const redactions: Redaction[] = [];
+  const walk = (v: unknown): unknown => {
+    if (typeof v === 'string') {
+      const r = redact(v);
+      redactions.push(...r.redactions);
+      return r.text;
+    }
+    if (Array.isArray(v)) return v.map(walk);
+    if (v && typeof v === 'object') {
+      return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, walk(x)]));
+    }
+    return v;
+  };
+  return { value: walk(value) as T, redactions };
 }

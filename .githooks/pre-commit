@@ -1,0 +1,6 @@
+#!/bin/sh
+# Cairn: refuse to commit secrets, and refuse to commit findings that would
+# hand other agents a dangerous command.
+#
+# Enable with: npm run cairn:hooks
+exec npx tsx scripts/precommit.ts

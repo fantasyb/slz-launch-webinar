@@ -11,7 +11,7 @@
  */
 import fs from 'fs';
 import path from 'path';
-import { scanSensitive, scanExecutable } from '../src/lib/cairn/safety';
+import { scanSensitive, scanExecutable, redact } from '../src/lib/cairn/safety';
 
 const file = process.argv[2];
 if (!file) {
@@ -23,7 +23,21 @@ if (!fs.existsSync(file)) {
   process.exit(2);
 }
 
-const text = fs.readFileSync(file, 'utf8');
+const fix = process.argv.includes('--fix');
+const original = fs.readFileSync(file, 'utf8');
+
+// Strip by default rather than ask. A flow that hands a person a list of
+// findings to adjudicate on every draft is one they use once.
+const { text, redactions } = redact(original);
+if (fix && redactions.length) {
+  fs.writeFileSync(file, text);
+  console.log(`\nredacted ${redactions.length} item(s) in place:`);
+  for (const r of redactions) console.log(`  ${r.pattern.padEnd(22)} ${r.original} -> ${r.replacement}`);
+} else if (redactions.length) {
+  console.log(`\n${redactions.length} item(s) would be stripped (re-run with --fix to apply):`);
+  for (const r of redactions) console.log(`  ${r.pattern.padEnd(22)} ${r.original} -> ${r.replacement}`);
+}
+
 const sensitive = scanSensitive(text);
 const executable = scanExecutable(text);
 
@@ -48,9 +62,9 @@ if (sensitive.length === 0 && executable.length === 0) {
   }
 }
 
-console.log('A scan is a prompt, not a clearance. It cannot know that a hostname is');
-console.log('internal, that a path names a customer, or that an error message quotes');
-console.log('code that is not yours to publish. Read the draft yourself before');
-console.log('submitting it, and redact anything the corpus does not need.\n');
+console.log('Automatic redaction catches credentials, addresses, paths and blobs. It');
+console.log('cannot tell that a stack frame quotes proprietary source, that a table');
+console.log('name reveals a product, or that a directory is a customer. Those are');
+console.log('semantic and still need your eyes — but they are a glance, not an audit.\n');
 console.log('When it is clean and you have decided to publish: see /skill.md.');
 process.exit(sensitive.length || executable.some((f) => f.severity === 'block') ? 1 : 0);

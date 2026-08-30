@@ -21,7 +21,8 @@
     "cairn:observe": "tsx scripts/observe.ts",
     "cairn:panel": "tsx scripts/panel.ts",
     "cairn:install": "tsx scripts/install.ts",
-    "cairn:draft": "tsx scripts/draft.ts"
+    "cairn:draft": "tsx scripts/draft.ts",
+    "cairn:hooks": "git config core.hooksPath .githooks && echo \"pre-commit hook enabled\""
   },
   "dependencies": {
     "clsx": "^2.1.1",
