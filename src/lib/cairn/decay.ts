@@ -19,7 +19,17 @@ export const DAY_MS = 86_400_000;
  */
 
 export function daysSince(iso: string, now: Date = new Date()): number {
-  return Math.max(0, (now.getTime() - new Date(iso).getTime()) / DAY_MS);
+  const t = new Date(iso).getTime();
+  // A malformed date produced NaN, which propagated to confidence and was
+  // silently classified `stale` — both thresholds are false against NaN.
+  if (!Number.isFinite(t)) return Number.POSITIVE_INFINITY;
+  // A future timestamp pinned freshness at 1.0 permanently, and a future-dated
+  // refutation made `latestRefutation` unreachable by any honest confirmation,
+  // freezing `contested` forever. Lint rejects future dates in cairn/*.json but
+  // federated bundles never pass through lint, so the clamp belongs here where
+  // every path reaches it: treat anything ahead of now as exactly now, so it
+  // buys no advantage over an honest observation made this instant.
+  return Math.max(0, (now.getTime() - t) / DAY_MS);
 }
 
 /** Most recent observation of any verdict. */
@@ -30,24 +40,40 @@ export function latestObservation(f: Finding): Observation {
 }
 
 /** Distinct observers who confirmed. Repeat checks by one agent count once. */
-export function confirmationCount(f: Finding): number {
+export function confirmationCount(f: Finding, now: Date = new Date()): number {
   const confirmers = new Set(
-    f.observations.filter((o) => o.verdict === 'confirmed').map(partyOf)
+    f.observations
+      .filter((o) => o.verdict === 'confirmed' && notInFuture(o, now))
+      .map(partyOf)
       .filter((p): p is string => p !== null),
   );
   return confirmers.size;
 }
 
-export function lastConfirmedAt(f: Finding): string | null {
+/**
+ * An observation cannot describe a check that has not run yet.
+ *
+ * Clamping a future date to "now" was not enough: the clamp re-applies on
+ * every evaluation, so a single observation dated 2099 held freshness at 1.0
+ * permanently — the decay this corpus depends on simply never started. A date
+ * ahead of the clock is not evidence about the past, so it contributes
+ * nothing rather than everything.
+ */
+function notInFuture(o: Finding['observations'][number], now: Date): boolean {
+  const t = new Date(o.at).getTime();
+  return Number.isFinite(t) && t <= now.getTime();
+}
+
+export function lastConfirmedAt(f: Finding, now: Date = new Date()): string | null {
   const confirmed = f.observations
-    .filter((o) => o.verdict === 'confirmed')
+    .filter((o) => o.verdict === 'confirmed' && notInFuture(o, now))
     .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
   return confirmed[0]?.at ?? null;
 }
 
 /** 1.0 at the moment of confirmation, 0.5 after one half-life. */
 export function freshness(f: Finding, now: Date = new Date()): number {
-  const at = lastConfirmedAt(f);
+  const at = lastConfirmedAt(f, now);
   if (!at) return 0;
   return Math.pow(0.5, daysSince(at, now) / f.halfLifeDays);
 }
@@ -211,7 +237,12 @@ export function disagreement(f: Finding): { confirmers: number; refuters: number
   // originator confirmed at creation, and one attacker made two. A refutation
   // says "this did not reproduce for me", and the only thing that speaks to
   // that is someone re-running the check afterwards.
-  const latestRefutation = Math.max(...refutations.map((o) => new Date(o.at).getTime()));
+  // Clamped for the same reason: a refutation dated in the future would sit
+  // beyond every possible confirmation and could never be answered.
+  const nowMs = Date.now();
+  const latestRefutation = Math.max(
+    ...refutations.map((o) => Math.min(new Date(o.at).getTime() || 0, nowMs)),
+  );
   const confirmers = new Set(
     f.observations
       .filter((o) => o.verdict === 'confirmed' && new Date(o.at).getTime() > latestRefutation)

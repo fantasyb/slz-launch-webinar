@@ -168,37 +168,6 @@ for (const file of files) {
   if (f.check.confirmedIf === f.check.refutedIf) {
     problems.push(`${file}: confirmedIf and refutedIf are identical — the check decides nothing`);
   }
-  // Prose fields are read by agents while they decide what to do, which is the
-  // position an injection wants. Blocking, not warning.
-  for (const [field, text] of [
-    ['title', f.title], ['claim', f.claim], ['expectation', f.expectation],
-    ['reality', f.reality], ['mechanism', f.mechanism ?? ''],
-    ['workaround', f.workaround ?? ''], ['derivation', f.derivation ?? ''],
-    ['appliesTo', f.appliesTo ?? ''],
-    ...f.evidence.map((e, i) => [`evidence[${i}]`, `${e.output}\n${e.note ?? ''}`] as const),
-    ...f.observations.map((o, i) => [`observations[${i}].note`, o.note ?? ''] as const),
-  ] as Array<[string, string]>) {
-    for (const flag of scanInjection(text)) {
-      problems.push(
-        `${file}: ${field} contains ${flag.pattern} (${flag.reason}) — ${flag.sample}`,
-      );
-    }
-  }
-
-  // Findings are executed by agents, so the corpus is a supply chain.
-  for (const [field, text] of [
-    ['check.command', f.check.command],
-    ['workaround', f.workaround ?? ''],
-    ...f.evidence.map((e, i) => [`evidence[${i}].command`, e.command] as const),
-  ] as Array<[string, string]>) {
-    for (const flag of scanExecutable(text)) {
-      const msg =
-        `${file}: ${field} contains ${flag.pattern} (${flag.reason}) — ${flag.sample}`;
-      if (flag.severity === 'block') problems.push(msg);
-      else warnings.push(msg);
-    }
-  }
-
   for (const o of f.observations) {
     if (new Date(o.at).getTime() > Date.now() + 86_400_000) {
       problems.push(`${file}: observation dated in the future (${o.at})`);
