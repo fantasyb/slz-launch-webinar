@@ -114,7 +114,17 @@ export interface PanelAnalysis {
   sharedBlindSpots: Array<{ id: string; title: string; ensemblePrior: number; actual: 0 | 1 }>;
   pairs: Array<{ a: string; b: string; r: number; n: number }>;
   meanCorrelation: number | null;
-  memberBrier: Array<{ by: string; brier: number; n: number }>;
+  /**
+   * Per member: their Brier over the rows they forecast, and the ensemble's
+   * Brier over those same rows. `null` at n=0 rather than 0, which would read
+   * as a perfect score.
+   */
+  memberBrier: Array<{
+    by: string;
+    brier: number | null;
+    n: number;
+    ensembleOnSameRows: number | null;
+  }>;
   ensembleBrier: number | null;
   /** Positive means the mean of rivals beats the best single model. */
   ensembleAdvantage: number | null;
@@ -133,13 +143,24 @@ export function analysePanel(findings: Finding[]): PanelAnalysis {
     }
   }
 
+  // Each member scored on the rows they actually forecast, and the ensemble
+  // re-scored on that same subset for the comparison below. Averaging the
+  // member over their rows and the ensemble over ALL rows compared two numbers
+  // computed on different supports, so a member who only forecast the easy
+  // findings could "beat" an ensemble carrying the hard ones — a difference in
+  // which questions were answered, reported as a difference in skill.
+  //
+  // `r.errors` is the deduplicated per-row view; re-filtering the finding's
+  // predictions re-admitted duplicate same-`by` forecasts the row had already
+  // collapsed.
   const memberBrier = panelists.map((by) => {
-    // Score members on the same findings the ensemble is scored on, or the
-    // comparison is between averages over different supports.
-    const mine = rows.flatMap((r) =>
-      r.finding.predictions.filter((p): p is Resolved => isScorableIn(r.finding, p) && p.by === by),
-    );
-    return { by, n: mine.length, brier: mine.reduce((a, p) => a + brier(p), 0) / (mine.length || 1) };
+    const mineRows = rows.filter((r) => r.errors.has(by));
+    const n = mineRows.length;
+    const err = mineRows.reduce((a, r) => a + Math.pow(r.errors.get(by)!, 2), 0);
+    const ensembleOnMine = n
+      ? mineRows.reduce((a, r) => a + r.ensembleBrier, 0) / n
+      : null;
+    return { by, n, brier: n ? err / n : null, ensembleOnSameRows: ensembleOnMine };
   });
 
   const ensembleBrier = rows.length
@@ -148,14 +169,39 @@ export function analysePanel(findings: Finding[]): PanelAnalysis {
   // A member needs enough forecasts to be a credible comparator; otherwise one
   // lucky n=1 row becomes the benchmark the ensemble is judged against.
   const MIN_MEMBER_N = 5;
-  const eligible = memberBrier.filter((m) => m.n >= MIN_MEMBER_N);
-  const bestMember = eligible.length ? Math.min(...eligible.map((m) => m.brier)) : null;
+  const eligible = memberBrier.filter(
+    (m): m is typeof m & { brier: number; ensembleOnSameRows: number } =>
+      m.n >= MIN_MEMBER_N && m.brier !== null && m.ensembleOnSameRows !== null,
+  );
+  // The best member, and the ensemble measured on exactly that member's rows.
+  const best = eligible.length
+    ? eligible.reduce((a, b) => (b.brier < a.brier ? b : a))
+    : null;
+  const bestMember = best ? best.brier : null;
   const meanCorrelation = pairs.length
     ? pairs.reduce((a, p) => a + p.r, 0) / pairs.length
     : null;
 
+  // The verdict is gated on the support the CORRELATIONS actually have, not on
+  // how many rows the panel produced.
+  //
+  // `rows.length >= 10` and `meanCorrelation` measure different things: a pair
+  // whose errors are constant yields no correlation and drops out of the mean,
+  // while its rows still count toward the gate. Ten rows of which seven were
+  // carried by pairs that dropped out published `correlated` from a single
+  // pair with n=3 — a headline claim about the model population resting on
+  // three points, with 70% of the evidence silently excluded.
+  const MIN_PAIRS = 2;
+  const MIN_PAIRWISE_SUPPORT = 10;
+  const pairwiseSupport = pairs.reduce((a, p) => a + p.n, 0);
+
   let verdict: PanelAnalysis['verdict'] = 'insufficient-data';
-  if (rows.length >= 10 && meanCorrelation !== null) {
+  if (
+    rows.length >= 10 &&
+    meanCorrelation !== null &&
+    pairs.length >= MIN_PAIRS &&
+    pairwiseSupport >= MIN_PAIRWISE_SUPPORT
+  ) {
     verdict = meanCorrelation >= 0.4 ? 'correlated' : 'independent';
   }
 
@@ -174,8 +220,9 @@ export function analysePanel(findings: Finding[]): PanelAnalysis {
     meanCorrelation,
     memberBrier,
     ensembleBrier,
-    ensembleAdvantage:
-      ensembleBrier !== null && bestMember !== null ? bestMember - ensembleBrier : null,
+    // Like for like: the best member against the ensemble on that member's own
+    // rows, never against the ensemble's average over rows they never saw.
+    ensembleAdvantage: best ? best.brier - best.ensembleOnSameRows : null,
     verdict,
   };
 }

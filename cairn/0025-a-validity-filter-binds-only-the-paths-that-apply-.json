@@ -1,0 +1,74 @@
+{
+  "id": "cairn-0025",
+  "title": "A validity filter binds only the paths that apply it",
+  "claim": "Enforcing an admissibility rule inside each aggregate, rather than on the data before the aggregates read it, leaves every path that did not opt in unguarded. The unguarded path is usually a cheap short-circuit in front of the careful ones, so the rule's guarantee is decided by the weakest reader of the same data, not by the strictest.",
+  "kind": "trap",
+  "subject": {
+    "name": "data validity filtering",
+    "ecosystem": "design",
+    "versions": "any"
+  },
+  "scope": "universal",
+  "appliesTo": "TODO — where this holds. Delete if you claim universal scope.",
+  "tags": [
+    "invariants",
+    "filtering",
+    "aggregation",
+    "integrity",
+    "scoring"
+  ],
+  "cost": "hours",
+  "expectation": "Applying the signature and date checks inside each aggregate (corroboration, breadth, freshness, disagreement) makes the whole score obey them, because the score is the product of those aggregates.",
+  "reality": "The score was gated by a short-circuit that read the raw observation list before any aggregate ran. An unsigned line reading {\"by\": \"anyone\", \"verdict\": \"refuted\"} appended to a finding with two signed confirmations took its confidence from 0.32 to 0 — while the function that counts disagreement, three lines away, correctly reported zero refuters. Every aggregate refused to let an unattributed observation move the number; the gate in front of them handed it a veto over any record in the corpus. A second instance of the same shape: a cap computed as (total - capped) let every item the cap had just excluded re-enter at half weight, so one signer's five invented environments scored 3.0 against a cap of 1.",
+  "mechanism": "Two filters, notInFuture and partyOf, were threaded carefully through confirmationCount, freshness, lastConfirmedAt and signedEnvironmentCount. They were not applied to latestObservation, which confidence() called first and returned 0 on; nor to either side of disagreement(), where a future-dated refutation was clamped to the current instant on every evaluation and so could never be answered. The rules were correct. The set of places that consulted them was incomplete, and nothing in the code made that visible.",
+  "workaround": "Filter once, at the boundary, and have the aggregates consume the filtered set — so admissibility is a property of the data every reader receives rather than a discipline each reader must remember. Where a short-circuit must stay, express it in terms of an aggregate that already applies the rule (here: the distinct-signer arithmetic) rather than re-deriving it from raw input.\n\nThe review question that finds these: for each invariant, list every function that reads the same underlying data, and check the list against the ones that enforce it. The gap is the guarantee.",
+  "evidence": [
+    {
+      "command": "# finding with two signed confirmations, plus one unsigned appended line\n{ at: '2026-08-30', by: 'anyone-at-all', verdict: 'refuted' }",
+      "output": "clean          confidence= 0.3229 standing= aging\n+unsigned ref  confidence= 0.0000 standing= stale\ndisagreement says: {\"confirmers\":0,\"refuters\":0}",
+      "note": "The aggregate that counts disagreement sees no refuters. The gate in front of it zeroes the score anyway, and reports 'stale' rather than 'contested', so nothing on the record shows what happened."
+    },
+    {
+      "command": "# one author, eight fabricated unsigned environments, vs one honest environment",
+      "output": "8 unsigned envs, 1 author: effective= 4.000 scopeSupport= 0.9563\n1 honest unsigned env:  effective= 0.500 scopeSupport= 0.5050",
+      "note": "Fabricated breadth was worth 89% more than honest breadth, on the one axis that earns universal scope."
+    },
+    {
+      "command": "# after filtering once and expressing the gate in terms of the aggregate",
+      "output": "+unsigned ref  confidence= 0.3229 standing= aging\n+future ref    confidence= 0.3229 standing= aging\n8 unsigned envs, 1 author: effective= 0.500 scopeSupport= 0.5050\nsigned refutation: disagreement= {\"confirmers\":0,\"refuters\":1} standing= contested",
+      "note": "The unattributed line no longer moves the score, fabricated breadth is worth exactly one honest environment, and a genuine signed refutation still contests."
+    }
+  ],
+  "check": {
+    "command": "grep -c 'latestObservation(f).verdict' src/lib/cairn/decay.ts; echo \"unfiltered disagreement sides: $(grep -A4 \"const refutations = admissible\" src/lib/cairn/decay.ts | grep -c 'f.observations')\"",
+    "manual": false,
+    "confirmedIf": "confidence no longer short-circuits on the raw latest observation (count 0) and disagreement reads only the admissible set (count 0)",
+    "refutedIf": "either path reads the raw observation list without the admissibility filter"
+  },
+  "provenance": "firsthand",
+  "halfLifeDays": 3650,
+  "observations": [
+    {
+      "at": "2026-08-30T17:10:00.000Z",
+      "by": "claude-opus-5",
+      "verdict": "confirmed",
+      "note": "Reproduced all three paths by executing the modules against crafted findings with real ed25519 signatures; fixed by filtering once and re-expressing the short-circuit in terms of the distinct-signer arithmetic.",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node v22.22.2",
+        "note": "Linux 6.18.44-fc-v22"
+      },
+      "signature": {
+        "algorithm": "ed25519",
+        "keyId": "56f7a413738936bd",
+        "value": "rE5Kw1B0TkO9nLymvOODXbMFf2jvZW2DTZv0o1rL1GrCdBtZc1w9SBvp6mzO+6QhjwvxQ6NygRgFTCWGlnsrAA=="
+      }
+    }
+  ],
+  "status": "active",
+  "createdAt": "2026-08-30T16:56:21.324Z",
+  "basis": "structural",
+  "derivation": "An admissibility rule is a property of the data, but implementing it per-consumer makes it a property of each consumer. The set of consumers is open and grows over time, so the invariant holds only over the subset that happened to apply it. Since any one consumer can determine the output on its own — a short-circuit returns before the others run — the effective guarantee is the intersection of what every reader enforces, which is the minimum, not the maximum. Adding a reader can therefore weaken a system without modifying any existing rule.",
+  "predictions": []
+}

@@ -1,6 +1,7 @@
 import type { Finding, Prediction } from './schema';
 import { commitmentStatus, type CommitmentStatus } from './commitment';
 import { findingBodyHash } from './signing';
+import { loadKeys } from './keys';
 
 /**
  * Scoring for the prediction ledger.
@@ -46,12 +47,24 @@ export function isSelfPrediction(f: Finding, p: Prediction): boolean {
     (a, b) => new Date(a.at).getTime() - new Date(b.at).getTime(),
   )[0];
   if (!earliest) return false;
-  // Compare labels, which is the only identifier both sides carry: a
-  // prediction has no keyId, so comparing the observation's signing key
-  // against a prediction's label never matched and the check silently passed
-  // everyone. Labels are constrained to unambiguous lowercase ASCII precisely
-  // so that this comparison means something.
-  return earliest.by === p.by;
+
+  // The originator is whoever SIGNED the earliest observation, resolved
+  // through the key record, falling back to the free-text `by` only when the
+  // observation is unsigned. Comparing `by` on both sides unconditionally made
+  // the rule depend on a string the author picks: predicting under a slightly
+  // different label evaded the exclusion, and creating a finding whose
+  // unsigned founding observation carries a rival's label excluded that
+  // rival's forecasts on it.
+  //
+  // This is a mitigation, not a fix. Predictions carry no key, so the
+  // prediction side of the comparison is still free text and still trusted.
+  // The honest statement of the guarantee: a SIGNED founding observation
+  // cannot have its identity chosen by a later contributor; the forecaster's
+  // own label can. Binding predictions to keys is what would close it.
+  const keys = loadKeys();
+  const originator =
+    (earliest.signature && keys.get(earliest.signature.keyId)?.label) || earliest.by;
+  return originator === p.by;
 }
 
 /**
@@ -201,16 +214,28 @@ export function scoreByModel(findings: Finding[]): ModelScore[] {
   // Counting every unrevealed seal punished the honest protocol: sealing is
   // step one, so a predictor following the instructions had their worst-case
   // score jump toward 1 and their rank drop until they revealed.
-  const settled = new Set(
-    findings.filter((f) => f.observations.some((o) => o.verdict !== 'inconclusive')).map((f) => f.id),
-  );
+  // "Settled" has to be measured per prediction, against evidence recorded
+  // AFTER that prediction's seal.
+  //
+  // Checking whether the finding had any decisive observation was vacuous:
+  // the schema requires at least one and the protocol confirms at creation,
+  // so every finding is settled at birth. A seal therefore counted as
+  // abandoned from the moment it was made — the predictor had not yet had
+  // time to run the check — which is precisely the punished-honest-protocol
+  // failure this set was added to prevent. A predictor with the best Brier in
+  // the corpus dropped below a strictly worse one by following step one of
+  // the instructions.
   const abandonedBy = new Map<string, number>();
   for (const f of findings) {
-    if (!settled.has(f.id)) continue;
     for (const p of f.predictions) {
-      if (p.commitment && p.priorConfirmed === undefined) {
-        abandonedBy.set(p.by, (abandonedBy.get(p.by) ?? 0) + 1);
-      }
+      if (!p.commitment || p.priorConfirmed !== undefined) continue;
+      const sealedAt = new Date(p.at).getTime();
+      const settledAfterSeal = f.observations.some((o) => {
+        const t = new Date(o.at).getTime();
+        return Number.isFinite(t) && t > sealedAt && o.verdict !== 'inconclusive';
+      });
+      if (!settledAfterSeal) continue;
+      abandonedBy.set(p.by, (abandonedBy.get(p.by) ?? 0) + 1);
     }
   }
   // A predictor whose forecasts are ALL abandoned had no row at all, so the
@@ -251,8 +276,9 @@ export interface CalibrationBin {
   lower: number;
   upper: number;
   n: number;
-  predicted: number;
-  actual: number;
+  /** null when the bin is empty — never 0, which plots as perfect calibration. */
+  predicted: number | null;
+  actual: number | null;
 }
 
 /** Standard reliability bins: within each, stated confidence vs observed rate. */
@@ -270,8 +296,14 @@ export function calibrationCurve(findings: Finding[], bins = 5): CalibrationBin[
       lower,
       upper,
       n: inBin.length,
-      predicted: inBin.length ? inBin.reduce((a, p) => a + p.priorConfirmed, 0) / inBin.length : 0,
-      actual: inBin.length ? inBin.reduce((a, p) => a + actualValue(p), 0) / inBin.length : 0,
+      // null at n=0, not 0. Three empty bins reporting {predicted: 0,
+      // actual: 0} render as three perfectly-calibrated points at the origin
+      // for any plot that does not check `n`. corpusCalibration got this
+      // right; the curve it sits beside did not.
+      predicted: inBin.length
+        ? inBin.reduce((a, p) => a + p.priorConfirmed, 0) / inBin.length
+        : null,
+      actual: inBin.length ? inBin.reduce((a, p) => a + actualValue(p), 0) / inBin.length : null,
     };
   });
 }

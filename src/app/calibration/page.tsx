@@ -163,18 +163,22 @@ export default function CalibrationPage() {
                   {Math.round(b.lower * 100)}&ndash;{Math.round(b.upper * 100)}%
                 </span>
                 <div className="relative h-6 flex-1 overflow-hidden rounded border border-rule bg-paper">
-                  <div
-                    className="h-full bg-moss/70"
-                    style={{ width: `${b.actual * 100}%` }}
-                  />
-                  <div
-                    className="absolute top-0 h-full w-[2px] bg-ink"
-                    style={{ left: `calc(${b.predicted * 100}% - 1px)` }}
-                    title={`stated ${Math.round(b.predicted * 100)}%`}
-                  />
+                  {b.actual !== null && (
+                    <div
+                      className="h-full bg-moss/70"
+                      style={{ width: `${b.actual * 100}%` }}
+                    />
+                  )}
+                  {b.predicted !== null && (
+                    <div
+                      className="absolute top-0 h-full w-[2px] bg-ink"
+                      style={{ left: `calc(${b.predicted * 100}% - 1px)` }}
+                      title={`stated ${Math.round(b.predicted * 100)}%`}
+                    />
+                  )}
                 </div>
                 <span className="w-28 shrink-0 text-right font-mono text-[11px] text-ink-faint">
-                  {Math.round(b.actual * 100)}% of {b.n}
+                  {b.actual === null ? 'no forecasts' : `${Math.round(b.actual * 100)}% of ${b.n}`}
                 </span>
               </div>
             ))}
