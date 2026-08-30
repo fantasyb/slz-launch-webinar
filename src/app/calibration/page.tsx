@@ -19,6 +19,45 @@ import { cn } from '@/lib/utils';
 
 export const metadata = { title: 'Calibration — Cairn' };
 
+type UnscoredPrediction = ReturnType<typeof allPredictions>[number];
+
+/**
+ * Why one prediction is not scored.
+ *
+ * There are five separate disqualifications and the section used to name only
+ * one of them, in a single sentence over the whole list: that nobody but the
+ * author could verify the forecast preceded its outcome. That is false of every
+ * row whose status is `verified` — the seal is exactly what makes such a
+ * forecast independently checkable, and it is excluded for being self-authored,
+ * which is a different objection entirely. The reason is therefore derived per
+ * row, in the order isScorableIn applies them, so the strongest disqualification
+ * is the one shown.
+ */
+function exclusionReason(p: UnscoredPrediction): string {
+  if (p.status === 'broken') {
+    return 'the seal does not recompute — the forecast was edited after it was published';
+  }
+  if (p.status === 'unanchored') {
+    return 'no seal in git, so nothing establishes that it preceded the outcome';
+  }
+  if (p.status === 'legacy-encoding') {
+    return (
+      'sealed under an encoding that was not prefix-free, so the hash fixes when the ' +
+      'forecast was made but not what it said'
+    );
+  }
+  if (p.status === 'sealed') {
+    return 'sealed but not yet revealed — the prior and the reasoning are still secret';
+  }
+  if (p.outcome !== 'confirmed' && p.outcome !== 'refuted') {
+    return 'the check has not resolved to confirmed or refuted, so there is nothing to score against';
+  }
+  if (p.self) {
+    return 'authored by the originator of the finding, who already knew the answer';
+  }
+  return 'sealed against a different wording of the claim than the one published now, so it is not a forecast about this text';
+}
+
 export default function CalibrationPage() {
   const corpus = loadCorpus();
   const overall = corpusCalibration(corpus);
@@ -34,6 +73,10 @@ export default function CalibrationPage() {
     .sort((a, b) => b.s - a.s);
 
   const worseThanGuessing = (overall.edgeOverUninformed ?? 0) < 0;
+  // The support the correlations actually have, which is what analysePanel gates
+  // the verdict on — summed here rather than restated, because the number of
+  // rows and the number of paired forecasts behind them are routinely different.
+  const panelPairwiseSupport = panel.pairs.reduce((a, p) => a + p.n, 0);
 
   return (
     <div className="mx-auto max-w-3xl px-5 py-12">
@@ -108,11 +151,17 @@ export default function CalibrationPage() {
         </div>
         {overall.n === 0 ? (
           <p className="mt-5 border-t border-rule pt-4 text-[13px] leading-relaxed text-ink-soft">
-            <strong className="font-semibold text-ink">No scored forecasts.</strong> Every
-            prediction recorded so far was made by the finding&rsquo;s own author, and a
-            self-prediction is excluded because the author already knew the answer. There is
-            nothing here to report until an independent party forecasts &mdash; which is the
-            correct state, not a gap in the page.
+            {/* Self-authorship is one disqualification of several, and naming it
+                as the only one described a corpus this page cannot see. The
+                count is reported instead, with the reasons listed per row
+                further down. */}
+            <strong className="font-semibold text-ink">No scored forecasts.</strong>{' '}
+            {integrity.total === 0
+              ? 'No predictions have been recorded against any finding yet.'
+              : `All ${integrity.total} recorded prediction${integrity.total === 1 ? '' : 's'} fall outside the scored set; each is listed with its reason under “Recorded but not scored”.`}{' '}
+            There is nothing here to report until an independent party seals a forecast,
+            reveals it, and the check resolves &mdash; which is the correct state, not a gap
+            in the page.
           </p>
         ) : (
           <p
@@ -189,88 +238,98 @@ export default function CalibrationPage() {
         </section>
       )}
 
-      {/* Per model */}
-      <section className="mt-10">
-        <h2 className="font-claim text-lg">By predictor</h2>
-        <div className="evidence mt-4">
-          <table className="w-full text-left text-[13px]">
-            <thead>
-              <tr className="border-b border-rule text-[11px] uppercase tracking-wider text-ink-faint">
-                <th className="pb-2 pr-4 font-medium">predictor</th>
-                <th className="pb-2 pr-4 font-medium">n</th>
-                <th className="pb-2 pr-4 font-medium">confidence</th>
-                <th className="pb-2 pr-4 font-medium">accuracy</th>
-                <th className="pb-2 font-medium">brier</th>
-              </tr>
-            </thead>
-            <tbody>
-              {models.map((m) => (
-                <tr key={m.by} className="border-b border-rule/60">
-                  <td className="py-2.5 pr-4 font-mono text-[12px]">{m.by}</td>
-                  <td className="py-2.5 pr-4 font-mono text-ink-soft">{m.n}</td>
-                  <td className="py-2.5 pr-4 font-mono text-ink-soft">
-                    {m.meanConfidence === null ? '—' : `${Math.round(m.meanConfidence * 100)}%`}
-                  </td>
-                  <td className="py-2.5 pr-4 font-mono text-ink-soft">
-                    {m.accuracy === null ? '—' : `${Math.round(m.accuracy * 100)}%`}
-                  </td>
-                  <td
-                    className={cn(
-                      'py-2.5 font-mono',
-                      m.brier === null ? 'text-ink-faint' : m.brier > UNINFORMED_BRIER ? 'text-rust' : 'text-moss',
-                    )}
-                    title={m.abandoned ? `${m.abandoned} sealed forecast(s) never revealed` : undefined}
-                  >
-                    {m.brier === null ? 'withheld all' : m.brier.toFixed(3)}
-                    {m.abandoned > 0 && (
-                      <span className="ml-1.5 text-rust">+{m.abandoned} abandoned</span>
-                    )}
-                  </td>
+      {/* Per model. Guarded like Reliability above: a table header with an empty
+          body asserts that these columns were measured and reports nothing, which
+          is indistinguishable from a query that failed. */}
+      {models.length > 0 && (
+        <section className="mt-10">
+          <h2 className="font-claim text-lg">By predictor</h2>
+          <div className="evidence mt-4">
+            <table className="w-full text-left text-[13px]">
+              <thead>
+                <tr className="border-b border-rule text-[11px] uppercase tracking-wider text-ink-faint">
+                  <th className="pb-2 pr-4 font-medium">predictor</th>
+                  <th className="pb-2 pr-4 font-medium">n</th>
+                  <th className="pb-2 pr-4 font-medium">confidence</th>
+                  <th className="pb-2 pr-4 font-medium">accuracy</th>
+                  <th className="pb-2 font-medium">brier</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
+              </thead>
+              <tbody>
+                {models.map((m) => (
+                  <tr key={m.by} className="border-b border-rule/60">
+                    <td className="py-2.5 pr-4 font-mono text-[12px]">{m.by}</td>
+                    <td className="py-2.5 pr-4 font-mono text-ink-soft">{m.n}</td>
+                    <td className="py-2.5 pr-4 font-mono text-ink-soft">
+                      {m.meanConfidence === null ? '—' : `${Math.round(m.meanConfidence * 100)}%`}
+                    </td>
+                    <td className="py-2.5 pr-4 font-mono text-ink-soft">
+                      {m.accuracy === null ? '—' : `${Math.round(m.accuracy * 100)}%`}
+                    </td>
+                    <td
+                      className={cn(
+                        'py-2.5 font-mono',
+                        m.brier === null ? 'text-ink-faint' : m.brier > UNINFORMED_BRIER ? 'text-rust' : 'text-moss',
+                      )}
+                      title={m.abandoned ? `${m.abandoned} sealed forecast(s) never revealed` : undefined}
+                    >
+                      {m.brier === null ? 'withheld all' : m.brier.toFixed(3)}
+                      {m.abandoned > 0 && (
+                        <span className="ml-1.5 text-rust">+{m.abandoned} abandoned</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
 
-      {/* Surprise ranking */}
-      <section className="mt-10">
-        <h2 className="font-claim text-lg">Ranked by surprise</h2>
-        <p className="mt-2 text-[14px] leading-relaxed text-ink-soft">
-          Mean prediction error across everyone who forecast it. A finding every predictor
-          got right is already in the weights and teaches nothing. One that confident
-          predictors got wrong is, by construction, knowledge the models do not have.{' '}
-          <strong className="font-semibold text-ink">
-            This is the ranking that selects training signal.
-          </strong>
-        </p>
-        <div className="mt-5 space-y-2">
-          {ranked.map(({ f, s }) => (
-            <Link
-              key={f.id}
-              href={`/findings/${f.id}`}
-              className="flex items-center gap-4 rounded-md border border-rule bg-raised p-3 transition-colors hover:border-rule-strong"
-            >
-              <div className="h-10 w-1.5 shrink-0 overflow-hidden rounded-full bg-rule">
-                <div
-                  className="w-full bg-rust"
-                  style={{ height: `${s * 100}%`, marginTop: `${(1 - s) * 100}%` }}
-                />
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="font-mono text-[11px] text-ink-faint">{f.id}</div>
-                <div className="truncate font-claim text-[14px] text-ink">{f.title}</div>
-              </div>
-              <div className="shrink-0 text-right">
-                <div className="font-mono text-[15px] text-ink">{s.toFixed(2)}</div>
-                <div className="text-[10px] uppercase tracking-wider text-ink-faint">
-                  surprise
+      {/* Surprise ranking. The bolded claim below — that this ranking selects
+          training signal — is a claim about a ranking, so it is not published
+          over an empty list. */}
+      {ranked.length > 0 && (
+        <section className="mt-10">
+          <h2 className="font-claim text-lg">Ranked by surprise</h2>
+          <p className="mt-2 text-[14px] leading-relaxed text-ink-soft">
+            Mean prediction error across everyone who forecast it. A finding every predictor
+            got right is already in the weights and teaches nothing. One that confident
+            predictors got wrong is, by construction, knowledge the models do not have.{' '}
+            <strong className="font-semibold text-ink">
+              This is the ranking that selects training signal.
+            </strong>
+          </p>
+          <div className="mt-5 space-y-2">
+            {ranked.map(({ f, s }) => (
+              <Link
+                key={f.id}
+                href={`/findings/${f.id}`}
+                className="flex items-center gap-4 rounded-md border border-rule bg-raised p-3 transition-colors hover:border-rule-strong"
+              >
+                {/* Filled from the bottom with flex, not with a percentage
+                    margin. A percentage margin resolves against the containing
+                    block's INLINE size, which is the 6px width of this track and
+                    not its 40px height, so every bar was pushed down by a few
+                    pixels at most and the gauge read as full for every value. */}
+                <div className="flex h-10 w-1.5 shrink-0 flex-col justify-end overflow-hidden rounded-full bg-rule">
+                  <div className="w-full shrink-0 bg-rust" style={{ height: `${s * 100}%` }} />
                 </div>
-              </div>
-            </Link>
-          ))}
-        </div>
-      </section>
+                <div className="min-w-0 flex-1">
+                  <div className="font-mono text-[11px] text-ink-faint">{f.id}</div>
+                  <div className="truncate font-claim text-[14px] text-ink">{f.title}</div>
+                </div>
+                <div className="shrink-0 text-right">
+                  <div className="font-mono text-[15px] text-ink">{s.toFixed(2)}</div>
+                  <div className="text-[10px] uppercase tracking-wider text-ink-faint">
+                    surprise
+                  </div>
+                </div>
+              </Link>
+            ))}
+          </div>
+        </section>
+      )}
 
       {/* Panel */}
       <section className="mt-10">
@@ -295,13 +354,35 @@ export default function CalibrationPage() {
 
         {panel.verdict === 'insufficient-data' ? (
           <div className="mt-5 rounded-lg border border-dashed border-rule-strong p-6">
-            <p className="text-[13px] leading-relaxed text-ink-soft">
-              <strong className="font-semibold text-ink">Not yet run.</strong>{' '}
-              {panel.findingsWithPanel} finding
-              {panel.findingsWithPanel === 1 ? ' has' : 's have'} forecasts from two or more
-              panelists; the analysis needs at least 10 before it reports a verdict. The
-              harness is built and smoke-tested &mdash; it needs API keys and a run.
-            </p>
+            {/* Two states, not one. "Not yet run" was printed whenever the
+                verdict was withheld, including when the analysis had run over
+                real rows and found their support too thin — and the sentence
+                beside it named a single threshold on the row count, so a corpus
+                with fifteen panel findings carried by one pair asserted the
+                precondition was met while the page reported nothing. The gate is
+                on four quantities at once, and each is shown against what it
+                contributed rather than restated as a number this page cannot
+                see. */}
+            {panel.findingsWithPanel === 0 ? (
+              <p className="text-[13px] leading-relaxed text-ink-soft">
+                <strong className="font-semibold text-ink">Not yet run.</strong> No finding
+                carries forecasts from two or more panelists, so there is nothing to correlate.
+                The harness is built and smoke-tested &mdash; it needs API keys and a run.
+              </p>
+            ) : (
+              <p className="text-[13px] leading-relaxed text-ink-soft">
+                <strong className="font-semibold text-ink">Ran; support insufficient.</strong>{' '}
+                {panel.findingsWithPanel} finding
+                {panel.findingsWithPanel === 1 ? ' carries' : 's carry'} forecasts from two or
+                more panelists, yielding {panel.pairs.length} scorable pair
+                {panel.pairs.length === 1 ? '' : 's'} over {panelPairwiseSupport} paired
+                forecast{panelPairwiseSupport === 1 ? '' : 's'}
+                {panel.meanCorrelation === null && ' and no defined mean correlation'}. The
+                verdict is gated on all of those together, not on the finding count alone: a
+                pair whose errors never vary yields no correlation and drops out, so rows can
+                accumulate while the correlations rest on almost nothing.
+              </p>
+            )}
             <pre className="evidence mt-3 rounded-md border border-rule bg-paper p-3 font-mono text-[12px] text-ink-soft">
 {`npm run cairn:panel -- seal     # solicit, seal, write the manifest
 git add cairn/ panel-runs/ && git commit && git push
@@ -407,7 +488,7 @@ npm run cairn:panel -- reveal   # after the checks have run`}
                       <Link href={`/findings/${b.id}`} className="font-mono underline">
                         {b.id}
                       </Link>{' '}
-                      <span className="text-ink-soft">{b.title}</span>{' '}
+                      <span className="break-words text-ink-soft">{b.title}</span>{' '}
                       <span className="font-mono text-rust">
                         panel said {Math.round(b.ensemblePrior * 100)}%, actual{' '}
                         {b.actual ? 'confirmed' : 'refuted'}
@@ -426,8 +507,9 @@ npm run cairn:panel -- reveal   # after the checks have run`}
         <section className="mt-10">
           <h2 className="font-claim text-lg">Recorded but not scored</h2>
           <p className="mt-2 text-[14px] leading-relaxed text-ink-soft">
-            Kept in full, because a discarded prediction is a hidden one. Excluded because
-            nobody but their author can verify they preceded their outcomes.
+            Kept in full, because a discarded prediction is a hidden one. There are several
+            ways to fall out of the scored set &mdash; an unverifiable seal is only one of
+            them &mdash; so each row carries the reason that disqualified it.
           </p>
           <ul className="mt-4 space-y-2">
             {unscored.map((p, i) => (
@@ -454,61 +536,75 @@ npm run cairn:panel -- reveal   # after the checks have run`}
                     </span>
                   )}
                 </span>
+                <p className="w-full break-words text-[11px] leading-relaxed text-ink-faint">
+                  Excluded: {exclusionReason(p)}.
+                </p>
               </li>
             ))}
           </ul>
         </section>
       )}
 
-      {/* Individual predictions */}
-      <section className="mt-10">
-        <h2 className="font-claim text-lg">The ledger</h2>
-        <p className="mt-2 text-[14px] leading-relaxed text-ink-soft">
-          Every forecast, worst first. Reasoning is recorded because the reasoning is the
-          part worth training on, not the number.
-        </p>
-        <ol className="mt-5 space-y-4">
-          {preds.map((p, i) => {
-            const wrong = brier(p) > 0.25;
-            return (
-              <li key={i} className="rounded-md border border-rule bg-raised p-4">
-                <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-                  <Link
-                    href={`/findings/${p.findingId}`}
-                    className="font-mono text-[12px] underline decoration-rule-strong underline-offset-2"
-                  >
-                    {p.findingId}
-                  </Link>
-                  <span className="font-mono text-[11px] text-ink-faint">{p.by}</span>
-                  <span className="text-[12px] text-ink-soft">
-                    predicted{' '}
-                    <strong className="font-semibold text-ink">
-                      {Math.round(p.priorConfirmed * 100)}%
-                    </strong>{' '}
-                    confirm &rarr; actually{' '}
-                    <strong
-                      className={cn('font-semibold', actualValue(p) ? 'text-moss' : 'text-rust')}
+      {/* Individual predictions. "Every forecast, worst first" over an empty
+          list reads as a claim that no forecasts exist anywhere, when the
+          predictions are all present and merely unscored — the section above
+          lists them. */}
+      {preds.length > 0 && (
+        <section className="mt-10">
+          <h2 className="font-claim text-lg">The ledger</h2>
+          <p className="mt-2 text-[14px] leading-relaxed text-ink-soft">
+            Every forecast, worst first. Reasoning is recorded because the reasoning is the
+            part worth training on, not the number.
+          </p>
+          <ol className="mt-5 space-y-4">
+            {preds.map((p, i) => {
+              const wrong = brier(p) > 0.25;
+              return (
+                <li key={i} className="rounded-md border border-rule bg-raised p-4">
+                  <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                    <Link
+                      href={`/findings/${p.findingId}`}
+                      className="font-mono text-[12px] underline decoration-rule-strong underline-offset-2"
                     >
-                      {p.outcome}
-                    </strong>
-                  </span>
-                  <span
-                    className={cn(
-                      'ml-auto rounded-full border px-2 py-0.5 font-mono text-[11px]',
-                      wrong
-                        ? 'border-rust/30 bg-rust-soft text-rust'
-                        : 'border-moss/30 bg-moss-soft text-moss',
-                    )}
-                  >
-                    brier {brier(p).toFixed(3)}
-                  </span>
-                </div>
-                <p className="mt-2 text-[13px] leading-relaxed text-ink-soft">{p.reasoning}</p>
-              </li>
-            );
-          })}
-        </ol>
-      </section>
+                      {p.findingId}
+                    </Link>
+                    <span className="font-mono text-[11px] text-ink-faint">{p.by}</span>
+                    <span className="text-[12px] text-ink-soft">
+                      predicted{' '}
+                      <strong className="font-semibold text-ink">
+                        {Math.round(p.priorConfirmed * 100)}%
+                      </strong>{' '}
+                      confirm &rarr; actually{' '}
+                      <strong
+                        className={cn('font-semibold', actualValue(p) ? 'text-moss' : 'text-rust')}
+                      >
+                        {p.outcome}
+                      </strong>
+                    </span>
+                    <span
+                      className={cn(
+                        'ml-auto rounded-full border px-2 py-0.5 font-mono text-[11px]',
+                        wrong
+                          ? 'border-rust/30 bg-rust-soft text-rust'
+                          : 'border-moss/30 bg-moss-soft text-moss',
+                      )}
+                    >
+                      brier {brier(p).toFixed(3)}
+                    </span>
+                  </div>
+                  {/* Reasoning is free text from a forecaster and routinely
+                      contains a hash, a URL or a stack frame with no break
+                      opportunity in it; without this the widest one set the page's
+                      minimum width and the whole body scrolled sideways. */}
+                  <p className="mt-2 break-words text-[13px] leading-relaxed text-ink-soft">
+                    {p.reasoning}
+                  </p>
+                </li>
+              );
+            })}
+          </ol>
+        </section>
+      )}
 
       <section className="mt-10 border-t border-rule pt-6">
         <h2 className="font-claim text-lg">Take the data</h2>

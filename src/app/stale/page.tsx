@@ -30,11 +30,21 @@ export default function StalePage() {
           See <span className="font-mono">/skill.md</span>.
         </p>
       </div>
-      <div className="mt-8 grid gap-3">
-        {queue.map((f) => (
-          <FindingCard key={f.id} finding={f} />
-        ))}
-      </div>
+      {/* An empty queue is a state worth naming. Rendering the heading and the
+          explanation above an empty grid left the reader unable to tell an empty
+          queue from a page that had failed to load its findings. */}
+      {queue.length === 0 ? (
+        <p className="mt-8 rounded-lg border border-dashed border-rule-strong p-8 text-center text-[13px] text-ink-faint">
+          Nothing to check. The queue holds active findings only, so it is empty either
+          because the corpus has none yet or because every finding in it has been retired.
+        </p>
+      ) : (
+        <div className="mt-8 grid gap-3">
+          {queue.map((f) => (
+            <FindingCard key={f.id} finding={f} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }

@@ -12,10 +12,11 @@ import {
   lastConfirmedAt,
   formatConfidence,
   environmentCount,
+  effectiveEnvironments,
   scopeSupport,
 } from '@/lib/cairn/decay';
 import { StandingBadge, ConfidenceStack, ProvenanceMark, standingHint } from '@/components/Standing';
-import { relativeDays, cn } from '@/lib/utils';
+import { relativeDays, formatEnvironments, cn } from '@/lib/utils';
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }) {
   const f = getFinding((await params).id);
@@ -48,6 +49,17 @@ export default async function FindingPage({ params }: { params: Promise<{ id: st
   const c = confidence(f);
   const s = standing(f);
   const confirmedAt = lastConfirmedAt(f);
+  // Two different environment numbers, both shown, because showing only one of
+  // them made the panel self-contradicting. `environmentCount` is the raw
+  // number of distinct environments; `effectiveEnvironments` is what
+  // `scopeSupport` actually divides on, after capping breadth at the number of
+  // distinct signers and halving unsigned environments. Two unsigned
+  // confirmations from two environments are 2 and 1 respectively, so printing
+  // the raw count beside the multiplier invited a reader to recompute the
+  // n = 2 formula, get 0.825, and see 0.65 printed next to it.
+  const environments = environmentCount(f);
+  const effective = effectiveEnvironments(f);
+  const support = scopeSupport(f);
 
   return (
     <article className="mx-auto max-w-3xl px-5 py-12">
@@ -72,11 +84,11 @@ export default async function FindingPage({ params }: { params: Promise<{ id: st
       {f.status === 'retired' && (
         <div className="mt-5 rounded-md border border-slate/30 bg-slate-soft p-4">
           <p className="text-[11px] font-semibold uppercase tracking-wider text-slate">Retired</p>
-          <p className="mt-1.5 text-[13px] leading-relaxed text-ink-soft">{f.retiredReason}</p>
+          <p className="mt-1.5 break-words text-[13px] leading-relaxed text-ink-soft">{f.retiredReason}</p>
         </div>
       )}
 
-      <p className="font-claim mt-5 border-l-2 border-moss pl-4 text-[17px] leading-relaxed text-ink">
+      <p className="font-claim mt-5 break-words border-l-2 border-moss pl-4 text-[17px] leading-relaxed text-ink">
         {f.claim}
       </p>
 
@@ -110,10 +122,13 @@ export default async function FindingPage({ params }: { params: Promise<{ id: st
           </div>
           <div>
             <dt className="text-ink-faint">Environments</dt>
-            <dd className="mt-0.5 font-mono text-ink">
-              {environmentCount(f)}{' '}
+            <dd
+              className="mt-0.5 font-mono text-ink"
+              title={`${environments} distinct environment(s) confirmed; ${formatEnvironments(effective)} after signed environments are capped at the number of distinct signers and unsigned ones counted at half. The multiplier is computed from the weighted number.`}
+            >
+              {environments}{' '}
               <span className="text-ink-faint">
-                (&times;{scopeSupport(f).toFixed(2)})
+                ({formatEnvironments(effective)} weighted &middot; &times;{support.toFixed(2)})
               </span>
             </dd>
           </div>
@@ -140,10 +155,13 @@ export default async function FindingPage({ params }: { params: Promise<{ id: st
           ) : f.scope === 'universal' ? (
             <>
               This claims <strong className="text-ink-soft">universal</strong> scope, so it is
-              multiplied by {scopeSupport(f).toFixed(2)} until confirmed across more
-              environments &mdash; a universal claim standing on{' '}
-              {environmentCount(f) === 1 ? 'one environment' : `${environmentCount(f)} environments`}{' '}
-              has not yet earned the word.
+              multiplied by {support.toFixed(2)} until confirmed across more environments
+              &mdash; a universal claim standing on{' '}
+              {environments === 1 ? 'one environment' : `${environments} environments`} has not
+              yet earned the word. The breadth behind that multiplier is weighted rather than
+              raw: signed environments are capped at the number of distinct signers, an
+              unsigned environment is attributable to nobody and counts half, which puts this
+              finding at {formatEnvironments(effective)}.
             </>
           ) : (
             <>
@@ -158,7 +176,7 @@ export default async function FindingPage({ params }: { params: Promise<{ id: st
           <p className="text-[11px] font-semibold uppercase tracking-wider text-slate">
             Applies to
           </p>
-          <p className="mt-1.5 text-[13px] leading-relaxed text-ink-soft">{f.appliesTo}</p>
+          <p className="mt-1.5 break-words text-[13px] leading-relaxed text-ink-soft">{f.appliesTo}</p>
         </div>
       )}
 
@@ -167,7 +185,7 @@ export default async function FindingPage({ params }: { params: Promise<{ id: st
           <p className="text-[11px] font-semibold uppercase tracking-wider text-slate">
             Structural &mdash; why this must hold
           </p>
-          <p className="mt-1.5 text-[13px] leading-relaxed text-ink-soft">{f.derivation}</p>
+          <p className="mt-1.5 break-words text-[13px] leading-relaxed text-ink-soft">{f.derivation}</p>
           <p className="mt-2.5 text-[11px] leading-relaxed text-ink-faint">
             This follows from how the thing is built rather than from observing it, so there
             is no second environment that could corroborate it and no breadth discount is
@@ -178,22 +196,22 @@ export default async function FindingPage({ params }: { params: Promise<{ id: st
       )}
 
       <Section title="What you would expect">
-        <p className="text-[14px] leading-relaxed text-ink-soft">{f.expectation}</p>
+        <p className="break-words text-[14px] leading-relaxed text-ink-soft">{f.expectation}</p>
       </Section>
 
       <Section title="What actually happens">
-        <p className="text-[14px] leading-relaxed text-ink">{f.reality}</p>
+        <p className="break-words text-[14px] leading-relaxed text-ink">{f.reality}</p>
       </Section>
 
       {f.mechanism && (
         <Section title="Why">
-          <p className="text-[14px] leading-relaxed text-ink-soft">{f.mechanism}</p>
+          <p className="break-words text-[14px] leading-relaxed text-ink-soft">{f.mechanism}</p>
         </Section>
       )}
 
       {f.workaround && (
         <Section title="What to do instead">
-          <p className="text-[14px] leading-relaxed text-ink">{f.workaround}</p>
+          <p className="break-words text-[14px] leading-relaxed text-ink">{f.workaround}</p>
         </Section>
       )}
 
@@ -208,7 +226,7 @@ export default async function FindingPage({ params }: { params: Promise<{ id: st
                   {e.output && `\n${e.output}`}
                 </Code>
                 {e.note && (
-                  <p className="mt-1.5 text-[12px] leading-relaxed text-ink-faint">{e.note}</p>
+                  <p className="mt-1.5 break-words text-[12px] leading-relaxed text-ink-faint">{e.note}</p>
                 )}
               </div>
             ))}
@@ -229,11 +247,11 @@ export default async function FindingPage({ params }: { params: Promise<{ id: st
         <dl className="mt-3 space-y-2 text-[13px]">
           <div className="flex gap-2.5">
             <dt className="shrink-0 font-medium text-moss">Confirmed if</dt>
-            <dd className="text-ink-soft">{f.check.confirmedIf}</dd>
+            <dd className="break-words text-ink-soft">{f.check.confirmedIf}</dd>
           </div>
           <div className="flex gap-2.5">
             <dt className="shrink-0 font-medium text-rust">Refuted if</dt>
-            <dd className="text-ink-soft">{f.check.refutedIf}</dd>
+            <dd className="break-words text-ink-soft">{f.check.refutedIf}</dd>
           </div>
         </dl>
         <Code>
@@ -263,7 +281,7 @@ export default async function FindingPage({ params }: { params: Promise<{ id: st
                     <span className="text-ink-faint">{relativeDays(o.at)}</span>
                   </div>
                   {o.note && (
-                    <p className="mt-1 text-[13px] leading-relaxed text-ink-soft">{o.note}</p>
+                    <p className="mt-1 break-words text-[13px] leading-relaxed text-ink-soft">{o.note}</p>
                   )}
                   {o.environment ? (
                     <p className="mt-1 font-mono text-[11px] text-ink-faint">

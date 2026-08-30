@@ -136,6 +136,8 @@ export interface LedgerIntegrity {
   sealed: number;
   broken: number;
   unanchored: number;
+  /** Sealed under the v1 encoding, which did not bind the field values. */
+  legacyEncoding: number;
   self: number;
   scored: number;
 }
@@ -148,6 +150,7 @@ export function ledgerIntegrity(findings: Finding[]): LedgerIntegrity {
     sealed: all.filter((p) => p.status === 'sealed').length,
     broken: all.filter((p) => p.status === 'broken').length,
     unanchored: all.filter((p) => p.status === 'unanchored').length,
+    legacyEncoding: all.filter((p) => p.status === 'legacy-encoding').length,
     self: all.filter((p) => p.self).length,
     scored: all.filter((p) => p.scorable).length,
   };

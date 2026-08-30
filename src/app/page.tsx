@@ -72,7 +72,14 @@ export default function Home() {
                 {integrity.total - integrity.scored}
               </strong>{' '}
               excluded &mdash; {integrity.self} as forecasts by the finding&rsquo;s own author,
-              which nobody else can check, and {integrity.unanchored} as unanchored.{' '}
+              which nobody else can check, {integrity.unanchored} as unanchored
+              {integrity.legacyEncoding > 0 && (
+                <>
+                  , and {integrity.legacyEncoding} sealed under an earlier encoding that did
+                  not bind the forecast&rsquo;s values
+                </>
+              )}
+              .{' '}
               <Link href="/calibration" className="underline decoration-rule-strong underline-offset-2 hover:text-ink">
                 See the ledger
               </Link>

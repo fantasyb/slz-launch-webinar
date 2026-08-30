@@ -6,7 +6,7 @@ import { loadKeys } from '@/lib/cairn/keys';
 import { confidence, standing, effectiveEnvironments } from '@/lib/cairn/decay';
 import { StandingBadge, ConfidenceStack } from '@/components/Standing';
 import { formatConfidence } from '@/lib/cairn/decay';
-import { relativeDays } from '@/lib/utils';
+import { relativeDays, formatEnvironments } from '@/lib/utils';
 
 export const metadata = { title: 'Federation — Cairn' };
 
@@ -87,21 +87,43 @@ export default function FederationPage() {
                         <span className="text-rule-strong">·</span>
                         <span className="truncate">{ff.origin}</span>
                       </div>
-                      <h3 className="font-claim text-[15px] leading-snug text-ink">
+                      <h3 className="font-claim break-words text-[15px] leading-snug text-ink">
                         {ff.finding.title}
                       </h3>
-                      <p className="mt-2 text-[13px] leading-relaxed text-ink-soft">
+                      <p className="mt-2 break-words text-[13px] leading-relaxed text-ink-soft">
                         {ff.finding.reality}
                       </p>
                       <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[11px] text-ink-faint">
                         <StandingBadge standing={standing(ff.finding)} />
                         <span>{formatConfidence(c)}</span>
-                        <span>{effectiveEnvironments(ff.finding)} env</span>
+                        <span>{formatEnvironments(effectiveEnvironments(ff.finding))} env</span>
                         <span className="text-moss">{ff.verifiedUpstream} upstream signed</span>
                         {ff.unverifiedUpstream > 0 && (
                           <span className="text-rust">{ff.unverifiedUpstream} unverified</span>
                         )}
                       </div>
+                      {/* The two halves of that row are computed against
+                          different key sets, and printed side by side they read
+                          as one figure explaining the other. The scores use
+                          local keys deliberately — an upstream's signature
+                          attests who spoke upstream, not that you accept them
+                          as a corroborating party — so an upstream-signed
+                          observation scores here exactly as an unsigned one
+                          does. Saying so is the only thing that stops the badge
+                          beside it from implying the opposite. */}
+                      <p className="mt-1.5 text-[11px] leading-relaxed text-ink-faint">
+                        Standing, confidence and breadth above are scored against your key
+                        list alone.{' '}
+                        {ff.verifiedUpstream > 0 && (
+                          <>
+                            {ff.verifiedUpstream === 1
+                              ? 'The upstream signature beside them verifies against upstream’s keys rather than yours, so it counts toward those three numbers exactly as an unsigned observation would.'
+                              : `The ${ff.verifiedUpstream} upstream signatures beside them verify against upstream’s keys rather than yours, so they count toward those three numbers exactly as unsigned observations would.`}{' '}
+                          </>
+                        )}
+                        Upstream evidence earns full weight in your scores only once you hold
+                        the key that signed it.
+                      </p>
 
                       {ff.overlay.length > 0 && (
                         <div className="mt-4 rounded-md border border-moss/25 bg-moss-soft p-3">
@@ -119,7 +141,7 @@ export default function FederationPage() {
                                 )}
                               </div>
                               {o.note && (
-                                <p className="mt-1 text-[12px] leading-relaxed text-ink-soft">
+                                <p className="mt-1 break-words text-[12px] leading-relaxed text-ink-soft">
                                   {o.note}
                                 </p>
                               )}

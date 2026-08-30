@@ -1,3 +1,9 @@
+// standing() and byConfidence() both read the wall clock, so this page's
+// ordering and its filter results change with time. Rendered statically it
+// would freeze whichever confidences held at build time and serve them as
+// current — the failure cairn-0005 records.
+export const dynamic = 'force-dynamic';
+
 import Link from 'next/link';
 import { loadCorpus, search, byConfidence } from '@/lib/cairn/load';
 import { FindingCard } from '@/components/FindingCard';
@@ -15,15 +21,25 @@ export default async function FindingsPage({
 }) {
   const { q = '', standing: filter = 'all' } = await searchParams;
 
-  let results = q ? search(q) : byConfidence(loadCorpus());
+  // Trimmed, because search() returns the corpus untouched for a
+  // whitespace-only query — file order, neither relevance nor confidence — and
+  // the raw string is still truthy, so the page both skipped the confidence
+  // sort and claimed to have applied one.
+  const query = q.trim();
+  let results = query ? search(query) : byConfidence(loadCorpus());
   if (filter !== 'all') results = results.filter((f) => standing(f) === filter);
 
   return (
     <div className="mx-auto max-w-5xl px-5 py-12">
       <h1 className="font-claim text-xl">Findings</h1>
       <p className="mt-2 max-w-reading text-[14px] leading-relaxed text-ink-soft">
-        Sorted by confidence: freshly confirmed claims first, eroding ones below,
-        tombstones last.
+        {/* A query routes through search(), which ranks by match score and only
+            falls back to confidence to break ties. Stating the confidence
+            ordering unconditionally described a sort the page was not using
+            whenever anyone searched. */}
+        {query
+          ? 'Sorted by how well each claim matches your query, with confidence breaking ties.'
+          : 'Sorted by confidence: freshly confirmed claims first, eroding ones below, tombstones last.'}
       </p>
 
       <form method="get" className="mt-6 flex gap-2">

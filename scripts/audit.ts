@@ -41,6 +41,7 @@ function isAncestor(a: string, b: string): boolean {
 }
 
 let failures = 0;
+let legacy = 0;
 let audited = 0;
 
 for (const p of allPredictions(loadCorpus())) {
@@ -53,6 +54,15 @@ for (const p of allPredictions(loadCorpus())) {
   if (p.status === 'broken') {
     console.error(`FAIL   ${label} — commitment does not recompute`);
     failures++;
+    continue;
+  }
+  if (p.status === 'legacy-encoding') {
+    // The git ancestry below would still pass for these, and reporting them
+    // among the provably-sealed would overstate what they establish: the v1
+    // encoding was not prefix-free, so the hash fixes WHEN the seal was made
+    // and not WHAT it said.
+    console.log(`skip   ${label} — v1 encoding, ordering provable but content is not`);
+    legacy++;
     continue;
   }
   if (!p.commitment) continue;
@@ -97,5 +107,8 @@ for (const p of allPredictions(loadCorpus())) {
   );
 }
 
-console.log(`\n${audited} forecast(s) provably sealed before resolution · ${failures} failure(s)`);
+console.log(
+  `\n${audited} forecast(s) provably sealed before resolution · ${failures} failure(s)` +
+    (legacy > 0 ? ` · ${legacy} under the superseded v1 encoding, not counted` : ''),
+);
 process.exit(failures > 0 ? 1 : 0);

@@ -16,6 +16,7 @@ import { pairwiseCorrelation } from '../src/lib/cairn/correlation';
 import { resolveOrigin, resetOriginCache } from '../src/lib/cairn/origin';
 import { findingBodyHash } from '../src/lib/cairn/signing';
 import { finding } from './helpers';
+import { loadCorpus } from '../src/lib/cairn/load';
 import type { Finding } from '../src/lib/cairn/schema';
 
 const seal = (by: string, at: string) => ({
@@ -153,7 +154,7 @@ test('ledgerIntegrity fields are internally consistent', () => {
   const l = ledgerIntegrity([f]);
 
   assert.equal(
-    l.verified + l.sealed + l.broken + l.unanchored,
+    l.verified + l.sealed + l.broken + l.unanchored + l.legacyEncoding,
     l.total,
     'status counts must partition the total',
   );
@@ -166,4 +167,16 @@ test('ledgerIntegrity fields are internally consistent', () => {
   // The one relationship the homepage depends on: excluded = total - scored,
   // and `self` is a reason for exclusion, never a superset of it.
   assert.ok(l.self <= l.total - l.scored, 'every self-prediction must be excluded');
+});
+
+
+test('the live corpus satisfies the same partition', () => {
+  const l = ledgerIntegrity(loadCorpus());
+  assert.equal(
+    l.verified + l.sealed + l.broken + l.unanchored + l.legacyEncoding,
+    l.total,
+    'a status the real corpus carries but the synthetic fixture does not is exactly ' +
+      'how this test passed while the homepage numbers stopped adding up',
+  );
+  assert.ok(l.self <= l.total - l.scored);
 });

@@ -60,19 +60,28 @@ export function FindingCard({ finding: f }: { finding: Finding }) {
               </>
             )}
           </div>
-          <h3 className="font-claim text-[15px] leading-snug text-ink group-hover:underline">
+          <h3 className="font-claim break-words text-[15px] leading-snug text-ink group-hover:underline">
             {f.title}
           </h3>
-          <p className="mt-2 line-clamp-2 text-[13px] leading-relaxed text-ink-soft">
+          <p className="mt-2 line-clamp-2 break-words text-[13px] leading-relaxed text-ink-soft">
             {f.reality}
           </p>
           <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1.5">
             <StandingBadge standing={standing(f)} />
             <ProvenanceMark provenance={f.provenance} />
+            {/* The date and the count answer different questions, so they are
+                no longer joined by "by". lastConfirmedAt takes any confirmed
+                observation; confirmationCount counts only parties identified by
+                a signature, so a finding confirmed three days ago by an
+                unsigned observer read "checked 3 days ago by 0". */}
             <span className="text-[11px] text-ink-faint">
-              {confirmed
-                ? `checked ${relativeDays(confirmed)} by ${confirmationCount(f)}`
-                : 'never confirmed'}
+              {confirmed ? `checked ${relativeDays(confirmed)}` : 'never confirmed'}
+            </span>
+            <span
+              title="Distinct signed confirmers. An unsigned confirmation is attributable to nobody, so it still sets the date above but adds nothing here."
+              className="text-[11px] text-ink-faint"
+            >
+              {confirmationCount(f)} signed
             </span>
             <span
               title="Distinct environments in which this was confirmed."

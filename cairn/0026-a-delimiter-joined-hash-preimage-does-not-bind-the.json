@@ -1,0 +1,74 @@
+{
+  "id": "cairn-0026",
+  "title": "A delimiter-joined hash preimage does not bind the fields it joins",
+  "claim": "Hashing a concatenation of fields separated by a delimiter commits to the resulting string, not to the tuple of values that produced it. Unless the encoding is prefix-free, two different tuples can serialise identically, so the party who published the hash can later choose which tuple they claim to have committed to. A comment asserting the delimiter cannot occur in a field is not enforcement.",
+  "kind": "trap",
+  "subject": {
+    "name": "commitment schemes",
+    "ecosystem": "protocol",
+    "versions": "any"
+  },
+  "scope": "universal",
+  "appliesTo": "TODO — where this holds. Delete if you claim universal scope.",
+  "tags": [
+    "hashing",
+    "commitment",
+    "encoding",
+    "injectivity",
+    "serialisation"
+  ],
+  "cost": "hours",
+  "expectation": "Joining the fields with a control character that will not appear in normal text, then hashing the result, binds the forecast: it cannot be edited to match the outcome, because the hash was published first.",
+  "reality": "It binds the joined string. The tuple remains free, because two of the joined fields were free text that the schema accepted control characters in. A forecaster could seal one hash and later reveal either a prior of 0.9 or a prior of 0.5 - both recompute to the published hash, and both parse as valid predictions. The seal proved that a commitment had been made, and said nothing about to what.",
+  "mechanism": "The preimage was [version, findingId, by, prior.toFixed(4), reasoning, anchor, nonce] joined with U+001F, under a comment reading 'a control character that cannot occur in any field'. Nothing enforced that: `by` and `reasoning` are free-text schema fields with no character-class constraint. Moving the boundary between them across the fixed-width prior field yields a second tuple with an identical serialisation.",
+  "workaround": "Use an encoding that is injective by construction rather than by assumption. JSON array encoding works, because the escaping makes field boundaries unambiguous for any content; length-prefixing works for the same reason. Both remove the assumption entirely, which matters because the assumption was about a schema someone else can later relax.\n\nIf a delimiter must be used, validate every field against it at the point of hashing, not in a comment. And treat a version tag inside the preimage as load-bearing: it is what allows an unsound encoding to be retired without misreporting old seals as tampering.",
+  "evidence": [
+    {
+      "command": "# two valid predictions under the v1 encoding, differing in prior and in `by`;\n# each contains the U+001F separator inside a free-text field\nA: by=alice  prior=0.9  reasoning=R <SEP> 0.5000 <SEP> BBBBBBBBBBBBBBBB\nB: by=alice <SEP> 0.9000 <SEP> R   prior=0.5  reasoning=BBBBBBBBBBBBBBBB",
+      "output": "same preimage: true\nsame hash:     true\nhash: 753627548464eeca457fa9cc21f6224ab8b8cf07ac3789facb5731a17cc51ce9\nA prior: 0.9  B prior: 0.5\nschema accepts A: true\nschema accepts B: true",
+      "note": "One published hash, two valid openings with different priors. The forecaster chooses after seeing the result."
+    },
+    {
+      "command": "# the same pair after switching the preimage to JSON array encoding",
+      "output": "same preimage: false\nsame hash:     false",
+      "note": "Injective for any field content, with no assumption about what the fields contain."
+    },
+    {
+      "command": "npm run cairn:audit",
+      "output": "0 forecast(s) provably sealed before resolution - 0 failure(s) - 1 under the superseded v1 encoding, not counted",
+      "note": "The one seal that previously read as verified is now reported as what it is: its ordering is still provable from git, its content is not."
+    }
+  ],
+  "check": {
+    "command": "grep -c 'JSON.stringify(\\[' src/lib/cairn/commitment.ts; grep -c 'canonicalPreimage' src/lib/cairn/commitment.ts",
+    "manual": false,
+    "confirmedIf": "the live preimage is produced by an injective JSON array encoding (first count is at least 1)",
+    "refutedIf": "the live preimage is produced by joining fields with a delimiter"
+  },
+  "provenance": "firsthand",
+  "halfLifeDays": 3650,
+  "observations": [
+    {
+      "at": "2026-08-30T18:05:00.000Z",
+      "by": "claude-opus-5",
+      "verdict": "confirmed",
+      "note": "Constructed the colliding pair, confirmed both parse under the prediction schema and hash identically, then confirmed the collision is gone under JSON encoding.",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node v22.22.2",
+        "note": "Linux 6.18.44-fc-v22"
+      },
+      "signature": {
+        "algorithm": "ed25519",
+        "keyId": "56f7a413738936bd",
+        "value": "BRg2He6p9l/fnknxmSga9uAftqdwdNXvLMtUpSZhBOJBw0kd5VyTAMRos9qsh6pQBszAchDQClUo+OQgWR2ZCA=="
+      }
+    }
+  ],
+  "status": "active",
+  "createdAt": "2026-08-30T17:28:08.734Z",
+  "basis": "structural",
+  "derivation": "A commitment scheme requires binding: given a published H(x), the committer must not be able to produce two distinct openings. Serialising a tuple by joining with a delimiter is injective only if no field can contain the delimiter. If any field is free text, the encoding maps many tuples onto one string, and every preimage of that string is a valid opening. The hash function is still collision-resistant; binding is lost before hashing, in the encoding. The scheme therefore fails at exactly the property it was chosen for, while every test of the hash itself passes.",
+  "predictions": []
+}
