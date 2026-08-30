@@ -81,7 +81,13 @@ interface ProviderCall {
   extract: (json: unknown) => string;
 }
 
-function buildCall(m: PanelMember, apiKey: string, prompt: string, maxTokens: number): ProviderCall {
+function buildCall(
+  m: PanelMember,
+  apiKey: string,
+  prompt: string,
+  maxTokens: number,
+  system: string = SYSTEM_PROMPT,
+): ProviderCall {
   switch (m.provider) {
     case 'anthropic':
       return {
@@ -94,7 +100,7 @@ function buildCall(m: PanelMember, apiKey: string, prompt: string, maxTokens: nu
         body: {
           model: m.model,
           max_tokens: maxTokens,
-          system: SYSTEM_PROMPT,
+          system,
           messages: [{ role: 'user', content: prompt }],
         },
         extract: (j) => {
@@ -115,7 +121,7 @@ function buildCall(m: PanelMember, apiKey: string, prompt: string, maxTokens: nu
           model: m.model,
           max_completion_tokens: maxTokens,
           messages: [
-            { role: 'system', content: SYSTEM_PROMPT },
+            { role: 'system', content: system },
             { role: 'user', content: prompt },
           ],
         },
@@ -129,7 +135,7 @@ function buildCall(m: PanelMember, apiKey: string, prompt: string, maxTokens: nu
         url: `https://generativelanguage.googleapis.com/v1beta/models/${m.model}:generateContent?key=${apiKey}`,
         headers: { 'content-type': 'application/json' },
         body: {
-          systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+          systemInstruction: { parts: [{ text: system }] },
           contents: [{ role: 'user', parts: [{ text: prompt }] }],
           generationConfig: { maxOutputTokens: maxTokens },
         },
@@ -147,6 +153,37 @@ export function parseForecast(text: string): Forecast {
   const end = cleaned.lastIndexOf('}');
   if (start === -1 || end === -1) throw new Error(`no JSON object in response: ${text.slice(0, 200)}`);
   return ForecastSchema.parse(JSON.parse(cleaned.slice(start, end + 1)));
+}
+
+/**
+ * One request to one provider, returning raw text.
+ *
+ * Shared by forecasting and adversarial review so that both go through the
+ * identical transport — same retries, same timeouts, same parsing. A reviewer
+ * called differently from a forecaster is a reviewer whose results cannot be
+ * compared with theirs.
+ */
+export async function ask(
+  m: PanelMember,
+  system: string,
+  prompt: string,
+  cfg: PanelConfig,
+): Promise<{ text?: string; error?: string }> {
+  const apiKey = process.env[m.apiKeyEnv];
+  if (!apiKey) return { error: `${m.apiKeyEnv} is not set` };
+  const call = buildCall(m, apiKey, prompt, cfg.maxTokens, system);
+  try {
+    const res = await fetch(call.url, {
+      method: 'POST',
+      headers: call.headers,
+      body: JSON.stringify(call.body),
+      signal: AbortSignal.timeout(cfg.timeoutMs),
+    });
+    if (!res.ok) return { error: `HTTP ${res.status}: ${(await res.text()).slice(0, 300)}` };
+    return { text: call.extract(await res.json()) };
+  } catch (e) {
+    return { error: (e as Error).message };
+  }
 }
 
 export interface SolicitResult {

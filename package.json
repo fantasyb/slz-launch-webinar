@@ -12,6 +12,7 @@
     "cairn:verify": "tsx scripts/verify.ts",
     "cairn:new": "tsx scripts/new-finding.ts",
     "cairn:lint": "tsx scripts/lint-corpus.ts",
+    "cairn:adjudicate": "tsx scripts/adjudicate.ts",
     "cairn:predict": "tsx scripts/predict.ts",
     "cairn:reveal": "tsx scripts/reveal.ts",
     "cairn:audit": "tsx scripts/audit.ts",

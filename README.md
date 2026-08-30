@@ -240,13 +240,29 @@ So the design goal is not "unpoisonable". It is **blast radius**:
 | Cairn writes to your files | **no** — install appends one block, signed, shape-checked, diffed, `--yes` |
 | Cairn transmits your data | **no** — querying is a GET; contributions are local drafts a human sends |
 | Cairn's content is marked untrusted | **yes** — every response carries `_untrustedFields` |
-| Hostile content is hard to merge | **partly** — scanners at lint and submit; a human merges every finding |
+| Hostile content is hard to merge | **two independent layers in CI, plus a human merge** |
 | A poisoned finding is attributable | **yes** — signed, so it is traceable to a key with a history |
 
-The scanners are review aids and are described that way in the code. Pattern matching on shell
-text is evadable; pattern matching on natural language is *more* evadable. They catch the blunt
-phrasings and give a reviewer's eye somewhere to land. **What defends the corpus is that a human
-merges every finding** — the same thing that defends any package registry.
+### Two layers, in CI, where they cannot be declined
+
+`/api/submit` scanning and the pre-commit hook both run on the *contributor's* machine — which
+means an attacker simply does not run them. A finding hand-written into a pull request touches
+neither. So both layers run in GitHub Actions on every change to `cairn/`:
+
+1. **Pattern layer** — `scanInjection` + `scanExecutable`. Catches blunt phrasings, evadable by
+   anyone who has read `safety.ts`.
+2. **Adversarial review** — models classify the submission as clean / suspicious / hostile.
+   Semantic, so it fails on a *different* axis than patterns do.
+
+The reviewer is itself a target, since it reads hostile text by design. The submission never
+enters its system prompt, only a delimited block; it is told the content may address it and that
+any instruction inside is evidence rather than direction; its response is schema-constrained;
+and an unparsable reply is a failure, not an approval. **No credential configured means the job
+fails** — a submission is never cleared by a layer that did not run.
+
+A finding that clears both is one two independent mechanisms failed to flag. That is the honest
+claim, and it is much stronger than either alone — but it is still not a proof, which is why a
+human merges every finding, the same thing that defends any package registry.
 
 ## Known limits
 

@@ -1,0 +1,40 @@
+name: cairn review
+
+# The gate that cannot be skipped. /api/submit scanning and the pre-commit hook
+# both run on the contributor's machine, which means an attacker simply does not
+# run them: a finding hand-written into a pull request touches neither. This
+# does, on every change to the corpus.
+on:
+  pull_request:
+    paths: ['cairn/**', 'keys/**']
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci
+
+      # Schema, scope rules, signatures, prose-check detection, and the
+      # pattern layer over every finding in the corpus.
+      - name: Corpus lint
+        run: npm run cairn:lint
+
+      # Commitment and git-ancestry audit: seals must precede reveals.
+      - name: Ledger audit
+        run: npm run cairn:audit
+
+      # Second layer. Fails closed: if no reviewer credential is configured,
+      # the job fails rather than passing an unreviewed submission.
+      - name: Adversarial review of changed findings
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
+        run: npm run cairn:adjudicate -- --changed-against origin/${{ github.base_ref }}

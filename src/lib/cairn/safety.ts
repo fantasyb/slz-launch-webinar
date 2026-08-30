@@ -111,8 +111,16 @@ export function scanExecutable(text: string): Flag[] {
 const SENSITIVE: Array<{ re: RegExp; pattern: string; reason: string }> = [
   { re: /\b(sk|pk|ghp|gho|ghs|xox[baprs])[-_][A-Za-z0-9_-]{16,}/, pattern: 'api-token', reason: 'looks like an API token' },
   { re: /-----BEGIN [A-Z ]*PRIVATE KEY-----/, pattern: 'private-key', reason: 'a private key block' },
+  // Present in the redaction list but previously absent here, so the hook
+  // would strip a bearer token on request yet not block a commit containing
+  // one. The two lists have to agree or the gate is weaker than the cleaner.
+  { re: /\b(?:Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{12,}/, pattern: 'auth-header', reason: 'an authorization header value' },
   { re: /\b[A-Za-z0-9._%+-]+@(?!example\.|test\.)[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/, pattern: 'email', reason: 'an email address' },
-  { re: /\b(?:password|passwd|secret|api[_-]?key|authorization)\s*[:=]\s*\S{6,}/i, pattern: 'credential-assignment', reason: 'a credential assignment' },
+  // The value must look like a secret, not merely follow a suggestive keyword.
+  // Matching on the keyword alone flags every type annotation in a typed
+  // language — `apiKey: string`, `token: z.string()` — and a scanner that
+  // fires on ordinary source is one contributors learn to bypass.
+  { re: /\b(?:password|passwd|secret|api[_-]?key|authorization)\s*[:=]\s*(?:(["'])[^"'\n]{8,}\1|(?=[A-Za-z0-9+/=_-]*\d)[A-Za-z0-9+/=_-]{8,})/i, pattern: 'credential-assignment', reason: 'a credential assignment' },
   { re: /\/(?:home|Users)\/(?!user\b|runner\b)[A-Za-z0-9._-]+/, pattern: 'home-path', reason: 'a home directory naming a real user' },
   { re: /\bhttps?:\/\/(?![^\s]*(?:example\.com|localhost))(?:[a-z0-9-]+\.)*[a-z0-9-]+\.(?:internal|corp|local|intranet|lan)\b/i, pattern: 'internal-host', reason: 'an internal hostname' },
   { re: /\b(?:10|192\.168|172\.(?:1[6-9]|2\d|3[01]))\.\d{1,3}\.\d{1,3}\b/, pattern: 'private-ip', reason: 'a private network address' },
@@ -170,7 +178,7 @@ const REDACTIONS: Array<{ re: RegExp; pattern: string; to: string }> = [
   { re: /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g, pattern: 'private-key', to: '<redacted:private-key>' },
   { re: /\b(?:sk|pk|ghp|gho|ghs|ghu|xox[baprs])[-_][A-Za-z0-9_-]{16,}/g, pattern: 'api-token', to: '<redacted:token>' },
   { re: /\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{12,}/gi, pattern: 'auth-header', to: '$1 <redacted:credential>' },
-  { re: /((?:password|passwd|secret|api[_-]?key|token)\s*[:=]\s*)("|')?[^\s"',}]{6,}\2?/gi, pattern: 'credential-assignment', to: '$1<redacted:credential>' },
+  { re: /((?:password|passwd|secret|api[_-]?key|token)\s*[:=]\s*)(?:(["'])[^"'\n]{8,}\2|(?=[A-Za-z0-9+/=_-]*\d)[A-Za-z0-9+/=_-]{8,})/gi, pattern: 'credential-assignment', to: '$1<redacted:credential>' },
   { re: /\b[A-Za-z0-9._%+-]+@(?!example\.|test\.)[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g, pattern: 'email', to: '<redacted:email>' },
   { re: /\b(https?:\/\/)(?:[a-z0-9-]+\.)*[a-z0-9-]+(\.(?:internal|corp|local|intranet|lan))\b/gi, pattern: 'internal-host', to: '$1<redacted:host>$2' },
   { re: /\/(home|Users)\/(?!user\b|runner\b|root\b)[A-Za-z0-9._-]+/g, pattern: 'home-path', to: '/$1/<redacted:user>' },
