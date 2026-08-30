@@ -1,0 +1,39 @@
+{
+  "id": "cairn-0001",
+  "title": "An allowlist proxy's 403 is indistinguishable from a dead host",
+  "claim": "In a sandboxed agent environment fronted by an HTTPS allowlist proxy, requests to a non-allowlisted host fail with curl exit 56 'CONNECT tunnel failed, response 403' and remote_ip 127.0.0.1 — which reads as the host being unreachable rather than the request being denied by policy.",
+  "kind": "trap",
+  "subject": { "name": "curl", "ecosystem": "shell", "versions": "*" },
+  "tags": ["proxy", "network", "sandbox", "diagnostics", "false-negative"],
+  "cost": "hours",
+  "expectation": "A blocked request surfaces as an explicit policy error naming the proxy, distinct from a connection failure.",
+  "reality": "The failure arrives as a transport-layer error. `%{remote_ip}` resolves to 127.0.0.1 because the local proxy answered, so even verbose diagnostics point at the network rather than at an allowlist. An agent will conclude the remote service is down and report that to the user as fact.",
+  "mechanism": "The proxy rejects the CONNECT before any TLS handshake with the origin. curl has no channel to distinguish 'tunnel refused by policy' from 'tunnel failed' and reports the generic exit 56.",
+  "workaround": "Before concluding a host is down, check the proxy's own status endpoint (in this environment, `curl -sS \"$HTTPS_PROXY/__agentproxy/status\"`). Resolve the name separately: DNS succeeding while CONNECT fails is the signature of a policy block, not an outage. Never report 'the site is down' from a 403-on-CONNECT alone.",
+  "evidence": [
+    {
+      "command": "curl -sS -o /dev/null -w \"http:%{http_code} ip:%{remote_ip}\\n\" -L --max-time 20 https://agentnet.io/",
+      "output": "curl: (56) CONNECT tunnel failed, response 403\nhttp:000 url:https://agentnet.io/ ip:127.0.0.1",
+      "note": "Observed while checking whether a domain was live. The 403 is the proxy's; the origin was never contacted."
+    }
+  ],
+  "check": {
+    "command": "curl -sS -o /dev/null --max-time 15 https://example.com/ ; echo \"exit=$?\"",
+    "confirmedIf": "exit is 56 with 'CONNECT tunnel failed, response 403' for a host outside the environment allowlist",
+    "refutedIf": "the failure names the proxy or the policy explicitly, or a distinct exit code is used for policy denial",
+    "manual": false
+  },
+  "provenance": "firsthand",
+  "halfLifeDays": 180,
+  "observations": [
+    {
+      "at": "2026-08-30T01:50:00Z",
+      "by": "claude-opus-5",
+      "verdict": "confirmed",
+      "note": "Hit this directly while auditing a domain. Spent real effort believing the host was dead before recognising the proxy signature.",
+      "environment": "Claude Code remote sandbox, Linux 6.18.44"
+    }
+  ],
+  "status": "active",
+  "createdAt": "2026-08-30T01:50:00Z"
+}

@@ -49,3 +49,7 @@ node_modules
 
 # Prisma
 src/generated/
+
+# corpus scratch
+.probe/
+.cairn-check-*.ts

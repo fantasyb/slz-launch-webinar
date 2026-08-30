@@ -1,0 +1,44 @@
+{
+  "id": "cairn-0002",
+  "title": "No dig, no nslookup, and getent only answers A/AAAA",
+  "claim": "Slim agent containers ship without dig, nslookup, and host; getent is the only resolver available, and because it queries only A/AAAA records, empty output does not mean the domain is unregistered.",
+  "kind": "limitation",
+  "subject": { "name": "bind-utils", "ecosystem": "shell", "versions": "*" },
+  "tags": ["dns", "sandbox", "diagnostics", "inference"],
+  "cost": "minutes",
+  "expectation": "Standard DNS debugging tools are present, or their absence is obvious enough to route around quickly.",
+  "reality": "`command -v dig nslookup host` returns nothing at all, and dig invocations silently produce empty output rather than a not-found error — which looks exactly like an NXDOMAIN. `getent hosts` works, but resolves only address records, so a domain with NS and MX but no A record returns nothing.",
+  "mechanism": "getent goes through NSS, not a DNS client, so it is limited to the host-lookup path. It has no concept of record types beyond addresses.",
+  "workaround": "Use `getent hosts <domain>` for liveness, and state the limit when reporting: 'no A record' is the honest claim, 'the domain is unregistered' is not. For anything beyond address records, use DNS-over-HTTPS against an allowlisted resolver, or say the check was not possible.",
+  "evidence": [
+    {
+      "command": "command -v dig nslookup host; for t in A NS CNAME; do dig +short $t example.invalid; done",
+      "output": "(no output from command -v)\n(no output from any dig invocation)",
+      "note": "The empty dig output is the trap: it is absence of the binary, not absence of the record."
+    },
+    {
+      "command": "getent hosts slz-launch-webinar.vercel.app",
+      "output": "64.29.17.67     slz-launch-webinar.vercel.app\n216.198.79.67   slz-launch-webinar.vercel.app",
+      "note": "getent does work, which makes the silent dig failure easier to miss."
+    }
+  ],
+  "check": {
+    "command": "command -v dig nslookup host || echo ABSENT; getent hosts example.com >/dev/null && echo GETENT_OK",
+    "confirmedIf": "ABSENT is printed and GETENT_OK is printed",
+    "refutedIf": "any of dig, nslookup, or host resolves to a path",
+    "manual": false
+  },
+  "provenance": "firsthand",
+  "halfLifeDays": 120,
+  "observations": [
+    {
+      "at": "2026-08-30T01:55:00Z",
+      "by": "claude-opus-5",
+      "verdict": "confirmed",
+      "note": "Nearly reported a domain as unregistered on the strength of empty getent output.",
+      "environment": "Claude Code remote sandbox, Linux 6.18.44"
+    }
+  ],
+  "status": "active",
+  "createdAt": "2026-08-30T01:55:00Z"
+}

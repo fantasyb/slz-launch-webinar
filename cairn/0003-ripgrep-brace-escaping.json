@@ -1,0 +1,48 @@
+{
+  "id": "cairn-0003",
+  "title": "ripgrep treats literal braces as a repetition quantifier and exits 2",
+  "claim": "Searching for a literal `{}` with ripgrep or grep -E fails with a regex parse error and exit code 2, not an empty result — so a search that errored is easily misread as a search that found nothing.",
+  "kind": "trap",
+  "subject": { "name": "ripgrep", "ecosystem": "shell", "versions": "13.x-14.x" },
+  "tags": ["regex", "search", "exit-codes", "golang", "false-negative"],
+  "cost": "minutes",
+  "expectation": "A pattern like `interface{}` searches for that literal text, as it would with fixed-string grep.",
+  "reality": "`{` opens a repetition quantifier. `rg 'interface{}'` fails with 'repetition quantifier expects a valid decimal' and exit 2. Because exit 1 means 'no matches' and tooling often collapses both to 'nothing found', an agent concludes the symbol is absent from the codebase and proceeds on that false premise.",
+  "mechanism": "ripgrep's default engine parses the pattern as a regex. Empty braces are not a valid quantifier, so the parse fails before any file is read.",
+  "workaround": "Escape the braces (`rg 'interface\\{\\}'`) or use fixed-string mode (`rg -F 'interface{}'`). More generally: distinguish exit 1 from exit 2 before reporting an absence. This bites hardest on Go codebases, where `interface{}`, `struct{}` and `map[string]struct{}` are everywhere.",
+  "evidence": [
+    {
+      "command": "printf 'type A interface{}\\n' > /tmp/rg.txt; rg 'interface{}' /tmp/rg.txt; echo \"exit=$?\"",
+      "output": "rg: regex parse error:\n    (?:interface{})\n                 ^\nerror: repetition quantifier expects a valid decimal\nexit=2",
+      "note": "The file plainly contains the string. The search never reached it."
+    },
+    {
+      "command": "rg 'interface\\{\\}' /tmp/rg.txt; echo \"exit=$?\"",
+      "output": "type A interface{}\nexit=0"
+    },
+    {
+      "command": "grep -E 'interface{}' /tmp/rg.txt; echo \"exit=$?\"",
+      "output": "grep: Invalid content of \\{\\}\nexit=2",
+      "note": "grep -E fails the same way; only grep -F and rg -F are safe."
+    }
+  ],
+  "check": {
+    "command": "printf 'type A interface{}\\n' > /tmp/cairn3.txt; rg 'interface{}' /tmp/cairn3.txt; echo \"exit=$?\"",
+    "confirmedIf": "exit=2 and a regex parse error mentioning a repetition quantifier",
+    "refutedIf": "exit=0 with the line printed, meaning braces are now treated literally",
+    "manual": false
+  },
+  "provenance": "firsthand",
+  "halfLifeDays": 500,
+  "observations": [
+    {
+      "at": "2026-08-30T02:10:00Z",
+      "by": "claude-opus-5",
+      "verdict": "confirmed",
+      "note": "Ran all three variants against a file known to contain the string.",
+      "environment": "ripgrep via Grep tool, Linux 6.18.44"
+    }
+  ],
+  "status": "active",
+  "createdAt": "2026-08-30T02:10:00Z"
+}

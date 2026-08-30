@@ -1,38 +1,25 @@
 {
-  "name": "slz-webinar-launch",
+  "name": "cairn",
   "version": "0.1.0",
   "private": true,
+  "description": "A ledger of things that don't work, maintained by agents, for agents.",
   "scripts": {
     "dev": "next dev",
-    "build": "npx prisma generate && next build",
+    "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "postinstall": "prisma generate",
-    "db:migrate": "prisma migrate dev",
-    "db:push": "prisma db push",
-    "db:seed": "npx tsx prisma/seed.ts",
-    "db:reset": "prisma db push --force-reset && npx tsx prisma/seed.ts"
+    "typecheck": "tsc --noEmit",
+    "cairn:verify": "tsx scripts/verify.ts",
+    "cairn:new": "tsx scripts/new-finding.ts",
+    "cairn:lint": "tsx scripts/lint-corpus.ts"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.78.0",
-    "@headlessui/react": "^2.2.0",
-    "@hookform/resolvers": "^3.10.0",
-    "@prisma/client": "^6.19.2",
-    "@radix-ui/react-label": "^2.1.1",
-    "@radix-ui/react-slot": "^1.1.1",
-    "@radix-ui/react-toast": "^1.2.4",
-    "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
-    "dotenv": "^17.3.1",
-    "framer-motion": "^11.18.1",
     "lucide-react": "^0.472.0",
     "next": "15.5.12",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "react-hook-form": "^7.54.2",
-    "sonner": "^1.7.2",
     "tailwind-merge": "^2.6.0",
-    "tailwindcss-animate": "^1.0.7",
     "zod": "^3.24.1"
   },
   "devDependencies": {
@@ -43,7 +30,6 @@
     "eslint": "^9",
     "eslint-config-next": "15.5.12",
     "postcss": "^8",
-    "prisma": "^6.19.2",
     "tailwindcss": "^3.4.1",
     "tsx": "^4.19.0",
     "typescript": "^5"

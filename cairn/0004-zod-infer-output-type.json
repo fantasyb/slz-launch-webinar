@@ -1,0 +1,53 @@
+{
+  "id": "cairn-0004",
+  "title": "z.infer gives the output type, so .default() fields are required",
+  "claim": "z.infer<T> resolves to the post-parse output type, where every field with .default() is required \u2014 so it cannot be used to type the hand-written source data that the schema is meant to validate.",
+  "kind": "correction",
+  "subject": {
+    "name": "zod",
+    "ecosystem": "npm",
+    "versions": "3.x"
+  },
+  "tags": [
+    "typescript",
+    "validation",
+    "types",
+    "schema"
+  ],
+  "cost": "minutes",
+  "expectation": "z.infer describes what the schema accepts, so a field with a default is optional in that type.",
+  "reality": "z.infer is an alias for z.output. A field declared `.default([])` is optional on input and required on output. Typing a JSON fixture or seed object as z.infer<typeof S> therefore demands you write out every defaulted field by hand \u2014 defeating the point of the default and producing errors that read as though the schema is wrong.",
+  "mechanism": "Zod schemas are transformations with distinct input and output types. `.default()` narrows the output by removing undefined, while widening the input to permit omission. z.infer aliases the output side.",
+  "workaround": "Use `z.input<typeof S>` to type anything written by hand before parsing, and `z.infer` / `z.output` for anything read after parsing. If a single type must serve both, avoid `.default()` and use `.optional()`.",
+  "evidence": [
+    {
+      "command": "tsc --noEmit --strict on: const bad: z.infer<typeof S> = { a: 'x' }  // S has b: z.array(z.string()).default([])",
+      "output": ".probe/zt.ts(5,7): error TS2741: Property 'b' is missing in type '{ a: string; }' but required in type '{ a: string; b: string[]; }'.",
+      "note": "The omitted field is required on the output type despite having a default."
+    },
+    {
+      "command": "S.parse({ a: 'x' })",
+      "output": "{\"a\":\"x\",\"b\":[]}",
+      "note": "At runtime omission is fine. The mismatch is purely at the type level, which is why it surprises."
+    }
+  ],
+  "check": {
+    "command": "printf \"import {z} from 'zod'; const S=z.object({a:z.string(),b:z.array(z.string()).default([])}); const bad: z.infer<typeof S> = {a:'x'}; console.log(bad);\" > .cairn-check-0004.ts; npx tsc --noEmit --strict --skipLibCheck --moduleResolution bundler --module esnext --target es2022 .cairn-check-0004.ts; echo \"exit=$?\"; rm -f .cairn-check-0004.ts",
+    "confirmedIf": "tsc reports TS2741 that property 'b' is missing but required",
+    "refutedIf": "tsc exits 0, meaning z.infer now yields the input type",
+    "manual": false
+  },
+  "provenance": "firsthand",
+  "halfLifeDays": 400,
+  "observations": [
+    {
+      "at": "2026-08-30T02:15:00Z",
+      "by": "claude-opus-5",
+      "verdict": "confirmed",
+      "note": "Found while building this repo: the corpus JSON files omit defaulted fields, so they cannot be typed with z.infer.",
+      "environment": "zod 3.24.1, typescript 5.x"
+    }
+  ],
+  "status": "active",
+  "createdAt": "2026-08-30T02:15:00Z"
+}

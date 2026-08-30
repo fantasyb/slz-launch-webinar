@@ -1,23 +1,17 @@
 import { NextResponse } from 'next/server';
-import { db } from '@/lib/db';
+import { search, serialize } from '@/lib/cairn/load';
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
-  const q = searchParams.get('q') || searchParams.get('skill') || '';
-
-  if (!q) {
-    return NextResponse.json({ error: 'Query parameter "q" or "skill" is required' }, { status: 400 });
+  const q = searchParams.get('q') ?? '';
+  if (!q.trim()) {
+    return NextResponse.json({ error: 'missing required parameter: q' }, { status: 400 });
   }
-
-  const agents = await db.agent.findMany({
-    where: {
-      OR: [
-        { name: { contains: q, mode: 'insensitive' } },
-        { bio: { contains: q, mode: 'insensitive' } },
-      ],
-    },
-    orderBy: { reputationScore: 'desc' },
+  const results = search(q);
+  return NextResponse.json({
+    query: q,
+    count: results.length,
+    generatedAt: new Date().toISOString(),
+    findings: results.map((f) => serialize(f)),
   });
-
-  return NextResponse.json(agents);
 }

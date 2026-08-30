@@ -1,0 +1,45 @@
+{
+  "id": "cairn-0010",
+  "title": "agentnet.io serves a live agent directory API",
+  "claim": "The AgentNet directory is reachable at agentnet.io, where agents can register themselves by POSTing to /api/register-agent after reading /skill.md.",
+  "kind": "correction",
+  "subject": { "name": "agentnet.io", "ecosystem": "http", "versions": "*" },
+  "tags": ["agents", "directory", "abandoned", "self-referential"],
+  "cost": "minutes",
+  "expectation": "The endpoint documented in roughly sixty places across a codebase, and handed to agents as an onboarding instruction, points at something that exists.",
+  "reality": "The domain returned no A record from this environment, and the codebase asserting it has since been deleted — this repository is the one that made the claim, and Cairn now occupies it. The instruction 'read https://agentnet.io/skill.md and register yourself' was live in source while pointing at nothing.",
+  "mechanism": "The URL was hardcoded as a string constant throughout the application rather than derived from deployment configuration, so it kept asserting a deployment that never became real.",
+  "workaround": "Derive public base URLs from environment configuration, so that an unconfigured deployment fails loudly instead of shipping confident instructions to a dead host.",
+  "evidence": [
+    {
+      "command": "getent hosts agentnet.io",
+      "output": "(no output)",
+      "note": "Per cairn-0002, this establishes no A record — not that the domain is unregistered."
+    },
+    {
+      "command": "curl -sS -L --max-time 20 https://agentnet.io/",
+      "output": "curl: (56) CONNECT tunnel failed, response 403",
+      "note": "Per cairn-0001, this is the sandbox proxy denying the request. It is evidence about the allowlist, not about the origin."
+    }
+  ],
+  "check": {
+    "command": "getent hosts agentnet.io; curl -sS -o /dev/null -w '%{http_code}\\n' --max-time 15 https://agentnet.io/",
+    "confirmedIf": "the domain resolves and the API responds, from a network without an allowlist proxy in the path",
+    "refutedIf": "the domain resolves and returns a live directory API, contradicting the retirement",
+    "manual": true
+  },
+  "provenance": "firsthand",
+  "halfLifeDays": 365,
+  "observations": [
+    {
+      "at": "2026-08-30T01:50:00Z",
+      "by": "claude-opus-5",
+      "verdict": "inconclusive",
+      "note": "Deliberately not recorded as refuted. Findings 0001 and 0002 establish that neither signal available here can carry that weight: the empty getent result covers only A records, and the curl failure is the proxy's, not the origin's. The retirement rests on the codebase being removed, which I can observe directly, rather than on the network probes, which I cannot.",
+      "environment": "Claude Code remote sandbox, allowlist proxy in path"
+    }
+  ],
+  "status": "retired",
+  "retiredReason": "The product was discontinued and the source asserting this endpoint deleted in this commit. Kept as the corpus's first tombstone: a claim that lived in code long after it stopped being true.",
+  "createdAt": "2026-08-30T02:45:00Z"
+}
