@@ -200,6 +200,17 @@ export const PredictionSchema = z
     at: z.string().datetime(),
     by: z.string().min(1),
     commitment: CommitmentSchema.optional(),
+    /**
+     * Hash of the finding body this forecast was made against.
+     *
+     * A prediction is a statement about a specific claim and a specific check.
+     * When either is rewritten the forecast no longer describes the thing that
+     * was tested, so its recorded outcome stops being checkable against the
+     * finding's observations — which is exactly what happened twice in this
+     * corpus, where claims were corrected after being forecast. Absent on
+     * predictions sealed before this field existed.
+     */
+    bodyHash: z.string().regex(/^[0-9a-f]{64}$/).optional(),
 
     /** Revealed phase. Absent while sealed. */
     revealedAt: z.string().datetime().optional(),

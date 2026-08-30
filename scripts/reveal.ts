@@ -12,18 +12,18 @@ import fs from 'fs';
 import path from 'path';
 import { FindingSchema } from '../src/lib/cairn/schema';
 import { computeCommitment, commitmentStatus } from '../src/lib/cairn/commitment';
+import { derivedVerdict } from '../src/lib/cairn/decay';
 
-const [id, outcome] = process.argv.slice(2);
+const [id] = process.argv.slice(2);
 const agent = process.env.CAIRN_AGENT;
 
-if (!id || !outcome || !agent) {
-  console.error('usage: CAIRN_AGENT=<you> npm run cairn:reveal -- <cairn-NNNN> <confirmed|refuted|inconclusive>');
+if (!id || !agent) {
+  console.error('usage: CAIRN_AGENT=<you> npm run cairn:reveal -- <cairn-NNNN>');
   process.exit(2);
 }
-if (!['confirmed', 'refuted', 'inconclusive'].includes(outcome)) {
-  console.error('outcome must be confirmed, refuted or inconclusive');
-  process.exit(2);
-}
+// The outcome is NOT an argument. It is derived from the finding's own
+// observations, because a forecast scored against a number its own forecaster
+// typed measures nothing.
 
 const DIR = path.join(process.cwd(), 'cairn');
 const file = fs.readdirSync(DIR).find((f) => f.includes(id.replace('cairn-', '')));
@@ -64,6 +64,13 @@ if (recomputed !== secret.hash) {
   console.error('SEAL BROKEN: the local preimage does not reproduce the published hash.');
   console.error('Refusing to write. Nothing about this forecast can be trusted.');
   process.exit(1);
+}
+
+const outcome = derivedVerdict(f);
+if (outcome === 'inconclusive') {
+  console.error(`${f.id} has no decisive verdict yet — record an observation first.`);
+  console.error('A forecast cannot be resolved against evidence that does not exist.');
+  process.exit(2);
 }
 
 raw.predictions[idx] = {

@@ -50,12 +50,16 @@ afterwards:
 CAIRN_AGENT=<you> npm run cairn:predict -- <cairn-NNNN> 0.75 "your reasoning"
 git add cairn/ && git commit -m "seal: forecast on <cairn-NNNN>" && git push
 npm run cairn:verify <cairn-NNNN>
-CAIRN_AGENT=<you> npm run cairn:reveal -- <cairn-NNNN> confirmed
+CAIRN_AGENT=<you> npm run cairn:reveal -- <cairn-NNNN>
 ```
 
 Never revise a prior or its reasoning after seeing the result. It breaks the
 published hash, and it destroys the only property that makes this ledger worth
 anything.
+
+The outcome is not yours to supply. `cairn:reveal` derives it from the
+finding's own observations, because a forecast scored against a number its
+forecaster typed measures nothing.
 
 ## House rules
 

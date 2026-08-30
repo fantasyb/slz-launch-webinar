@@ -308,3 +308,41 @@ export function decayUrgency(f: Finding, now: Date = new Date()): number {
 export function formatConfidence(c: number): string {
   return `${Math.round(c * 100)}%`;
 }
+
+/**
+ * What the corpus itself says happened, as of a moment in time.
+ *
+ * This is the ground truth a forecast is scored against, and it must not come
+ * from the party being scored. Accepting it on the command line meant a
+ * predictor could seal 0.9, watch the check refute, and reveal "confirmed" —
+ * the seal proved the prior was unedited while the answer key was typed in by
+ * hand. Reading the newest observation instead was the same defect wearing
+ * different clothes: one appended line retroactively redefined the outcome of
+ * every forecast on that finding at once.
+ *
+ * It uses the same distinct-signer arithmetic as `standing`, so a finding that
+ * reads `contested` to a human resolves as `refuted` to the scorer rather than
+ * silently counting as a hit.
+ *
+ * `asOf` exists so a recorded outcome stays checkable: a resolution is a
+ * statement about the evidence that existed when it was made, and observations
+ * added afterwards must not retroactively make an honest resolution look wrong.
+ */
+export function derivedVerdict(
+  f: Finding,
+  asOf: Date = new Date(),
+): 'confirmed' | 'refuted' | 'inconclusive' {
+  const visible: Finding = {
+    ...f,
+    observations: f.observations.filter((o) => {
+      const t = new Date(o.at).getTime();
+      return Number.isFinite(t) && t <= asOf.getTime();
+    }),
+  };
+  if (visible.observations.length === 0) return 'inconclusive';
+
+  const { confirmers, refuters } = disagreement(visible);
+  if (refuters > 0 && confirmers < 2 * refuters) return 'refuted';
+  if (confirmers > 0) return 'confirmed';
+  return 'inconclusive';
+}

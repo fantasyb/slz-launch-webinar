@@ -16,6 +16,7 @@ import path from 'path';
 import { execSync } from 'child_process';
 import { FindingSchema } from '../src/lib/cairn/schema';
 import { computeCommitment, generateNonce } from '../src/lib/cairn/commitment';
+import { findingBodyHash } from '../src/lib/cairn/signing';
 
 const [id, priorArg, ...reasoningParts] = process.argv.slice(2);
 const agent = process.env.CAIRN_AGENT;
@@ -77,7 +78,13 @@ const hash = computeCommitment({ findingId: f.id, by: agent, priorConfirmed: pri
 // Public: the seal only.
 raw.predictions = [
   ...raw.predictions,
-  { at: new Date().toISOString(), by: agent, commitment: { algorithm: 'sha256', hash, anchor }, self: false },
+  {
+    at: new Date().toISOString(),
+    by: agent,
+    commitment: { algorithm: 'sha256', hash, anchor },
+    bodyHash: findingBodyHash(f),
+    self: false,
+  },
 ];
 fs.writeFileSync(full, `${JSON.stringify(raw, null, 2)}\n`);
 

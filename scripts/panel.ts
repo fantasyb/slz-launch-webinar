@@ -26,6 +26,7 @@ import { execSync } from 'child_process';
 import { FindingSchema, type Finding } from '../src/lib/cairn/schema';
 import { PanelConfigSchema, solicit, type SolicitResult } from '../src/lib/cairn/panel';
 import { computeCommitment, generateNonce } from '../src/lib/cairn/commitment';
+import { derivedVerdict } from '../src/lib/cairn/decay';
 
 const MODE = process.argv[2];
 const CORPUS = path.join(process.cwd(), 'cairn');
@@ -194,13 +195,12 @@ function reveal() {
       );
       if (idx === -1) continue;
 
-      // The outcome comes from the finding's own latest observation: the check
-      // has already been run and judged by a human or by cairn:verify.
-      const latest = [...finding.observations].sort(
-        (a, b) => new Date(b.at).getTime() - new Date(a.at).getTime(),
-      )[0];
-      if (!latest || latest.verdict === 'inconclusive') {
-        console.log(`  skip ${finding.id} ${s.by} — no decisive observation yet`);
+      // Derived from the whole observation set, not the newest entry. Reading
+      // only the latest let one appended line retroactively redefine the
+      // ground truth of every panellist's forecast on this finding at once.
+      const outcome = derivedVerdict(finding);
+      if (outcome === 'inconclusive') {
+        console.log(`  skip ${finding.id} ${s.by} — no decisive verdict yet`);
         continue;
       }
 
@@ -210,14 +210,14 @@ function reveal() {
         nonce: s.nonce,
         priorConfirmed: s.priorConfirmed,
         reasoning: s.reasoning,
-        outcome: latest.verdict,
+        outcome,
         resolvedAt: new Date().toISOString(),
       };
       touched = true;
       revealed++;
-      const err = Math.abs(s.priorConfirmed - (latest.verdict === 'confirmed' ? 1 : 0));
+      const err = Math.abs(s.priorConfirmed - (outcome === 'confirmed' ? 1 : 0));
       console.log(
-        `  ${finding.id} ${s.by.padEnd(16)} ${s.priorConfirmed.toFixed(2)} -> ${latest.verdict}  brier ${(err * err).toFixed(3)}`,
+        `  ${finding.id} ${s.by.padEnd(16)} ${s.priorConfirmed.toFixed(2)} -> ${outcome}  brier ${(err * err).toFixed(3)}`,
       );
     }
 

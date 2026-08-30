@@ -1,5 +1,6 @@
 import type { Finding, Prediction } from './schema';
 import { commitmentStatus, type CommitmentStatus } from './commitment';
+import { findingBodyHash } from './signing';
 
 /**
  * Scoring for the prediction ledger.
@@ -74,6 +75,10 @@ export function isScorable(findingId: string, p: Prediction): p is Resolved {
 
 /** As isScorable, but with the originator check that needs the whole finding. */
 export function isScorableIn(f: Finding, p: Prediction): p is Resolved {
+  // A forecast about a claim that has since been rewritten is not a forecast
+  // about this finding, and scoring it against this finding's evidence would
+  // credit or penalise a prediction for text it never saw.
+  if (p.bodyHash && p.bodyHash !== findingBodyHash(f)) return false;
   return isScorable(f.id, p) && !isSelfPrediction(f, p);
 }
 

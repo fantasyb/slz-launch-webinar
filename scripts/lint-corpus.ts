@@ -7,6 +7,7 @@ import path from 'path';
 import { FindingSchema, environmentSignature } from '../src/lib/cairn/schema';
 import { commitmentStatus } from '../src/lib/cairn/commitment';
 import { verifyObservation, findingBodyHash } from '../src/lib/cairn/signing';
+import { derivedVerdict } from '../src/lib/cairn/decay';
 import { loadKeys } from '../src/lib/cairn/keys';
 import { scanExecutable, scanInjection } from '../src/lib/cairn/safety';
 
@@ -163,6 +164,32 @@ for (const file of files) {
     }
     if (pred.outcome && pred.priorConfirmed === undefined && pred.commitment) {
       problems.push(`${file}: prediction by ${pred.by} resolved while still sealed — reveal it`);
+    }
+    // The outcome is the ground truth a forecast is scored against, so it may
+    // not be whatever the forecaster wrote. Check it against what the finding's
+    // own observations supported at the moment it was resolved.
+    if (pred.outcome && pred.resolvedAt) {
+      const currentBody = findingBodyHash(f);
+      if (pred.bodyHash && pred.bodyHash !== currentBody) {
+        // Not a wrong outcome — a forecast about text that no longer exists.
+        warnings.push(
+          `${file}: prediction by ${pred.by} forecast a claim that has since been ` +
+            `amended; its outcome is no longer checkable and it is not scored`,
+        );
+      } else if (!pred.bodyHash) {
+        warnings.push(
+          `${file}: prediction by ${pred.by} predates body binding, so its outcome ` +
+            `cannot be checked against the current claim`,
+        );
+      } else {
+        const expected = derivedVerdict(f, new Date(pred.resolvedAt));
+        if (expected !== pred.outcome) {
+          problems.push(
+            `${file}: prediction by ${pred.by} records outcome "${pred.outcome}" but the ` +
+              `finding's observations supported "${expected}" at ${pred.resolvedAt}`,
+          );
+        }
+      }
     }
   }
   if (f.check.confirmedIf === f.check.refutedIf) {
