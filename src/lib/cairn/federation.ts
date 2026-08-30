@@ -50,17 +50,23 @@ export type Upstream = z.infer<typeof UpstreamSchema>;
 
 /** What a cairn publishes for others to consume. */
 export const FederationBundleSchema = z.object({
-  origin: z.string().min(1),
-  generatedAt: z.string(),
-  findings: z.array(FindingSchema),
-  keys: z.array(
-    z.object({
-      keyId: z.string(),
-      label: z.string(),
-      publicKey: z.string(),
-      createdAt: z.string(),
-    }),
-  ),
+  // Bounded and shape-checked, because every field here is written by whoever
+  // runs the upstream. `origin` in particular is rendered as an identity on
+  // the federation page; an unbounded string is both a display problem and a
+  // place to hide bulk text no reviewer reads to the end of.
+  origin: z.string().min(1).max(200),
+  generatedAt: z.string().max(40),
+  findings: z.array(FindingSchema).max(5000),
+  keys: z
+    .array(
+      z.object({
+        keyId: z.string().regex(/^[0-9a-f]{16}$/),
+        label: z.string().max(64),
+        publicKey: z.string().max(4000),
+        createdAt: z.string().max(40),
+      }),
+    )
+    .max(1000),
 });
 export type FederationBundle = z.infer<typeof FederationBundleSchema>;
 

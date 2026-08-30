@@ -18,7 +18,13 @@ import {
   CACHE_DIR,
   type Upstream,
 } from '../src/lib/cairn/federation';
-import { verifyObservation, findingBodyHash, type KeyRecord } from '../src/lib/cairn/signing';
+import {
+  verifyObservation,
+  findingBodyHash,
+  deriveKeyId,
+  validateLabel,
+  type KeyRecord,
+} from '../src/lib/cairn/signing';
 import { loadKeys } from '../src/lib/cairn/keys';
 import { fetchJson } from '../src/lib/cairn/fetchJson';
 
@@ -51,7 +57,23 @@ async function main() {
         continue;
       }
       const bundle = parsed.data;
-      const keys = new Map<string, KeyRecord>(bundle.keys.map((k) => [k.keyId, k as KeyRecord]));
+
+      // Same gate loadFederated applies, for the same reason: a key record
+      // must derive its id from its own material, and its label must render
+      // unambiguously. Building the map straight from the bundle meant the
+      // signed/unverified counts printed below — the numbers an operator
+      // reads to decide whether an upstream is trustworthy — were computed
+      // with key records nobody had checked. The consumer was hardened and
+      // its sibling here was left behind, which is what cairn-0021 is about.
+      const keys = new Map<string, KeyRecord>();
+      let rejectedKeys = 0;
+      for (const k of bundle.keys as KeyRecord[]) {
+        if (deriveKeyId(k.publicKey) !== k.keyId || validateLabel(k.label)) {
+          rejectedKeys++;
+          continue;
+        }
+        keys.set(k.keyId, k);
+      }
 
       let verified = 0;
       let unverified = 0;
@@ -70,6 +92,12 @@ async function main() {
         `ok    ${up.name} <- ${bundle.origin}: ${bundle.findings.length} findings, ` +
           `${bundle.keys.length} keys, ${verified} signed / ${unverified} unverified observations`,
       );
+      if (rejectedKeys > 0) {
+        console.log(
+          `      ${rejectedKeys} key record(s) rejected: id does not derive from the key ` +
+            `material, or the label is not unambiguously renderable.`,
+        );
+      }
       if (unverified > 0) {
         console.log(
           `      ${unverified} upstream observation(s) are unsigned or do not verify. ` +
