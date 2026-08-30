@@ -7,11 +7,11 @@ import { decide, type Adjudication } from '../src/lib/cairn/adjudicate';
 
 const clean = (reviewer: string): Adjudication => ({
   reviewer,
-  verdict: { verdict: 'clean', reasons: [] },
+  verdict: { verdict: 'clean', reasons: [], quotedEvidence: [] },
 });
 const flag = (reviewer: string): Adjudication => ({
   reviewer,
-  verdict: { verdict: 'hostile', reasons: ['nope'] },
+  verdict: { verdict: 'hostile', reasons: ['nope'], quotedEvidence: [] },
 });
 const errored = (reviewer: string): Adjudication => ({ reviewer, error: 'timeout' });
 

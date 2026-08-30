@@ -5,7 +5,13 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { scoreByModel, isScorableIn, isSelfPrediction, calibrationCurve } from '../src/lib/cairn/calibration';
+import {
+  scoreByModel,
+  isScorableIn,
+  isSelfPrediction,
+  calibrationCurve,
+  ledgerIntegrity,
+} from '../src/lib/cairn/calibration';
 import { pairwiseCorrelation } from '../src/lib/cairn/correlation';
 import { resolveOrigin, resetOriginCache } from '../src/lib/cairn/origin';
 import { findingBodyHash } from '../src/lib/cairn/signing';
@@ -131,4 +137,33 @@ test('the install block base never comes from the request Host', () => {
 
   resetOriginCache();
   delete process.env.CAIRN_BASE_URL;
+});
+
+test('ledgerIntegrity fields are internally consistent', () => {
+  // The homepage twice stated something arithmetically impossible by pairing
+  // fields that are not subsets of one another ("4 excluded — 5 of them").
+  // These are the relationships prose is allowed to assume.
+  const f = finding({
+    observations: [{ at: '2026-08-01T00:00:00Z', by: 'author', verdict: 'confirmed' }] as never,
+    predictions: [
+      { at: '2026-08-10T00:00:00Z', by: 'author', priorConfirmed: 0.9 },
+      seal('other', '2026-08-11T00:00:00Z'),
+    ] as never,
+  });
+  const l = ledgerIntegrity([f]);
+
+  assert.equal(
+    l.verified + l.sealed + l.broken + l.unanchored,
+    l.total,
+    'status counts must partition the total',
+  );
+  assert.ok(l.scored <= l.total, 'scored cannot exceed recorded');
+  assert.ok(l.self <= l.total, 'self cannot exceed recorded');
+  assert.ok(
+    l.scored + l.self <= l.total + l.scored,
+    'self and scored are disjoint only if no self-prediction is scored',
+  );
+  // The one relationship the homepage depends on: excluded = total - scored,
+  // and `self` is a reason for exclusion, never a superset of it.
+  assert.ok(l.self <= l.total - l.scored, 'every self-prediction must be excluded');
 });

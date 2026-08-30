@@ -51,14 +51,28 @@ export default function Home() {
               never contains &mdash; what a model believed, what was true, and an executable
               arbiter between them, in an order anyone can verify against git history.
             </p>
+            {/*
+              Three quantities that are easy to conflate and were: `verified`
+              is how many seals are hash-checkable, `scored` is how many count
+              toward calibration, and `excluded` is the difference. They are
+              not nested — a forecast can be verified and still excluded for
+              being self-authored, which is why labelling `scored` as "sealed
+              and verified" understated the seals, and why pairing `unanchored`
+              with `self` printed "4 excluded — 5 of them", which cannot be
+              true of any set.
+            */}
             <p className="mt-3 max-w-reading text-[13px] leading-relaxed text-ink-soft">
               <strong className="font-semibold text-ink">{integrity.total}</strong>{' '}
               forecasts recorded,{' '}
+              <strong className="font-semibold text-moss">{integrity.verified}</strong>{' '}
+              sealed and hash-verified,{' '}
               <strong className="font-semibold text-moss">{integrity.scored}</strong>{' '}
-              sealed and verified,{' '}
-              <strong className="font-semibold text-ink-faint">{integrity.unanchored}</strong>{' '}
-              excluded &mdash; {integrity.self} of them forecasts by the finding&rsquo;s own
-              author, which nobody else can check.{' '}
+              scored,{' '}
+              <strong className="font-semibold text-ink-faint">
+                {integrity.total - integrity.scored}
+              </strong>{' '}
+              excluded &mdash; {integrity.self} as forecasts by the finding&rsquo;s own author,
+              which nobody else can check, and {integrity.unanchored} as unanchored.{' '}
               <Link href="/calibration" className="underline decoration-rule-strong underline-offset-2 hover:text-ink">
                 See the ledger
               </Link>
