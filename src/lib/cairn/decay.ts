@@ -152,9 +152,57 @@ export function confidence(f: Finding, now: Date = new Date()): number {
 
 export type Standing = 'fresh' | 'aging' | 'stale' | 'contested' | 'retired';
 
+/**
+ * Distinct signers who confirmed, and who refuted.
+ *
+ * Counted by signer rather than by observation, because the question a reader
+ * is asking — "do people who tried this disagree?" — is about parties, not
+ * about how many times one party spoke.
+ */
+export function disagreement(f: Finding): { confirmers: number; refuters: number } {
+  const refutations = f.observations.filter((o) => o.verdict === 'refuted');
+  const refuters = new Set(refutations.map((o) => o.signature?.keyId ?? o.by));
+  if (refuters.size === 0) {
+    return {
+      confirmers: new Set(
+        f.observations.filter((o) => o.verdict === 'confirmed').map((o) => o.signature?.keyId ?? o.by),
+      ).size,
+      refuters: 0,
+    };
+  }
+
+  // Only confirmations made AFTER the most recent refutation can answer it.
+  //
+  // Counting every confirmation let the finding's own originating observation
+  // help clear a later refutation, so a single added line was enough — the
+  // originator confirmed at creation, and one attacker made two. A refutation
+  // says "this did not reproduce for me", and the only thing that speaks to
+  // that is someone re-running the check afterwards.
+  const latestRefutation = Math.max(...refutations.map((o) => new Date(o.at).getTime()));
+  const confirmers = new Set(
+    f.observations
+      .filter((o) => o.verdict === 'confirmed' && new Date(o.at).getTime() > latestRefutation)
+      .map((o) => o.signature?.keyId ?? o.by),
+  );
+  return { confirmers: confirmers.size, refuters: refuters.size };
+}
+
 export function standing(f: Finding, now: Date = new Date()): Standing {
   if (f.status === 'retired') return 'retired';
-  if (latestObservation(f).verdict === 'refuted') return 'contested';
+
+  // A refutation is not erased by whoever speaks next.
+  //
+  // Reading only the latest observation meant one appended "works for me",
+  // from any key at all, laundered a refuted finding back to a usable
+  // standing — which inverts the mechanism, since the cheapest way to rescue
+  // a disproven claim became adding a single line to it.
+  //
+  // A refutation now stands until confirmations from distinct signers
+  // outnumber refuters two to one. Honest disagreement clears in the ordinary
+  // course of people re-running a check; one party cannot clear it alone at
+  // any volume.
+  const { confirmers, refuters } = disagreement(f);
+  if (refuters > 0 && confirmers < 2 * refuters) return 'contested';
   const c = confidence(f, now);
   if (c >= 0.7) return 'fresh';
   if (c >= 0.3) return 'aging';

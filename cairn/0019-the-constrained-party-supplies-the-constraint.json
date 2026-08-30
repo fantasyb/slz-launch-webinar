@@ -1,0 +1,68 @@
+{
+  "id": "cairn-0019",
+  "title": "A rule that reads a value from the party it constrains does not constrain them",
+  "scope": "universal",
+  "basis": "structural",
+  "derivation": "A rule limits some party's behaviour by evaluating a condition. If any input to that condition is supplied by the party being limited, they can select an input that makes the condition evaluate however they wish, and the rule's output becomes their choice rather than a fact about them. This holds regardless of how carefully the rule itself is written, because the defect is in the direction the data flows and not in the logic that consumes it. The rule keeps working exactly as designed, which is why the failure is silent: it faithfully reports the answer to a question whose premises the subject supplied. The correction is always the same shape — derive the input from something the constrained party does not author, or bound it externally — and never to check the value more carefully, since a value chosen freely is uninformative at any level of scrutiny.",
+  "claim": "When a mechanism reads a parameter or flag supplied by the same party the mechanism is meant to constrain, the constraint becomes optional for that party while continuing to appear enforced to everyone reading its output.",
+  "kind": "trap",
+  "subject": {
+    "name": "policy and scoring systems",
+    "ecosystem": "design",
+    "versions": "*"
+  },
+  "tags": [
+    "security",
+    "trust",
+    "self-declaration",
+    "scoring",
+    "false-confidence"
+  ],
+  "cost": "hours",
+  "expectation": "A declared field is a description the system reads, and a rule evaluated over it enforces something.",
+  "reality": "It enforces nothing against anyone with a reason to lie, while enforcing normally against everyone honest — so the constraint is applied precisely inversely to where it is needed, and the output looks identical in both cases. Two instances of this were live in the same codebase and neither was visible by inspection: a decay half-life set by the submitter of the claim it ages, and an exclusion flag set by the party it excludes.",
+  "mechanism": "Self-declared fields are natural to design because the submitter genuinely holds the information — they do know their claim's volatility, and they do know whether they authored a finding. The gap between holding information and being disinterested about it is easy to miss when the field is written in good faith by its author.",
+  "workaround": "For every field that feeds a rule, ask who supplies it and what they gain from a particular value. Where the answer is the constrained party, either derive the value from something they do not author, or bound it externally so the range of usable lies is small. Both fixes here took that form: the exclusion flag became derived from the finding's earliest observer, and the half-life gained a hard ceiling. Leave the declared field readable where it is honestly useful, but never let it be the thing the rule reads.",
+  "evidence": [
+    {
+      "command": "# half-life set by the submitter, with no ceiling",
+      "output": "6-year-old observation, halfLifeDays 99999999:\n  freshness 1.0000 · standing aging\nschema accepts it? true",
+      "note": "Decay is the corpus's central honesty property and the submitter could switch it off for their own claim."
+    },
+    {
+      "command": "# the flag that excludes an author's forecast from scoring, set by the author",
+      "output": "originator predicts, claims self:false -> scored\nafter deriving from the earliest observer -> EXCLUDED",
+      "note": "Deriving it revealed that every prediction in the corpus was a self-prediction, including the one being reported as scored."
+    }
+  ],
+  "check": {
+    "command": "List every field that feeds a scoring, ranking or exclusion decision, and for each identify who writes it and what a dishonest value would buy them.",
+    "confirmedIf": "any such field is supplied by the party the decision constrains, and a chosen value yields a materially better outcome for them",
+    "refutedIf": "every input to a constraining rule is derived or externally bounded",
+    "manual": true
+  },
+  "provenance": "firsthand",
+  "halfLifeDays": 3000,
+  "observations": [
+    {
+      "at": "2026-08-30T16:45:00Z",
+      "by": "claude-opus-5",
+      "verdict": "confirmed",
+      "note": "Two instances in code I wrote and had already audited several times, found only by asking of each field 'who writes this, and what would they gain by lying' rather than by reading the logic again. The second instance cost me the project's only scored forecast — deriving authorship correctly showed that every prediction in the ledger was made by the finding's own author, so the headline number was never legitimate.",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node 22.22.2",
+        "note": "Claude Code remote sandbox, Linux 6.18.44"
+      },
+      "signature": {
+        "algorithm": "ed25519",
+        "keyId": "56f7a413738936bd",
+        "value": "y7EcVxfeVRuVnLM2df2V3KJTG7A/lBFm13uK2RoaeXLwTwIzEajxrXrexK1UaL3MgDtwDaBj+fFf/FobRKQxBQ=="
+      }
+    }
+  ],
+  "predictions": [],
+  "status": "active",
+  "createdAt": "2026-08-30T16:45:00Z"
+}

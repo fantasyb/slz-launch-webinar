@@ -105,9 +105,12 @@ export const VerdictSchema = z.enum(['confirmed', 'refuted', 'inconclusive']);
 export type Verdict = z.infer<typeof VerdictSchema>;
 
 export const EvidenceSchema = z.object({
-  command: z.string().min(1),
-  output: z.string(),
-  note: z.string().optional(),
+  command: z.string().min(1).max(4000),
+  // Bounded like everything else: an unbounded field is a denial-of-service
+  // vector against every consumer of the API, and a place to hide bulk text
+  // no reviewer will read to the end of.
+  output: z.string().max(20000),
+  note: z.string().max(2000).optional(),
 });
 export type Evidence = z.infer<typeof EvidenceSchema>;
 
@@ -129,7 +132,7 @@ export const ObservationSchema = z.object({
   /** Free-form agent or human identifier. No accounts, no auth, no trust score. */
   by: z.string().min(1),
   verdict: VerdictSchema,
-  note: z.string().optional(),
+  note: z.string().max(4000).optional(),
   /**
    * Omitted when the observation was not executed anywhere — a secondhand
    * assertion. Such an observation contributes no breadth, which is the
@@ -201,7 +204,7 @@ export const PredictionSchema = z
     revealedAt: z.string().datetime().optional(),
     nonce: z.string().optional(),
     priorConfirmed: z.number().min(0).max(1).optional(),
-    reasoning: z.string().optional(),
+    reasoning: z.string().max(4000).optional(),
 
     outcome: VerdictSchema.optional(),
     resolvedAt: z.string().datetime().optional(),
@@ -229,7 +232,7 @@ export const FindingSchema = z.object({
   id: z.string().regex(/^cairn-\d{4}$/),
   title: z.string().min(1).max(120),
   /** One sentence. What is true. Written to be falsifiable. */
-  claim: z.string().min(1),
+  claim: z.string().min(1).max(2000),
   kind: KindSchema,
   subject: SubjectSchema,
   scope: ScopeSchema,
@@ -239,21 +242,21 @@ export const FindingSchema = z.object({
    * the design. A structural claim without one is an assertion wearing a
    * category label.
    */
-  derivation: z.string().optional(),
+  derivation: z.string().max(4000).optional(),
   /** Required when scope is environment-specific: where the claim applies. */
-  appliesTo: z.string().optional(),
-  tags: z.array(z.string()).default([]),
+  appliesTo: z.string().max(1000).optional(),
+  tags: z.array(z.string().max(40)).max(12).default([]),
   /** What rediscovering this from scratch costs. Drives triage. */
   cost: CostSchema,
 
   /** What a competent reader would reasonably predict. */
-  expectation: z.string().min(1),
+  expectation: z.string().min(1).max(2000),
   /** What actually happens instead. */
-  reality: z.string().min(1),
+  reality: z.string().min(1).max(4000),
   /** Why it behaves that way, when known. */
-  mechanism: z.string().optional(),
+  mechanism: z.string().max(4000).optional(),
   /** What to do instead. The part that saves the next agent's afternoon. */
-  workaround: z.string().optional(),
+  workaround: z.string().max(4000).optional(),
 
   evidence: z.array(EvidenceSchema).default([]),
   check: CheckSchema,
@@ -264,7 +267,15 @@ export const FindingSchema = z.object({
    * estimate of how fast this corner of the world moves. A finding about
    * a nightly build might be 20; one about POSIX semantics, 3000.
    */
-  halfLifeDays: z.number().int().positive(),
+  /**
+   * Bounded deliberately. Unbounded, this field disables the corpus's central
+   * honesty property: a submitter naming a half-life of ten million days keeps
+   * a finding permanently `fresh` no matter how old its last check, and the
+   * decay that is supposed to force re-verification never happens. The ceiling
+   * is ten years, which is longer than any claim about software has earned;
+   * the floor stops a finding being made to vanish before anyone reads it.
+   */
+  halfLifeDays: z.number().int().min(7).max(3650),
 
   observations: z.array(ObservationSchema).min(1),
   /** Forecasts recorded before verification. See PredictionSchema. */

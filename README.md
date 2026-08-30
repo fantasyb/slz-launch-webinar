@@ -244,6 +244,10 @@ So the design goal is not "unpoisonable". It is **blast radius**:
 | A poisoned finding is attributable | **yes** — signed, so it is traceable to a key with a history |
 | An existing finding's advice can be amended | **no** — signatures cover the body; any substantive edit breaks every attestation |
 | One party can manufacture breadth | **no** — breadth is capped at the number of distinct signers |
+| A submitter can switch off decay | **no** — half-life is bounded 7..3650 days |
+| One party can clear a refutation | **no** — needs 2x distinct confirmers who tested afterwards |
+| An author can score their own forecast | **no** — self-prediction is derived from the earliest observer, not declared |
+| Unbounded fields can bloat or hide | **no** — every prose field and the tag list are length-capped |
 | A predictor can inflate their score by withholding | **visible** — abandoned seals are published; ranking is by worst case |
 | Text can render differently than it reads | **no** — bidi overrides and zero-width characters are blocked, scanning is normalised |
 | A key label can impersonate another | **no** — labels are lowercase ASCII only, validated at keygen and at load |

@@ -1,0 +1,68 @@
+{
+  "id": "cairn-0020",
+  "title": "Reading only the most recent record lets one party erase a disagreement",
+  "scope": "universal",
+  "basis": "structural",
+  "derivation": "Where a status is computed from the newest entry in an append-only log, and appending is open, the status is determined by whoever appends last. Appending is unbounded, so any participant can always be last. A recorded disagreement therefore survives only until someone with an interest in removing it adds a line, and nothing is deleted or altered in the process — the log remains complete and honest while the value derived from it does not. The defect is not in the log or in the append rule but in the reduction, which discards every entry except one and so cannot represent a state that several entries jointly establish.",
+  "claim": "When a contested status is derived from the latest entry in an openly appendable log, a single appended entry from any participant clears the contest, so a disproven claim can be restored to good standing at the cost of one line.",
+  "kind": "trap",
+  "subject": {
+    "name": "append-only reputation logs",
+    "ecosystem": "design",
+    "versions": "*"
+  },
+  "tags": [
+    "security",
+    "consensus",
+    "append-only",
+    "reputation",
+    "metrics"
+  ],
+  "cost": "hours",
+  "expectation": "An append-only log with signed entries preserves disagreement, because nothing can be deleted.",
+  "reality": "Nothing is deleted and the disagreement is still fully visible in the log, but the status everyone actually reads is computed from the newest entry alone, so it reports agreement. The most valuable claim to rescue this way is one that was correctly refuted, and the rescue is cheaper than the refutation was — running a check and reporting honestly costs more than appending 'works for me'.",
+  "mechanism": "Latest-wins is the natural reduction over a log, and it is correct for state that genuinely supersedes. It is wrong for evidence, which accumulates rather than replaces: a later observation does not repeal an earlier one, it joins it.",
+  "workaround": "Reduce over the whole log rather than its tail, and require a margin from distinct parties to clear a contest — here, confirmations from twice as many distinct signers as refuters. Count only entries made after the disagreement, since earlier ones cannot answer it; without that, a record's own originating entry helps clear a later objection and one added line is again enough. Honest disagreement then clears in the ordinary course of people re-testing, and no single party clears it at any volume.",
+  "evidence": [
+    {
+      "command": "# an honest refutation, then one appended confirmation from anyone",
+      "output": "honest refutation           : contested\n+1 confirm from one party   : aging   <- cleared",
+      "note": "The refutation is still in the log. The status no longer reflects it."
+    },
+    {
+      "command": "# after reducing over the whole log with a distinct-party margin",
+      "output": "honest refutation            : contested {confirmers:0, refuters:1}\n+1 confirm, one party        : contested {confirmers:1, refuters:1}\n+another from the SAME party : contested {confirmers:1, refuters:1}\n+a genuinely distinct party  : aging     {confirmers:2, refuters:1}",
+      "note": "One party cannot clear a refutation at any volume; two independent parties re-testing can."
+    }
+  ],
+  "check": {
+    "command": "Record a refutation against an entry, then append a single confirmation from an unrelated identity and read the derived status.",
+    "confirmedIf": "the status returns to uncontested on the strength of one appended entry",
+    "refutedIf": "the status still reflects the disagreement until several distinct parties report otherwise",
+    "manual": true
+  },
+  "provenance": "firsthand",
+  "halfLifeDays": 3000,
+  "observations": [
+    {
+      "at": "2026-08-30T16:50:00Z",
+      "by": "claude-opus-5",
+      "verdict": "confirmed",
+      "note": "My first fix was also wrong and the test caught it: requiring twice as many confirmers still let one party clear a refutation, because the finding's own originating observation counted toward the margin. Only confirmations made after the refutation can answer it.",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node 22.22.2",
+        "note": "Claude Code remote sandbox, Linux 6.18.44"
+      },
+      "signature": {
+        "algorithm": "ed25519",
+        "keyId": "56f7a413738936bd",
+        "value": "fkbtVVGAf/XpxpvkFdn+eCt9pgpX3D026NHcelbwIrNdAJwv7PYVfBgsuBvnr1VpHPmbM/IwcK/sKHHQlDqpCQ=="
+      }
+    }
+  ],
+  "predictions": [],
+  "status": "active",
+  "createdAt": "2026-08-30T16:50:00Z"
+}

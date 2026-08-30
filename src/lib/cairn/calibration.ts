@@ -28,6 +28,32 @@ export function statusOf(findingId: string, p: Prediction): CommitmentStatus {
 }
 
 /**
+ * Whether a prediction was made by the finding's own originator.
+ *
+ * `self` is a self-declared flag, and a predictor who knows the answer has
+ * every reason to leave it false. So it is derived instead: the originator is
+ * whoever signed the earliest observation — the party who put the finding into
+ * the corpus and therefore knew its outcome before anyone could forecast it.
+ *
+ * The declared flag is still honoured, but only in the direction that adds
+ * exclusion. Someone may mark their own prediction self-authored for reasons
+ * the code cannot see; nobody may mark it away.
+ */
+export function isSelfPrediction(f: Finding, p: Prediction): boolean {
+  if (p.self) return true;
+  const earliest = [...f.observations].sort(
+    (a, b) => new Date(a.at).getTime() - new Date(b.at).getTime(),
+  )[0];
+  if (!earliest) return false;
+  // Compare labels, which is the only identifier both sides carry: a
+  // prediction has no keyId, so comparing the observation's signing key
+  // against a prediction's label never matched and the check silently passed
+  // everyone. Labels are constrained to unambiguous lowercase ASCII precisely
+  // so that this comparison means something.
+  return earliest.by === p.by;
+}
+
+/**
  * A prediction counts toward calibration only if all four hold:
  *
  *   1. it resolved to confirmed or refuted (inconclusive has no truth value);
@@ -43,8 +69,12 @@ export function statusOf(findingId: string, p: Prediction): CommitmentStatus {
 export function isScorable(findingId: string, p: Prediction): p is Resolved {
   if (p.outcome !== 'confirmed' && p.outcome !== 'refuted') return false;
   if (p.priorConfirmed === undefined || p.reasoning === undefined) return false;
-  if (p.self) return false;
   return statusOf(findingId, p) === 'verified';
+}
+
+/** As isScorable, but with the originator check that needs the whole finding. */
+export function isScorableIn(f: Finding, p: Prediction): p is Resolved {
+  return isScorable(f.id, p) && !isSelfPrediction(f, p);
 }
 
 export function actualValue(p: Resolved): 0 | 1 {
@@ -58,7 +88,7 @@ export function brier(p: Resolved): number {
 
 export function scorablePredictions(findings: Finding[]): Array<Resolved & { findingId: string }> {
   return findings.flatMap((f) =>
-    f.predictions.filter((p) => isScorable(f.id, p)).map((p) => ({ ...p, findingId: f.id })),
+    f.predictions.filter((p) => isScorableIn(f, p)).map((p) => ({ ...p, findingId: f.id })),
   );
 }
 
@@ -69,7 +99,8 @@ export function allPredictions(findings: Finding[]) {
       ...p,
       findingId: f.id,
       status: statusOf(f.id, p),
-      scorable: isScorable(f.id, p),
+      scorable: isScorableIn(f, p),
+      self: isSelfPrediction(f, p),
     })),
   );
 }
@@ -103,7 +134,7 @@ export function ledgerIntegrity(findings: Finding[]): LedgerIntegrity {
  * the model population lacks.
  */
 export function surprise(f: Finding): number | null {
-  const scored = f.predictions.filter((p) => isScorable(f.id, p));
+  const scored = f.predictions.filter((p) => isScorableIn(f, p));
   if (scored.length === 0) return null;
   return (
     scored.reduce((acc, p) => acc + Math.abs(p.priorConfirmed - actualValue(p)), 0) /
