@@ -324,19 +324,35 @@ export function formatConfidence(c: number): string {
  * reads `contested` to a human resolves as `refuted` to the scorer rather than
  * silently counting as a hit.
  *
- * `asOf` exists so a recorded outcome stays checkable: a resolution is a
- * statement about the evidence that existed when it was made, and observations
- * added afterwards must not retroactively make an honest resolution look wrong.
+ * The window matters in both directions, and getting only one end right is
+ * what made this function unsound for as long as it existed.
+ *
+ * `asOf` closes the late end: a resolution is a statement about the evidence
+ * that existed when it was made, and observations added afterwards must not
+ * retroactively make an honest resolution look wrong.
+ *
+ * `since` closes the early end, and it is the load-bearing one. A forecast is
+ * a claim about what a check *will* show; evidence that already existed when
+ * the forecast was sealed cannot resolve it. Without this bound, `predict`
+ * followed immediately by `reveal` — with no check ever run — resolved against
+ * the finding's own founding observation and printed a Brier score. The seal
+ * was cryptographically perfect and the number underneath it was invented.
+ * Callers must pass the seal time; there is deliberately no default, because
+ * every omission of it was a fabricated score.
  */
 export function derivedVerdict(
   f: Finding,
-  asOf: Date = new Date(),
+  window: { since: Date; asOf?: Date },
 ): 'confirmed' | 'refuted' | 'inconclusive' {
+  const asOf = window.asOf ?? new Date();
+  const lo = window.since.getTime();
+  const hi = asOf.getTime();
+  if (!Number.isFinite(lo) || !Number.isFinite(hi)) return 'inconclusive';
   const visible: Finding = {
     ...f,
     observations: f.observations.filter((o) => {
       const t = new Date(o.at).getTime();
-      return Number.isFinite(t) && t <= asOf.getTime();
+      return Number.isFinite(t) && t > lo && t <= hi;
     }),
   };
   if (visible.observations.length === 0) return 'inconclusive';

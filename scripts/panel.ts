@@ -27,6 +27,8 @@ import { FindingSchema, type Finding } from '../src/lib/cairn/schema';
 import { PanelConfigSchema, solicit, type SolicitResult } from '../src/lib/cairn/panel';
 import { computeCommitment, generateNonce } from '../src/lib/cairn/commitment';
 import { derivedVerdict } from '../src/lib/cairn/decay';
+import { findingBodyHash } from '../src/lib/cairn/signing';
+import { writeJsonAtomic } from '../src/lib/cairn/atomic';
 
 const MODE = process.argv[2];
 const CORPUS = path.join(process.cwd(), 'cairn');
@@ -71,7 +73,42 @@ async function seal() {
     error?: string;
   }> = [];
 
-  fs.mkdirSync(SECRETS, { recursive: true });
+  fs.mkdirSync(SECRETS, { recursive: true, mode: 0o700 });
+  fs.mkdirSync(RUNS, { recursive: true });
+
+  // The manifest exists so an operator cannot solicit forecasts and quietly
+  // drop the unflattering ones. Writing it after the loop meant Ctrl-C partway
+  // through — or after watching the solicitations scroll past — left sealed
+  // commitments in the corpus with no record of what else was attempted, which
+  // is precisely the discretion the manifest is meant to remove. It is now
+  // rewritten before every corpus mutation, so it always covers at least what
+  // has been published.
+  const flushManifest = (): string => {
+    const batchHash = crypto
+      .createHash('sha256')
+      .update(
+        JSON.stringify(
+          [...attempts].sort((a, b) =>
+            `${a.findingId}${a.member}`.localeCompare(`${b.findingId}${b.member}`),
+          ),
+        ),
+      )
+      .digest('hex');
+    writeJsonAtomic(path.join(RUNS, `${runId}.json`), {
+      runId,
+      createdAt: new Date().toISOString(),
+      anchor,
+      members: cfg.members,
+      attempts,
+      batchHash,
+      note:
+        'Every (model, finding) pair attempted in this run, including failures. ' +
+        'Written before the corpus seals it describes, so an interrupted run ' +
+        'leaves a manifest listing forecasts the corpus may not yet carry — ' +
+        'never the reverse.',
+    });
+    return batchHash;
+  };
 
   for (const { file, finding } of candidates) {
     const raw = JSON.parse(fs.readFileSync(path.join(CORPUS, file), 'utf8'));
@@ -111,12 +148,15 @@ async function seal() {
         at: new Date().toISOString(),
         by: r.member.label,
         commitment: { algorithm: 'sha256', hash, anchor },
+        bodyHash: findingBodyHash(finding),
         self: false,
       });
 
-      fs.writeFileSync(
+      // 0600: until reveal, these preimages are the whole blind.
+      writeJsonAtomic(
         path.join(SECRETS, `${finding.id}--${r.member.label.replace(/[^\w.-]/g, '_')}.json`),
-        `${JSON.stringify({ findingId: finding.id, by: r.member.label, ...r.forecast, anchor, nonce, hash }, null, 2)}\n`,
+        { findingId: finding.id, by: r.member.label, ...r.forecast, anchor, nonce, hash },
+        0o600,
       );
 
       attempts.push({
@@ -130,41 +170,11 @@ async function seal() {
       console.log(`  seal ${finding.id} ${r.member.label}  ${hash.slice(0, 12)}`);
     }
 
-    fs.writeFileSync(path.join(CORPUS, file), `${JSON.stringify(raw, null, 2)}\n`);
+    flushManifest();
+    writeJsonAtomic(path.join(CORPUS, file), raw);
   }
 
-  // Batch hash over every attempt, sorted, so the manifest cannot be pruned.
-  const batchHash = crypto
-    .createHash('sha256')
-    .update(
-      JSON.stringify(
-        [...attempts].sort((a, b) =>
-          `${a.findingId}${a.member}`.localeCompare(`${b.findingId}${b.member}`),
-        ),
-      ),
-    )
-    .digest('hex');
-
-  fs.mkdirSync(RUNS, { recursive: true });
-  fs.writeFileSync(
-    path.join(RUNS, `${runId}.json`),
-    `${JSON.stringify(
-      {
-        runId,
-        createdAt: new Date().toISOString(),
-        anchor,
-        members: cfg.members,
-        attempts,
-        batchHash,
-        note:
-          'Every (model, finding) pair attempted in this run, including failures. ' +
-          'Published before any check was executed, so a forecast missing from the ' +
-          'ledger is visible as a hole here rather than as an absence nobody can see.',
-      },
-      null,
-      2,
-    )}\n`,
-  );
+  const batchHash = flushManifest();
 
   const sealed = attempts.filter((a) => a.status === 'sealed').length;
   console.log(`\n${sealed} sealed, ${attempts.length - sealed} errored`);
@@ -180,6 +190,7 @@ function reveal() {
     process.exit(2);
   }
   let revealed = 0;
+  let broken = 0;
 
   for (const { file, finding } of loadFindings()) {
     const raw = JSON.parse(fs.readFileSync(path.join(CORPUS, file), 'utf8'));
@@ -195,12 +206,35 @@ function reveal() {
       );
       if (idx === -1) continue;
 
-      // Derived from the whole observation set, not the newest entry. Reading
-      // only the latest let one appended line retroactively redefine the
-      // ground truth of every panellist's forecast on this finding at once.
-      const outcome = derivedVerdict(finding);
+      // Recompute the commitment from the preimage rather than comparing the
+      // stored hash against a copy of itself. Trusting `s.hash` meant an edited
+      // secret file — reasoning rewritten, hash field left alone — was published
+      // as the revealed forecast while this script exited 0 reporting success.
+      const recomputed = computeCommitment({
+        findingId: s.findingId,
+        by: s.by,
+        priorConfirmed: s.priorConfirmed,
+        reasoning: s.reasoning,
+        anchor: s.anchor,
+        nonce: s.nonce,
+      });
+      if (recomputed !== raw.predictions[idx].commitment?.hash) {
+        console.error(`  SEAL BROKEN ${finding.id} ${s.by} — preimage does not reproduce the`);
+        console.error('    published hash. Refusing to reveal this forecast.');
+        broken += 1;
+        continue;
+      }
+
+      // Derived from the whole observation set, not the newest entry (one
+      // appended line must not retroactively redefine every panellist's
+      // ground truth at once), and only from evidence postdating that
+      // panellist's own seal, so a forecast cannot be resolved by
+      // observations that already existed when it was made.
+      const outcome = derivedVerdict(finding, {
+        since: new Date(raw.predictions[idx].at),
+      });
       if (outcome === 'inconclusive') {
-        console.log(`  skip ${finding.id} ${s.by} — no decisive verdict yet`);
+        console.log(`  skip ${finding.id} ${s.by} — no observation recorded since the seal`);
         continue;
       }
 
@@ -221,10 +255,14 @@ function reveal() {
       );
     }
 
-    if (touched) fs.writeFileSync(path.join(CORPUS, file), `${JSON.stringify(raw, null, 2)}\n`);
+    if (touched) writeJsonAtomic(path.join(CORPUS, file), raw);
   }
 
   console.log(`\n${revealed} forecast(s) revealed. Commit, then: npm run cairn:audit`);
+  if (broken > 0) {
+    console.error(`${broken} forecast(s) had a broken seal and were not revealed.`);
+    process.exit(1);
+  }
 }
 
 if (MODE === 'seal') {

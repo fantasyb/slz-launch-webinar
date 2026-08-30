@@ -9,6 +9,7 @@
  */
 import { execSync } from 'child_process';
 import fs from 'fs';
+import { resolveFindingFile } from '../src/lib/cairn/resolve';
 import path from 'path';
 import { FindingSchema } from '../src/lib/cairn/schema';
 import { scanExecutable } from '../src/lib/cairn/safety';
@@ -20,15 +21,15 @@ if (!id) {
 }
 
 const DIR = path.join(process.cwd(), 'cairn');
-const file = fs.readdirSync(DIR).find((f) => f.includes(id.replace('cairn-', '')));
-if (!file) {
-  console.error(`no finding matching ${id}`);
+let full: string;
+try {
+  full = resolveFindingFile(id, DIR);
+} catch (e) {
+  console.error((e as Error).message);
   process.exit(2);
 }
 
-const finding = FindingSchema.parse(
-  JSON.parse(fs.readFileSync(path.join(DIR, file), 'utf8')),
-);
+const finding = FindingSchema.parse(JSON.parse(fs.readFileSync(full, 'utf8')));
 
 const unresolved = finding.predictions.filter((p) => !p.outcome);
 if (unresolved.length) {
@@ -118,8 +119,11 @@ if (unresolved.length) {
   console.log('Never edit `priorConfirmed` or `reasoning` — a forecast revised after');
   console.log('the fact measures nothing.\n');
 }
-console.log('Judge the result yourself, then append an observation to');
-console.log(`cairn/${file} and open a pull request:\n`);
+console.log('Judge the result yourself, then record what you saw:\n');
+console.log(
+  `  CAIRN_KEY=<id> CAIRN_AGENT=<you> npm run cairn:observe -- ${finding.id} <confirmed|refuted|inconclusive> "what you saw"\n`,
+);
+console.log('That signs and appends it. The shape, for reference:\n');
 console.log(
   JSON.stringify(
     {

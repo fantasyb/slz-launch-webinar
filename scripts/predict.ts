@@ -12,10 +12,12 @@
  * prior observations, no other predictions.
  */
 import fs from 'fs';
+import { resolveFindingFile } from '../src/lib/cairn/resolve';
 import path from 'path';
 import { execSync } from 'child_process';
 import { FindingSchema } from '../src/lib/cairn/schema';
 import { computeCommitment, generateNonce } from '../src/lib/cairn/commitment';
+import { writeJsonAtomic } from '../src/lib/cairn/atomic';
 import { findingBodyHash } from '../src/lib/cairn/signing';
 
 const [id, priorArg, ...reasoningParts] = process.argv.slice(2);
@@ -27,12 +29,13 @@ if (!id) {
 }
 
 const DIR = path.join(process.cwd(), 'cairn');
-const file = fs.readdirSync(DIR).find((f) => f.includes(id.replace('cairn-', '')));
-if (!file) {
-  console.error(`no finding matching ${id}`);
+let full: string;
+try {
+  full = resolveFindingFile(id, DIR);
+} catch (e) {
+  console.error((e as Error).message);
   process.exit(2);
 }
-const full = path.join(DIR, file);
 const raw = JSON.parse(fs.readFileSync(full, 'utf8'));
 const f = FindingSchema.parse(raw);
 
@@ -75,6 +78,25 @@ const anchor = execSync('git rev-parse HEAD', { encoding: 'utf8' }).trim();
 const nonce = generateNonce();
 const hash = computeCommitment({ findingId: f.id, by: agent, priorConfirmed: prior, reasoning, anchor, nonce });
 
+// Private first, public second, and the order is load-bearing.
+//
+// A preimage with no published seal is worthless — nobody can be held to a
+// commitment that was never announced, and the next `cairn:predict` simply
+// overwrites it. A published seal with no preimage is unrecoverable: reveal
+// refuses ("no sealed forecast found") and predict refuses to seal twice, so
+// the forecast is stuck `sealed` forever and looks identical to an honest
+// pending one. Writing the corpus first put the unrecoverable failure on the
+// likelier path.
+const secretDir = path.join(process.cwd(), '.cairn-secrets');
+fs.mkdirSync(secretDir, { recursive: true, mode: 0o700 });
+const secretFile = path.join(secretDir, `${f.id}--${agent.replace(/[^\w.-]/g, '_')}.json`);
+// 0600: until reveal, the confidentiality of this file is the entire blind.
+writeJsonAtomic(
+  secretFile,
+  { findingId: f.id, by: agent, priorConfirmed: prior, reasoning, anchor, nonce, hash },
+  0o600,
+);
+
 // Public: the seal only.
 raw.predictions = [
   ...raw.predictions,
@@ -86,20 +108,15 @@ raw.predictions = [
     self: false,
   },
 ];
-fs.writeFileSync(full, `${JSON.stringify(raw, null, 2)}\n`);
-
-// Private: the preimage, gitignored.
-const secretDir = path.join(process.cwd(), '.cairn-secrets');
-fs.mkdirSync(secretDir, { recursive: true });
-const secretFile = path.join(secretDir, `${f.id}--${agent.replace(/[^\w.-]/g, '_')}.json`);
-fs.writeFileSync(
-  secretFile,
-  `${JSON.stringify({ findingId: f.id, by: agent, priorConfirmed: prior, reasoning, anchor, nonce, hash }, null, 2)}\n`,
-);
+writeJsonAtomic(full, raw);
 
 console.log(`SEALED  ${hash.slice(0, 16)}…  anchored at ${anchor.slice(0, 10)}`);
 console.log(`secret  ${path.relative(process.cwd(), secretFile)} (gitignored)\n`);
 console.log('Now publish the seal BEFORE running the check:\n');
-console.log(`  git add cairn/${file} && git commit -m "seal: forecast on ${f.id}" && git push\n`);
-console.log('Then:  npm run cairn:verify ' + f.id);
-console.log('Then:  CAIRN_AGENT=' + agent + ' npm run cairn:reveal -- ' + f.id + ' confirmed|refuted');
+console.log(`  git add cairn/${path.basename(full)} && git commit -m "seal: forecast on ${f.id}" && git push\n`);
+console.log('Then run the check, record what it did, and reveal:\n');
+console.log(`  npm run cairn:verify ${f.id}`);
+console.log(`  CAIRN_KEY=<id> CAIRN_AGENT=${agent} npm run cairn:observe -- ${f.id} <confirmed|refuted> "what you saw"`);
+console.log(`  CAIRN_AGENT=${agent} npm run cairn:reveal -- ${f.id}`);
+console.log('\nThe outcome is derived from the observations, not supplied by you,');
+console.log('and only observations recorded after the seal can resolve it.');

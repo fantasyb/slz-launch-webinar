@@ -9,6 +9,7 @@
  * never scored.
  */
 import fs from 'fs';
+import { resolveFindingFile } from '../src/lib/cairn/resolve';
 import path from 'path';
 import { FindingSchema } from '../src/lib/cairn/schema';
 import { computeCommitment, commitmentStatus } from '../src/lib/cairn/commitment';
@@ -26,12 +27,13 @@ if (!id || !agent) {
 // typed measures nothing.
 
 const DIR = path.join(process.cwd(), 'cairn');
-const file = fs.readdirSync(DIR).find((f) => f.includes(id.replace('cairn-', '')));
-if (!file) {
-  console.error(`no finding matching ${id}`);
+let full: string;
+try {
+  full = resolveFindingFile(id, DIR);
+} catch (e) {
+  console.error((e as Error).message);
   process.exit(2);
 }
-const full = path.join(DIR, file);
 const raw = JSON.parse(fs.readFileSync(full, 'utf8'));
 const f = FindingSchema.parse(raw);
 
@@ -66,10 +68,17 @@ if (recomputed !== secret.hash) {
   process.exit(1);
 }
 
-const outcome = derivedVerdict(f);
+// Scored only against evidence recorded after the seal. A forecast is a claim
+// about what a check will show, so the finding's pre-existing observations
+// cannot resolve it — counting them let predict-then-reveal, with no check run
+// at all, print a Brier score against the finding's own founding observation.
+const sealedAt = new Date(raw.predictions[idx].at);
+const outcome = derivedVerdict(f, { since: sealedAt });
 if (outcome === 'inconclusive') {
-  console.error(`${f.id} has no decisive verdict yet — record an observation first.`);
-  console.error('A forecast cannot be resolved against evidence that does not exist.');
+  console.error(`${f.id} has no observation recorded since your seal at ${raw.predictions[idx].at}.`);
+  console.error('Run the check and record what it did:');
+  console.error(`  npm run cairn:verify ${f.id}`);
+  console.error('A forecast cannot be resolved against evidence that predates it.');
   process.exit(2);
 }
 

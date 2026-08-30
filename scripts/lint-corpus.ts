@@ -178,11 +178,14 @@ for (const file of files) {
         );
       } else if (!pred.bodyHash) {
         warnings.push(
-          `${file}: prediction by ${pred.by} predates body binding, so its outcome ` +
-            `cannot be checked against the current claim`,
+          `${file}: prediction by ${pred.by} carries no bodyHash, so nothing binds it ` +
+            `to the claim it forecast; it is not scored`,
         );
       } else {
-        const expected = derivedVerdict(f, new Date(pred.resolvedAt));
+        const expected = derivedVerdict(f, {
+          since: new Date(pred.at),
+          asOf: new Date(pred.resolvedAt),
+        });
         if (expected !== pred.outcome) {
           problems.push(
             `${file}: prediction by ${pred.by} records outcome "${pred.outcome}" but the ` +

@@ -78,7 +78,14 @@ export function isScorableIn(f: Finding, p: Prediction): p is Resolved {
   // A forecast about a claim that has since been rewritten is not a forecast
   // about this finding, and scoring it against this finding's evidence would
   // credit or penalise a prediction for text it never saw.
-  if (p.bodyHash && p.bodyHash !== findingBodyHash(f)) return false;
+  //
+  // A forecast with no bodyHash at all is the same problem with the evidence
+  // missing: nothing binds it to any particular wording, so it cannot be shown
+  // to be about the claim it is being scored against. It is excluded for the
+  // same reason, and this must stay in step with lint-corpus.ts, which reports
+  // exactly these predictions as unscored — the two disagreed once, and the
+  // corpus told a reader the opposite of what the scorer did.
+  if (!p.bodyHash || p.bodyHash !== findingBodyHash(f)) return false;
   return isScorable(f.id, p) && !isSelfPrediction(f, p);
 }
 
