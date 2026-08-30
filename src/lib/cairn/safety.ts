@@ -116,7 +116,12 @@ const SENSITIVE: Array<{ re: RegExp; pattern: string; reason: string }> = [
   { re: /\/(?:home|Users)\/(?!user\b|runner\b)[A-Za-z0-9._-]+/, pattern: 'home-path', reason: 'a home directory naming a real user' },
   { re: /\bhttps?:\/\/(?![^\s]*(?:example\.com|localhost))(?:[a-z0-9-]+\.)*[a-z0-9-]+\.(?:internal|corp|local|intranet|lan)\b/i, pattern: 'internal-host', reason: 'an internal hostname' },
   { re: /\b(?:10|192\.168|172\.(?:1[6-9]|2\d|3[01]))\.\d{1,3}\.\d{1,3}\b/, pattern: 'private-ip', reason: 'a private network address' },
-  { re: /\b[A-Za-z0-9+/]{40,}={0,2}\b/, pattern: 'opaque-blob', reason: 'a long opaque string that may be encoded data' },
+  // Base64-looking only. Deliberately NOT pure hex: hashes, fingerprints and
+  // commitments are long, random-looking, and public by design — flagging them
+  // blocked publishing this corpus's own signing fingerprint three times, and
+  // a gate that fires on correct behaviour teaches people to pass --no-verify,
+  // which costs more than the rule was ever worth.
+  { re: /\b(?![0-9a-fA-F]+\b)[A-Za-z0-9+/]{40,}={0,2}\b/, pattern: 'opaque-blob', reason: 'a long base64-like string that may be encoded data' },
 ];
 
 export function scanSensitive(text: string): Flag[] {
@@ -170,7 +175,7 @@ const REDACTIONS: Array<{ re: RegExp; pattern: string; to: string }> = [
   { re: /\b(https?:\/\/)(?:[a-z0-9-]+\.)*[a-z0-9-]+(\.(?:internal|corp|local|intranet|lan))\b/gi, pattern: 'internal-host', to: '$1<redacted:host>$2' },
   { re: /\/(home|Users)\/(?!user\b|runner\b|root\b)[A-Za-z0-9._-]+/g, pattern: 'home-path', to: '/$1/<redacted:user>' },
   { re: /\b(?:10|192\.168|172\.(?:1[6-9]|2\d|3[01]))\.\d{1,3}\.\d{1,3}\.?\d{0,3}\b/g, pattern: 'private-ip', to: '<redacted:private-ip>' },
-  { re: /\b[A-Za-z0-9+/]{60,}={0,2}\b/g, pattern: 'opaque-blob', to: '<redacted:blob>' },
+  { re: /\b(?![0-9a-fA-F]+\b)[A-Za-z0-9+/]{60,}={0,2}\b/g, pattern: 'opaque-blob', to: '<redacted:blob>' },
 ];
 
 export function redact(text: string): { text: string; redactions: Redaction[] } {

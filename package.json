@@ -16,6 +16,7 @@
     "cairn:reveal": "tsx scripts/reveal.ts",
     "cairn:audit": "tsx scripts/audit.ts",
     "cairn:keygen": "tsx scripts/keygen.ts",
+    "cairn:fingerprint": "tsx scripts/fingerprint.ts",
     "cairn:sign": "tsx scripts/sign.ts",
     "cairn:federate": "tsx scripts/federate.ts",
     "cairn:observe": "tsx scripts/observe.ts",

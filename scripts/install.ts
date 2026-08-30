@@ -92,6 +92,16 @@ async function resolveBlock(): Promise<{ base: string; block: string; provenance
     process.exit(1);
   }
 
+  // The tool cannot know where the pin came from, and that is exactly the step
+  // it cannot enforce. It can at least say so at the moment it matters.
+  if (!localKey) {
+    const host = (() => { try { return new URL(from).host; } catch { return from; } })();
+    console.log(`\nNo local copy of this key, so the pin is doing all the work.`);
+    console.log(`If you copied that fingerprint from ${host}, this check proves nothing —`);
+    console.log(`whoever serves the key also served the fingerprint. Get it from the git`);
+    console.log(`repository, a package, or a person, and compare.\n`);
+  }
+
   const pin = checkPin(publicKey, pinnedKey);
   if (!pin.ok) {
     console.error(`PIN CHECK FAILED: ${pin.reason}`);
