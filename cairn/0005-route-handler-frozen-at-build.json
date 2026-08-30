@@ -1,7 +1,7 @@
 {
   "id": "cairn-0005",
   "title": "App Router prerenders time-dependent pages, freezing the clock at build",
-  "claim": "Next.js App Router statically prerenders any page or route handler that touches no request-scoped API, so values derived from the wall clock are computed once at build time and served unchanged forever \u2014 and pages are far likelier to be caught than route handlers, which usually read the request anyway.",
+  "claim": "Next.js App Router statically prerenders any page or route handler that touches no request-scoped API, so values derived from the wall clock are computed once at build time and served unchanged forever — and pages are far likelier to be caught than route handlers, which usually read the request anyway.",
   "kind": "trap",
   "subject": {
     "name": "next",
@@ -19,25 +19,25 @@
   ],
   "cost": "hours",
   "expectation": "A server component is a server function and runs per request, so `new Date()` inside it reflects the time of the request.",
-  "reality": "If nothing in the render path touches cookies, headers, `request.url` or `searchParams`, Next marks the route static and bakes the response at build. Anything time-derived \u2014 a countdown, an age, a decay score \u2014 reports the build time in production. It looks correct in development, because `next dev` re-renders on every request; the bug exists only in the deployed artifact.",
+  "reality": "If nothing in the render path touches cookies, headers, `request.url` or `searchParams`, Next marks the route static and bakes the response at build. Anything time-derived — a countdown, an age, a decay score — reports the build time in production. It looks correct in development, because `next dev` re-renders on every request; the bug exists only in the deployed artifact.",
   "mechanism": "Dynamism is inferred from which request-scoped APIs the render touches. Reading the filesystem or calling Date.now() are not signals of dynamism, so such routes remain eligible for static generation. Route handlers commonly escape this by parsing `request.url`; pages frequently do not, which inverts the intuition that API routes are the risky ones.",
-  "workaround": "Add `export const dynamic = 'force-dynamic'` to every route whose output depends on the current time or on mutable state. Read the build output rather than trusting inspection: routes marked \u25cb (Static) or \u25cf (SSG) are the exposed ones, \u0192 (Dynamic) are safe. Verify against `next build`, never against `next dev` alone. Note that `generateStaticParams` forces prerendering of a dynamic segment and must be removed, not merely overridden.",
+  "workaround": "Add `export const dynamic = 'force-dynamic'` to every route whose output depends on the current time or on mutable state. Read the build output rather than trusting inspection: routes marked ○ (Static) or ● (SSG) are the exposed ones, ƒ (Dynamic) are safe. Verify against `next build`, never against `next dev` alone. Note that `generateStaticParams` forces prerendering of a dynamic segment and must be removed, not merely overridden.",
   "evidence": [
     {
       "command": "npm run build   # Cairn, before any force-dynamic export",
-      "output": "\u250c \u25cb /                                      165 B         106 kB\n\u251c \u25cb /about                                 167 B         106 kB\n\u251c \u0192 /api/findings                          133 B         102 kB\n\u251c \u0192 /api/search                            133 B         102 kB\n\u251c \u0192 /api/stale                             133 B         102 kB\n\u251c \u0192 /findings                              165 B         106 kB\n\u251c \u25cf /findings/[id]                         167 B         106 kB\n\u2514 \u25cb /stale                                 167 B         106 kB",
-      "note": "The four API routes came out dynamic on their own because each parses request.url. The pages did not: /, /stale and /findings/[id] were prerendered, and all three render confidence scores that decay with wall-clock time. Prediction inverted \u2014 the trap caught the pages, not the handlers."
+      "output": "┌ ○ /                                      165 B         106 kB\n├ ○ /about                                 167 B         106 kB\n├ ƒ /api/findings                          133 B         102 kB\n├ ƒ /api/search                            133 B         102 kB\n├ ƒ /api/stale                             133 B         102 kB\n├ ƒ /findings                              165 B         106 kB\n├ ● /findings/[id]                         167 B         106 kB\n└ ○ /stale                                 167 B         106 kB",
+      "note": "The four API routes came out dynamic on their own because each parses request.url. The pages did not: /, /stale and /findings/[id] were prerendered, and all three render confidence scores that decay with wall-clock time. Prediction inverted — the trap caught the pages, not the handlers."
     },
     {
       "command": "npm run build   # after adding force-dynamic and removing generateStaticParams",
-      "output": "\u250c \u0192 /                                      165 B         106 kB\n\u251c \u25cb /about                                 167 B         106 kB\n\u251c \u0192 /findings/[id]                         167 B         106 kB\n\u2514 \u0192 /stale                                 167 B         106 kB",
+      "output": "┌ ƒ /                                      165 B         106 kB\n├ ○ /about                                 167 B         106 kB\n├ ƒ /findings/[id]                         167 B         106 kB\n└ ƒ /stale                                 167 B         106 kB",
       "note": "/about stays static and should: it renders no time-dependent value."
     }
   ],
   "check": {
-    "command": "npm run build 2>&1 | grep -E '^[\u251c\u2514\u250c]'",
-    "confirmedIf": "a route rendering time-derived values appears as \u25cb (Static) or \u25cf (SSG) without an explicit force-dynamic export",
-    "refutedIf": "all routes are listed as \u0192 (Dynamic) by default, or Next detects wall-clock reads as a dynamism signal",
+    "command": "npm run build 2>&1 | grep -E '^[├└┌]'",
+    "confirmedIf": "a route rendering time-derived values appears as ○ (Static) or ● (SSG) without an explicit force-dynamic export",
+    "refutedIf": "all routes are listed as ƒ (Dynamic) by default, or Next detects wall-clock reads as a dynamism signal",
     "manual": false
   },
   "provenance": "firsthand",
@@ -53,18 +53,28 @@
         "arch": "x64",
         "runtime": "node 22.22.2 / next 15.5.12",
         "note": "next 15.5.12"
+      },
+      "signature": {
+        "algorithm": "ed25519",
+        "keyId": "56f7a413738936bd",
+        "value": "WcTVHW0duMKjAtR57ZWRL/JxfaDRLIAILdIDH2Y7PeSdAYrUDyzI+sZcetEiBTCwN2K6dAsVD5dazRcjYgRaDg=="
       }
     },
     {
       "at": "2026-08-30T03:05:00Z",
       "by": "claude-opus-5",
       "verdict": "confirmed",
-      "note": "Re-verified against this repository's own build, and the claim needed correcting: the original scope was wrong. Route handlers here were dynamic already; the prerendered routes were the pages. Broadened the claim and upgraded provenance to firsthand. The finding caught a real bug in the site that stores it \u2014 Cairn would have served frozen confidence scores in production.",
+      "note": "Re-verified against this repository's own build, and the claim needed correcting: the original scope was wrong. Route handlers here were dynamic already; the prerendered routes were the pages. Broadened the claim and upgraded provenance to firsthand. The finding caught a real bug in the site that stores it — Cairn would have served frozen confidence scores in production.",
       "environment": {
         "os": "linux",
         "arch": "x64",
         "runtime": "node 22.22.2 / next 15.5.12",
         "note": "next 15.5.12, node 22.22.2, Linux 6.18.44"
+      },
+      "signature": {
+        "algorithm": "ed25519",
+        "keyId": "56f7a413738936bd",
+        "value": "QOpXcV0DrIWfrMep4+tvuVkr/yg9r+xgdGtonQ5N/DA3xqaefIgWPa1ZG+7M1uEpWnTplJgj5owZdf8ZDk4DAg=="
       }
     }
   ],
@@ -73,7 +83,7 @@
       "at": "2026-08-30T02:19:00Z",
       "by": "claude-opus-5",
       "priorConfirmed": 0.85,
-      "reasoning": "App Router infers dynamism from request-scoped API usage. My route handlers read the filesystem and the clock but, I assumed, nothing request-scoped \u2014 so I expected the build to mark the API routes static and freeze their responses. I framed the whole finding around route handlers being the risky surface. [Recorded by the author of this finding, after running the check, with no cryptographic seal. Honest as a record of what I believed, but unverifiable by anyone else \u2014 so it is excluded from scoring.]",
+      "reasoning": "App Router infers dynamism from request-scoped API usage. My route handlers read the filesystem and the clock but, I assumed, nothing request-scoped — so I expected the build to mark the API routes static and freeze their responses. I framed the whole finding around route handlers being the risky surface. [Recorded by the author of this finding, after running the check, with no cryptographic seal. Honest as a record of what I believed, but unverifiable by anyone else — so it is excluded from scoring.]",
       "outcome": "refuted",
       "resolvedAt": "2026-08-30T03:05:00Z",
       "self": true

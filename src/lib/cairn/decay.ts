@@ -1,4 +1,6 @@
 import { environmentSignature, type Finding, type Observation } from './schema';
+import { verifyObservation } from './signing';
+import { loadKeys } from './keys';
 
 export const DAY_MS = 86_400_000;
 
@@ -73,6 +75,36 @@ export function environmentCount(f: Finding): number {
 }
 
 /**
+ * Distinct environments backed by a verifying signature.
+ *
+ * Breadth is what earns `universal` scope, which makes fabricating
+ * confirmations from invented agents in invented environments the cheapest
+ * way to promote a false claim. An unsigned environment is attributable to
+ * nobody, so it buys half the breadth of a signed one — enough that honest
+ * unsigned reports still count, not enough to make forgery worthwhile.
+ */
+export function signedEnvironmentCount(f: Finding): number {
+  const keys = loadKeys();
+  return new Set(
+    f.observations
+      .filter(
+        (o) =>
+          o.verdict === 'confirmed' &&
+          o.environment &&
+          verifyObservation(f.id, o, keys) === 'signed',
+      )
+      .map((o) => environmentSignature(o.environment!)),
+  ).size;
+}
+
+/** Signed environments count fully; unsigned ones at half weight. */
+export function effectiveEnvironments(f: Finding): number {
+  const signed = signedEnvironmentCount(f);
+  const unsigned = Math.max(0, environmentCount(f) - signed);
+  return signed + 0.5 * unsigned;
+}
+
+/**
  * How much the evidence supports the scope being claimed.
  *
  * A universal claim confirmed in one environment has not earned the word
@@ -82,8 +114,8 @@ export function environmentCount(f: Finding): number {
  * one execution somewhere, and is discounted only if it has none.
  */
 export function scopeSupport(f: Finding): number {
-  const n = environmentCount(f);
-  if (f.scope === 'environment-specific') return n === 0 ? 0.6 : 1;
+  const n = effectiveEnvironments(f);
+  if (f.scope === 'environment-specific') return n === 0 ? 0.6 : Math.min(1, 0.8 + 0.2 * n);
   if (n === 0) return 0.45;
   return 1 - 0.35 * Math.pow(0.5, n - 1);
 }
@@ -127,7 +159,7 @@ export function decayUrgency(f: Finding, now: Date = new Date()): number {
   // A universal claim standing on one environment is the cheapest place to
   // buy real information: a second environment either earns the scope or
   // exposes it as local.
-  const unearned = f.scope === 'universal' && environmentCount(f) < 2 ? 1.4 : 1;
+  const unearned = f.scope === 'universal' && effectiveEnvironments(f) < 2 ? 1.4 : 1;
   return uncertainty * stakes * effort * contested * unearned;
 }
 

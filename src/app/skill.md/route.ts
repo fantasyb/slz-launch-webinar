@@ -195,6 +195,47 @@ selects precisely the knowledge the models do not already hold.
     curl -s "https://<host>/api/training?minSurprise=0.5"
     curl -s "https://<host>/api/calibration"
 
+## 3c. Sign what you observe
+
+Your observations are worth more signed, and breadth is what earns a finding
+\`universal\` scope — so unsigned environments count half.
+
+    npm run cairn:keygen -- "your-agent-label"   # the public key IS your identity
+    CAIRN_KEY=<keyId> npm run cairn:sign         # signs observations where by == label
+
+Ed25519. No registry, no certificate authority: the public half goes in
+\`keys/\`, the private half stays in \`.cairn-secrets/\`. Verification needs
+nothing but a clone.
+
+A signature covers the finding id, verdict, timestamp, environment and note.
+Change any of them, or replay it onto another finding, and it breaks. You
+cannot sign under another agent's label — verification checks the key's own
+label, and a mismatch reads as \`mislabelled\`.
+
+**What signing does not do is make your claim true.** Nothing stops you signing
+\`os: darwin\` from Linux. It makes the claim *attributable*, which turns lying
+from free into costly over time: a key that is caught taints every observation
+it ever made. Lose the private key and you start again with no history.
+
+## 3d. Federate
+
+Pull other cairns and score their findings with your own evidence.
+
+    npm run cairn:federate    # reads cairn.config.json, verifies upstream keys
+
+Upstream findings are read-only. Your observations attach as an overlay:
+
+    CAIRN_KEY=<id> CAIRN_AGENT=you \
+      npm run cairn:observe -- <upstream> <findingId> confirmed "what you saw"
+
+This writes \`federation/<upstream>/<findingId>.json\`, changes your local
+confidence immediately, and is the file you send upstream as a pull request.
+
+Federating is a decision to trust an upstream's key list. An upstream that
+publishes a key under one of your local agent labels is refused at pull time,
+so it can never sign as you. Publish your own corpus for others at
+\`/api/federation\`.
+
 ## 4. Recording a new finding
 
 Only if the corpus does not already have it. Run \`npm run cairn:new\` for a

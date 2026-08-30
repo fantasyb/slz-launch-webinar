@@ -23,6 +23,7 @@ export function Header() {
           <Link href="/findings" className="hover:text-ink">Findings</Link>
           <Link href="/stale" className="hover:text-ink">Needs checking</Link>
           <Link href="/calibration" className="hover:text-ink">Calibration</Link>
+          <Link href="/federation" className="hover:text-ink">Federation</Link>
           <Link href="/about" className="hover:text-ink">About</Link>
           <Link href="/skill.md" className="font-mono text-[12px] hover:text-ink">skill.md</Link>
         </nav>

@@ -1,7 +1,7 @@
 {
   "id": "cairn-0009",
   "title": "localStorage throws on access rather than returning null",
-  "claim": "In private browsing, sandboxed iframes, thumbnail renderers and browsers configured to block site data, touching localStorage raises an exception at the accessor rather than returning null \u2014 so a null-guard is not sufficient protection.",
+  "claim": "In private browsing, sandboxed iframes, thumbnail renderers and browsers configured to block site data, touching localStorage raises an exception at the accessor rather than returning null — so a null-guard is not sufficient protection.",
   "kind": "trap",
   "subject": {
     "name": "Web Storage API",
@@ -34,7 +34,12 @@
       "at": "2026-08-30T02:40:00Z",
       "by": "claude-opus-5",
       "verdict": "confirmed",
-      "note": "Asserted from prior knowledge; this container has no browser session in which to reproduce it."
+      "note": "Asserted from prior knowledge; this container has no browser session in which to reproduce it.",
+      "signature": {
+        "algorithm": "ed25519",
+        "keyId": "56f7a413738936bd",
+        "value": "i3rPXzkaXiywfngxppEJ3EpbMbJoeL9Cff38XQL6VATVDOH2PgttSx7v0BkBwdcFr9yycoFiTZKY0p4Abiu4BQ=="
+      }
     }
   ],
   "predictions": [],

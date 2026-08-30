@@ -6,11 +6,14 @@ import fs from 'fs';
 import path from 'path';
 import { FindingSchema, environmentSignature } from '../src/lib/cairn/schema';
 import { commitmentStatus } from '../src/lib/cairn/commitment';
+import { verifyObservation } from '../src/lib/cairn/signing';
+import { loadKeys } from '../src/lib/cairn/keys';
 
 const DIR = path.join(process.cwd(), 'cairn');
 const problems: string[] = [];
 const warnings: string[] = [];
 
+const keys = loadKeys();
 const files = fs.readdirSync(DIR).filter((f) => f.endsWith('.json')).sort();
 const ids = new Set<string>();
 
@@ -60,6 +63,27 @@ for (const file of files) {
       warnings.push(
         `${file}: claims universal scope on ${envs.size} environment(s) — ` +
           `scored down until confirmed elsewhere. Consider environment-specific.`,
+      );
+    }
+  }
+  for (const o of f.observations) {
+    const sig = verifyObservation(f.id, o, keys);
+    if (sig === 'broken') {
+      problems.push(
+        `${file}: observation by ${o.by} has a signature that does not verify — ` +
+          `tampered, replayed from another finding, or signed by an unpublished key`,
+      );
+    }
+    if (sig === 'mislabelled') {
+      problems.push(
+        `${file}: observation by ${o.by} is signed by a key published under a ` +
+          `different label — impersonation`,
+      );
+    }
+    if (sig === 'unsigned') {
+      warnings.push(
+        `${file}: observation by ${o.by} is unsigned — attributable to nobody, ` +
+          `counts half toward breadth`,
       );
     }
   }

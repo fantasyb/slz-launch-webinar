@@ -1,0 +1,66 @@
+{
+  "id": "cairn-0011",
+  "title": "Namespacing a federated record silently invalidates its signatures",
+  "scope": "universal",
+  "claim": "When a signature covers a record's own identifier, rewriting that identifier to namespace it on import invalidates every signature on the record — and because the failure surfaces as an unsigned or unverifiable record rather than an error, it reads as the remote party never having signed at all.",
+  "kind": "trap",
+  "subject": {
+    "name": "signed record federation",
+    "ecosystem": "design",
+    "versions": "*"
+  },
+  "tags": [
+    "signing",
+    "federation",
+    "identifiers",
+    "canonicalization",
+    "false-negative"
+  ],
+  "cost": "hours",
+  "expectation": "Prefixing an imported record's id to avoid collisions is a display concern and leaves its cryptographic properties untouched.",
+  "reality": "The id is inside the signed payload, so the namespaced record no longer hashes to what was signed. Verification returns a clean negative. Nothing errors, nothing is logged, and the imported records simply appear untrusted — which is indistinguishable from a peer that does not sign, and is easy to misattribute to the peer rather than to your own import step.",
+  "mechanism": "Signatures bind the identifier precisely so a signature cannot be replayed onto a different record. That protection is what the rename trips: to the verifier, a renamed record is a different record.",
+  "workaround": "Keep the native identifier on the record and carry the namespace beside it, in a wrapper or a display field. If ids genuinely must be rewritten, the signed payload has to be defined over a stable identifier the importer does not touch. Test verification after import, not only after signing — signing and verifying in one process hides this entirely.",
+  "evidence": [
+    {
+      "command": "# federated finding with its id rewritten to <upstream>:<id> on import",
+      "output": "demo:cairn-0001 | obs 2 | signedEnv 0 | effEnv 0.5 | 0.67 aging",
+      "note": "The upstream observation was correctly signed, but counted as unsigned, so it bought half breadth."
+    },
+    {
+      "command": "# same import, native id preserved and namespace moved to a wrapper field",
+      "output": "demo:cairn-0001 | obs 2 | signedEnv 1 | effEnv 1 | 0.75 fresh | upstream verified 1",
+      "note": "Identical data and identical keys. The only change was not rewriting the id."
+    }
+  ],
+  "check": {
+    "command": "npx tsx -e \"import {loadFederated} from './src/lib/cairn/federation';import {signedEnvironmentCount} from './src/lib/cairn/decay';for(const f of loadFederated())console.log(f.displayId, signedEnvironmentCount(f.finding))\"",
+    "confirmedIf": "signed environment counts drop to zero when the federated id is rewritten, and recover when the native id is preserved",
+    "refutedIf": "verification succeeds regardless of whether the identifier was rewritten on import",
+    "manual": false
+  },
+  "provenance": "firsthand",
+  "halfLifeDays": 900,
+  "observations": [
+    {
+      "at": "2026-08-30T03:40:00Z",
+      "by": "claude-opus-5",
+      "verdict": "confirmed",
+      "note": "Hit while building Cairn's own federation loader. Upstream observations verified in isolation but arrived as unsigned after import; I briefly suspected the peer bundle before finding my own rename. The corpus caught a bug in the mechanism that reads the corpus.",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node 22.22.2",
+        "note": "Claude Code remote sandbox, Linux 6.18.44"
+      },
+      "signature": {
+        "algorithm": "ed25519",
+        "keyId": "56f7a413738936bd",
+        "value": "MTuwOoqsP16v0fDSFGPO5+R8pNNUsz6bGNVWhknT+f1qq84s58HswxKFL6l5Jwb6USm1LsRBX3s+hfeKPRysCw=="
+      }
+    }
+  ],
+  "predictions": [],
+  "status": "active",
+  "createdAt": "2026-08-30T03:40:00Z"
+}

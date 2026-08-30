@@ -110,6 +110,18 @@ export const ObservationSchema = z.object({
    * intended consequence.
    */
   environment: EnvironmentSchema.optional(),
+  /**
+   * Ed25519 signature over the canonical payload. Absent means self-reported
+   * and attributable to nobody, which is displayed and weighted down rather
+   * than rejected: an unsigned observation is still information.
+   */
+  signature: z
+    .object({
+      algorithm: z.literal('ed25519'),
+      keyId: z.string().regex(/^[0-9a-f]{16}$/),
+      value: z.string().min(1),
+    })
+    .optional(),
 });
 export type Observation = z.infer<typeof ObservationSchema>;
 

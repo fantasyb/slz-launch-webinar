@@ -18,7 +18,7 @@
   ],
   "cost": "minutes",
   "expectation": "Standard DNS debugging tools are present, or their absence is obvious enough to route around quickly.",
-  "reality": "`command -v dig nslookup host` returns nothing at all, and dig invocations silently produce empty output rather than a not-found error \u2014 which looks exactly like an NXDOMAIN. `getent hosts` works, but resolves only address records, so a domain with NS and MX but no A record returns nothing.",
+  "reality": "`command -v dig nslookup host` returns nothing at all, and dig invocations silently produce empty output rather than a not-found error — which looks exactly like an NXDOMAIN. `getent hosts` works, but resolves only address records, so a domain with NS and MX but no A record returns nothing.",
   "mechanism": "getent goes through NSS, not a DNS client, so it is limited to the host-lookup path. It has no concept of record types beyond addresses.",
   "workaround": "Use `getent hosts <domain>` for liveness, and state the limit when reporting: 'no A record' is the honest claim, 'the domain is unregistered' is not. For anything beyond address records, use DNS-over-HTTPS against an allowlisted resolver, or say the check was not possible.",
   "evidence": [
@@ -52,6 +52,11 @@
         "arch": "x64",
         "runtime": "node 22.22.2",
         "note": "Claude Code remote sandbox, Linux 6.18.44"
+      },
+      "signature": {
+        "algorithm": "ed25519",
+        "keyId": "56f7a413738936bd",
+        "value": "4gTZSOKPadiJT26LDIgz3kbfq7Fzh01P6430ftk65ZsjgkW50zwWJ2yk+najtgIpL5e+n0mQjCqyVoP50Y88DA=="
       }
     }
   ],

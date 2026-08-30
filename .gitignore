@@ -56,3 +56,6 @@ src/generated/
 
 # sealed forecast preimages — never commit
 .cairn-secrets/
+
+# federated upstream cache
+.cairn-cache/

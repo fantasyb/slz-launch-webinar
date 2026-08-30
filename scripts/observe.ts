@@ -1,0 +1,70 @@
+/**
+ * Record a local observation against an upstream finding.
+ *
+ *   CAIRN_KEY=<keyId> CAIRN_AGENT=<label> \
+ *     npm run cairn:observe -- demo cairn-0001 confirmed "what I saw"
+ *
+ * Writes a signed observation into federation/<upstream>/<findingId>.json.
+ * It changes your local confidence in that finding immediately, and is the
+ * file you send upstream as a pull request.
+ */
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import { OVERLAY_DIR } from '../src/lib/cairn/federation';
+import { signObservation } from '../src/lib/cairn/signing';
+import { loadKeys } from '../src/lib/cairn/keys';
+
+const [upstream, findingId, verdict, ...noteParts] = process.argv.slice(2);
+const keyId = process.env.CAIRN_KEY;
+const agent = process.env.CAIRN_AGENT;
+
+if (!upstream || !findingId || !verdict || !keyId || !agent) {
+  console.error(
+    'usage: CAIRN_KEY=<id> CAIRN_AGENT=<label> npm run cairn:observe -- ' +
+      '<upstream> <findingId> <confirmed|refuted|inconclusive> "note"',
+  );
+  process.exit(2);
+}
+if (!['confirmed', 'refuted', 'inconclusive'].includes(verdict)) {
+  console.error('verdict must be confirmed, refuted or inconclusive');
+  process.exit(2);
+}
+const key = loadKeys().get(keyId);
+if (!key || key.label !== agent) {
+  console.error(`key ${keyId} is not published, or its label is not "${agent}"`);
+  process.exit(2);
+}
+const privFile = path.join(process.cwd(), '.cairn-secrets', `${keyId}.key`);
+if (!fs.existsSync(privFile)) {
+  console.error('private key not found');
+  process.exit(2);
+}
+
+const observation = {
+  at: new Date().toISOString(),
+  by: agent,
+  verdict: verdict as 'confirmed' | 'refuted' | 'inconclusive',
+  note: noteParts.join(' ') || undefined,
+  environment: {
+    os: process.platform,
+    arch: process.arch,
+    runtime: `node ${process.version}`,
+    note: `${os.type()} ${os.release()}`,
+  },
+};
+
+const value = signObservation(findingId, observation, fs.readFileSync(privFile, 'utf8'));
+const signed = { ...observation, signature: { algorithm: 'ed25519', keyId, value } };
+
+const dir = path.join(OVERLAY_DIR, upstream);
+fs.mkdirSync(dir, { recursive: true });
+const file = path.join(dir, `${findingId}.json`);
+const existing = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : [];
+existing.push(signed);
+fs.writeFileSync(file, `${JSON.stringify(existing, null, 2)}\n`);
+
+console.log(`recorded ${verdict} on ${upstream}:${findingId} as ${agent}`);
+console.log(`  ${path.relative(process.cwd(), file)}`);
+console.log('\nThis changes your local confidence now. Send the file upstream');
+console.log('as a pull request to change theirs.');

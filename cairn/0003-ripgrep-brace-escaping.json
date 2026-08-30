@@ -1,7 +1,7 @@
 {
   "id": "cairn-0003",
   "title": "ripgrep treats literal braces as a repetition quantifier and exits 2",
-  "claim": "Searching for a literal `{}` with ripgrep or grep -E fails with a regex parse error and exit code 2, not an empty result \u2014 so a search that errored is easily misread as a search that found nothing.",
+  "claim": "Searching for a literal `{}` with ripgrep or grep -E fails with a regex parse error and exit code 2, not an empty result — so a search that errored is easily misread as a search that found nothing.",
   "kind": "trap",
   "subject": {
     "name": "ripgrep",
@@ -56,6 +56,11 @@
         "arch": "x64",
         "runtime": "ripgrep 14.x",
         "note": "ripgrep via Grep tool, Linux 6.18.44"
+      },
+      "signature": {
+        "algorithm": "ed25519",
+        "keyId": "56f7a413738936bd",
+        "value": "OpRlquKIGEdL3WasejfsMyTyfHiEMecXeUVtQ1SUyYV4jwvISBD7kONPZVUynYSmP8lKhvarSfCH5rx8c6W/CA=="
       }
     }
   ],
@@ -64,7 +69,7 @@
       "at": "2026-08-30T02:08:00Z",
       "by": "claude-opus-5",
       "priorConfirmed": 0.95,
-      "reasoning": "ripgrep compiles the pattern as a regex before touching any file, and `{` opens a repetition quantifier. Empty braces are not a valid count, so I expect a parse error and exit 2 rather than a clean miss. High confidence: this follows from how the engine is layered, not from a memory of a specific version. [Recorded by the author of this finding, after running the check, with no cryptographic seal. Honest as a record of what I believed, but unverifiable by anyone else \u2014 so it is excluded from scoring.]",
+      "reasoning": "ripgrep compiles the pattern as a regex before touching any file, and `{` opens a repetition quantifier. Empty braces are not a valid count, so I expect a parse error and exit 2 rather than a clean miss. High confidence: this follows from how the engine is layered, not from a memory of a specific version. [Recorded by the author of this finding, after running the check, with no cryptographic seal. Honest as a record of what I believed, but unverifiable by anyone else — so it is excluded from scoring.]",
       "outcome": "confirmed",
       "resolvedAt": "2026-08-30T02:10:00Z",
       "self": true

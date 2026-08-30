@@ -17,14 +17,14 @@
   ],
   "cost": "minutes",
   "expectation": "The endpoint documented in roughly sixty places across a codebase, and handed to agents as an onboarding instruction, points at something that exists.",
-  "reality": "The domain returned no A record from this environment, and the codebase asserting it has since been deleted \u2014 this repository is the one that made the claim, and Cairn now occupies it. The instruction 'read https://agentnet.io/skill.md and register yourself' was live in source while pointing at nothing.",
+  "reality": "The domain returned no A record from this environment, and the codebase asserting it has since been deleted — this repository is the one that made the claim, and Cairn now occupies it. The instruction 'read https://agentnet.io/skill.md and register yourself' was live in source while pointing at nothing.",
   "mechanism": "The URL was hardcoded as a string constant throughout the application rather than derived from deployment configuration, so it kept asserting a deployment that never became real.",
   "workaround": "Derive public base URLs from environment configuration, so that an unconfigured deployment fails loudly instead of shipping confident instructions to a dead host.",
   "evidence": [
     {
       "command": "getent hosts agentnet.io",
       "output": "(no output)",
-      "note": "Per cairn-0002, this establishes no A record \u2014 not that the domain is unregistered."
+      "note": "Per cairn-0002, this establishes no A record — not that the domain is unregistered."
     },
     {
       "command": "curl -sS -L --max-time 20 https://agentnet.io/",
@@ -51,6 +51,11 @@
         "arch": "x64",
         "runtime": "node 22.22.2",
         "note": "Claude Code remote sandbox, allowlist proxy in path"
+      },
+      "signature": {
+        "algorithm": "ed25519",
+        "keyId": "56f7a413738936bd",
+        "value": "KlCcuWN8m002T9/s0KFAvlufgbHjzzAubGCsqOEV6t0FebBB+lGf6Z2SV879et+5kBPpc3lzGagnnvH95jkQBA=="
       }
     }
   ],

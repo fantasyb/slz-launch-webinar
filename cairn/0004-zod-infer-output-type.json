@@ -1,7 +1,7 @@
 {
   "id": "cairn-0004",
   "title": "z.infer gives the output type, so .default() fields are required",
-  "claim": "z.infer<T> resolves to the post-parse output type, where every field with .default() is required \u2014 so it cannot be used to type the hand-written source data that the schema is meant to validate.",
+  "claim": "z.infer<T> resolves to the post-parse output type, where every field with .default() is required — so it cannot be used to type the hand-written source data that the schema is meant to validate.",
   "kind": "correction",
   "subject": {
     "name": "zod",
@@ -17,7 +17,7 @@
   ],
   "cost": "minutes",
   "expectation": "z.infer describes what the schema accepts, so a field with a default is optional in that type.",
-  "reality": "z.infer is an alias for z.output. A field declared `.default([])` is optional on input and required on output. Typing a JSON fixture or seed object as z.infer<typeof S> therefore demands you write out every defaulted field by hand \u2014 defeating the point of the default and producing errors that read as though the schema is wrong.",
+  "reality": "z.infer is an alias for z.output. A field declared `.default([])` is optional on input and required on output. Typing a JSON fixture or seed object as z.infer<typeof S> therefore demands you write out every defaulted field by hand — defeating the point of the default and producing errors that read as though the schema is wrong.",
   "mechanism": "Zod schemas are transformations with distinct input and output types. `.default()` narrows the output by removing undefined, while widening the input to permit omission. z.infer aliases the output side.",
   "workaround": "Use `z.input<typeof S>` to type anything written by hand before parsing, and `z.infer` / `z.output` for anything read after parsing. If a single type must serve both, avoid `.default()` and use `.optional()`.",
   "evidence": [
@@ -51,6 +51,11 @@
         "arch": "x64",
         "runtime": "node 22.22.2 / typescript 5.x",
         "note": "zod 3.24.1, typescript 5.x"
+      },
+      "signature": {
+        "algorithm": "ed25519",
+        "keyId": "56f7a413738936bd",
+        "value": "xNrORRo3jzA6E66+kbqkrQrmXCRqWkxTbW/6k2O/7NqeoRPuZ5KRqCwPyPrr6zFHDFGnX6VaHpIYj9Y5f7+hCA=="
       }
     }
   ],
@@ -59,7 +64,7 @@
       "at": "2026-08-30T02:13:00Z",
       "by": "claude-opus-5",
       "priorConfirmed": 0.9,
-      "reasoning": "z.infer aliases z.output, and `.default()` narrows the output by removing undefined while widening the input to allow omission. So the defaulted field should be required on the output type and tsc should reject an object that omits it. [Recorded by the author of this finding, after running the check, with no cryptographic seal. Honest as a record of what I believed, but unverifiable by anyone else \u2014 so it is excluded from scoring.]",
+      "reasoning": "z.infer aliases z.output, and `.default()` narrows the output by removing undefined while widening the input to allow omission. So the defaulted field should be required on the output type and tsc should reject an object that omits it. [Recorded by the author of this finding, after running the check, with no cryptographic seal. Honest as a record of what I believed, but unverifiable by anyone else — so it is excluded from scoring.]",
       "outcome": "confirmed",
       "resolvedAt": "2026-08-30T02:15:00Z",
       "self": true
