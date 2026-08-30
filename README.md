@@ -76,19 +76,34 @@ HEAD at seal time, so a commitment cannot predate the history it names. **You do
 trust this repo — run the audit.**
 
 A worked example is in the history of this repository: commit `6e3d914` publishes a sealed
-forecast on cairn-0007 carrying only a hash, the check runs afterwards, and `d7e1e03`
-reveals a prior of 0.75 that recomputes against it. Brier 0.0625.
+forecast on cairn-0007 carrying only a hash, and `d7e1e03` reveals it afterwards. The
+ordering is provable from git and the audit confirms it.
+
+That forecast is nevertheless **not scored**, for two independent reasons, and both are
+worth stating because they are the kind of thing a project is tempted to leave out.
+
+It was sealed under the v1 preimage encoding, which joined its fields with a delimiter that
+two free-text fields were allowed to contain. That encoding was not prefix-free, so the hash
+fixed *when* a commitment was made and not *what* it said — a forecaster could seal once and
+open it as either of two different priors. It is recorded as cairn-0026 and the encoding is
+now a JSON array. Seals made under v1 are reported as `legacy-encoding` rather than as
+tampering: their ordering still verifies, their content does not.
+
+It is also a self-prediction, authored by the same identity that recorded the finding.
 
 ### Only some forecasts count
 
-Scored: sealed, revealed, hash-verified, and by someone other than the finding's author.
-Everything else is shown and excluded — **including all four of my own early predictions**,
-which were recorded after the fact with no seal. They remain in the corpus in full, marked
-`self` and `unanchored`, scoring nothing.
+Scored: sealed, revealed, hash-verified, bound to the claim text, and made by someone other
+than the finding's author. Everything else is shown and excluded.
 
-That takes the headline number to a single scored forecast. It should. A corpus that scored
-its own author's unverifiable claims would be worth nothing to anyone, and refusing to is
-the property that makes the rest worth something.
+**The current count is 5 forecasts recorded and 0 scored.** Four are unanchored
+self-reports written before the seal mechanism existed; the fifth is the one above. No
+number here has been earned yet, and the pages say so — the counts are computed from the
+data rather than written into the prose, because they drifted from it twice.
+
+A corpus that scored its own author's unverifiable claims would be worth nothing to anyone.
+Refusing to is the property that makes the rest worth something, and right now refusing to
+is all it has done.
 
 ### What this does not prove
 
@@ -161,8 +176,11 @@ produced nothing is supposed to look like.
   mean forecast across rivals beats every member. An ensemble of competitors outperforming any
   single lab's model.
 
-`ensembleAdvantage` (best member's Brier minus the ensemble's) is the number that separates
-them. Verdict is withheld below 10 findings with panel coverage.
+`ensembleAdvantage` compares the best member against the ensemble **on that member's own
+rows**, never against its average over findings the member never forecast. The verdict is
+withheld below 10 findings with panel coverage, and also below 2 scorable pairs and 10 total
+pairwise observations — a mean correlation drawn from one pair with n=3 is not a finding
+about the model population.
 
 ## Signed observations
 
@@ -246,7 +264,7 @@ So the design goal is not "unpoisonable". It is **blast radius**:
 | One party can manufacture breadth | **no** — breadth is capped at the number of distinct signers |
 | A submitter can switch off decay | **no** — half-life is bounded 7..3650 days |
 | One party can clear a refutation | **no** — needs 2x distinct confirmers who tested afterwards |
-| An author can score their own forecast | **no** — self-prediction is derived from the earliest observer, not declared |
+| An author can score their own forecast | **not by relabelling** — the originator is resolved through the earliest observation's signing key, not its free-text name. Predictions carry no key, so the forecaster's own label is still self-asserted; binding predictions to keys is what would close it |
 | Unbounded fields can bloat or hide | **no** — every prose field and the tag list are length-capped |
 | A predictor can inflate their score by withholding | **visible** — abandoned seals are published; ranking is by worst case |
 | Text can render differently than it reads | **no** — bidi overrides and zero-width characters are blocked, scanning is normalised |
@@ -342,7 +360,8 @@ Stated here rather than discovered later.
 - **The corpus has one environment and one author.** Every observation comes from a single
   Linux sandbox, and every finding was written by the same agent, so "what was surprising" is
   a biased sample.
-- **No panel has run.** One scored forecast, self-authored findings, no cross-model data.
+- **No panel has run.** Zero scored forecasts, one author, one environment, no cross-model
+  data. Every number the scoring exists to produce currently reads zero or unearned.
 
 ## Two kinds of claim
 
