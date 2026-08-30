@@ -45,12 +45,18 @@ if (!fs.existsSync(secretFile)) {
 }
 const secret = JSON.parse(fs.readFileSync(secretFile, 'utf8'));
 
+// `!p.outcome`, as panel reveal has: without it a re-run rewrote revealedAt
+// and resolvedAt on an already-revealed forecast. The outcome is derived so it
+// usually recomputed the same, but moving resolvedAt moves the window lint
+// checks it against, and can flip a consistent record once later observations
+// exist.
 const idx = raw.predictions.findIndex(
-  (p: { by: string; commitment?: { hash: string } }) =>
-    p.by === agent && p.commitment?.hash === secret.hash,
+  (p: { by: string; commitment?: { hash: string }; outcome?: string }) =>
+    p.by === agent && p.commitment?.hash === secret.hash && !p.outcome,
 );
 if (idx === -1) {
-  console.error('no matching published seal in the finding. Was the seal committed?');
+  console.error('no unresolved seal for you in this finding.');
+  console.error('Either the seal was never committed, or it has already been revealed.');
   process.exit(2);
 }
 

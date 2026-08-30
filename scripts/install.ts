@@ -22,6 +22,8 @@
  *   3. you approve the printed diff with --yes.
  */
 import fs from 'fs';
+import { writeJsonAtomic } from '../src/lib/cairn/atomic';
+import { fetchJson } from '../src/lib/cairn/fetchJson';
 import os from 'os';
 import path from 'path';
 import {
@@ -48,10 +50,28 @@ const KNOWN_KEYS = path.join(os.homedir(), '.cairn', 'known-keys.json');
 type Known = Record<string, { fingerprint: string; firstSeen: string; source: string }>;
 
 function loadKnown(): Known {
+  // "No file yet" and "file I cannot read" are different facts. Collapsing
+  // them meant a truncated known-keys file read as an empty one: the
+  // key-change detection below found nothing to compare against and stayed
+  // silent, and the next rememberKey rewrote the file with only the current
+  // host, discarding every other pin the user had.
+  let text: string;
   try {
-    return JSON.parse(fs.readFileSync(KNOWN_KEYS, 'utf8')) as Known;
+    text = fs.readFileSync(KNOWN_KEYS, 'utf8');
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return {};
+    throw e;
+  }
+  try {
+    const parsed = JSON.parse(text) as Known;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('not an object');
+    return parsed;
   } catch {
-    return {};
+    console.error(`${KNOWN_KEYS} exists but cannot be parsed.`);
+    console.error('Refusing to continue: treating it as empty would silently drop every');
+    console.error('key you have pinned, and defeat the key-change warning. Inspect or');
+    console.error('move the file, then re-run.');
+    process.exit(2);
   }
 }
 
@@ -59,8 +79,8 @@ function rememberKey(host: string, fingerprint: string, source: string) {
   const known = loadKnown();
   if (known[host]) return;
   known[host] = { fingerprint, firstSeen: new Date().toISOString(), source };
-  fs.mkdirSync(path.dirname(KNOWN_KEYS), { recursive: true });
-  fs.writeFileSync(KNOWN_KEYS, `${JSON.stringify(known, null, 2)}\n`);
+  fs.mkdirSync(path.dirname(KNOWN_KEYS), { recursive: true, mode: 0o700 });
+  writeJsonAtomic(KNOWN_KEYS, known, 0o600);
 }
 
 /**
@@ -73,9 +93,10 @@ function rememberKey(host: string, fingerprint: string, source: string) {
  */
 async function fetchIndependentFingerprint(url: string): Promise<string | null> {
   try {
-    const res = await fetch(url, { headers: { accept: 'application/json' } });
-    if (!res.ok) return null;
-    const body = (await res.json()) as { publicKey?: string; signature?: { publicKey?: string } };
+    const body = (await fetchJson(url)) as {
+      publicKey?: string;
+      signature?: { publicKey?: string };
+    };
     const pem = body.publicKey ?? body.signature?.publicKey;
     return pem ? keyFingerprint(pem) : null;
   } catch {
@@ -83,9 +104,31 @@ async function fetchIndependentFingerprint(url: string): Promise<string | null> 
   }
 }
 
+/**
+ * Read `--name <value>`, distinguishing "absent" from "present but empty".
+ *
+ * The old version returned `process.argv[i + 1]` unconditionally, so
+ * `--key` with the fingerprint forgotten (or written after it) yielded
+ * `undefined` and the install walked quietly down to a weaker rung of the
+ * assurance ladder — TOFU, or a remembered host — while the operator believed
+ * they had pinned a key. In a script whose only job is a verified install,
+ * "flag present but ignored" is the worst failure shape available.
+ */
 function arg(name: string): string | undefined {
-  const i = process.argv.indexOf(`--${name}`);
-  return i === -1 ? undefined : process.argv[i + 1];
+  const flag = `--${name}`;
+  const hits = process.argv.filter((a) => a === flag).length;
+  if (hits === 0) return undefined;
+  if (hits > 1) {
+    console.error(`${flag} given ${hits} times; pass it once`);
+    process.exit(2);
+  }
+  const i = process.argv.indexOf(flag);
+  const value = process.argv[i + 1];
+  if (value === undefined || value.startsWith('--')) {
+    console.error(`${flag} needs a value`);
+    process.exit(2);
+  }
+  return value;
 }
 
 const target = path.resolve(arg('into') ?? process.cwd());
@@ -105,17 +148,17 @@ async function resolveBlock(): Promise<{ base: string; block: string; provenance
     return { base, block: installBlock(base), provenance: 'generated locally' };
   }
 
-  const res = await fetch(from, { headers: { accept: 'application/json' } });
-  if (!res.ok) {
-    console.error(`fetch failed: ${res.status} ${res.statusText}`);
-    process.exit(1);
-  }
-  const payload = (await res.json()) as {
+  let payload: {
     base?: string;
     block?: string;
     signature?: { keyId: string; value: string; publicKey?: string } | null;
   };
-
+  try {
+    payload = (await fetchJson(from)) as typeof payload;
+  } catch (e) {
+    console.error(`fetch failed: ${(e as Error).message}`);
+    process.exit(1);
+  }
   if (!payload.base || !payload.block) {
     console.error('response is missing base or block');
     process.exit(1);

@@ -14,7 +14,7 @@
  */
 import fs from 'fs';
 import path from 'path';
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import { FindingSchema } from '../src/lib/cairn/schema';
 import { PanelConfigSchema } from '../src/lib/cairn/panel';
 import { adjudicate, decide, type Adjudication } from '../src/lib/cairn/adjudicate';
@@ -23,8 +23,19 @@ import { scanInjection, scanExecutable } from '../src/lib/cairn/safety';
 function targets(): string[] {
   const i = process.argv.indexOf('--changed-against');
   if (i !== -1) {
-    const base = process.argv[i + 1] ?? 'origin/main';
-    return execSync(`git diff --name-only ${base}...HEAD -- cairn/`, { encoding: 'utf8' })
+    // execFileSync, not execSync: `base` is `origin/${{ github.base_ref }}` in
+    // CI, and this runs on the runner holding the panel's API keys. audit.ts
+    // was fixed for exactly this and its sibling was left behind — the same
+    // shape cairn-0021 is about.
+    const next = process.argv[i + 1];
+    if (next !== undefined && next.startsWith('--')) {
+      console.error('--changed-against needs a value');
+      process.exit(2);
+    }
+    const base = next ?? 'origin/main';
+    return execFileSync('git', ['diff', '--name-only', `${base}...HEAD`, '--', 'cairn/'], {
+      encoding: 'utf8',
+    })
       .split('\n')
       .filter((f) => f.endsWith('.json') && fs.existsSync(f));
   }

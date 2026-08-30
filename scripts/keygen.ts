@@ -22,7 +22,9 @@ fs.mkdirSync(path.dirname(keyFile), { recursive: true });
 fs.writeFileSync(keyFile, `${JSON.stringify(record, null, 2)}\n`);
 
 const secretDir = path.join(process.cwd(), '.cairn-secrets');
-fs.mkdirSync(secretDir, { recursive: true });
+// 0700: the directory holds private keys and unrevealed forecast preimages.
+// The key file was already 0600; the directory around it was 0755.
+fs.mkdirSync(secretDir, { recursive: true, mode: 0o700 });
 const privFile = path.join(secretDir, `${record.keyId}.key`);
 fs.writeFileSync(privFile, privateKey, { mode: 0o600 });
 

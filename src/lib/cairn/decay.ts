@@ -1,5 +1,5 @@
 import { environmentSignature, type Finding, type Observation } from './schema';
-import { verifyObservation, findingBodyHash } from './signing';
+import { verifyObservation, findingBodyHash, type KeyRecord } from './signing';
 import { loadKeys } from './keys';
 
 export const DAY_MS = 86_400_000;
@@ -110,8 +110,10 @@ export function environmentCount(f: Finding): number {
  * nobody, so it buys half the breadth of a signed one — enough that honest
  * unsigned reports still count, not enough to make forgery worthwhile.
  */
-export function signedEnvironmentCount(f: Finding): number {
-  const keys = loadKeys();
+export function signedEnvironmentCount(
+  f: Finding,
+  keys: Map<string, KeyRecord> = loadKeys(),
+): number {
   const attested = f.observations.filter(
     (o) =>
       o.verdict === 'confirmed' &&

@@ -20,12 +20,11 @@ import {
 } from '../src/lib/cairn/federation';
 import { verifyObservation, findingBodyHash, type KeyRecord } from '../src/lib/cairn/signing';
 import { loadKeys } from '../src/lib/cairn/keys';
+import { fetchJson } from '../src/lib/cairn/fetchJson';
 
 async function fetchBundle(up: Upstream): Promise<unknown> {
   if (up.source.startsWith('http://') || up.source.startsWith('https://')) {
-    const res = await fetch(up.source, { headers: { accept: 'application/json' } });
-    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-    return res.json();
+    return fetchJson(up.source);
   }
   const dir = path.resolve(process.cwd(), up.source);
   const file = fs.statSync(dir).isDirectory() ? path.join(dir, 'federation.json') : dir;

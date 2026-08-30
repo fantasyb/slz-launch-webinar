@@ -2,7 +2,13 @@ import fs from 'fs';
 import path from 'path';
 import { z } from 'zod';
 import { FindingSchema, ObservationSchema, type Finding, type Observation } from './schema';
-import { verifyObservation, findingBodyHash, type KeyRecord } from './signing';
+import {
+  verifyObservation,
+  findingBodyHash,
+  deriveKeyId,
+  validateLabel,
+  type KeyRecord,
+} from './signing';
 import { loadKeys } from './keys';
 
 /**
@@ -122,10 +128,29 @@ export function loadFederated(): FederatedFinding[] {
     const bundle = readBundle(up.name);
     if (!bundle) continue;
 
-    // Upstream keys, namespaced so they cannot collide with local identities.
-    const upstreamKeys = new Map<string, KeyRecord>(
-      bundle.keys.map((k) => [k.keyId, k as KeyRecord]),
-    );
+    // Upstream keys, in their own map so they cannot collide with local
+    // identities — a hostile upstream must not be able to publish a key under
+    // one of your agents' labels and have its observations read as yours.
+    //
+    // The two record-level checks that keys/ enforces apply here too: an id
+    // must be derived from the key material it claims (or a record could
+    // assert an id it never earned), and a label must render unambiguously
+    // (or it can impersonate another by appearance alone). Upstream bundles
+    // are the least trusted input in the system, so they get the same gate
+    // rather than a weaker one.
+    const upstreamKeys = new Map<string, KeyRecord>();
+    let rejectedKeys = 0;
+    for (const k of bundle.keys as KeyRecord[]) {
+      if (deriveKeyId(k.publicKey) !== k.keyId) {
+        rejectedKeys++;
+        continue;
+      }
+      if (validateLabel(k.label)) {
+        rejectedKeys++;
+        continue;
+      }
+      upstreamKeys.set(k.keyId, k);
+    }
 
     for (const finding of bundle.findings) {
       const overlay = readOverlay(up.name, finding.id);
@@ -150,7 +175,13 @@ export function loadFederated(): FederatedFinding[] {
       });
     }
 
-    // Local keys must still verify the overlay, which loadKeys covers.
+    if (rejectedKeys > 0) {
+      // Not fatal: the observations they would have signed simply fail to
+      // verify and are counted as unverified, which is already surfaced.
+      console.warn(`federation: ${up.name} published ${rejectedKeys} unusable key record(s)`);
+    }
+
+    // The overlay is signed by local keys, which verifyOverlay covers.
     void localKeys;
   }
 

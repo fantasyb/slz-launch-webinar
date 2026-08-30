@@ -8,7 +8,7 @@
  * every draft guarantees they contribute once; a gate that is silent until it
  * matters is one they keep.
  */
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import fs from 'fs';
 import { scanSensitive, scanExecutable, redact } from '../src/lib/cairn/safety';
 
@@ -41,14 +41,46 @@ function proseOf(text: string): string {
   return parts.join('\n');
 }
 
-const staged = execSync('git diff --cached --name-only --diff-filter=ACM', { encoding: 'utf8' })
-  .split('\n')
-  .filter((f) => f && fs.existsSync(f) && !f.startsWith('.cairn-'));
+// -z, so a filename containing a newline or a non-ASCII byte arrives intact.
+// Without it git C-quotes such paths, `fs.existsSync` returned false, and they
+// were dropped from the scan without a word.
+const staged = execFileSync(
+  'git',
+  ['diff', '--cached', '--name-only', '--diff-filter=ACM', '-z'],
+  { encoding: 'utf8' },
+)
+  .split('\0')
+  .filter(Boolean);
 
 let blocked = 0;
 
+// A private key or a sealed preimage should never be in a commit, and the
+// old filter exempted exactly the directory holding them: `.cairn-secrets` is
+// gitignored, so it was assumed unreachable, but `git add -f` reaches it. The
+// gate built to keep private keys out of history had a hole shaped like the
+// private keys.
 for (const file of staged) {
-  const raw = fs.readFileSync(file, 'utf8');
+  if (file.startsWith('.cairn-secrets/') || file.startsWith('.cairn-secrets')) {
+    console.error(`BLOCKED ${file}`);
+    console.error('  .cairn-secrets holds private keys and unrevealed forecast preimages.');
+    console.error('  Nothing in it may be committed. Unstage it: git restore --staged ' + file);
+    blocked++;
+    continue;
+  }
+  if (file.startsWith('.cairn-')) continue;
+
+  // Read what is STAGED, not what is on disk. The two differ whenever a file
+  // was edited after `git add`, so staging a token and then deleting it from
+  // the worktree let the token through the gate and into the commit.
+  let raw: string;
+  try {
+    raw = execFileSync('git', ['show', `:${file}`], {
+      encoding: 'utf8',
+      maxBuffer: 64 * 1024 * 1024,
+    });
+  } catch {
+    continue; // not resolvable in the index (submodule, or a race) — nothing to scan
+  }
   const text = file.endsWith('.json') ? proseOf(raw) : raw;
 
   // Secrets: never, in any file.
