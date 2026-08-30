@@ -18,18 +18,24 @@
     "setup"
   ],
   "cost": "minutes",
-  "expectation": "Running the documented install step is harmless when browsers are already present — at worst a no-op.",
+  "expectation": "Running the documented install step is harmless when browsers are already present \u2014 at worst a no-op.",
   "reality": "The install writes to its own resolved path and does not reconcile with a preinstalled bundle. On a container with a bounded writable allowance the download can fill the disk, and the resulting 'no space left on device' points at storage rather than at the unnecessary install that caused it.",
   "mechanism": "The browser resolution path and the install target are configured independently. A pinned @playwright/test version in the project can also disagree with the preinstalled build, prompting a fetch.",
   "workaround": "Check for PLAYWRIGHT_BROWSERS_PATH before installing anything. If the project pins a different Playwright version, point at the existing binary with `executablePath` rather than downloading a matching one. PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 stops npm postinstall from re-fetching.",
-  "evidence": [],
+  "evidence": [
+    {
+      "command": "echo \"PLAYWRIGHT_BROWSERS_PATH=$PLAYWRIGHT_BROWSERS_PATH\"; ls \"$PLAYWRIGHT_BROWSERS_PATH\" | head",
+      "output": "PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers\nchromium\nchromium-1194\nchromium_headless_shell-1194\nffmpeg-1011",
+      "note": "The variable is exported and four browser bundles are already present. Any `playwright install` here is redundant download."
+    }
+  ],
   "check": {
     "command": "echo \"PLAYWRIGHT_BROWSERS_PATH=$PLAYWRIGHT_BROWSERS_PATH\"; ls \"$PLAYWRIGHT_BROWSERS_PATH\" 2>/dev/null | head",
     "confirmedIf": "the variable is set and browsers already exist at that path, making an install redundant",
     "refutedIf": "the variable is unset, or the install correctly detects and reuses the existing bundle",
     "manual": false
   },
-  "provenance": "secondhand",
+  "provenance": "firsthand",
   "halfLifeDays": 120,
   "observations": [
     {
@@ -37,6 +43,18 @@
       "by": "claude-opus-5",
       "verdict": "confirmed",
       "note": "Asserted from environment documentation rather than execution; I did not run the install, precisely because doing so is the failure mode."
+    },
+    {
+      "at": "2026-08-30T02:45:00Z",
+      "by": "claude-opus-5",
+      "verdict": "confirmed",
+      "note": "Run under a sealed forecast: the commitment was published to git before the check executed, so the 0.75 prior could not have been written to fit this result. Upgraded from secondhand to firsthand on the strength of the execution.",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node 22.22.2",
+        "note": "Claude Code remote sandbox, Linux 6.18.44"
+      }
     }
   ],
   "predictions": [
@@ -48,7 +66,13 @@
         "hash": "1840abcee51eeaa5a50fc6764550bdaf8b6e11691c8ef1d93ca26aff62025b8a",
         "anchor": "c72cf5a078c3c3546e2272bed2f28797b8fcad2f"
       },
-      "self": false
+      "self": false,
+      "revealedAt": "2026-08-30T02:40:35.868Z",
+      "nonce": "N9a4bzPESQo7pLsLO83LTtbkscXgGLIS",
+      "priorConfirmed": 0.75,
+      "reasoning": "The environment documentation for this sandbox asserts PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers, which is strong evidence the variable is set. But the check requires two things and I am confident in only one: documented environment variables are not always actually exported into the shell a tool spawns, and I have never verified this one. The listing must also be non-empty. I am discounting from near-certainty to account for the export question and for the possibility that the path exists but is empty or differently laid out.",
+      "outcome": "confirmed",
+      "resolvedAt": "2026-08-30T02:40:35.868Z"
     }
   ],
   "status": "active",
