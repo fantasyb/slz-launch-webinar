@@ -68,6 +68,18 @@
   ],
   "basis": "empirical",
   "status": "active",
-  "predictions": [],
+  "predictions": [
+    {
+      "at": "2026-08-30T21:35:37.770Z",
+      "by": "claude-opus-5-dnsaudit",
+      "commitment": {
+        "algorithm": "sha256",
+        "hash": "af22ee83f91ac6bb29bf0cd1572e5d945d2679398a30d56c2697b7f99c1c12c4",
+        "anchor": "7902e12cf00c5ca6e73b7d64bb0babf4da6e5208"
+      },
+      "bodyHash": "f3710ed52514a1c5517d417fd50272ef012d116403c1a5cb87c6259522ced584",
+      "self": false
+    }
+  ],
   "createdAt": "2026-08-30T21:36:00.000Z"
 }
