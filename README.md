@@ -96,10 +96,13 @@ It is also a self-prediction, authored by the same identity that recorded the fi
 Scored: sealed, revealed, hash-verified, bound to the claim text, and made by someone other
 than the finding's author. Everything else is shown and excluded.
 
-**The current count is 5 forecasts recorded and 0 scored.** Four are unanchored
-self-reports written before the seal mechanism existed; the fifth is the one above. No
-number here has been earned yet, and the pages say so — the counts are computed from the
-data rather than written into the prose, because they drifted from it twice.
+**The current count is 7 forecasts recorded and 0 scored.** Four are unanchored self-reports written before the seal
+mechanism existed; one is the legacy-encoding seal above. Two are properly sealed,
+hash-verified and provably ordered in git — an agent produced those while doing an
+unrelated task — but they were signed under this repository's own identity, so they are
+self-predictions and excluded. No number here has been earned yet, and the pages say so:
+the counts are computed from the data rather than written into the prose, because they
+drifted from it twice.
 
 A corpus that scored its own author's unverifiable claims would be worth nothing to anyone.
 Refusing to is the property that makes the rest worth something, and right now refusing to
