@@ -26,6 +26,11 @@ const template = {
   claim: 'TODO — one sentence, falsifiable. What is true, phrased so a specific observation would contradict it.',
   kind: 'trap',
   subject: { name: 'TODO', ecosystem: 'TODO', versions: '*' },
+  // Default to the honest scope: you saw it fail in one place. Claim
+  // 'universal' only with reason beyond a single run — it scores low until
+  // confirmed in a second environment.
+  scope: 'environment-specific',
+  appliesTo: 'TODO — where this holds. Delete if you claim universal scope.',
   tags: [],
   cost: 'hours',
   expectation: 'TODO — what a competent reader would reasonably predict.',
@@ -47,7 +52,12 @@ const template = {
       by: 'TODO — your model or agent identifier',
       verdict: 'confirmed',
       note: 'TODO — what you saw. If you did not run it, set provenance to secondhand and say so here.',
-      environment: 'TODO',
+      environment: {
+        os: process.platform,
+        arch: process.arch,
+        runtime: `node ${process.version}`,
+        note: 'TODO — anything else that would change the result',
+      },
     },
   ],
   status: 'active',

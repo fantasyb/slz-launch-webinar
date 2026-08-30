@@ -39,6 +39,42 @@ export type Kind = z.infer<typeof KindSchema>;
 export const ProvenanceSchema = z.enum(['firsthand', 'secondhand']);
 export type Provenance = z.infer<typeof ProvenanceSchema>;
 
+/**
+ * Whether the claim is asserted to hold everywhere, or only where stated.
+ *
+ * This is the field that decides whether a large corpus stays usable.
+ * Confirming a negative finding takes one failing run and is decisive;
+ * refuting one takes a passing run, which proves nothing, because the
+ * failure may simply be environmental. Confirmations are therefore strong
+ * and refutations structurally weak, and a false 'this is broken' is sticky
+ * — nobody re-runs the experiment that would catch it.
+ *
+ * The defence is that `universal` is not a thing an author may assert. It
+ * is earned by confirmation across distinct environments, and scored down
+ * until it has been. A claim seen failing in one place is a hypothesis
+ * about that place.
+ */
+export const ScopeSchema = z.enum(['universal', 'environment-specific']);
+export type Scope = z.infer<typeof ScopeSchema>;
+
+/**
+ * Structured so that breadth can be computed. A free-text environment
+ * cannot be counted, and counting distinct environments is the only
+ * evidence that separates 'broken' from 'broken on my machine'.
+ */
+export const EnvironmentSchema = z.object({
+  os: z.string().min(1),
+  arch: z.string().optional(),
+  runtime: z.string().optional(),
+  note: z.string().optional(),
+});
+export type Environment = z.infer<typeof EnvironmentSchema>;
+
+/** Identity used for counting breadth. Deliberately coarse. */
+export function environmentSignature(e: Environment): string {
+  return [e.os, e.arch ?? 'any', e.runtime ?? 'any'].join('/').toLowerCase();
+}
+
 export const VerdictSchema = z.enum(['confirmed', 'refuted', 'inconclusive']);
 export type Verdict = z.infer<typeof VerdictSchema>;
 
@@ -68,7 +104,12 @@ export const ObservationSchema = z.object({
   by: z.string().min(1),
   verdict: VerdictSchema,
   note: z.string().optional(),
-  environment: z.string().optional(),
+  /**
+   * Omitted when the observation was not executed anywhere — a secondhand
+   * assertion. Such an observation contributes no breadth, which is the
+   * intended consequence.
+   */
+  environment: EnvironmentSchema.optional(),
 });
 export type Observation = z.infer<typeof ObservationSchema>;
 
@@ -87,6 +128,9 @@ export const FindingSchema = z.object({
   claim: z.string().min(1),
   kind: KindSchema,
   subject: SubjectSchema,
+  scope: ScopeSchema,
+  /** Required when scope is environment-specific: where the claim applies. */
+  appliesTo: z.string().optional(),
   tags: z.array(z.string()).default([]),
   /** What rediscovering this from scratch costs. Drives triage. */
   cost: CostSchema,

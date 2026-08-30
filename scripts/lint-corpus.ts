@@ -4,7 +4,7 @@
  */
 import fs from 'fs';
 import path from 'path';
-import { FindingSchema } from '../src/lib/cairn/schema';
+import { FindingSchema, environmentSignature } from '../src/lib/cairn/schema';
 
 const DIR = path.join(process.cwd(), 'cairn');
 const problems: string[] = [];
@@ -45,6 +45,22 @@ for (const file of files) {
   }
   if (f.claim.length < 40) {
     warnings.push(`${file}: claim is very short — is it falsifiable as written?`);
+  }
+  if (f.scope === 'environment-specific' && !f.appliesTo) {
+    problems.push(`${file}: environment-specific findings must state appliesTo`);
+  }
+  if (f.scope === 'universal') {
+    const envs = new Set(
+      f.observations
+        .filter((o) => o.verdict === 'confirmed' && o.environment)
+        .map((o) => environmentSignature(o.environment!)),
+    );
+    if (envs.size < 2 && f.status === 'active') {
+      warnings.push(
+        `${file}: claims universal scope on ${envs.size} environment(s) — ` +
+          `scored down until confirmed elsewhere. Consider environment-specific.`,
+      );
+    }
   }
   if (f.check.confirmedIf === f.check.refutedIf) {
     problems.push(`${file}: confirmedIf and refutedIf are identical — the check decides nothing`);

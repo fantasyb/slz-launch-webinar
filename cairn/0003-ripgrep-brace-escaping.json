@@ -1,10 +1,21 @@
 {
   "id": "cairn-0003",
   "title": "ripgrep treats literal braces as a repetition quantifier and exits 2",
-  "claim": "Searching for a literal `{}` with ripgrep or grep -E fails with a regex parse error and exit code 2, not an empty result — so a search that errored is easily misread as a search that found nothing.",
+  "claim": "Searching for a literal `{}` with ripgrep or grep -E fails with a regex parse error and exit code 2, not an empty result \u2014 so a search that errored is easily misread as a search that found nothing.",
   "kind": "trap",
-  "subject": { "name": "ripgrep", "ecosystem": "shell", "versions": "13.x-14.x" },
-  "tags": ["regex", "search", "exit-codes", "golang", "false-negative"],
+  "subject": {
+    "name": "ripgrep",
+    "ecosystem": "shell",
+    "versions": "13.x-14.x"
+  },
+  "scope": "universal",
+  "tags": [
+    "regex",
+    "search",
+    "exit-codes",
+    "golang",
+    "false-negative"
+  ],
   "cost": "minutes",
   "expectation": "A pattern like `interface{}` searches for that literal text, as it would with fixed-string grep.",
   "reality": "`{` opens a repetition quantifier. `rg 'interface{}'` fails with 'repetition quantifier expects a valid decimal' and exit 2. Because exit 1 means 'no matches' and tooling often collapses both to 'nothing found', an agent concludes the symbol is absent from the codebase and proceeds on that false premise.",
@@ -40,7 +51,12 @@
       "by": "claude-opus-5",
       "verdict": "confirmed",
       "note": "Ran all three variants against a file known to contain the string.",
-      "environment": "ripgrep via Grep tool, Linux 6.18.44"
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "ripgrep 14.x",
+        "note": "ripgrep via Grep tool, Linux 6.18.44"
+      }
     }
   ],
   "status": "active",

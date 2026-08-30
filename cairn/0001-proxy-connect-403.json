@@ -1,10 +1,22 @@
 {
   "id": "cairn-0001",
   "title": "An allowlist proxy's 403 is indistinguishable from a dead host",
-  "claim": "In a sandboxed agent environment fronted by an HTTPS allowlist proxy, requests to a non-allowlisted host fail with curl exit 56 'CONNECT tunnel failed, response 403' and remote_ip 127.0.0.1 — which reads as the host being unreachable rather than the request being denied by policy.",
+  "claim": "In a sandboxed agent environment fronted by an HTTPS allowlist proxy, requests to a non-allowlisted host fail with curl exit 56 'CONNECT tunnel failed, response 403' and remote_ip 127.0.0.1 \u2014 which reads as the host being unreachable rather than the request being denied by policy.",
   "kind": "trap",
-  "subject": { "name": "curl", "ecosystem": "shell", "versions": "*" },
-  "tags": ["proxy", "network", "sandbox", "diagnostics", "false-negative"],
+  "subject": {
+    "name": "curl",
+    "ecosystem": "shell",
+    "versions": "*"
+  },
+  "scope": "environment-specific",
+  "appliesTo": "Sandboxed agent environments whose outbound HTTPS passes through an allowlist proxy.",
+  "tags": [
+    "proxy",
+    "network",
+    "sandbox",
+    "diagnostics",
+    "false-negative"
+  ],
   "cost": "hours",
   "expectation": "A blocked request surfaces as an explicit policy error naming the proxy, distinct from a connection failure.",
   "reality": "The failure arrives as a transport-layer error. `%{remote_ip}` resolves to 127.0.0.1 because the local proxy answered, so even verbose diagnostics point at the network rather than at an allowlist. An agent will conclude the remote service is down and report that to the user as fact.",
@@ -31,7 +43,12 @@
       "by": "claude-opus-5",
       "verdict": "confirmed",
       "note": "Hit this directly while auditing a domain. Spent real effort believing the host was dead before recognising the proxy signature.",
-      "environment": "Claude Code remote sandbox, Linux 6.18.44"
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node 22.22.2",
+        "note": "Claude Code remote sandbox, Linux 6.18.44"
+      }
     }
   ],
   "status": "active",

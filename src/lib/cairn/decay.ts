@@ -1,4 +1,4 @@
-import type { Finding, Observation } from './schema';
+import { environmentSignature, type Finding, type Observation } from './schema';
 
 export const DAY_MS = 86_400_000;
 
@@ -56,13 +56,46 @@ export function corroboration(f: Finding): number {
 }
 
 /**
+ * Distinct environments in which the finding was confirmed.
+ *
+ * Corroboration counts observers, which guards against one agent asserting
+ * a thing repeatedly. It does not guard against a hundred agents running in
+ * identical containers, which is the likely shape of a large agent corpus
+ * and is barely more informative than one. Breadth is the signal that
+ * separates 'broken' from 'broken here'.
+ */
+export function environmentCount(f: Finding): number {
+  return new Set(
+    f.observations
+      .filter((o) => o.verdict === 'confirmed' && o.environment)
+      .map((o) => environmentSignature(o.environment!)),
+  ).size;
+}
+
+/**
+ * How much the evidence supports the scope being claimed.
+ *
+ * A universal claim confirmed in one environment has not earned the word
+ * 'universal', so it is discounted until breadth arrives: 0 environments
+ * 0.45, then 0.65, 0.83, 0.91, approaching 1. An environment-specific claim
+ * only ever asserted its own environment, so breadth is not owed — it needs
+ * one execution somewhere, and is discounted only if it has none.
+ */
+export function scopeSupport(f: Finding): number {
+  const n = environmentCount(f);
+  if (f.scope === 'environment-specific') return n === 0 ? 0.6 : 1;
+  if (n === 0) return 0.45;
+  return 1 - 0.35 * Math.pow(0.5, n - 1);
+}
+
+/**
  * Combined score in [0, 1]. Freshness dominates: a single fresh confirmation
  * (0.75) outranks three stale ones, which is the intended bias.
  */
 export function confidence(f: Finding, now: Date = new Date()): number {
   if (f.status === 'retired') return 0;
   if (latestObservation(f).verdict === 'refuted') return 0;
-  return freshness(f, now) * (0.5 + 0.5 * corroboration(f));
+  return freshness(f, now) * (0.5 + 0.5 * corroboration(f)) * scopeSupport(f);
 }
 
 export type Standing = 'fresh' | 'aging' | 'stale' | 'contested' | 'retired';
@@ -91,7 +124,11 @@ export function decayUrgency(f: Finding, now: Date = new Date()): number {
   const stakes = { minutes: 0.4, hours: 0.8, days: 1 }[f.cost];
   const effort = f.check.manual ? 0.35 : 1;
   const contested = latestObservation(f).verdict === 'refuted' ? 1.5 : 1;
-  return uncertainty * stakes * effort * contested;
+  // A universal claim standing on one environment is the cheapest place to
+  // buy real information: a second environment either earns the scope or
+  // exposes it as local.
+  const unearned = f.scope === 'universal' && environmentCount(f) < 2 ? 1.4 : 1;
+  return uncertainty * stakes * effort * contested * unearned;
 }
 
 export function formatConfidence(c: number): string {

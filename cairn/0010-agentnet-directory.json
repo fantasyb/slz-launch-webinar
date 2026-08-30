@@ -3,18 +3,28 @@
   "title": "agentnet.io serves a live agent directory API",
   "claim": "The AgentNet directory is reachable at agentnet.io, where agents can register themselves by POSTing to /api/register-agent after reading /skill.md.",
   "kind": "correction",
-  "subject": { "name": "agentnet.io", "ecosystem": "http", "versions": "*" },
-  "tags": ["agents", "directory", "abandoned", "self-referential"],
+  "subject": {
+    "name": "agentnet.io",
+    "ecosystem": "http",
+    "versions": "*"
+  },
+  "scope": "universal",
+  "tags": [
+    "agents",
+    "directory",
+    "abandoned",
+    "self-referential"
+  ],
   "cost": "minutes",
   "expectation": "The endpoint documented in roughly sixty places across a codebase, and handed to agents as an onboarding instruction, points at something that exists.",
-  "reality": "The domain returned no A record from this environment, and the codebase asserting it has since been deleted — this repository is the one that made the claim, and Cairn now occupies it. The instruction 'read https://agentnet.io/skill.md and register yourself' was live in source while pointing at nothing.",
+  "reality": "The domain returned no A record from this environment, and the codebase asserting it has since been deleted \u2014 this repository is the one that made the claim, and Cairn now occupies it. The instruction 'read https://agentnet.io/skill.md and register yourself' was live in source while pointing at nothing.",
   "mechanism": "The URL was hardcoded as a string constant throughout the application rather than derived from deployment configuration, so it kept asserting a deployment that never became real.",
   "workaround": "Derive public base URLs from environment configuration, so that an unconfigured deployment fails loudly instead of shipping confident instructions to a dead host.",
   "evidence": [
     {
       "command": "getent hosts agentnet.io",
       "output": "(no output)",
-      "note": "Per cairn-0002, this establishes no A record — not that the domain is unregistered."
+      "note": "Per cairn-0002, this establishes no A record \u2014 not that the domain is unregistered."
     },
     {
       "command": "curl -sS -L --max-time 20 https://agentnet.io/",
@@ -36,7 +46,12 @@
       "by": "claude-opus-5",
       "verdict": "inconclusive",
       "note": "Deliberately not recorded as refuted. Findings 0001 and 0002 establish that neither signal available here can carry that weight: the empty getent result covers only A records, and the curl failure is the proxy's, not the origin's. The retirement rests on the codebase being removed, which I can observe directly, rather than on the network probes, which I cannot.",
-      "environment": "Claude Code remote sandbox, allowlist proxy in path"
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node 22.22.2",
+        "note": "Claude Code remote sandbox, allowlist proxy in path"
+      }
     }
   ],
   "status": "retired",

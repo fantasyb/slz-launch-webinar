@@ -1,6 +1,12 @@
 import Link from 'next/link';
 import type { Finding } from '@/lib/cairn/schema';
-import { confidence, standing, confirmationCount, lastConfirmedAt } from '@/lib/cairn/decay';
+import {
+  confidence,
+  standing,
+  confirmationCount,
+  lastConfirmedAt,
+  environmentCount,
+} from '@/lib/cairn/decay';
 import { ConfidenceStack, StandingBadge, ProvenanceMark } from './Standing';
 import { relativeDays, cn } from '@/lib/utils';
 
@@ -31,6 +37,17 @@ export function FindingCard({ finding: f }: { finding: Finding }) {
             <span>{KIND_LABEL[f.kind]}</span>
             <span className="text-rule-strong">·</span>
             <span className="font-mono">{f.subject.name}</span>
+            <span className="text-rule-strong">·</span>
+            <span
+              title={
+                f.scope === 'universal'
+                  ? 'Asserted to hold everywhere. Discounted until confirmed across environments.'
+                  : f.appliesTo
+              }
+              className={f.scope === 'universal' ? 'text-moss' : 'text-slate'}
+            >
+              {f.scope === 'universal' ? 'universal' : 'env-specific'}
+            </span>
           </div>
           <h3 className="font-claim text-[15px] leading-snug text-ink group-hover:underline">
             {f.title}
@@ -45,6 +62,12 @@ export function FindingCard({ finding: f }: { finding: Finding }) {
               {confirmed
                 ? `checked ${relativeDays(confirmed)} by ${confirmationCount(f)}`
                 : 'never confirmed'}
+            </span>
+            <span
+              title="Distinct environments in which this was confirmed."
+              className="text-[11px] text-ink-faint"
+            >
+              {environmentCount(f)} env
             </span>
           </div>
         </div>

@@ -3,11 +3,22 @@
   "title": "Hitting max_tokens truncates mid-JSON and looks like a model failure",
   "claim": "When a model response reaches max_tokens, the output is cut off at an arbitrary character rather than closed cleanly, so a request for structured output returns invalid JSON that reads as the model being incapable rather than the budget being too small.",
   "kind": "trap",
-  "subject": { "name": "LLM completion APIs", "ecosystem": "http", "versions": "*" },
-  "tags": ["llm", "json", "structured-output", "truncation", "misdiagnosis"],
+  "subject": {
+    "name": "LLM completion APIs",
+    "ecosystem": "http",
+    "versions": "*"
+  },
+  "scope": "universal",
+  "tags": [
+    "llm",
+    "json",
+    "structured-output",
+    "truncation",
+    "misdiagnosis"
+  ],
   "cost": "hours",
   "expectation": "A model asked for JSON returns either valid JSON or a clear error.",
-  "reality": "The response stops mid-token. The caller's JSON.parse throws, and the natural reading is that the model failed to follow instructions. Teams respond by rewriting prompts, lowering temperature, or switching models — none of which help, because the cause is a numeric budget. The tell is in the response metadata, not the content: a stop reason indicating the limit was reached rather than a natural end.",
+  "reality": "The response stops mid-token. The caller's JSON.parse throws, and the natural reading is that the model failed to follow instructions. Teams respond by rewriting prompts, lowering temperature, or switching models \u2014 none of which help, because the cause is a numeric budget. The tell is in the response metadata, not the content: a stop reason indicating the limit was reached rather than a natural end.",
   "mechanism": "max_tokens bounds output length, and the sampler stops there unconditionally. Nothing reconciles that bound with the grammar of the requested format.",
   "workaround": "Always branch on the stop reason before parsing. If it indicates the token limit, retry with a larger budget rather than a different prompt. Where the API offers constrained decoding or a tool schema, use it. Never treat a JSON parse error from a model as evidence about the model's ability without checking the stop reason first.",
   "evidence": [],
@@ -24,8 +35,7 @@
       "at": "2026-08-30T02:25:00Z",
       "by": "claude-opus-5",
       "verdict": "confirmed",
-      "note": "Asserted from prior knowledge; not re-executed in this container, which has no allowlisted model endpoint. Treat as unverified until someone runs the check.",
-      "environment": "not re-run"
+      "note": "Asserted from prior knowledge; not re-executed in this container, which has no allowlisted model endpoint. Treat as unverified until someone runs the check."
     }
   ],
   "status": "active",

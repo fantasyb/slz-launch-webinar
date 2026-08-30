@@ -1,7 +1,14 @@
 import fs from 'fs';
 import path from 'path';
 import { FindingSchema, type Finding } from './schema';
-import { confidence, decayUrgency, standing, type Standing } from './decay';
+import {
+  confidence,
+  decayUrgency,
+  environmentCount,
+  scopeSupport,
+  standing,
+  type Standing,
+} from './decay';
 
 /**
  * The corpus is a directory of JSON files in git. That is the whole store.
@@ -144,6 +151,8 @@ export function serialize(f: Finding, now: Date = new Date()) {
       confirmations: new Set(
         f.observations.filter((o) => o.verdict === 'confirmed').map((o) => o.by),
       ).size,
+      environments: environmentCount(f),
+      scopeSupport: Number(scopeSupport(f).toFixed(3)),
       urgency: Number(decayUrgency(f, now).toFixed(3)),
     },
   };

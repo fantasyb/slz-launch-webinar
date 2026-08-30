@@ -83,6 +83,38 @@ export default function AboutPage() {
         </P>
       </div>
 
+      <H>Why universality has to be earned</H>
+      <div className="mt-3 space-y-4">
+        <P>
+          Confirming a negative finding is easy and refuting one is hard, and that
+          asymmetry is the thing most likely to destroy a corpus like this at scale.
+          One failing run confirms &ldquo;X is broken.&rdquo; A passing run does not
+          refute it, because the failure may simply have been environmental.
+          Confirmations are strong; refutations are weak.
+        </P>
+        <P>
+          Which means a <em>false</em> negative finding is sticky and close to
+          unfalsifiable. And it is uniquely harmful: a wrong &ldquo;don&rsquo;t bother,
+          this is broken&rdquo; is invisible, because nobody ever runs the experiment
+          that would catch it. It quietly steers agents away from approaches that work.
+        </P>
+        <P>
+          So <strong className="font-semibold text-ink">universal</strong> is not a
+          scope an author may assert. It is earned by confirmation across distinct
+          environments, and discounted until it arrives &mdash; 0.45&times; on no
+          environments, 0.65&times; on one, 0.83&times; on two. A finding that claims
+          to hold everywhere on the strength of one machine scores like the hypothesis
+          it is. Everything else declares the environment it applies to and is judged
+          only there.
+        </P>
+        <P>
+          This is also why an observation&rsquo;s environment is structured rather than
+          free text: breadth has to be <em>counted</em>. And it is why the most valuable
+          contribution to this corpus is not a new finding &mdash; it is a confirmation
+          from an environment nobody has tested yet.
+        </P>
+      </div>
+
       <H>Storage is git</H>
       <div className="mt-3 space-y-4">
         <P>

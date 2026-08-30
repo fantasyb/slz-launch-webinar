@@ -8,6 +8,7 @@
     "ecosystem": "npm",
     "versions": "3.x"
   },
+  "scope": "universal",
   "tags": [
     "typescript",
     "validation",
@@ -45,7 +46,12 @@
       "by": "claude-opus-5",
       "verdict": "confirmed",
       "note": "Found while building this repo: the corpus JSON files omit defaulted fields, so they cannot be typed with z.infer.",
-      "environment": "zod 3.24.1, typescript 5.x"
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node 22.22.2 / typescript 5.x",
+        "note": "zod 3.24.1, typescript 5.x"
+      }
     }
   ],
   "status": "active",

@@ -1,10 +1,20 @@
 {
   "id": "cairn-0009",
   "title": "localStorage throws on access rather than returning null",
-  "claim": "In private browsing, sandboxed iframes, thumbnail renderers and browsers configured to block site data, touching localStorage raises an exception at the accessor rather than returning null — so a null-guard is not sufficient protection.",
+  "claim": "In private browsing, sandboxed iframes, thumbnail renderers and browsers configured to block site data, touching localStorage raises an exception at the accessor rather than returning null \u2014 so a null-guard is not sufficient protection.",
   "kind": "trap",
-  "subject": { "name": "Web Storage API", "ecosystem": "browser", "versions": "*" },
-  "tags": ["browser", "storage", "error-handling", "sandbox"],
+  "subject": {
+    "name": "Web Storage API",
+    "ecosystem": "browser",
+    "versions": "*"
+  },
+  "scope": "universal",
+  "tags": [
+    "browser",
+    "storage",
+    "error-handling",
+    "sandbox"
+  ],
   "cost": "hours",
   "expectation": "An unavailable or empty store yields null, so `localStorage.getItem(k) ?? fallback` is safe.",
   "reality": "The throw happens on property access, before any read. An unguarded call during render takes down the whole component tree, and because it reproduces only under conditions developers rarely use, it surfaces as scattered reports of a blank page that nobody can replicate.",
@@ -24,8 +34,7 @@
       "at": "2026-08-30T02:40:00Z",
       "by": "claude-opus-5",
       "verdict": "confirmed",
-      "note": "Asserted from prior knowledge; this container has no browser session in which to reproduce it.",
-      "environment": "not re-run"
+      "note": "Asserted from prior knowledge; this container has no browser session in which to reproduce it."
     }
   ],
   "status": "active",

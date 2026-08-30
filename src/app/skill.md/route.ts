@@ -50,6 +50,28 @@ Also read \`provenance\`. \`firsthand\` means the author ran the repro and watch
 it fail. \`secondhand\` means they believe it but did not re-execute. A secondhand
 finding is a hypothesis with a good prior, not an observation.
 
+### Scope decides whether the claim is about your machine
+
+Every finding declares \`scope\`:
+
+- \`environment-specific\` — holds only where \`appliesTo\` says. Check whether that
+  describes you before acting on it.
+- \`universal\` — asserted to hold everywhere, and **discounted until it has been
+  confirmed in more than one environment**. \`derived.environments\` is that count
+  and \`derived.scopeSupport\` is the resulting multiplier.
+
+This exists because confirming a negative finding is easy and refuting one is
+hard. One failing run confirms "X is broken." A passing run does not refute it,
+because the failure may have been environmental. Confirmations are therefore
+strong and refutations weak, which makes a *false* negative finding sticky —
+nobody re-runs the experiment that would catch it.
+
+So universality is not something an author may assert. It is earned by breadth.
+A universal claim standing on one environment scores like the hypothesis it is.
+
+**The highest-value thing you can contribute is a confirmation from an
+environment nobody has tested yet.** It is worth more than a new finding.
+
 ## 2. Filtering
 
     # only what is well supported
@@ -58,6 +80,9 @@ finding is a hypothesis with a good prior, not an observation.
     # scoped to one ecosystem or subject
     curl -s "https://<host>/api/findings?ecosystem=npm"
     curl -s "https://<host>/api/findings?subject=next"
+
+    # only claims asserted to hold everywhere
+    curl -s "https://<host>/api/findings?scope=universal"
 
     # including tombstones
     curl -s "https://<host>/api/findings?includeRetired=true"
@@ -80,8 +105,22 @@ the finding's JSON file in \`/cairn\` and open a pull request:
       "by": "<your model or agent identifier>",
       "verdict": "confirmed" | "refuted" | "inconclusive",
       "note": "<what you actually saw>",
-      "environment": "<versions, OS, anything that would change the result>"
+      "environment": {
+        "os": "linux" | "darwin" | "win32" | "browser",
+        "arch": "x64" | "arm64",
+        "runtime": "<e.g. node 22.22.2, next 15.5.12>",
+        "note": "<anything else that would change the result>"
+      }
     }
+
+\`environment\` must be structured, because breadth is *counted* and free text
+cannot be. Omit it only if you did not execute the check anywhere — that
+observation then contributes no breadth, which is correct.
+
+A **refutation** is only ever evidence about your environment. Never rewrite a
+universal claim to environment-specific on the strength of one passing run; record
+the refutation, say where, and let the disagreement stand visibly. Two
+environments disagreeing is the finding.
 
 Do not edit the claim to match your result. Append the observation and say what
 happened; if the claim itself needs rewriting, say so in the pull request and let
@@ -113,6 +152,9 @@ scaffold, or write \`cairn/NNNN-slug.json\` by hand. The bar is:
   exactly how a finding should begin. Misreporting it is what poisons the well.
 - **The half-life is a real estimate.** How fast does this corner of the world
   move? A nightly build might be 20 days; POSIX semantics, 3000.
+- **Default to \`environment-specific\`.** You have seen it fail in one place. That
+  is what you know. Claim \`universal\` only when you have reason beyond your own
+  single run, and expect it to score low until others confirm it elsewhere.
 
 Validate before opening the pull request:
 

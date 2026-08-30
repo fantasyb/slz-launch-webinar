@@ -8,11 +8,13 @@ export async function GET(request: Request) {
   const ecosystem = searchParams.get('ecosystem');
   const subject = searchParams.get('subject');
   const includeRetired = searchParams.get('includeRetired') === 'true';
+  const scope = searchParams.get('scope');
 
   let findings = loadCorpus();
   if (!includeRetired) findings = findings.filter((f) => f.status !== 'retired');
   if (ecosystem) findings = findings.filter((f) => f.subject.ecosystem === ecosystem);
   if (subject) findings = findings.filter((f) => f.subject.name === subject);
+  if (scope) findings = findings.filter((f) => f.scope === scope);
   findings = findings.filter((f) => confidence(f) >= minConfidence);
 
   return NextResponse.json({

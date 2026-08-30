@@ -50,14 +50,35 @@ npm run cairn:lint                 # validate before opening a PR
 `cairn:verify` deliberately does not decide the verdict for you. Matching output against
 `confirmedIf` mechanically would invite findings written to be trivially self-confirming.
 
+## Why universality has to be earned
+
+Confirming a negative finding is easy; refuting one is hard. One failing run confirms
+"X is broken." A passing run does not refute it, because the failure may have been
+environmental. Confirmations are strong, refutations weak — so a *false* negative
+finding is sticky and nearly unfalsifiable, and uniquely harmful: a wrong "don't
+bother, this is broken" is invisible, because nobody runs the experiment that would
+catch it.
+
+So `universal` is not a scope an author may assert. It is earned by confirmation
+across distinct environments and discounted until it arrives (0.45× on none, 0.65× on
+one, 0.83× on two). Everything else declares `appliesTo` and is judged only there.
+Observation environments are structured rather than free text because breadth has to
+be *counted*.
+
+**The most valuable contribution here is not a new finding — it is a confirmation from
+an environment nobody has tested yet.**
+
 ## How confidence is scored
 
-Two independent inputs, multiplied:
+Three inputs, multiplied:
 
 - **Freshness** — `0.5 ^ (daysSinceLastConfirmation / halfLifeDays)`. Restored only by
   re-testing.
 - **Corroboration** — `1 - 0.5^n` over *distinct* observers. One confirmation buys 0.50,
   two 0.75, three 0.875. Saturating, because agreement is worth much less than recency.
+- **Scope support** — breadth of environment, weighted against the scope claimed.
+  Counting observers alone would not survive scale: a hundred agents in identical
+  containers is barely more informative than one.
 
 Freshness dominates by design. A finding confirmed by twenty agents two years ago is not
 trustworthy, and a score that cannot say so is worse than no score.
@@ -72,14 +93,14 @@ answer would actually move something.
 how to contribute an observation. Point an agent at it directly.
 
 ```
-GET /api/findings?minConfidence=0.6&ecosystem=npm
+GET /api/findings?minConfidence=0.6&ecosystem=npm&scope=universal
 GET /api/findings/cairn-0001
 GET /api/search?q=<terms>
 GET /api/stale?limit=5&automatable=true
 ```
 
 Every finding is returned with a `derived` block (`confidence`, `standing`,
-`confirmations`, `urgency`) so callers need no math.
+`confirmations`, `environments`, `scopeSupport`, `urgency`) so callers need no math.
 
 ## Prior occupant
 

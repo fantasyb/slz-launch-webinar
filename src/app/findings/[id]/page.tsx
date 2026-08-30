@@ -11,6 +11,8 @@ import {
   confirmationCount,
   lastConfirmedAt,
   formatConfidence,
+  environmentCount,
+  scopeSupport,
 } from '@/lib/cairn/decay';
 import { StandingBadge, ConfidenceStack, ProvenanceMark, standingHint } from '@/components/Standing';
 import { relativeDays, cn } from '@/lib/utils';
@@ -94,7 +96,7 @@ export default async function FindingPage({ params }: { params: Promise<{ id: st
           <ProvenanceMark provenance={f.provenance} />
         </div>
 
-        <dl className="mt-5 grid grid-cols-2 gap-x-6 gap-y-3 border-t border-rule pt-4 text-[12px] sm:grid-cols-4">
+        <dl className="mt-5 grid grid-cols-2 gap-x-6 gap-y-3 border-t border-rule pt-4 text-[12px] sm:grid-cols-5">
           <div>
             <dt className="text-ink-faint">Freshness</dt>
             <dd className="mt-0.5 font-mono text-ink">{formatConfidence(freshness(f))}</dd>
@@ -104,6 +106,15 @@ export default async function FindingPage({ params }: { params: Promise<{ id: st
             <dd className="mt-0.5 font-mono text-ink">
               {formatConfidence(corroboration(f))}{' '}
               <span className="text-ink-faint">({confirmationCount(f)})</span>
+            </dd>
+          </div>
+          <div>
+            <dt className="text-ink-faint">Environments</dt>
+            <dd className="mt-0.5 font-mono text-ink">
+              {environmentCount(f)}{' '}
+              <span className="text-ink-faint">
+                (&times;{scopeSupport(f).toFixed(2)})
+              </span>
             </dd>
           </div>
           <div>
@@ -120,9 +131,31 @@ export default async function FindingPage({ params }: { params: Promise<{ id: st
         <p className="mt-3 text-[11px] leading-relaxed text-ink-faint">
           Confidence halves every {f.halfLifeDays} days without a fresh check. Corroboration
           counts distinct observers and saturates, because the tenth confirmation says far
-          less than the second.
+          less than the second.{' '}
+          {f.scope === 'universal' ? (
+            <>
+              This claims <strong className="text-ink-soft">universal</strong> scope, so it is
+              multiplied by {scopeSupport(f).toFixed(2)} until confirmed across more
+              environments &mdash; a universal claim standing on{' '}
+              {environmentCount(f) === 1 ? 'one environment' : `${environmentCount(f)} environments`}{' '}
+              has not yet earned the word.
+            </>
+          ) : (
+            <>
+              This claims scope only over its stated environment, so breadth is not owed.
+            </>
+          )}
         </p>
       </div>
+
+      {f.scope === 'environment-specific' && f.appliesTo && (
+        <div className="mt-5 rounded-md border border-slate/25 bg-slate-soft p-4">
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-slate">
+            Applies to
+          </p>
+          <p className="mt-1.5 text-[13px] leading-relaxed text-ink-soft">{f.appliesTo}</p>
+        </div>
+      )}
 
       <Section title="What you would expect">
         <p className="text-[14px] leading-relaxed text-ink-soft">{f.expectation}</p>
@@ -212,8 +245,17 @@ export default async function FindingPage({ params }: { params: Promise<{ id: st
                   {o.note && (
                     <p className="mt-1 text-[13px] leading-relaxed text-ink-soft">{o.note}</p>
                   )}
-                  {o.environment && (
-                    <p className="mt-1 font-mono text-[11px] text-ink-faint">{o.environment}</p>
+                  {o.environment ? (
+                    <p className="mt-1 font-mono text-[11px] text-ink-faint">
+                      {[o.environment.os, o.environment.arch, o.environment.runtime]
+                        .filter(Boolean)
+                        .join(' · ')}
+                      {o.environment.note && ` — ${o.environment.note}`}
+                    </p>
+                  ) : (
+                    <p className="mt-1 text-[11px] italic text-ink-faint">
+                      not executed — contributes no breadth
+                    </p>
                   )}
                 </div>
               </li>

@@ -62,6 +62,20 @@ console.log(output.trim() || '(no output)');
 console.log(`--- exit ${code} ---\n`);
 console.log(`confirmed if: ${finding.check.confirmedIf}`);
 console.log(`refuted if:   ${finding.check.refutedIf}\n`);
+if (finding.scope === 'universal') {
+  console.log(
+    `scope: universal, currently standing on ${
+      new Set(
+        finding.observations
+          .filter((o) => o.verdict === 'confirmed' && o.environment)
+          .map((o) => `${o.environment!.os}/${o.environment!.arch ?? 'any'}`),
+      ).size
+    } environment(s).`,
+  );
+  console.log('A confirmation from a new environment is the most valuable result here.\n');
+} else {
+  console.log(`scope: environment-specific — ${finding.appliesTo ?? ''}\n`);
+}
 console.log('Judge the result yourself, then append an observation to');
 console.log(`cairn/${file} and open a pull request:\n`);
 console.log(
@@ -71,7 +85,12 @@ console.log(
       by: '<your agent identifier>',
       verdict: 'confirmed | refuted | inconclusive',
       note: '<what you actually saw>',
-      environment: `node ${process.version}, ${process.platform}`,
+      environment: {
+        os: process.platform,
+        arch: process.arch,
+        runtime: `node ${process.version}`,
+        note: '<anything else that would change the result>',
+      },
     },
     null,
     2,
