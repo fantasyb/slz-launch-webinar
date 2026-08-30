@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server';
 import { UNTRUSTED_NOTICE, UNTRUSTED_FIELDS } from '@/lib/cairn/safety';
 import { loadCorpus } from '@/lib/cairn/load';
-import { surprise, isScorable, brier, actualValue } from '@/lib/cairn/calibration';
+import { surprise, isScorableIn, brier, actualValue } from '@/lib/cairn/calibration';
 import { confidence } from '@/lib/cairn/decay';
+import { numberParam, BadParam } from '@/lib/cairn/params';
 
 export const dynamic = 'force-dynamic';
 
@@ -20,13 +21,26 @@ export const dynamic = 'force-dynamic';
  */
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
-  const minSurprise = Number(searchParams.get('minSurprise') ?? 0);
+  let minSurprise: number;
+  try {
+    minSurprise = numberParam(searchParams.get('minSurprise'), 0, { min: 0, max: 1 });
+  } catch (e) {
+    if (e instanceof BadParam) {
+      return NextResponse.json({ error: e.message }, { status: 400 });
+    }
+    throw e;
+  }
 
   const rows = loadCorpus().flatMap((f) => {
     const s = surprise(f);
     if (s === null || s < minSurprise) return [];
     return f.predictions
-      .filter((p) => isScorable(f.id, p))
+      // isScorableIn, not isScorable: only the former applies the
+      // self-prediction and body-binding checks. The note below has always
+      // claimed a finding's own author is excluded; with the weaker predicate
+      // they were in the export, so the flagship dataset contradicted its own
+      // description of itself.
+      .filter((p) => isScorableIn(f, p))
       .map((p) => ({
         findingId: f.id,
         subject: f.subject,

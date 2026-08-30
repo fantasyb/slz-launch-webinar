@@ -56,7 +56,7 @@ export async function POST(request: Request) {
     current: {
       standing: standing(finding),
       confidence: Number(confidence(finding).toFixed(3)),
-      environments: environmentCount(finding),
+      environments: environmentCount(finding, new Date()),
       scope: finding.scope,
     },
     newEnvironment,

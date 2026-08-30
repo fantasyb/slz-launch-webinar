@@ -93,10 +93,13 @@ export function corroboration(f: Finding): number {
  * and is barely more informative than one. Breadth is the signal that
  * separates 'broken' from 'broken here'.
  */
-export function environmentCount(f: Finding): number {
+export function environmentCount(f: Finding, now: Date = new Date()): number {
+  // notInFuture, as freshness and corroboration already do. Without it a
+  // future-dated observation bought breadth it could not buy anywhere else —
+  // the cheapest input to fake, exempt from the one filter that catches it.
   return new Set(
     f.observations
-      .filter((o) => o.verdict === 'confirmed' && o.environment)
+      .filter((o) => o.verdict === 'confirmed' && o.environment && notInFuture(o, now))
       .map((o) => environmentSignature(o.environment!)),
   ).size;
 }

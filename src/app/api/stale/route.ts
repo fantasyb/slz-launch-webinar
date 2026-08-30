@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { UNTRUSTED_NOTICE, UNTRUSTED_FIELDS } from '@/lib/cairn/safety';
 import { staleQueue, serialize } from '@/lib/cairn/load';
+import { numberParam, BadParam } from '@/lib/cairn/params';
 
 /**
  * The maintenance queue. An agent with spare cycles GETs this, takes the top
@@ -9,7 +10,15 @@ import { staleQueue, serialize } from '@/lib/cairn/load';
  */
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
-  const limit = Math.min(Number(searchParams.get('limit') ?? 10), 100);
+  let limit: number;
+  try {
+    limit = numberParam(searchParams.get('limit'), 10, { min: 1, max: 100 });
+  } catch (e) {
+    if (e instanceof BadParam) {
+      return NextResponse.json({ error: e.message }, { status: 400 });
+    }
+    throw e;
+  }
   const automatableOnly = searchParams.get('automatable') === 'true';
 
   let queue = staleQueue(100);

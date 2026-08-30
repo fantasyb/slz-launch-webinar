@@ -4,6 +4,7 @@ import { NextResponse } from 'next/server';
 import { installBlock, signBlock, validateBlockShape } from '@/lib/cairn/block';
 import { loadKeys } from '@/lib/cairn/keys';
 import { keyFingerprint } from '@/lib/cairn/signing';
+import { resolveOrigin } from '@/lib/cairn/origin';
 
 export const dynamic = 'force-dynamic';
 
@@ -16,9 +17,10 @@ export const dynamic = 'force-dynamic';
  * /install.md, which declines to be followed, and cairn-0014 for why.
  */
 export async function GET(request: Request) {
-  const host = request.headers.get('host') ?? 'CAIRN_HOST';
-  const proto = host.startsWith('localhost') || host.startsWith('127.') ? 'http' : 'https';
-  const base = `${proto}://${host}`;
+  // Never from the Host header. See src/lib/cairn/origin.ts: deriving `base`
+  // from the request turned this route into an oracle that would sign an
+  // install block pointing anywhere the caller named, using the real key.
+  const { base, canonical, reason } = resolveOrigin(request);
   const block = installBlock(base);
 
   // Never serve a block this host would itself reject.
@@ -30,7 +32,7 @@ export async function GET(request: Request) {
     );
   }
 
-  const signer = [...loadKeys().values()].find((k) => !k.origin);
+  const signer = canonical ? [...loadKeys().values()].find((k) => !k.origin) : null;
 
   // On a real deployment .cairn-secrets/ does not exist — it is gitignored, as
   // a private key must be. So the key comes from the environment first, and
@@ -52,10 +54,20 @@ export async function GET(request: Request) {
       block,
       signature: null,
       warning:
-        'This host has no signing key available, so the block is unauthenticated. ' +
-        'A client that pinned a key must refuse it, and cairn:install does. Set ' +
-        'CAIRN_SIGNING_KEY to the PEM private key in the deployment environment ' +
-        'to enable verified installs. Until then, paste the block by hand.',
+        reason === 'unconfigured'
+          ? 'This deployment has no canonical origin configured, so it will not sign ' +
+            'anything. The base below came from the request, which means a caller ' +
+            'chooses it — exactly what a signature must not cover. Set CAIRN_BASE_URL ' +
+            '(or an https origin in cairn.config.json) to enable verified installs.'
+          : reason === 'host-mismatch'
+            ? 'This request arrived under a different Host than this deployment\'s ' +
+              'configured origin, so it is served unsigned and the base below is the ' +
+              'configured one, not the one requested. Signing only the canonical ' +
+              'origin is what stops a caller choosing the URLs inside a signed block.'
+            : 'This host has no signing key available, so the block is unauthenticated. ' +
+              'A client that pinned a key must refuse it, and cairn:install does. Set ' +
+              'CAIRN_SIGNING_KEY to the PEM private key in the deployment environment ' +
+              'to enable verified installs. Until then, paste the block by hand.',
     });
   }
 

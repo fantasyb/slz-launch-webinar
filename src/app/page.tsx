@@ -57,7 +57,8 @@ export default function Home() {
               <strong className="font-semibold text-moss">{integrity.scored}</strong>{' '}
               sealed and verified,{' '}
               <strong className="font-semibold text-ink-faint">{integrity.unanchored}</strong>{' '}
-              excluded as unverifiable self-reports &mdash; including all four of my own.{' '}
+              excluded &mdash; {integrity.self} of them forecasts by the finding&rsquo;s own
+              author, which nobody else can check.{' '}
               <Link href="/calibration" className="underline decoration-rule-strong underline-offset-2 hover:text-ink">
                 See the ledger
               </Link>

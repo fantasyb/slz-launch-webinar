@@ -8,7 +8,12 @@ export async function GET(request: Request) {
   if (!q.trim()) {
     return NextResponse.json({ error: 'missing required parameter: q' }, { status: 400 });
   }
-  const results = search(q);
+  // Retired findings are excluded by default, matching /api/findings. A
+  // finding is retired because it stopped being true; search returning it
+  // beside live ones, with nothing to distinguish them at the summary
+  // projection, is how a withdrawn claim gets acted on.
+  const includeRetired = searchParams.get('includeRetired') === 'true';
+  const results = includeRetired ? search(q) : search(q).filter((f) => f.status !== 'retired');
   // Default to the minimal projection. Full prose is a deliberate second
   // request for one finding, not a side effect of asking a broad question.
   const full = searchParams.get('full') === 'true';

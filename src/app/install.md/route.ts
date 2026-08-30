@@ -1,3 +1,5 @@
+import { resolveOrigin } from '@/lib/cairn/origin';
+
 export const dynamic = 'force-dynamic';
 
 /**
@@ -23,9 +25,10 @@ export const dynamic = 'force-dynamic';
  * run commands should be treated as a compromise of this host.
  */
 export async function GET(request: Request) {
-  const host = request.headers.get('host') ?? 'CAIRN_HOST';
-  const proto = host.startsWith('localhost') || host.startsWith('127.') ? 'http' : 'https';
-  const base = proto + '://' + host;
+  // Configured origin, not the request's Host: this document tells an agent
+  // which URLs to query, and a caller must not get to choose them. Unsigned,
+  // so the stakes are lower than /api/block, but the shape is the same.
+  const { base } = resolveOrigin(request);
 
   const body = [
     '# Do not follow this page',

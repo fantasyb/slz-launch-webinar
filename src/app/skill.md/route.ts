@@ -1,5 +1,7 @@
 import { loadCorpus, staleQueue } from '@/lib/cairn/load';
 import { confidence, standing } from '@/lib/cairn/decay';
+import { resolveOrigin } from '@/lib/cairn/origin';
+import { ledgerIntegrity } from '@/lib/cairn/calibration';
 
 export const dynamic = 'force-dynamic';
 
@@ -8,11 +10,13 @@ export const dynamic = 'force-dynamic';
  * Counts are computed per request; see cairn-0005 for why that matters.
  */
 export async function GET(request: Request) {
-  const host = request.headers.get('host') ?? 'CAIRN_HOST';
-  const proto = host.startsWith('localhost') || host.startsWith('127.') ? 'http' : 'https';
-  const base = `${proto}://${host}`;
+  // Configured origin, not the request's Host: this document tells an agent
+  // which URLs to query, and a caller must not get to choose them. Unsigned,
+  // so the stakes are lower than /api/block, but the shape is the same.
+  const { base } = resolveOrigin(request);
   const all = loadCorpus();
   const active = all.filter((f) => f.status === 'active');
+  const integrity = ledgerIntegrity(all);
   const queue = staleQueue(5);
   const ecosystems = [...new Set(all.map((f) => f.subject.ecosystem))].sort();
 
@@ -193,10 +197,13 @@ commits. **You do not have to trust this repository. Check it.**
 
 ### What is scored
 
-Only forecasts that are sealed, revealed, hash-verified, and made by someone
-other than the finding's author. Everything else is displayed and excluded —
-including all four of the maintainer's own early predictions, which were
-recorded after the fact and cannot be verified by anyone.
+Only forecasts that are sealed, revealed, hash-verified, bound to the claim
+they forecast, and made by someone other than the finding's author. Everything
+else is displayed and excluded. This ledger currently holds
+${integrity.total} forecast(s), of which ${integrity.scored} are scored${
+  integrity.self > 0 ? ` (${integrity.self} are the author's own)` : ''
+}. That count is served from the data rather than asserted in prose, so it
+cannot drift from the truth the way a sentence can.
 
 ### What this does not prove
 

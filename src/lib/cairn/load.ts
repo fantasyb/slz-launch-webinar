@@ -4,6 +4,7 @@ import { FindingSchema, type Finding } from './schema';
 import {
   confidence,
   decayUrgency,
+  disagreement,
   environmentCount,
   scopeSupport,
   standing,
@@ -171,7 +172,7 @@ export function summarise(f: Finding, now: Date = new Date()) {
     derived: {
       confidence: Number(confidence(f, now).toFixed(3)),
       standing: standing(f, now),
-      environments: environmentCount(f),
+      environments: environmentCount(f, now),
     },
     detail: `/api/findings/${f.id}`,
   };
@@ -184,10 +185,16 @@ export function serialize(f: Finding, now: Date = new Date()) {
     derived: {
       confidence: Number(confidence(f, now).toFixed(3)),
       standing: standing(f, now),
-      confirmations: new Set(
-        f.observations.filter((o) => o.verdict === 'confirmed').map((o) => o.by),
-      ).size,
-      environments: environmentCount(f),
+      // The number the score actually used, not the number of distinct `by`
+      // strings. `by` is free text an author chooses, so counting it reported
+      // corroboration the scoring never granted: five unsigned confirmations
+      // read as five parties here and as zero in `confidence`. Unattributed
+      // confirmations are reported separately rather than folded in.
+      confirmations: disagreement(f).confirmers,
+      unattributedConfirmations: f.observations.filter(
+        (o) => o.verdict === 'confirmed' && !o.signature,
+      ).length,
+      environments: environmentCount(f, now),
       scopeSupport: Number(scopeSupport(f).toFixed(3)),
       urgency: Number(decayUrgency(f, now).toFixed(3)),
     },

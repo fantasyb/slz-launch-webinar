@@ -2,10 +2,19 @@ import { NextResponse } from 'next/server';
 import { UNTRUSTED_NOTICE, UNTRUSTED_FIELDS } from '@/lib/cairn/safety';
 import { loadCorpus, serialize } from '@/lib/cairn/load';
 import { confidence } from '@/lib/cairn/decay';
+import { numberParam, BadParam } from '@/lib/cairn/params';
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
-  const minConfidence = Number(searchParams.get('minConfidence') ?? 0);
+  let minConfidence: number;
+  try {
+    minConfidence = numberParam(searchParams.get('minConfidence'), 0, { min: 0, max: 1 });
+  } catch (e) {
+    if (e instanceof BadParam) {
+      return NextResponse.json({ error: e.message }, { status: 400 });
+    }
+    throw e;
+  }
   const ecosystem = searchParams.get('ecosystem');
   const subject = searchParams.get('subject');
   const includeRetired = searchParams.get('includeRetired') === 'true';
