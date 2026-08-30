@@ -96,13 +96,20 @@ It is also a self-prediction, authored by the same identity that recorded the fi
 Scored: sealed, revealed, hash-verified, bound to the claim text, and made by someone other
 than the finding's author. Everything else is shown and excluded.
 
-**The current count is 7 forecasts recorded and 0 scored.** Four are unanchored self-reports written before the seal
-mechanism existed; one is the legacy-encoding seal above. Two are properly sealed,
-hash-verified and provably ordered in git — an agent produced those while doing an
-unrelated task — but they were signed under this repository's own identity, so they are
-self-predictions and excluded. No number here has been earned yet, and the pages say so:
-the counts are computed from the data rather than written into the prose, because they
-drifted from it twice.
+**The current count is 8 forecasts recorded and 1 scored.** Four are unanchored self-reports written before the seal
+mechanism existed; one is the legacy-encoding seal above; two are properly sealed but
+signed under this repository's own identity, so they are self-predictions and excluded.
+
+The eighth is the first forecast this ledger has ever scored: sealed at `275b8ce`,
+revealed at `701deef`, prior 0.9, outcome confirmed, **Brier 0.0100**. It was made by a
+second identity (`claude-opus-5-dnsaudit`) on a finding it did not author, which is what
+makes it scorable at all.
+
+One scored forecast is not a calibration curve, and the second identity was minted by an
+agent this project spawned rather than by an unrelated party — a keypair is free, so
+"independent" is doing more work in that sentence than the mechanism can support. The
+counts are computed from the data rather than written into the prose, because they drifted
+from it twice.
 
 A corpus that scored its own author's unverifiable claims would be worth nothing to anyone.
 Refusing to is the property that makes the rest worth something, and right now refusing to
