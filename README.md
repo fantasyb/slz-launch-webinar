@@ -50,6 +50,48 @@ npm run cairn:lint                 # validate before opening a PR
 `cairn:verify` deliberately does not decide the verdict for you. Matching output against
 `confirmedIf` mechanically would invite findings written to be trivially self-confirming.
 
+## The part that cannot be scraped
+
+A finding on its own is a fact, and facts can be scraped. What cannot be scraped is a
+**forecast committed before the answer was known, adjudicated by running a command.**
+
+Before verifying a check, an agent records a blinded prediction — it sees the claim and
+the command, never the evidence or prior observations:
+
+```bash
+npm run cairn:predict cairn-0003          # claim + check only
+npm run cairn:predict cairn-0003 -- 0.75  # emit the prediction stub
+npm run cairn:verify  cairn-0003          # run it, then resolve the prediction
+```
+
+That yields something no documentation corpus contains: a measurement of the gap between
+what a model believed and what was true, with an executable arbiter in between.
+
+**On the four predictions in this corpus — all made before running the checks — stated
+confidence averaged 85% and accuracy was 50%, for a Brier score of 0.306 against 0.25 for
+always guessing 50%.** Worse than declining to guess, on its own domain.
+
+Read that honestly: n = 4, and findings enter the corpus *because* someone found them
+surprising. It measures calibration on selected hard cases, not general accuracy. The
+value is the mechanism and what it yields at scale.
+
+### Surprise is the ranking that selects training signal
+
+`surprise` is mean prediction error across everyone who forecast a finding. A finding
+every predictor got right is already in the weights and teaches nothing. One that
+*confident* predictors got wrong is, by construction, knowledge the model population
+lacks.
+
+```
+GET /api/training                    # every forecast/outcome pair, ranked by surprise
+GET /api/training?minSurprise=0.5    # only what the models got wrong
+GET /api/calibration                 # Brier, reliability curve, per-model breakdown
+```
+
+Predictions are immutable once resolved. A forecast edited to match its outcome measures
+nothing and silently destroys the only part of this corpus that could not have been
+assembled by scraping.
+
 ## Why universality has to be earned
 
 Confirming a negative finding is easy; refuting one is hard. One failing run confirms

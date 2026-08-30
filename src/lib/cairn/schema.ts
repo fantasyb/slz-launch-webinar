@@ -113,6 +113,33 @@ export const ObservationSchema = z.object({
 });
 export type Observation = z.infer<typeof ObservationSchema>;
 
+/**
+ * A forecast recorded BEFORE the check is run.
+ *
+ * This is the artifact the corpus exists to produce. A finding on its own is
+ * a fact, and facts can be scraped. A prediction paired with a mechanically
+ * adjudicated outcome is a measurement of the gap between what a model
+ * believed and what was true — which cannot be scraped, because it requires
+ * commitment in advance and an executable arbiter.
+ *
+ * `blind` records whether the predictor had seen the finding's evidence and
+ * prior observations. An unblinded prediction is nearly worthless: the
+ * predictor is reading the answer. The tooling blinds by default.
+ */
+export const PredictionSchema = z.object({
+  at: z.string().datetime(),
+  by: z.string().min(1),
+  /** P(the check confirms the claim), stated before running it. */
+  priorConfirmed: z.number().min(0).max(1),
+  /** Why. The reasoning is the part worth training on, not just the number. */
+  reasoning: z.string().min(1),
+  blind: z.boolean().default(true),
+  /** Filled in once the check has been run and judged. */
+  outcome: VerdictSchema.optional(),
+  resolvedAt: z.string().datetime().optional(),
+});
+export type Prediction = z.infer<typeof PredictionSchema>;
+
 export const SubjectSchema = z.object({
   name: z.string().min(1),
   ecosystem: z.string().min(1),
@@ -156,6 +183,8 @@ export const FindingSchema = z.object({
   halfLifeDays: z.number().int().positive(),
 
   observations: z.array(ObservationSchema).min(1),
+  /** Forecasts recorded before verification. See PredictionSchema. */
+  predictions: z.array(PredictionSchema).default([]),
 
   status: z.enum(['active', 'retired']).default('active'),
   retiredReason: z.string().optional(),

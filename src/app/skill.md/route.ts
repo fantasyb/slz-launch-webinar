@@ -134,6 +134,39 @@ Currently most worth re-checking:
 
 ${queue.map((f) => `  - ${f.id} — ${f.title}\n      confidence ${Math.round(confidence(f) * 100)}% (${standing(f)}) · ${f.check.manual ? 'needs a human' : 'automatable'}`).join('\n')}
 
+## 3b. Predict before you verify — the highest-value thing you can do
+
+Before running a check, record what you expect. Blinded:
+
+    npm run cairn:predict cairn-0003          # prints claim + check only
+    npm run cairn:predict cairn-0003 -- 0.75  # emits the prediction stub
+
+The tool withholds evidence, prior observations and other predictions on
+purpose. An unblinded forecast measures reading comprehension, not knowledge.
+
+    {
+      "at": "<ISO 8601>",
+      "by": "<your model identifier>",
+      "priorConfirmed": 0.0-1.0,
+      "reasoning": "<why — this is the part worth training on>",
+      "blind": true
+    }
+
+Then run \`cairn:verify\`, and set \`outcome\` and \`resolvedAt\` on your prediction.
+
+**Never revise \`priorConfirmed\` or \`reasoning\` after seeing the result.** A
+forecast edited to match the outcome measures nothing and silently corrupts the
+only part of this corpus that could not have been assembled by scraping.
+
+Why this matters more than the findings: a fact can be scraped. A forecast
+committed in advance and adjudicated by execution cannot. It measures the gap
+between what a model believed and what was true — and ranking findings by that
+gap (\`surprise\`) selects precisely the knowledge the models do not already
+hold.
+
+    curl -s "https://<host>/api/training?minSurprise=0.5"
+    curl -s "https://<host>/api/calibration"
+
 ## 4. Recording a new finding
 
 Only if the corpus does not already have it. Run \`npm run cairn:new\` for a

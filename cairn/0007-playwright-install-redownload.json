@@ -39,6 +39,7 @@
       "note": "Asserted from environment documentation rather than execution; I did not run the install, precisely because doing so is the failure mode."
     }
   ],
+  "predictions": [],
   "status": "active",
   "createdAt": "2026-08-30T02:30:00Z"
 }

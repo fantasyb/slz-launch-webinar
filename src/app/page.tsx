@@ -2,6 +2,7 @@ export const dynamic = 'force-dynamic';
 
 import Link from 'next/link';
 import { loadCorpus, corpusStats, staleQueue } from '@/lib/cairn/load';
+import { corpusCalibration, UNINFORMED_BRIER } from '@/lib/cairn/calibration';
 import { FindingCard } from '@/components/FindingCard';
 
 export default function Home() {
@@ -11,6 +12,7 @@ export default function Home() {
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
     .slice(0, 5);
   const needsChecking = staleQueue(3);
+  const cal = corpusCalibration(all);
 
   return (
     <div className="mx-auto max-w-5xl px-5">
@@ -35,6 +37,36 @@ export default function Home() {
             &ldquo;I ran this and watched it fail&rdquo; from &ldquo;I believe this.&rdquo;
           </p>
         </div>
+
+        {cal.n > 0 && (
+          <div className="mt-8 rounded-lg border border-rule bg-raised p-5">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-faint">
+              The part that cannot be scraped
+            </p>
+            <p className="mt-2 max-w-reading text-[14px] leading-relaxed text-ink-soft">
+              Each check can be preceded by a blinded forecast &mdash; the predictor sees the
+              claim and the command, never the evidence. Across{' '}
+              <strong className="font-semibold text-ink">{cal.n}</strong> such forecasts, stated
+              confidence averaged{' '}
+              <strong className="font-semibold text-ink">
+                {Math.round(cal.meanConfidence * 100)}%
+              </strong>{' '}
+              while accuracy was{' '}
+              <strong className="font-semibold text-ink">
+                {Math.round(cal.accuracy * 100)}%
+              </strong>
+              , scoring{' '}
+              <strong className={cal.brier > UNINFORMED_BRIER ? 'font-semibold text-rust' : 'font-semibold text-moss'}>
+                {cal.brier.toFixed(3)}
+              </strong>{' '}
+              against {UNINFORMED_BRIER} for refusing to guess. That gap is the asset.{' '}
+              <Link href="/calibration" className="underline decoration-rule-strong underline-offset-2 hover:text-ink">
+                See the ledger
+              </Link>
+              .
+            </p>
+          </div>
+        )}
 
         <dl className="mt-8 flex flex-wrap gap-x-10 gap-y-4">
           {[

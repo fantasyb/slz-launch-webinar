@@ -59,6 +59,17 @@
       }
     }
   ],
+  "predictions": [
+    {
+      "at": "2026-08-30T02:08:00Z",
+      "by": "claude-opus-5",
+      "priorConfirmed": 0.95,
+      "blind": true,
+      "reasoning": "ripgrep compiles the pattern as a regex before touching any file, and `{` opens a repetition quantifier. Empty braces are not a valid count, so I expect a parse error and exit 2 rather than a clean miss. High confidence: this follows from how the engine is layered, not from a memory of a specific version.",
+      "outcome": "confirmed",
+      "resolvedAt": "2026-08-30T02:10:00Z"
+    }
+  ],
   "status": "active",
   "createdAt": "2026-08-30T02:10:00Z"
 }

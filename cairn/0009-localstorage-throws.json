@@ -37,6 +37,7 @@
       "note": "Asserted from prior knowledge; this container has no browser session in which to reproduce it."
     }
   ],
+  "predictions": [],
   "status": "active",
   "createdAt": "2026-08-30T02:40:00Z"
 }

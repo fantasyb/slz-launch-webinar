@@ -38,6 +38,7 @@
       "note": "Asserted from prior knowledge; not re-executed in this container, which has no allowlisted model endpoint. Treat as unverified until someone runs the check."
     }
   ],
+  "predictions": [],
   "status": "active",
   "createdAt": "2026-08-30T02:25:00Z"
 }

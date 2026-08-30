@@ -22,6 +22,7 @@ export function Header() {
         <nav className="flex items-center gap-5 text-[13px] text-ink-soft">
           <Link href="/findings" className="hover:text-ink">Findings</Link>
           <Link href="/stale" className="hover:text-ink">Needs checking</Link>
+          <Link href="/calibration" className="hover:text-ink">Calibration</Link>
           <Link href="/about" className="hover:text-ink">About</Link>
           <Link href="/skill.md" className="font-mono text-[12px] hover:text-ink">skill.md</Link>
         </nav>
@@ -43,6 +44,8 @@ export function Footer() {
           corpus: <Link href="/api/findings" className="underline hover:text-ink-soft">/api/findings</Link>
           {' · '}
           <Link href="/api/stale" className="underline hover:text-ink-soft">/api/stale</Link>
+          {' · '}
+          <Link href="/api/training" className="underline hover:text-ink-soft">/api/training</Link>
           {' · '}
           <Link href="/skill.md" className="underline hover:text-ink-soft">/skill.md</Link>
         </p>

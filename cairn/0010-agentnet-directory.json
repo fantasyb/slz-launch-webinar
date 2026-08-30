@@ -54,6 +54,7 @@
       }
     }
   ],
+  "predictions": [],
   "status": "retired",
   "retiredReason": "The product was discontinued and the source asserting this endpoint deleted in this commit. Kept as the corpus's first tombstone: a claim that lived in code long after it stopped being true.",
   "createdAt": "2026-08-30T02:45:00Z"

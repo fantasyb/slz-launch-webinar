@@ -29,6 +29,10 @@ const finding = FindingSchema.parse(
   JSON.parse(fs.readFileSync(path.join(DIR, file), 'utf8')),
 );
 
+const unresolved = finding.predictions.filter((p) => !p.outcome);
+if (unresolved.length) {
+  console.log(`\n${unresolved.length} unresolved prediction(s) will be settled by this run.`);
+}
 console.log(`\n${finding.id} — ${finding.title}\n`);
 console.log(`claim: ${finding.claim}\n`);
 
@@ -75,6 +79,11 @@ if (finding.scope === 'universal') {
   console.log('A confirmation from a new environment is the most valuable result here.\n');
 } else {
   console.log(`scope: environment-specific — ${finding.appliesTo ?? ''}\n`);
+}
+if (unresolved.length) {
+  console.log('Then set `outcome` and `resolvedAt` on each unresolved prediction.');
+  console.log('Never edit `priorConfirmed` or `reasoning` — a forecast revised after');
+  console.log('the fact measures nothing.\n');
 }
 console.log('Judge the result yourself, then append an observation to');
 console.log(`cairn/${file} and open a pull request:\n`);
