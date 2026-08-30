@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { z } from 'zod';
 import { FindingSchema, ObservationSchema, type Finding, type Observation } from './schema';
-import { verifyObservation, type KeyRecord } from './signing';
+import { verifyObservation, findingBodyHash, type KeyRecord } from './signing';
 import { loadKeys } from './keys';
 
 /**
@@ -132,7 +132,7 @@ export function loadFederated(): FederatedFinding[] {
       let verified = 0;
       let unverified = 0;
       for (const o of finding.observations) {
-        if (verifyObservation(finding.id, o, upstreamKeys) === 'signed') verified++;
+        if (verifyObservation(finding.id, o, upstreamKeys, findingBodyHash(finding)) === 'signed') verified++;
         else unverified++;
       }
 

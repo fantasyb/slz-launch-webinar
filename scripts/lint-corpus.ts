@@ -6,7 +6,7 @@ import fs from 'fs';
 import path from 'path';
 import { FindingSchema, environmentSignature } from '../src/lib/cairn/schema';
 import { commitmentStatus } from '../src/lib/cairn/commitment';
-import { verifyObservation } from '../src/lib/cairn/signing';
+import { verifyObservation, findingBodyHash } from '../src/lib/cairn/signing';
 import { loadKeys } from '../src/lib/cairn/keys';
 import { scanExecutable, scanInjection } from '../src/lib/cairn/safety';
 
@@ -127,7 +127,7 @@ for (const file of files) {
   }
 
   for (const o of f.observations) {
-    const sig = verifyObservation(f.id, o, keys);
+    const sig = verifyObservation(f.id, o, keys, findingBodyHash(f));
     if (sig === 'broken') {
       problems.push(
         `${file}: observation by ${o.by} has a signature that does not verify — ` +

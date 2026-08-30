@@ -10,7 +10,7 @@
 import fs from 'fs';
 import path from 'path';
 import { FindingSchema } from '../src/lib/cairn/schema';
-import { signObservation, deriveKeyId } from '../src/lib/cairn/signing';
+import { signObservation, deriveKeyId, findingBodyHash } from '../src/lib/cairn/signing';
 import { loadKeys } from '../src/lib/cairn/keys';
 
 const keyId = process.env.CAIRN_KEY;
@@ -51,7 +51,7 @@ for (const file of fs.readdirSync(DIR).filter((f) => f.endsWith('.json'))) {
       return raw.observations[i];
     }
     const { signature: _drop, ...unsigned } = o;
-    const value = signObservation(f.id, unsigned, privateKey);
+    const value = signObservation(f.id, unsigned, privateKey, findingBodyHash(f));
     touched = true;
     signed++;
     return { ...raw.observations[i], signature: { algorithm: 'ed25519', keyId, value } };

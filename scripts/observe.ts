@@ -11,8 +11,8 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { OVERLAY_DIR } from '../src/lib/cairn/federation';
-import { signObservation } from '../src/lib/cairn/signing';
+import { OVERLAY_DIR, loadFederated } from '../src/lib/cairn/federation';
+import { signObservation, findingBodyHash } from '../src/lib/cairn/signing';
 import { loadKeys } from '../src/lib/cairn/keys';
 
 const [upstream, findingId, verdict, ...noteParts] = process.argv.slice(2);
@@ -54,7 +54,20 @@ const observation = {
   },
 };
 
-const value = signObservation(findingId, observation, fs.readFileSync(privFile, 'utf8'));
+// The observation attests to the upstream body as it stood when the check ran.
+// Without this it would survive that body being amended, which is the hole
+// this whole mechanism exists to close.
+const target = loadFederated().find((x) => x.upstream === upstream && x.finding.id === findingId);
+if (!target) {
+  console.error(`no cached finding ${findingId} from upstream "${upstream}" — run cairn:federate first`);
+  process.exit(2);
+}
+const value = signObservation(
+  findingId,
+  observation,
+  fs.readFileSync(privFile, 'utf8'),
+  findingBodyHash(target.finding),
+);
 const signed = { ...observation, signature: { algorithm: 'ed25519', keyId, value } };
 
 const dir = path.join(OVERLAY_DIR, upstream);

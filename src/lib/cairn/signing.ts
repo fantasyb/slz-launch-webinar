@@ -30,7 +30,58 @@ import { environmentSignature } from './schema';
  *     the only one being claimed.
  */
 
-export const SIGNATURE_VERSION = 'cairn-sig-v1';
+export const SIGNATURE_VERSION = 'cairn-sig-v2';
+
+/**
+ * Hash of the substantive body of a finding.
+ *
+ * v1 signed only the observation — who, what verdict, when, where. It did not
+ * cover the finding's own text, so amending a trusted finding's `workaround`
+ * left every signature verifying. That is the highest-value attack on a corpus
+ * like this: poisoning advice that agents already rely on is worth far more
+ * than introducing an unknown finding, and it was invisible.
+ *
+ * An observation now attests to the body it was made against. Amending that
+ * body invalidates prior attestations, which is not a limitation but the
+ * correct semantics: "I ran this check and saw this" is a statement about a
+ * specific claim and a specific check, and it stops being true when either
+ * changes. A legitimate editor re-signs, which needs the key; an attacker
+ * cannot, and CI refuses a body no observation attests to.
+ *
+ * Deliberately excludes observations, predictions, tags and timestamps — those
+ * change as the corpus lives, and folding them in would invalidate everything
+ * on every append.
+ */
+export function findingBodyHash(f: {
+  id: string;
+  claim: string;
+  expectation: string;
+  reality: string;
+  mechanism?: string;
+  workaround?: string;
+  derivation?: string;
+  appliesTo?: string;
+  scope: string;
+  basis?: string;
+  subject: { name: string; ecosystem: string; versions: string };
+  check: { command: string; confirmedIf: string; refutedIf: string; manual: boolean };
+  evidence: Array<{ command: string; output: string; note?: string }>;
+}): string {
+  return crypto
+    .createHash('sha256')
+    .update(
+      JSON.stringify([
+        f.id, f.claim, f.expectation, f.reality,
+        f.mechanism ?? '', f.workaround ?? '', f.derivation ?? '', f.appliesTo ?? '',
+        f.scope, f.basis ?? 'empirical',
+        f.subject.name, f.subject.ecosystem, f.subject.versions,
+        f.check.command, f.check.confirmedIf, f.check.refutedIf, f.check.manual,
+        f.evidence.map((e) => [e.command, e.output, e.note ?? '']),
+      ]),
+      'utf8',
+    )
+    .digest('hex');
+}
 export const SIGNATURE_ALGORITHM = 'ed25519';
 
 export interface KeyRecord {
@@ -113,10 +164,15 @@ export function generateKeypair(label: string): { record: KeyRecord; privateKey:
  * The note is hashed rather than included so that long prose does not bloat
  * the payload while still being covered by the signature.
  */
-export function observationPayload(findingId: string, o: Omit<Observation, 'signature'>): string {
+export function observationPayload(
+  findingId: string,
+  o: Omit<Observation, 'signature'>,
+  bodyHash: string,
+): string {
   return JSON.stringify([
     SIGNATURE_VERSION,
     findingId,
+    bodyHash,
     o.by,
     o.verdict,
     o.at,
@@ -129,9 +185,12 @@ export function signObservation(
   findingId: string,
   o: Omit<Observation, 'signature'>,
   privateKeyPem: string,
+  bodyHash: string,
 ): string {
   const key = crypto.createPrivateKey(privateKeyPem);
-  return crypto.sign(null, Buffer.from(observationPayload(findingId, o), 'utf8'), key).toString('base64');
+  return crypto
+    .sign(null, Buffer.from(observationPayload(findingId, o, bodyHash), 'utf8'), key)
+    .toString('base64');
 }
 
 export type SignatureStatus =
@@ -148,6 +207,7 @@ export function verifyObservation(
   findingId: string,
   o: Observation,
   keys: Map<string, KeyRecord>,
+  bodyHash: string,
 ): SignatureStatus {
   if (!o.signature) return 'unsigned';
   const key = keys.get(o.signature.keyId);
@@ -158,7 +218,7 @@ export function verifyObservation(
   try {
     ok = crypto.verify(
       null,
-      Buffer.from(observationPayload(findingId, unsigned), 'utf8'),
+      Buffer.from(observationPayload(findingId, unsigned, bodyHash), 'utf8'),
       crypto.createPublicKey(key.publicKey),
       Buffer.from(signature.value, 'base64'),
     );

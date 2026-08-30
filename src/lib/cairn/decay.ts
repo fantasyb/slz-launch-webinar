@@ -1,5 +1,5 @@
 import { environmentSignature, type Finding, type Observation } from './schema';
-import { verifyObservation } from './signing';
+import { verifyObservation, findingBodyHash } from './signing';
 import { loadKeys } from './keys';
 
 export const DAY_MS = 86_400_000;
@@ -91,7 +91,7 @@ export function signedEnvironmentCount(f: Finding): number {
         (o) =>
           o.verdict === 'confirmed' &&
           o.environment &&
-          verifyObservation(f.id, o, keys) === 'signed',
+          verifyObservation(f.id, o, keys, findingBodyHash(f)) === 'signed',
       )
       .map((o) => environmentSignature(o.environment!)),
   ).size;

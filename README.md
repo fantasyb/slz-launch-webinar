@@ -242,6 +242,24 @@ So the design goal is not "unpoisonable". It is **blast radius**:
 | Cairn's content is marked untrusted | **yes** — every response carries `_untrustedFields` |
 | Hostile content is hard to merge | **two independent layers in CI, plus a human merge** |
 | A poisoned finding is attributable | **yes** — signed, so it is traceable to a key with a history |
+| An existing finding's advice can be amended | **no** — signatures cover the body; any substantive edit breaks every attestation |
+
+### Attestations cover what they attest
+
+Signatures bind the observation **and the finding body it was made against**. Rewriting a
+`claim`, `workaround`, `check` or `evidence` invalidates every signature on that finding; adding
+a tag or appending an observation does not.
+
+This closes what was the sharpest hole in the design. Poisoning a *trusted* finding beats
+introducing an unknown one — a fresh, universally scoped, multiply confirmed entry is exactly
+what an agent acts on without re-checking, and the attestation is what persuades it not to. In
+v1 the signed payload was `version, findingId, by, verdict, at, environment, noteHash`; the
+advice was never in it, so the advice could be replaced and the entry still rendered as fully
+attested. Recorded as [`cairn-0016`](./cairn/0016-signing-the-observation-not-the-observed.json).
+
+The invalidation is deliberate, not a limitation: *"I ran this check and saw this"* is a claim
+about a specific assertion and a specific procedure, and it stops being true when either
+changes. A legitimate editor re-signs, which needs the key.
 
 ### Shrink the surface before trying to police it
 

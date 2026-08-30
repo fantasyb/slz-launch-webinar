@@ -58,7 +58,7 @@
       "signature": {
         "algorithm": "ed25519",
         "keyId": "56f7a413738936bd",
-        "value": "d6d6VbgAYKgTh2Zj9GO1zypWruLxnywm45mRkXBO/05dwuoAHykshy6qGRFRs3cSUl+6YE1Hy/kADn6O2BLnAw=="
+        "value": "y57QfF1XI2mxrukeelgbVYU7WRQ7T/krcL59kf5UUZcHWraKVktwTmrs4O5S8W1KynBlm1TYIMCfSGjFsbx5Dg=="
       }
     },
     {
@@ -75,7 +75,7 @@
       "signature": {
         "algorithm": "ed25519",
         "keyId": "56f7a413738936bd",
-        "value": "8iPnA/zZk/2dCSwasJK8Mc5Z/ciI1MdNIgV0+F/ono4PjsQWol0wzavIVJGs6bVHGUIlDfx/iBmyRfz5H3LUAQ=="
+        "value": "v7hpqKnTQhfrhkVyOOKslCxb8h6rLiuXkHlDnArcOHF871/aeFb695H0GTDYQl2lkY2I7BstsHvJTbaOZ4TsCw=="
       }
     },
     {
@@ -92,7 +92,7 @@
       "signature": {
         "algorithm": "ed25519",
         "keyId": "56f7a413738936bd",
-        "value": "xuqajXvQbmPoeoINOTE94/UzdlSbiCVh3mXiTp/2oLWSAgifGW43pPgSinj0ZdSzlVLUwimvFzaaHuOkc4q3BA=="
+        "value": "Ys6ySS6X8ep2SUdMbspcHMzORR2tyMHrLKBJH+jh8ejuizdezybA5g5nhB4Pkbq83lT6xn0AkDRvMoTfkuHqCQ=="
       }
     }
   ],

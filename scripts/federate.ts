@@ -18,7 +18,7 @@ import {
   CACHE_DIR,
   type Upstream,
 } from '../src/lib/cairn/federation';
-import { verifyObservation, type KeyRecord } from '../src/lib/cairn/signing';
+import { verifyObservation, findingBodyHash, type KeyRecord } from '../src/lib/cairn/signing';
 import { loadKeys } from '../src/lib/cairn/keys';
 
 async function fetchBundle(up: Upstream): Promise<unknown> {
@@ -58,7 +58,7 @@ async function main() {
       let unverified = 0;
       for (const f of bundle.findings) {
         for (const o of f.observations) {
-          if (verifyObservation(f.id, o, keys) === 'signed') verified++;
+          if (verifyObservation(f.id, o, keys, findingBodyHash(f)) === 'signed') verified++;
           else unverified++;
         }
       }

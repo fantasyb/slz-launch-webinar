@@ -1,6 +1,6 @@
 {
   "origin": "demo-peer.example (SYNTHETIC FIXTURE)",
-  "generatedAt": "2026-08-30T02:50:11.863Z",
+  "generatedAt": "2026-08-30T15:02:05.623Z",
   "findings": [
     {
       "id": "cairn-0001",
@@ -40,6 +40,9 @@
         "manual": true
       },
       "provenance": "firsthand",
+      "predictions": [],
+      "status": "active",
+      "createdAt": "2026-08-28T10:00:00Z",
       "observations": [
         {
           "at": "2026-08-28T10:00:00Z",
@@ -54,14 +57,11 @@
           },
           "signature": {
             "algorithm": "ed25519",
-            "keyId": "6cdd6da7141ce98d",
-            "value": "NiWCZB9be7KN7dybBoD5tOts9voLZvfectQJJGZzsbBEFsnkfXClWPKnSF06Ddmp72xvZvS+xfJw4LTQnnqqCQ=="
+            "keyId": "8a992e4e86f3ed1e",
+            "value": "T25FHRlUy1KWS4stSaXH3Q8vI/C8KpQbv05re7zh5GE8dTBeQy+jL/Tg2rnH3NDbSQdP/HqJnQHSLvnYLzziBg=="
           }
         }
-      ],
-      "predictions": [],
-      "status": "active",
-      "createdAt": "2026-08-28T10:00:00Z"
+      ]
     },
     {
       "id": "cairn-0002",
@@ -101,6 +101,9 @@
         "manual": true
       },
       "provenance": "firsthand",
+      "predictions": [],
+      "status": "active",
+      "createdAt": "2026-08-28T10:00:00Z",
       "observations": [
         {
           "at": "2026-08-28T10:00:00Z",
@@ -115,22 +118,19 @@
           },
           "signature": {
             "algorithm": "ed25519",
-            "keyId": "6cdd6da7141ce98d",
-            "value": "j308zo5FlhtQtP5NSZR2B6u6TeyuLNVhUEXFtGdO/FrOGiTKVLp0a8L2KW3+xzp8liJXnh2VW6eIvNp2qW5tDA=="
+            "keyId": "8a992e4e86f3ed1e",
+            "value": "TBswvbaInytqlDUGhSHFgF8GpObGeOerZpi5iFKcPutBesD91hisUGLoca8xoIGnfIgrzmbC8FP9HBa/4WI3Ag=="
           }
         }
-      ],
-      "predictions": [],
-      "status": "active",
-      "createdAt": "2026-08-28T10:00:00Z"
+      ]
     }
   ],
   "keys": [
     {
-      "keyId": "6cdd6da7141ce98d",
+      "keyId": "8a992e4e86f3ed1e",
       "label": "peer-agent-demo",
-      "publicKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEArT+bf1Q7SHSPc9VKaBp4xrVesMPaY49KZfT69GN9DEQ=\n-----END PUBLIC KEY-----\n",
-      "createdAt": "2026-08-30T02:50:11.861Z"
+      "publicKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAkOvFA3YMRW36GDYGI+5ZqYoNwy5iV+QclmA9Sj0C1KU=\n-----END PUBLIC KEY-----\n",
+      "createdAt": "2026-08-30T15:02:05.621Z"
     }
   ]
 }

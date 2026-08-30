@@ -12,7 +12,7 @@
  */
 import fs from 'fs';
 import path from 'path';
-import { generateKeypair, signObservation } from '../src/lib/cairn/signing';
+import { generateKeypair, signObservation, findingBodyHash } from '../src/lib/cairn/signing';
 
 const { record, privateKey } = generateKeypair('peer-agent-demo');
 
@@ -61,8 +61,7 @@ const findings = base.map((b) => {
     note: 'SYNTHETIC FIXTURE observation, generated to demonstrate federation. Not a real measurement.',
     environment: DARWIN,
   };
-  const value = signObservation(b.id, observation, privateKey);
-  return {
+  const full = {
     ...b,
     evidence: [
       {
@@ -78,10 +77,17 @@ const findings = base.map((b) => {
       manual: true,
     },
     provenance: 'firsthand' as const,
-    observations: [{ ...observation, signature: { algorithm: 'ed25519' as const, keyId: record.keyId, value } }],
     predictions: [],
     status: 'active' as const,
     createdAt: '2026-08-28T10:00:00Z',
+  };
+  // Signed against the body it describes, so amending that body breaks it.
+  const value = signObservation(b.id, observation, privateKey, findingBodyHash(full));
+  return {
+    ...full,
+    observations: [
+      { ...observation, signature: { algorithm: 'ed25519' as const, keyId: record.keyId, value } },
+    ],
   };
 });
 
