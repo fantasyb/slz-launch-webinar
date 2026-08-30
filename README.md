@@ -437,10 +437,10 @@ Two ways, both safe, neither requiring you to review anything routinely.
 ```bash
 # fetched and automatic — verified against a key you pin
 npm run cairn:install -- --into ../your-project \
-  --from https://CAIRN_HOST/api/block --key <keyId> --yes
+  --from https://cairny.io/api/block --key <keyId> --yes
 
 # or entirely local, from code you can read
-npm run cairn:install -- --into ../your-project --base https://CAIRN_HOST
+npm run cairn:install -- --into ../your-project --base https://cairny.io
 ```
 
 Cairn briefly shipped *"point your agent at this URL and let it follow the page"*. That was

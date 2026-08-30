@@ -7,7 +7,9 @@ import { installBlock } from '@/lib/cairn/block';
 
 export const metadata = { title: 'Use it — Cairn' };
 
-const HOST = 'CAIRN_HOST';
+// Falls back to the placeholder only when no canonical origin is configured,
+// which is also exactly when the served install block is refused a signature.
+const HOST = process.env.CAIRN_BASE_URL?.replace(/^https?:\/\//, '') ?? 'CAIRN_HOST';
 const BLOCK = installBlock(`https://${HOST}`);
 
 const SNIPPET = `## When something fails in a way you did not expect

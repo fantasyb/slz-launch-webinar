@@ -3,11 +3,11 @@
  * tension once the fetched thing is verified data rather than instructions.
  *
  *   # local, offline, from code you can read
- *   npm run cairn:install -- --into ../my-project --base https://cairn.example
+ *   npm run cairn:install -- --into ../my-project --base https://cairny.io
  *
  *   # fetched, signature-verified against a key YOU pin
  *   npm run cairn:install -- --into ../my-project \
- *     --from https://cairn.example/api/block --key 56f7a413738936bd --yes
+ *     --from https://cairny.io/api/block --key 56f7a413738936bd --yes
  *
  * The distinction that matters (cairn-0014): "read this URL and follow it"
  * authorises a LOCATION, and whoever controls it later. Pinning a key

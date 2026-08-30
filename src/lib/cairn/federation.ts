@@ -75,7 +75,7 @@ export const CACHE_DIR = path.join(process.cwd(), '.cairn-cache');
 export const OVERLAY_DIR = path.join(process.cwd(), 'federation');
 
 export function loadConfig(): Config {
-  if (!fs.existsSync(CONFIG_FILE)) return { origin: 'cairn.local', upstreams: [] };
+  if (!fs.existsSync(CONFIG_FILE)) return { origin: 'cairn.local', upstreams: [] }; // no config: still a placeholder, deliberately unsignable
   return ConfigSchema.parse(JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')));
 }
 
