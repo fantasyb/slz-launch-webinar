@@ -33,7 +33,7 @@ export default function CalibrationPage() {
     .filter((r): r is { f: (typeof corpus)[number]; s: number } => r.s !== null)
     .sort((a, b) => b.s - a.s);
 
-  const worseThanGuessing = overall.edgeOverUninformed < 0;
+  const worseThanGuessing = (overall.edgeOverUninformed ?? 0) < 0;
 
   return (
     <div className="mx-auto max-w-3xl px-5 py-12">
@@ -90,9 +90,15 @@ export default function CalibrationPage() {
         <div className="grid grid-cols-2 gap-x-6 gap-y-5 sm:grid-cols-4">
           {[
             { k: 'predictions', v: String(overall.n) },
-            { k: 'mean confidence', v: `${Math.round(overall.meanConfidence * 100)}%` },
-            { k: 'accuracy', v: `${Math.round(overall.accuracy * 100)}%` },
-            { k: 'brier score', v: overall.brier.toFixed(3) },
+            {
+              k: 'mean confidence',
+              v: overall.meanConfidence === null ? '—' : `${Math.round(overall.meanConfidence * 100)}%`,
+            },
+            {
+              k: 'accuracy',
+              v: overall.accuracy === null ? '—' : `${Math.round(overall.accuracy * 100)}%`,
+            },
+            { k: 'brier score', v: overall.brier === null ? '—' : overall.brier.toFixed(3) },
           ].map(({ k, v }) => (
             <div key={k}>
               <div className="font-claim text-2xl text-ink">{v}</div>
@@ -100,30 +106,38 @@ export default function CalibrationPage() {
             </div>
           ))}
         </div>
-        <p
-          className={cn(
-            'mt-5 border-t border-rule pt-4 text-[13px] leading-relaxed',
-            worseThanGuessing ? 'text-rust' : 'text-moss',
-          )}
-        >
-          {worseThanGuessing ? (
-            <>
-              <strong className="font-semibold">
-                Worse than declining to guess.
-              </strong>{' '}
-              Always predicting 50% scores {UNINFORMED_BRIER}; these predictions score{' '}
-              {overall.brier.toFixed(3)}, an edge of{' '}
-              {overall.edgeOverUninformed.toFixed(3)}. Stated confidence averaged{' '}
-              {Math.round(overall.meanConfidence * 100)}% while accuracy was{' '}
-              {Math.round(overall.accuracy * 100)}%. That gap is the asset.
-            </>
-          ) : (
-            <>
-              Beating the uninformed baseline of {UNINFORMED_BRIER} by{' '}
-              {overall.edgeOverUninformed.toFixed(3)}.
-            </>
-          )}
-        </p>
+        {overall.n === 0 ? (
+          <p className="mt-5 border-t border-rule pt-4 text-[13px] leading-relaxed text-ink-soft">
+            <strong className="font-semibold text-ink">No scored forecasts.</strong> Every
+            prediction recorded so far was made by the finding&rsquo;s own author, and a
+            self-prediction is excluded because the author already knew the answer. There is
+            nothing here to report until an independent party forecasts &mdash; which is the
+            correct state, not a gap in the page.
+          </p>
+        ) : (
+          <p
+            className={cn(
+              'mt-5 border-t border-rule pt-4 text-[13px] leading-relaxed',
+              worseThanGuessing ? 'text-rust' : 'text-moss',
+            )}
+          >
+            {worseThanGuessing ? (
+              <>
+                <strong className="font-semibold">Worse than declining to guess.</strong>{' '}
+                Always predicting 50% scores {UNINFORMED_BRIER}; these score{' '}
+                {overall.brier!.toFixed(3)}, an edge of{' '}
+                {overall.edgeOverUninformed!.toFixed(3)}. Stated confidence averaged{' '}
+                {Math.round(overall.meanConfidence! * 100)}% while accuracy was{' '}
+                {Math.round(overall.accuracy! * 100)}%. That gap is the asset.
+              </>
+            ) : (
+              <>
+                Beating the uninformed baseline of {UNINFORMED_BRIER} by{' '}
+                {overall.edgeOverUninformed!.toFixed(3)}.
+              </>
+            )}
+          </p>
+        )}
       </div>
 
       <p className="mt-4 rounded-md border border-ochre/25 bg-ochre-soft p-3 text-[12px] leading-relaxed text-ink-soft">
@@ -191,18 +205,22 @@ export default function CalibrationPage() {
                   <td className="py-2.5 pr-4 font-mono text-[12px]">{m.by}</td>
                   <td className="py-2.5 pr-4 font-mono text-ink-soft">{m.n}</td>
                   <td className="py-2.5 pr-4 font-mono text-ink-soft">
-                    {Math.round(m.meanConfidence * 100)}%
+                    {m.meanConfidence === null ? '—' : `${Math.round(m.meanConfidence * 100)}%`}
                   </td>
                   <td className="py-2.5 pr-4 font-mono text-ink-soft">
-                    {Math.round(m.accuracy * 100)}%
+                    {m.accuracy === null ? '—' : `${Math.round(m.accuracy * 100)}%`}
                   </td>
                   <td
                     className={cn(
                       'py-2.5 font-mono',
-                      m.brier > UNINFORMED_BRIER ? 'text-rust' : 'text-moss',
+                      m.brier === null ? 'text-ink-faint' : m.brier > UNINFORMED_BRIER ? 'text-rust' : 'text-moss',
                     )}
+                    title={m.abandoned ? `${m.abandoned} sealed forecast(s) never revealed` : undefined}
                   >
-                    {m.brier.toFixed(3)}
+                    {m.brier === null ? 'withheld all' : m.brier.toFixed(3)}
+                    {m.abandoned > 0 && (
+                      <span className="ml-1.5 text-rust">+{m.abandoned} abandoned</span>
+                    )}
                   </td>
                 </tr>
               ))}

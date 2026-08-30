@@ -32,7 +32,8 @@ export function latestObservation(f: Finding): Observation {
 /** Distinct observers who confirmed. Repeat checks by one agent count once. */
 export function confirmationCount(f: Finding): number {
   const confirmers = new Set(
-    f.observations.filter((o) => o.verdict === 'confirmed').map((o) => o.by),
+    f.observations.filter((o) => o.verdict === 'confirmed').map(partyOf)
+      .filter((p): p is string => p !== null),
   );
   return confirmers.size;
 }
@@ -159,13 +160,45 @@ export type Standing = 'fresh' | 'aging' | 'stale' | 'contested' | 'retired';
  * is asking — "do people who tried this disagree?" — is about parties, not
  * about how many times one party spoke.
  */
+/**
+ * One identifier namespace for a party.
+ *
+ * Mixing a signed observation's keyId with an unsigned one's free-text label
+ * meant the same party counted as two: alice signs one confirmation and adds
+ * one unsigned, and the two-to-one rule clears her own refutation. Resolving a
+ * key to its published label puts both on the same footing, and an unsigned
+ * observation is identified only by a string anyone may claim — which is why
+ * it is worth less below.
+ */
+function partyOf(o: Finding['observations'][number]): string | null {
+  // An unsigned observation is attributable to nobody: `by` is a free string
+  // anyone may claim, so it cannot establish that a distinct party spoke.
+  // Namespacing signed and unsigned separately was not enough — one party
+  // signing once and adding one unsigned line still counted as two, which is
+  // the two-line rescue this rule exists to prevent.
+  //
+  // The exclusion is symmetric on purpose. If unsigned refutations counted,
+  // anyone could contest any true finding for free, which is the same defect
+  // pointed the other way. Unsigned observations are still recorded, still
+  // displayed, and still count toward freshness; they just cannot move a
+  // disagreement, because moving one is a claim about who you are.
+  return o.signature ? `key:${o.signature.keyId}` : null;
+}
+
+function distinctParties(observations: Finding['observations']): number {
+  return new Set(observations.map(partyOf).filter((p): p is string => p !== null)).size;
+}
+
 export function disagreement(f: Finding): { confirmers: number; refuters: number } {
   const refutations = f.observations.filter((o) => o.verdict === 'refuted');
-  const refuters = new Set(refutations.map((o) => o.signature?.keyId ?? o.by));
+  const refuters = new Set(
+    refutations.map(partyOf).filter((p): p is string => p !== null),
+  );
   if (refuters.size === 0) {
     return {
       confirmers: new Set(
-        f.observations.filter((o) => o.verdict === 'confirmed').map((o) => o.signature?.keyId ?? o.by),
+        f.observations.filter((o) => o.verdict === 'confirmed').map(partyOf)
+          .filter((p): p is string => p !== null),
       ).size,
       refuters: 0,
     };
@@ -182,7 +215,8 @@ export function disagreement(f: Finding): { confirmers: number; refuters: number
   const confirmers = new Set(
     f.observations
       .filter((o) => o.verdict === 'confirmed' && new Date(o.at).getTime() > latestRefutation)
-      .map((o) => o.signature?.keyId ?? o.by),
+      .map(partyOf)
+      .filter((p): p is string => p !== null),
   );
   return { confirmers: confirmers.size, refuters: refuters.size };
 }
@@ -219,11 +253,18 @@ export function standing(f: Finding, now: Date = new Date()): Standing {
  */
 export function decayUrgency(f: Finding, now: Date = new Date()): number {
   if (f.status === 'retired') return 0;
-  const c = confidence(f, now);
-  const uncertainty = 1 - Math.abs(c - 0.5) * 2;
+
+  // A contested finding is the single most informative thing to re-check, and
+  // it used to rank last. confidence() floors a refuted finding to 0, so
+  // `1 - |0 - 0.5| * 2` was 0 and every factor after it — including the 1.5
+  // contested boost — multiplied into nothing. The boost could never fire,
+  // because the only state that set it also zeroed everything it multiplied.
+  const contestedNow = standing(f, now) === 'contested';
+  const c = contestedNow ? freshness(f, now) * 0.5 : confidence(f, now);
+  const uncertainty = contestedNow ? 1 : 1 - Math.abs(c - 0.5) * 2;
   const stakes = { minutes: 0.4, hours: 0.8, days: 1 }[f.cost];
   const effort = f.check.manual ? 0.35 : 1;
-  const contested = latestObservation(f).verdict === 'refuted' ? 1.5 : 1;
+  const contested = contestedNow ? 1.5 : 1;
   // A universal claim standing on one environment is the cheapest place to
   // buy real information: a second environment either earns the scope or
   // exposes it as local.

@@ -1,5 +1,5 @@
 import type { Finding } from './schema';
-import { isScorable, actualValue, brier, type Resolved } from './calibration';
+import { isScorableIn, actualValue, brier, type Resolved } from './calibration';
 
 /**
  * Do rival models share blind spots?
@@ -38,7 +38,18 @@ const CONFIDENT = 0.7;
 
 export function forecastsByFinding(findings: Finding[], minPanel = 2): FindingForecasts[] {
   return findings.flatMap((f) => {
-    const scored = f.predictions.filter((p): p is Resolved => isScorable(f.id, p));
+    // isScorableIn, not isScorable: the finding's own author knew the answer,
+    // scores a perfect Brier, becomes bestMember, and biases ensembleAdvantage
+    // negative — reporting "the ensemble loses to the best single model" when
+    // the best single model was reading the answer key.
+    let scored = f.predictions.filter((p): p is Resolved => isScorableIn(f, p));
+    // One predictor may not constitute a panel by predicting twice.
+    const seen = new Set<string>();
+    scored = scored.filter((p) => (seen.has(p.by) ? false : (seen.add(p.by), true)));
+    // Every prediction on a finding must agree about what happened; if they do
+    // not, the row's `actual` would be whichever record sorted first.
+    const outcomes = new Set(scored.map((p) => p.outcome));
+    if (outcomes.size > 1) return [];
     if (scored.length < minPanel) return [];
 
     const actual = actualValue(scored[0]);
@@ -85,8 +96,16 @@ export function pairwiseCorrelation(
     da += (x - ma) ** 2;
     db += (y - mb) ** 2;
   }
-  const den = Math.sqrt(da * db);
-  return den === 0 ? { r: 0, n } : { r: num / den, n };
+  // A constant error series has zero variance and no correlation is defined.
+  // Testing `den === 0` was not enough: the mean of three copies of 0.1 is
+  // 0.10000000000000002, so the deviations are ~1e-17 rather than 0, the guard
+  // is skipped, and the ratio of two residues is exactly +/-1 with a
+  // noise-determined sign. Constant series are ordinary here — error is
+  // prior minus actual, and actual is 0 or 1 — so the published verdict was
+  // computable from which side of an ulp two rounding errors landed.
+  const EPSILON = 1e-12;
+  if (da < EPSILON || db < EPSILON) return null;
+  return { r: num / Math.sqrt(da * db), n };
 }
 
 export interface PanelAnalysis {
@@ -115,8 +134,10 @@ export function analysePanel(findings: Finding[]): PanelAnalysis {
   }
 
   const memberBrier = panelists.map((by) => {
-    const mine = findings.flatMap((f) =>
-      f.predictions.filter((p): p is Resolved => isScorable(f.id, p) && p.by === by),
+    // Score members on the same findings the ensemble is scored on, or the
+    // comparison is between averages over different supports.
+    const mine = rows.flatMap((r) =>
+      r.finding.predictions.filter((p): p is Resolved => isScorableIn(r.finding, p) && p.by === by),
     );
     return { by, n: mine.length, brier: mine.reduce((a, p) => a + brier(p), 0) / (mine.length || 1) };
   });
@@ -124,7 +145,11 @@ export function analysePanel(findings: Finding[]): PanelAnalysis {
   const ensembleBrier = rows.length
     ? rows.reduce((a, r) => a + r.ensembleBrier, 0) / rows.length
     : null;
-  const bestMember = memberBrier.length ? Math.min(...memberBrier.map((m) => m.brier)) : null;
+  // A member needs enough forecasts to be a credible comparator; otherwise one
+  // lucky n=1 row becomes the benchmark the ensemble is judged against.
+  const MIN_MEMBER_N = 5;
+  const eligible = memberBrier.filter((m) => m.n >= MIN_MEMBER_N);
+  const bestMember = eligible.length ? Math.min(...eligible.map((m) => m.brier)) : null;
   const meanCorrelation = pairs.length
     ? pairs.reduce((a, p) => a + p.r, 0) / pairs.length
     : null;

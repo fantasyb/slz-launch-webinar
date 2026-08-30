@@ -172,7 +172,8 @@ export const CommitmentSchema = z.object({
   /** H(version|findingId|by|prior|reasoning|anchor|nonce). See commitment.ts. */
   hash: z.string().regex(/^[0-9a-f]{64}$/),
   /** Repo HEAD sha when the seal was created. Bounds the interval from below. */
-  anchor: z.string().min(7),
+  /** A git sha. Pattern-constrained because this value reaches git tooling. */
+  anchor: z.string().regex(/^[0-9a-f]{7,40}$/),
 });
 export type Commitment = z.infer<typeof CommitmentSchema>;
 
@@ -202,7 +203,7 @@ export const PredictionSchema = z
 
     /** Revealed phase. Absent while sealed. */
     revealedAt: z.string().datetime().optional(),
-    nonce: z.string().optional(),
+    nonce: z.string().regex(/^[A-Za-z0-9_-]{16,128}$/).optional(),
     priorConfirmed: z.number().min(0).max(1).optional(),
     reasoning: z.string().max(4000).optional(),
 

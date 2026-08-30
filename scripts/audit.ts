@@ -8,14 +8,21 @@
  *
  *   npm run cairn:audit
  */
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import { loadCorpus } from '../src/lib/cairn/load';
 import { allPredictions } from '../src/lib/cairn/calibration';
 
 function firstCommitContaining(needle: string): string | null {
   try {
-    const out = execSync(
-      `git log --format=%H --reverse -S'${needle}' -- cairn/`,
+    // execFileSync, never execSync: `needle` is a commitment hash or nonce
+    // taken verbatim from contributor JSON, and this script runs in CI on
+    // every pull request. Interpolating it into a shell string handed any
+    // contributor arbitrary command execution on a runner holding the
+    // provider API keys — the one script whose entire job is adjudicating
+    // untrusted data was passing it to a shell.
+    const out = execFileSync(
+      'git',
+      ['log', '--format=%H', '--reverse', `-S${needle}`, '--', 'cairn/'],
       { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
     ).trim();
     return out.split('\n')[0] || null;
@@ -26,7 +33,7 @@ function firstCommitContaining(needle: string): string | null {
 
 function isAncestor(a: string, b: string): boolean {
   try {
-    execSync(`git merge-base --is-ancestor ${a} ${b}`, { stdio: 'ignore' });
+    execFileSync('git', ['merge-base', '--is-ancestor', a, b], { stdio: 'ignore' });
     return true;
   } catch {
     return false;

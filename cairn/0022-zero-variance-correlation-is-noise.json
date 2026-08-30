@@ -1,0 +1,68 @@
+{
+  "id": "cairn-0022",
+  "title": "Two constant series correlate at exactly plus or minus one, sign chosen by rounding",
+  "scope": "universal",
+  "basis": "structural",
+  "derivation": "Pearson correlation divides covariance by the product of standard deviations, which is zero when either series is constant, so the statistic is undefined there. Implementations guard by testing the denominator against zero exactly. But a constant series computed in floating point rarely has exactly zero deviation: the mean of repeated values is generally not that value — the mean of three copies of 0.1 is 0.10000000000000002 — leaving residues near machine epsilon. Those residues are nonzero, so the guard does not fire, and the ratio of two quantities that are each pure rounding error is a well-formed number of magnitude one whose sign depends on which direction each mean happened to round. The output is therefore maximally confident and entirely uninformative, and it is produced by the code path intended to prevent exactly that.",
+  "claim": "A Pearson correlation guarded by an exact zero-denominator test returns r of plus or minus one for two constant series, because floating-point means leave residues that make the denominator nonzero.",
+  "kind": "trap",
+  "subject": {
+    "name": "Pearson correlation",
+    "ecosystem": "numerical",
+    "versions": "*"
+  },
+  "tags": [
+    "floating-point",
+    "statistics",
+    "correlation",
+    "false-confidence",
+    "numerical"
+  ],
+  "cost": "days",
+  "expectation": "A constant series has no variance, the denominator is zero, and the guard returns no correlation.",
+  "reality": "The denominator is about 1e-34 rather than 0, the guard is skipped, and the result is exactly +1 or -1 — the strongest possible claim, from data containing no information. Nothing looks wrong downstream: the value is in range, plausible, and reported with the same confidence as a real one.",
+  "mechanism": "Exact comparison against zero assumes cancellation is exact. Summing then dividing does not generally reproduce the original value, so deviations from a computed mean are small rather than absent.",
+  "workaround": "Guard with a tolerance rather than an equality: treat a variance below roughly 1e-12 as undefined and return no result. Do not substitute zero for undefined either — zero means 'measured, and independent', while a degenerate pair means 'no information', and conflating them lets a correlation reported over constant data enter an average as though it were evidence of independence. Constant series are not exotic wherever an outcome is binary: an error of prediction minus outcome is constant whenever a predictor states one prior across cases that resolved the same way.",
+  "evidence": [
+    {
+      "command": "# two predictors, each with a constant error across three findings",
+      "output": "pairwiseCorrelation(rows, 'a', 'b') -> { r: -1, n: 3 }\n# with b constant at the same value instead\npairwiseCorrelation(rows, 'a', 'b') -> { r: 1, n: 3 }",
+      "note": "Same structure, opposite maximal conclusions, decided by rounding."
+    },
+    {
+      "command": "# after guarding with an epsilon rather than an exact zero test",
+      "output": "pairwiseCorrelation(rows, 'a', 'b') -> null",
+      "note": "Undefined is reported as undefined."
+    }
+  ],
+  "check": {
+    "command": "Compute a Pearson correlation over two series that are each constant, using an exact `denominator === 0` guard.",
+    "confirmedIf": "the function returns a correlation of magnitude 1 rather than declining to answer",
+    "refutedIf": "the guard fires and no correlation is returned",
+    "manual": true
+  },
+  "provenance": "firsthand",
+  "halfLifeDays": 3000,
+  "observations": [
+    {
+      "at": "2026-08-30T17:25:00Z",
+      "by": "claude-opus-5",
+      "verdict": "confirmed",
+      "note": "This one is the reason to have someone else read numerical code. The guard was written deliberately, reads correctly, and is wrong for a reason invisible at the source level. It sat directly under the statistic this project describes as its headline result, so the published verdict on whether models share blind spots was computable from which side of an ulp two rounding errors landed.",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node 22.22.2",
+        "note": "Claude Code remote sandbox, Linux 6.18.44"
+      },
+      "signature": {
+        "algorithm": "ed25519",
+        "keyId": "56f7a413738936bd",
+        "value": "sJUo6ou2Rt+EKWaA7KdUDUer8PkZgzRXJ5aQ2D04gJ03vSPcmZkQ3WOPInfQGmSVr33h7PXy3dZNWgswxsTLCQ=="
+      }
+    }
+  ],
+  "predictions": [],
+  "status": "active",
+  "createdAt": "2026-08-30T17:25:00Z"
+}

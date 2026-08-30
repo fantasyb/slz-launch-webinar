@@ -145,10 +145,11 @@ export function surprise(f: Finding): number | null {
 export interface ModelScore {
   by: string;
   n: number;
-  brier: number;
+  /** null when this predictor has revealed nothing — never 0, which reads as perfect. */
+  brier: number | null;
   /** Mean stated confidence, after orienting each prediction toward its own claim. */
-  meanConfidence: number;
-  accuracy: number;
+  meanConfidence: number | null;
+  accuracy: number | null;
   /**
    * Forecasts this predictor sealed and never revealed.
    *
@@ -184,12 +185,25 @@ export function scoreByModel(findings: Finding[]): ModelScore[] {
   }
   // Seals this predictor published and never revealed, counted from the whole
   // corpus rather than from the scorable set — that is the point.
+  // A seal is abandoned only once the finding it forecasts has been settled.
+  // Counting every unrevealed seal punished the honest protocol: sealing is
+  // step one, so a predictor following the instructions had their worst-case
+  // score jump toward 1 and their rank drop until they revealed.
+  const settled = new Set(
+    findings.filter((f) => f.observations.some((o) => o.verdict !== 'inconclusive')).map((f) => f.id),
+  );
   const abandonedBy = new Map<string, number>();
-  for (const p of findings.flatMap((f) => f.predictions)) {
-    if (p.commitment && p.priorConfirmed === undefined) {
-      abandonedBy.set(p.by, (abandonedBy.get(p.by) ?? 0) + 1);
+  for (const f of findings) {
+    if (!settled.has(f.id)) continue;
+    for (const p of f.predictions) {
+      if (p.commitment && p.priorConfirmed === undefined) {
+        abandonedBy.set(p.by, (abandonedBy.get(p.by) ?? 0) + 1);
+      }
     }
   }
+  // A predictor whose forecasts are ALL abandoned had no row at all, so the
+  // worst offender was the one the report could not see.
+  for (const by of abandonedBy.keys()) if (!groups.has(by)) groups.set(by, []);
 
   return [...groups.entries()]
     .map(([by, ps]) => {
@@ -198,12 +212,14 @@ export function scoreByModel(findings: Finding[]): ModelScore[] {
       return {
         by,
         n: ps.length,
-        brier: sum / ps.length,
+        brier: ps.length ? sum / ps.length : null,
         // How confident they were in whichever direction they leaned.
-        meanConfidence:
-          ps.reduce((a, p) => a + Math.max(p.priorConfirmed, 1 - p.priorConfirmed), 0) / ps.length,
-        accuracy:
-          ps.filter((p) => (p.priorConfirmed >= 0.5 ? 1 : 0) === actualValue(p)).length / ps.length,
+        meanConfidence: ps.length
+          ? ps.reduce((a, p) => a + Math.max(p.priorConfirmed, 1 - p.priorConfirmed), 0) / ps.length
+          : null,
+        accuracy: ps.length
+          ? ps.filter((p) => (p.priorConfirmed >= 0.5 ? 1 : 0) === actualValue(p)).length / ps.length
+          : null,
         abandoned,
         // Each withheld forecast counted as maximally wrong (squared error 1).
         brierWorstCase: (sum + abandoned) / (ps.length + abandoned),
@@ -230,10 +246,11 @@ export interface CalibrationBin {
 /** Standard reliability bins: within each, stated confidence vs observed rate. */
 export function calibrationCurve(findings: Finding[], bins = 5): CalibrationBin[] {
   const ps = scorablePredictions(findings);
-  const width = 1 / bins;
   return Array.from({ length: bins }, (_, i) => {
-    const lower = i * width;
-    const upper = lower + width;
+    // i / bins, not i * (1 / bins): 3 * (1/5) is 0.6000000000000001, so a
+    // stated 0.6 failed `>= lower` and was charged to the bin below.
+    const lower = i / bins;
+    const upper = (i + 1) / bins;
     const inBin = ps.filter(
       (p) => p.priorConfirmed >= lower && (i === bins - 1 ? p.priorConfirmed <= upper : p.priorConfirmed < upper),
     );
@@ -249,19 +266,25 @@ export function calibrationCurve(findings: Finding[], bins = 5): CalibrationBin[
 
 export interface CorpusCalibration {
   n: number;
-  brier: number;
-  accuracy: number;
-  meanConfidence: number;
+  /** All null when n is 0 — never 0, which is the best achievable score. */
+  brier: number | null;
+  accuracy: number | null;
+  meanConfidence: number | null;
   /** Positive means better than refusing to guess; negative means worse. */
-  edgeOverUninformed: number;
+  edgeOverUninformed: number | null;
   /** All scored predictions are sealed by construction; kept for the API shape. */
-  sealedShare: number;
+  sealedShare: number | null;
 }
 
 export function corpusCalibration(findings: Finding[]): CorpusCalibration {
   const ps = scorablePredictions(findings);
   if (ps.length === 0) {
-    return { n: 0, brier: 0, accuracy: 0, meanConfidence: 0, edgeOverUninformed: 0, sealedShare: 0 };
+    // null, not 0: zero is the best possible Brier, so an empty corpus
+    // rendered as perfectly calibrated to any consumer not checking n.
+    return {
+      n: 0, brier: null, accuracy: null, meanConfidence: null,
+      edgeOverUninformed: null, sealedShare: null,
+    };
   }
   const b = ps.reduce((a, p) => a + brier(p), 0) / ps.length;
   return {
