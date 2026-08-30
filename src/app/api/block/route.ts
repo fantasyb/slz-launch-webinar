@@ -30,11 +30,19 @@ export async function GET(request: Request) {
   }
 
   const signer = [...loadKeys().values()].find((k) => !k.origin);
+
+  // On a real deployment .cairn-secrets/ does not exist — it is gitignored, as
+  // a private key must be. So the key comes from the environment first, and
+  // the local file is only a development convenience. Without this the signed
+  // install path is inoperative everywhere it actually matters.
   const keyFile = signer
     ? path.join(process.cwd(), '.cairn-secrets', `${signer.keyId}.key`)
     : null;
+  const privateKey =
+    process.env.CAIRN_SIGNING_KEY ??
+    (keyFile && fs.existsSync(keyFile) ? fs.readFileSync(keyFile, 'utf8') : null);
 
-  if (!signer || !keyFile || !fs.existsSync(keyFile)) {
+  if (!signer || !privateKey) {
     // Unsigned is still served, and says so, so a verifying client fails closed
     // rather than silently accepting an unauthenticated block.
     return NextResponse.json({
@@ -44,7 +52,9 @@ export async function GET(request: Request) {
       signature: null,
       warning:
         'This host has no signing key available, so the block is unauthenticated. ' +
-        'A client that pinned a key must refuse it. Paste the block by hand instead.',
+        'A client that pinned a key must refuse it, and cairn:install does. Set ' +
+        'CAIRN_SIGNING_KEY to the PEM private key in the deployment environment ' +
+        'to enable verified installs. Until then, paste the block by hand.',
     });
   }
 
@@ -55,7 +65,7 @@ export async function GET(request: Request) {
     signature: {
       algorithm: 'ed25519',
       keyId: signer.keyId,
-      value: signBlock(base, block, fs.readFileSync(keyFile, 'utf8')),
+      value: signBlock(base, block, privateKey),
     },
     verify:
       'Recompute over JSON.stringify(["cairn-block-v1", base, block]) with the ed25519 ' +

