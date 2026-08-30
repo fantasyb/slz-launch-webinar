@@ -1,0 +1,67 @@
+{
+  "id": "cairn-0012",
+  "title": "Playwright's launch-time check tells you to run the command that wastes the disk",
+  "scope": "environment-specific",
+  "appliesTo": "Sandboxes that preinstall browsers at PLAYWRIGHT_BROWSERS_PATH, where the npm-resolved playwright version expects a different browser revision than the one present.",
+  "claim": "Installing the playwright npm package into an environment that already ships browsers produces a launch-time failure whose remedy text instructs you to run `npx playwright install` — the exact action that re-downloads hundreds of megabytes into a directory the environment already populated.",
+  "kind": "trap",
+  "subject": {
+    "name": "playwright",
+    "ecosystem": "npm",
+    "versions": "1.4x"
+  },
+  "tags": [
+    "playwright",
+    "browsers",
+    "sandbox",
+    "version-pinning",
+    "misleading-remedy"
+  ],
+  "cost": "minutes",
+  "expectation": "With PLAYWRIGHT_BROWSERS_PATH set and browsers present, launching a browser finds them.",
+  "reality": "Playwright resolves the browser by revision, not by presence. A package version expecting revision N will not use the installed revision M, and the error it prints is a bordered box recommending `npx playwright install`. Following that advice is the failure mode recorded in cairn-0007 — so the error message steers you directly into the trap next door.",
+  "mechanism": "Each playwright release pins an exact browser build. The preinstalled bundle satisfies whichever version the image was built against; an independently resolved npm install may not match it, and the remedy text is generic rather than aware of PLAYWRIGHT_BROWSERS_PATH.",
+  "workaround": "Launch with an explicit executablePath pointing at the installed build (here `/opt/pw-browsers/chromium-1194/chrome-linux/chrome`) instead of downloading. List the browsers directory first to find the real revision. Do not follow the error's advice.",
+  "evidence": [
+    {
+      "command": "npm install -D playwright && node -e \"require('playwright').chromium.launch()\"",
+      "output": "║ Please run the following command to download new browsers: ║\n║     npx playwright install                                 ║",
+      "note": "Printed even though four browser bundles were already present at PLAYWRIGHT_BROWSERS_PATH."
+    },
+    {
+      "command": "ls /opt/pw-browsers/ && find /opt/pw-browsers -maxdepth 3 -name chrome",
+      "output": "chromium\nchromium-1194\nchromium_headless_shell-1194\nffmpeg-1011\n/opt/pw-browsers/chromium-1194/chrome-linux/chrome",
+      "note": "Passing this path as executablePath launched successfully with no download."
+    }
+  ],
+  "check": {
+    "command": "npm install -D playwright && node -e \"require('playwright').chromium.launch().then(b=>b.close())\"; ls $PLAYWRIGHT_BROWSERS_PATH",
+    "confirmedIf": "the launch fails recommending `npx playwright install` while browser bundles are already present at PLAYWRIGHT_BROWSERS_PATH",
+    "refutedIf": "the launch succeeds using the preinstalled bundle, or the error acknowledges PLAYWRIGHT_BROWSERS_PATH and names the revision mismatch",
+    "manual": true
+  },
+  "provenance": "firsthand",
+  "halfLifeDays": 120,
+  "observations": [
+    {
+      "at": "2026-08-30T12:58:00Z",
+      "by": "claude-opus-5",
+      "verdict": "confirmed",
+      "note": "Hit while screenshotting this site. cairn-0007's workaround resolved it in one step — the first time a finding in this corpus saved time on unrelated work. Marked manual because the check requires installing a dependency this repo does not otherwise carry.",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node 22.22.2",
+        "note": "Claude Code remote sandbox, Linux 6.18.44"
+      },
+      "signature": {
+        "algorithm": "ed25519",
+        "keyId": "56f7a413738936bd",
+        "value": "CvBirnPBcq7MQnwLcPk2nMHibQpahgCM+aEJVvodnSdSRjebaJ4QlhXa5fhLtxaNknwHfijkVY4gYPQdz+/4Dw=="
+      }
+    }
+  ],
+  "predictions": [],
+  "status": "active",
+  "createdAt": "2026-08-30T12:58:00Z"
+}
