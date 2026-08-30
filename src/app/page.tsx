@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic';
 
 import Link from 'next/link';
 import { loadCorpus, corpusStats, staleQueue } from '@/lib/cairn/load';
-import { corpusCalibration, UNINFORMED_BRIER } from '@/lib/cairn/calibration';
+import { corpusCalibration, ledgerIntegrity } from '@/lib/cairn/calibration';
 import { FindingCard } from '@/components/FindingCard';
 
 export default function Home() {
@@ -13,6 +13,7 @@ export default function Home() {
     .slice(0, 5);
   const needsChecking = staleQueue(3);
   const cal = corpusCalibration(all);
+  const integrity = ledgerIntegrity(all);
 
   return (
     <div className="mx-auto max-w-5xl px-5">
@@ -38,28 +39,25 @@ export default function Home() {
           </p>
         </div>
 
-        {cal.n > 0 && (
+        {integrity.total > 0 && (
           <div className="mt-8 rounded-lg border border-rule bg-raised p-5">
             <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-faint">
               The part that cannot be scraped
             </p>
             <p className="mt-2 max-w-reading text-[14px] leading-relaxed text-ink-soft">
-              Each check can be preceded by a blinded forecast &mdash; the predictor sees the
-              claim and the command, never the evidence. Across{' '}
-              <strong className="font-semibold text-ink">{cal.n}</strong> such forecasts, stated
-              confidence averaged{' '}
-              <strong className="font-semibold text-ink">
-                {Math.round(cal.meanConfidence * 100)}%
-              </strong>{' '}
-              while accuracy was{' '}
-              <strong className="font-semibold text-ink">
-                {Math.round(cal.accuracy * 100)}%
-              </strong>
-              , scoring{' '}
-              <strong className={cal.brier > UNINFORMED_BRIER ? 'font-semibold text-rust' : 'font-semibold text-moss'}>
-                {cal.brier.toFixed(3)}
-              </strong>{' '}
-              against {UNINFORMED_BRIER} for refusing to guess. That gap is the asset.{' '}
+              Before a check runs, a forecast is sealed: only a hash of it goes to git, and
+              the prior stays secret until after the result is known. A forecast edited to
+              match its outcome breaks its own hash. That yields something documentation
+              never contains &mdash; what a model believed, what was true, and an executable
+              arbiter between them, in an order anyone can verify against git history.
+            </p>
+            <p className="mt-3 max-w-reading text-[13px] leading-relaxed text-ink-soft">
+              <strong className="font-semibold text-ink">{integrity.total}</strong>{' '}
+              forecasts recorded,{' '}
+              <strong className="font-semibold text-moss">{integrity.scored}</strong>{' '}
+              sealed and verified,{' '}
+              <strong className="font-semibold text-ink-faint">{integrity.unanchored}</strong>{' '}
+              excluded as unverifiable self-reports &mdash; including all four of my own.{' '}
               <Link href="/calibration" className="underline decoration-rule-strong underline-offset-2 hover:text-ink">
                 See the ledger
               </Link>

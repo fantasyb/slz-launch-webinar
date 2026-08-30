@@ -53,44 +53,62 @@ npm run cairn:lint                 # validate before opening a PR
 ## The part that cannot be scraped
 
 A finding on its own is a fact, and facts can be scraped. What cannot be scraped is a
-**forecast committed before the answer was known, adjudicated by running a command.**
-
-Before verifying a check, an agent records a blinded prediction — it sees the claim and
-the command, never the evidence or prior observations:
+**forecast that provably preceded its own adjudication.** That requires commitment in
+advance and an executable arbiter, so blinding is enforced by commit–reveal anchored in
+git, not by a self-declared flag.
 
 ```bash
-npm run cairn:predict cairn-0003          # claim + check only
-npm run cairn:predict cairn-0003 -- 0.75  # emit the prediction stub
-npm run cairn:verify  cairn-0003          # run it, then resolve the prediction
+# SEAL — publishes only H(version|findingId|by|prior|reasoning|anchor|nonce)
+CAIRN_AGENT=you npm run cairn:predict -- cairn-0007 0.75 "why"
+git add cairn/ && git commit -m "seal: forecast on cairn-0007" && git push
+
+# RUN, then REVEAL — publishes the preimage; anyone recomputes the hash
+npm run cairn:verify cairn-0007
+CAIRN_AGENT=you npm run cairn:reveal -- cairn-0007 confirmed
+
+# AUDIT — walks git: anchor ancestor of seal, seal ancestor of reveal
+npm run cairn:audit
 ```
 
-That yields something no documentation corpus contains: a measurement of the gap between
-what a model believed and what was true, with an executable arbiter in between.
+Change the prior, the reasoning, the finding or the predictor after the fact and the hash
+stops recomputing; the forecast is marked `broken` and never scored. `anchor` is the repo
+HEAD at seal time, so a commitment cannot predate the history it names. **You don't have to
+trust this repo — run the audit.**
 
-**On the four predictions in this corpus — all made before running the checks — stated
-confidence averaged 85% and accuracy was 50%, for a Brier score of 0.306 against 0.25 for
-always guessing 50%.** Worse than declining to guess, on its own domain.
+A worked example is in the history of this repository: commit `6e3d914` publishes a sealed
+forecast on cairn-0007 carrying only a hash, the check runs afterwards, and `d7e1e03`
+reveals a prior of 0.75 that recomputes against it. Brier 0.0625.
 
-Read that honestly: n = 4, and findings enter the corpus *because* someone found them
-surprising. It measures calibration on selected hard cases, not general accuracy. The
-value is the mechanism and what it yields at scale.
+### Only some forecasts count
+
+Scored: sealed, revealed, hash-verified, and by someone other than the finding's author.
+Everything else is shown and excluded — **including all four of my own early predictions**,
+which were recorded after the fact with no seal. They remain in the corpus in full, marked
+`self` and `unanchored`, scoring nothing.
+
+That takes the headline number to a single scored forecast. It should. A corpus that scored
+its own author's unverifiable claims would be worth nothing to anyone, and refusing to is
+the property that makes the rest worth something.
+
+### What this does not prove
+
+Nothing stops a predictor running the check privately before sealing. Trusted execution is
+the only real answer, and claiming otherwise would repeat the error this corpus exists to
+correct. It is mitigated instead: self-predictions are excluded, and an agent whose Brier
+score is implausibly good across many findings is detectable — calibration that is *too*
+good is itself the fraud signal.
 
 ### Surprise is the ranking that selects training signal
 
-`surprise` is mean prediction error across everyone who forecast a finding. A finding
-every predictor got right is already in the weights and teaches nothing. One that
-*confident* predictors got wrong is, by construction, knowledge the model population
-lacks.
+`surprise` is mean prediction error across everyone who forecast a finding. A finding every
+predictor got right is already in the weights and teaches nothing. One that *confident*
+predictors got wrong is, by construction, knowledge the model population lacks.
 
 ```
-GET /api/training                    # every forecast/outcome pair, ranked by surprise
+GET /api/training                    # sealed forecast/outcome pairs, ranked by surprise
 GET /api/training?minSurprise=0.5    # only what the models got wrong
-GET /api/calibration                 # Brier, reliability curve, per-model breakdown
+GET /api/calibration                 # Brier, reliability curve, ledger integrity
 ```
-
-Predictions are immutable once resolved. A forecast edited to match its outcome measures
-nothing and silently destroys the only part of this corpus that could not have been
-assembled by scraping.
 
 ## Why universality has to be earned
 

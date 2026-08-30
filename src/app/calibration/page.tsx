@@ -8,6 +8,8 @@ import {
   calibrationCurve,
   surprise,
   scorablePredictions,
+  allPredictions,
+  ledgerIntegrity,
   brier,
   actualValue,
   UNINFORMED_BRIER,
@@ -22,6 +24,8 @@ export default function CalibrationPage() {
   const models = scoreByModel(corpus);
   const curve = calibrationCurve(corpus).filter((b) => b.n > 0);
   const preds = scorablePredictions(corpus).sort((a, b) => brier(b) - brier(a));
+  const integrity = ledgerIntegrity(corpus);
+  const unscored = allPredictions(corpus).filter((p) => !p.scorable);
   const ranked = corpus
     .map((f) => ({ f, s: surprise(f) }))
     .filter((r): r is { f: (typeof corpus)[number]; s: number } => r.s !== null)
@@ -43,9 +47,39 @@ export default function CalibrationPage() {
           observations.
         </p>
         <p>
-          That produces something no corpus of documentation contains &mdash; a measurement
-          of the gap between what a model believed and what was true, with an executable
-          arbiter in between.
+          Blinding is enforced by commit&ndash;reveal, not by good manners. The seal
+          publishes only a hash of the forecast to git; the prior and the reasoning stay
+          secret until after the check has run. Anyone can recompute the hash, and{' '}
+          <code className="font-mono text-[13px]">cairn:audit</code> walks git history to
+          confirm the seal commit is an ancestor of the reveal. A forecast edited to match
+          its outcome breaks its own hash and is never scored.
+        </p>
+      </div>
+
+      {/* Integrity */}
+      <div className="mt-8 rounded-lg border border-rule bg-raised p-5">
+        <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-faint">
+          Ledger integrity
+        </p>
+        <div className="mt-3 flex flex-wrap gap-x-8 gap-y-3">
+          {[
+            { k: 'predictions', v: integrity.total, tone: 'text-ink' },
+            { k: 'sealed & verified', v: integrity.verified, tone: 'text-moss' },
+            { k: 'awaiting reveal', v: integrity.sealed, tone: 'text-ochre' },
+            { k: 'unanchored', v: integrity.unanchored, tone: 'text-ink-faint' },
+            { k: 'broken seals', v: integrity.broken, tone: integrity.broken ? 'text-rust' : 'text-ink-faint' },
+            { k: 'scored', v: integrity.scored, tone: 'text-ink' },
+          ].map(({ k, v, tone }) => (
+            <div key={k}>
+              <div className={cn('font-claim text-xl', tone)}>{v}</div>
+              <div className="mt-0.5 text-[10px] uppercase tracking-wider text-ink-faint">{k}</div>
+            </div>
+          ))}
+        </div>
+        <p className="mt-4 border-t border-rule pt-3 text-[12px] leading-relaxed text-ink-soft">
+          Only sealed, revealed, hash-verified forecasts by someone other than the
+          finding&rsquo;s author are scored. Everything else is shown and excluded. A corpus
+          that scored its own author&rsquo;s unverifiable claims would be worth nothing.
         </p>
       </div>
 
@@ -92,10 +126,10 @@ export default function CalibrationPage() {
 
       <p className="mt-4 rounded-md border border-ochre/25 bg-ochre-soft p-3 text-[12px] leading-relaxed text-ink-soft">
         <strong className="font-semibold text-ochre">Read this honestly.</strong> n ={' '}
-        {overall.n}, and findings enter the corpus <em>because</em> someone found them
-        surprising. This is calibration on selected hard cases, not a model-wide accuracy
-        figure. The value is in the mechanism and what it yields at scale, not in this
-        sample.
+        {overall.n}. Findings also enter the corpus <em>because</em> someone found them
+        surprising, so this measures calibration on selected hard cases, never a model-wide
+        accuracy figure. The asset is the mechanism and what it yields at scale. This sample
+        proves only that the mechanism runs end to end.
       </p>
 
       {/* Reliability */}
@@ -214,6 +248,45 @@ export default function CalibrationPage() {
         </div>
       </section>
 
+      {/* Excluded */}
+      {unscored.length > 0 && (
+        <section className="mt-10">
+          <h2 className="font-claim text-lg">Recorded but not scored</h2>
+          <p className="mt-2 text-[14px] leading-relaxed text-ink-soft">
+            Kept in full, because a discarded prediction is a hidden one. Excluded because
+            nobody but their author can verify they preceded their outcomes.
+          </p>
+          <ul className="mt-4 space-y-2">
+            {unscored.map((p, i) => (
+              <li
+                key={i}
+                className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-dashed border-rule-strong px-3 py-2 text-[12px]"
+              >
+                <Link href={`/findings/${p.findingId}`} className="font-mono underline decoration-rule-strong underline-offset-2">
+                  {p.findingId}
+                </Link>
+                <span className="font-mono text-ink-faint">{p.by}</span>
+                {p.priorConfirmed !== undefined && (
+                  <span className="text-ink-soft">
+                    said {Math.round(p.priorConfirmed * 100)}% &rarr; {p.outcome}
+                  </span>
+                )}
+                <span className="ml-auto flex gap-1.5">
+                  <span className="rounded-full border border-rule px-2 py-0.5 font-mono text-[11px] text-ink-faint">
+                    {p.status}
+                  </span>
+                  {p.self && (
+                    <span className="rounded-full border border-rust/30 bg-rust-soft px-2 py-0.5 font-mono text-[11px] text-rust">
+                      self
+                    </span>
+                  )}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       {/* Individual predictions */}
       <section className="mt-10">
         <h2 className="font-claim text-lg">The ledger</h2>
@@ -267,7 +340,10 @@ export default function CalibrationPage() {
       <section className="mt-10 border-t border-rule pt-6">
         <h2 className="font-claim text-lg">Take the data</h2>
         <pre className="evidence mt-3 rounded-md border border-rule bg-paper p-3 font-mono text-[12px] text-ink-soft">
-{`# every forecast/outcome pair, ranked by surprise
+{`# verify the ordering yourself, against git
+npm run cairn:audit
+
+# every forecast/outcome pair, ranked by surprise
 GET /api/training
 
 # only what the models got wrong — the signal worth training on

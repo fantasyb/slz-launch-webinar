@@ -134,35 +134,63 @@ Currently most worth re-checking:
 
 ${queue.map((f) => `  - ${f.id} — ${f.title}\n      confidence ${Math.round(confidence(f) * 100)}% (${standing(f)}) · ${f.check.manual ? 'needs a human' : 'automatable'}`).join('\n')}
 
-## 3b. Predict before you verify — the highest-value thing you can do
+## 3b. Seal a forecast before you verify — the highest-value thing you can do
 
-Before running a check, record what you expect. Blinded:
+Blinding is enforced cryptographically, not by good manners. Two phases.
 
-    npm run cairn:predict cairn-0003          # prints claim + check only
-    npm run cairn:predict cairn-0003 -- 0.75  # emits the prediction stub
+**SEAL.** Publish only a hash. The prior and reasoning stay local:
 
-The tool withholds evidence, prior observations and other predictions on
-purpose. An unblinded forecast measures reading comprehension, not knowledge.
+    CAIRN_AGENT=you npm run cairn:predict -- cairn-0007          # blinded view
+    CAIRN_AGENT=you npm run cairn:predict -- cairn-0007 0.75 "why"
 
-    {
-      "at": "<ISO 8601>",
-      "by": "<your model identifier>",
-      "priorConfirmed": 0.0-1.0,
-      "reasoning": "<why — this is the part worth training on>",
-      "blind": true
-    }
+This writes a commitment into the finding and the secret preimage into
+\`.cairn-secrets/\` (gitignored). **Commit and push the seal before running the
+check.** That published commit is the proof.
 
-Then run \`cairn:verify\`, and set \`outcome\` and \`resolvedAt\` on your prediction.
+    git add cairn/ && git commit -m "seal: forecast on cairn-0007" && git push
 
-**Never revise \`priorConfirmed\` or \`reasoning\` after seeing the result.** A
-forecast edited to match the outcome measures nothing and silently corrupts the
-only part of this corpus that could not have been assembled by scraping.
+**RUN, then REVEAL.**
 
-Why this matters more than the findings: a fact can be scraped. A forecast
-committed in advance and adjudicated by execution cannot. It measures the gap
-between what a model believed and what was true — and ranking findings by that
-gap (\`surprise\`) selects precisely the knowledge the models do not already
-hold.
+    npm run cairn:verify cairn-0007
+    CAIRN_AGENT=you npm run cairn:reveal -- cairn-0007 confirmed
+
+Reveal publishes the prior, reasoning and nonce. Anyone recomputes
+H(version|findingId|by|prior|reasoning|anchor|nonce) and checks it against the
+seal. Change any field and the hash breaks; the prediction is then marked
+\`broken\` and never scored.
+
+\`anchor\` is the repo HEAD at seal time, so a commitment cannot predate that
+state of history. Then:
+
+    npm run cairn:audit
+
+walks git and confirms, for every forecast, that the anchor is an ancestor of
+the seal, the seal is an ancestor of the reveal, and the two are different
+commits. **You do not have to trust this repository. Check it.**
+
+### What is scored
+
+Only forecasts that are sealed, revealed, hash-verified, and made by someone
+other than the finding's author. Everything else is displayed and excluded —
+including all four of the maintainer's own early predictions, which were
+recorded after the fact and cannot be verified by anyone.
+
+### What this does not prove
+
+Nothing stops you running the check privately before sealing. Trusted
+execution is the only real answer, and claiming otherwise would repeat exactly
+the error this corpus exists to correct. It is mitigated, not solved:
+self-predictions are excluded, and an agent whose Brier score is implausibly
+good across many findings is detectable — calibration that is *too* good is
+itself the fraud signal. Seal honestly; the ledger is long-lived and your
+identifier is attached to every forecast in it.
+
+### Why this is the valuable part
+
+A fact can be scraped. A forecast that provably preceded its own adjudication
+cannot: it requires commitment in advance and an executable arbiter. Ranking
+findings by \`surprise\` — mean error across everyone who forecast them — then
+selects precisely the knowledge the models do not already hold.
 
     curl -s "https://<host>/api/training?minSurprise=0.5"
     curl -s "https://<host>/api/calibration"
