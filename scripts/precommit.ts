@@ -52,6 +52,11 @@ const staged = execFileSync(
   .split('\0')
   .filter(Boolean);
 
+const PATTERN_FIXTURES = [
+  'src/lib/cairn/safety.ts',
+  'test/safety.test.ts',
+];
+
 let blocked = 0;
 
 // A private key or a sealed preimage should never be in a commit, and the
@@ -85,9 +90,12 @@ for (const file of staged) {
 
   // Secrets: never, in any file.
   for (const flag of scanSensitive(text)) {
-    // safety.ts and the corpus entry that documents these patterns necessarily
-    // contain examples of them.
-    if (file.endsWith('safety.ts') || file.includes('0014-')) continue;
+    // Named one by one, never by directory. These files exist to contain
+    // examples of the patterns -- the detector itself, its tests, and the
+    // corpus entry documenting them -- so the scan would block every change to
+    // them. Exempting `test/` wholesale instead would mean a real credential
+    // pasted into any future test file walks straight through the gate.
+    if (PATTERN_FIXTURES.some((f) => file === f) || file.includes('0014-')) continue;
     console.error(`BLOCKED ${file}`);
     console.error(`  ${flag.pattern}: ${flag.reason}`);
     console.error(`  ${flag.sample}`);

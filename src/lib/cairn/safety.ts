@@ -74,7 +74,7 @@ const DANGEROUS: Array<{ re: RegExp; pattern: string; reason: string; severity: 
     severity: 'block',
   },
   {
-    re: /\b(cat|type)\b[^\n]*\b(\.env|id_rsa|credentials|\.npmrc|\.aws)\b/i,
+    re: /\b(?:cat|less|more|head|tail)\b[^\n]*(\.env\b|id_rsa\b|id_ed25519\b|\.npmrc\b|\.aws\b|credentials\.json\b)/i,
     pattern: 'reads-credentials',
     reason: 'reads a file that commonly holds secrets',
     severity: 'block',
@@ -99,29 +99,54 @@ const DANGEROUS: Array<{ re: RegExp; pattern: string; reason: string; severity: 
  * survive a reviewer who has been handed the reason to look.
  */
 export function scanExecutable(text: string): Flag[] {
+  // Normalised, like scanInjection. Only that one path normalised, so
+  // fullwidth "ｃｕｒｌ ... | ｓｈ" passed both the submission gate and the
+  // corpus lint: NFKC folds it to ASCII, and nothing on this path was
+  // applying NFKC.
+  const scanned = normaliseForScan(text);
   return DANGEROUS.flatMap((d) => {
-    const m = d.re.exec(text);
+    const m = d.re.exec(scanned);
     return m
       ? [{ severity: d.severity, pattern: d.pattern, reason: d.reason, sample: m[0].slice(0, 120) }]
       : [];
   });
 }
 
+/**
+ * Token shapes, shared by the scanner and the redactor.
+ *
+ * The two lists drifted five separate ways — different prefixes, different
+ * keyword sets, different length thresholds, one with /i and one without —
+ * and every divergence where the scanner was broader than the redactor meant
+ * a secret that was flagged and then published unchanged.
+ */
+const TOKEN_RE = /\b(?:sk|pk|ghp|gho|ghs|ghu|ghr|github_pat|xox[baprs])[-_][A-Za-z0-9_-]{16,}/;
+const CREDENTIAL_KEYWORDS = 'password|passwd|secret|api[_-]?key|authorization|token|access[_-]?key';
+/** Quoted values need no digit, so the floor is length alone; keep it low. */
+const QUOTED_MIN = 4;
+const OPAQUE_MIN = 40;
+
 /** Things that should never leave a private repository in a submission. */
 const SENSITIVE: Array<{ re: RegExp; pattern: string; reason: string }> = [
-  { re: /\b(sk|pk|ghp|gho|ghs|xox[baprs])[-_][A-Za-z0-9_-]{16,}/, pattern: 'api-token', reason: 'looks like an API token' },
+  // `ghu` and `github_pat_` were in neither list, so a fine-grained GitHub PAT
+  // passed the gate AND the cleaner: the underscores split it into runs too
+  // short for `opaque-blob` to reach, so nothing saw it at all.
+  { re: TOKEN_RE, pattern: 'api-token', reason: 'looks like an API token' },
+  // Unanchored on the END marker. A key clipped by a CI log limit was flagged
+  // here and left untouched by the redactor, which is the one direction that
+  // publishes a secret: flagged, then printed verbatim.
   { re: /-----BEGIN [A-Z ]*PRIVATE KEY-----/, pattern: 'private-key', reason: 'a private key block' },
   // Present in the redaction list but previously absent here, so the hook
   // would strip a bearer token on request yet not block a commit containing
   // one. The two lists have to agree or the gate is weaker than the cleaner.
-  { re: /\b(?:Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{12,}/, pattern: 'auth-header', reason: 'an authorization header value' },
+  { re: /\b(?:Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{12,}/i, pattern: 'auth-header', reason: 'an authorization header value' },
   { re: /\b[A-Za-z0-9._%+-]+@(?!example\.|test\.)[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/, pattern: 'email', reason: 'an email address' },
   // The value must look like a secret, not merely follow a suggestive keyword.
   // Matching on the keyword alone flags every type annotation in a typed
   // language — `apiKey: string`, `token: z.string()` — and a scanner that
   // fires on ordinary source is one contributors learn to bypass.
-  { re: /\b(?:password|passwd|secret|api[_-]?key|authorization)\s*[:=]\s*(?:(["'])[^"'\n]{8,}\1|(?=[A-Za-z0-9+/=_-]*\d)[A-Za-z0-9+/=_-]{8,})/i, pattern: 'credential-assignment', reason: 'a credential assignment' },
-  { re: /\/(?:home|Users)\/(?!user\b|runner\b)[A-Za-z0-9._-]+/, pattern: 'home-path', reason: 'a home directory naming a real user' },
+  { re: new RegExp(`\\b(?:${CREDENTIAL_KEYWORDS})\\s*[:=]\\s*(?:([\"'])[^\"'\\n]{${QUOTED_MIN},}\\1|(?=[A-Za-z0-9+/=_-]*\\d)[A-Za-z0-9+/=_-]{8,})`, 'i'), pattern: 'credential-assignment', reason: 'a credential assignment' },
+  { re: /\/(?:home|Users)\/(?!user\b|runner\b|root\b|linuxbrew\b|Shared\b)[A-Za-z0-9._-]+/i, pattern: 'home-path', reason: 'a home directory naming a real user' },
   { re: /\bhttps?:\/\/(?![^\s]*(?:example\.com|localhost))(?:[a-z0-9-]+\.)*[a-z0-9-]+\.(?:internal|corp|local|intranet|lan)\b/i, pattern: 'internal-host', reason: 'an internal hostname' },
   { re: /\b(?:10|192\.168|172\.(?:1[6-9]|2\d|3[01]))\.\d{1,3}\.\d{1,3}\b/, pattern: 'private-ip', reason: 'a private network address' },
   // Base64-looking only. Deliberately NOT pure hex: hashes, fingerprints and
@@ -129,12 +154,15 @@ const SENSITIVE: Array<{ re: RegExp; pattern: string; reason: string }> = [
   // blocked publishing this corpus's own signing fingerprint three times, and
   // a gate that fires on correct behaviour teaches people to pass --no-verify,
   // which costs more than the rule was ever worth.
-  { re: /\b(?![0-9a-fA-F]+\b)[A-Za-z0-9+/]{40,}={0,2}\b/, pattern: 'opaque-blob', reason: 'a long base64-like string that may be encoded data' },
+  { re: new RegExp(`\\b(?![0-9a-fA-F]+\\b)[A-Za-z0-9+/]{${OPAQUE_MIN},}={0,2}\\b`), pattern: 'opaque-blob', reason: 'a long base64-like string that may be encoded data' },
 ];
 
 export function scanSensitive(text: string): Flag[] {
+  // Same reason as scanExecutable: a token split by a zero-width space is
+  // still a token.
+  const scanned = normaliseForScan(text);
   return SENSITIVE.flatMap((d) => {
-    const m = d.re.exec(text);
+    const m = d.re.exec(scanned);
     return m ? [{ severity: 'warn' as const, pattern: d.pattern, reason: d.reason, sample: m[0].slice(0, 60) }] : [];
   });
 }
@@ -175,20 +203,28 @@ export interface Redaction {
  * judgement call; it does not remove it.
  */
 const REDACTIONS: Array<{ re: RegExp; pattern: string; to: string }> = [
+  // Falls back to the header alone when there is no END marker, so a
+  // truncated key is rewritten rather than flagged-and-published.
   { re: /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g, pattern: 'private-key', to: '<redacted:private-key>' },
-  { re: /\b(?:sk|pk|ghp|gho|ghs|ghu|xox[baprs])[-_][A-Za-z0-9_-]{16,}/g, pattern: 'api-token', to: '<redacted:token>' },
+  { re: /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*/g, pattern: 'private-key', to: '<redacted:private-key>' },
+  { re: new RegExp(TOKEN_RE.source, 'g'), pattern: 'api-token', to: '<redacted:token>' },
   { re: /\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{12,}/gi, pattern: 'auth-header', to: '$1 <redacted:credential>' },
-  { re: /((?:password|passwd|secret|api[_-]?key|token)\s*[:=]\s*)(?:(["'])[^"'\n]{8,}\2|(?=[A-Za-z0-9+/=_-]*\d)[A-Za-z0-9+/=_-]{8,})/gi, pattern: 'credential-assignment', to: '$1<redacted:credential>' },
+  { re: new RegExp(`((?:${CREDENTIAL_KEYWORDS})\\s*[:=]\\s*)(?:([\"'])[^\"'\\n]{${QUOTED_MIN},}\\2|(?=[A-Za-z0-9+/=_-]*\\d)[A-Za-z0-9+/=_-]{8,})`, 'gi'), pattern: 'credential-assignment', to: '$1<redacted:credential>' },
   { re: /\b[A-Za-z0-9._%+-]+@(?!example\.|test\.)[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g, pattern: 'email', to: '<redacted:email>' },
   { re: /\b(https?:\/\/)(?:[a-z0-9-]+\.)*[a-z0-9-]+(\.(?:internal|corp|local|intranet|lan))\b/gi, pattern: 'internal-host', to: '$1<redacted:host>$2' },
-  { re: /\/(home|Users)\/(?!user\b|runner\b|root\b)[A-Za-z0-9._-]+/g, pattern: 'home-path', to: '/$1/<redacted:user>' },
+  { re: /\/(home|Users)\/(?!user\b|runner\b|root\b|linuxbrew\b|Shared\b)[A-Za-z0-9._-]+/gi, pattern: 'home-path', to: '/$1/<redacted:user>' },
   { re: /\b(?:10|192\.168|172\.(?:1[6-9]|2\d|3[01]))\.\d{1,3}\.\d{1,3}\.?\d{0,3}\b/g, pattern: 'private-ip', to: '<redacted:private-ip>' },
-  { re: /\b(?![0-9a-fA-F]+\b)[A-Za-z0-9+/]{60,}={0,2}\b/g, pattern: 'opaque-blob', to: '<redacted:blob>' },
+  { re: new RegExp(`\\b(?![0-9a-fA-F]+\\b)[A-Za-z0-9+/]{${OPAQUE_MIN},}={0,2}\\b`, 'g'), pattern: 'opaque-blob', to: '<redacted:blob>' },
 ];
 
 export function redact(text: string): { text: string; redactions: Redaction[] } {
   const redactions: Redaction[] = [];
-  let out = text;
+  // Invisible characters are stripped first. A zero-width space inside a token
+  // split it into two runs, the first was rewritten and the tail was published:
+  // "ghp_ABCDEFGHIJKLMNOP\u200bQRSTUVWXYZ0123456789" became
+  // "<redacted:token>\u200bQRSTUVWXYZ0123456789". Removing them cannot destroy
+  // legitimate content, because scanInvisible blocks them outright upstream.
+  let out = text.replace(INVISIBLE, '');
   for (const r of REDACTIONS) {
     out = out.replace(r.re, (...args: unknown[]) => {
       const match = args[0] as string;
@@ -272,8 +308,15 @@ const INJECTION: Array<{ re: RegExp; pattern: string; reason: string }> = [
  * the presence of a bidi control is itself blocking, because there is no
  * honest reason for one here.
  */
-const INVISIBLE = /[\u200b-\u200f\u2028\u2029\u00ad\ufeff]/g;
-const BIDI_CONTROL = /[\u202a-\u202e\u2066-\u2069]/;
+// U+2060-2064 (word joiner and invisible operators), U+FE00-FE0F (variation
+// selectors), U+180E, and the U+E0000 tag block were all outside the original
+// class: invisible, NFKC-stable, and in the tag block able to encode arbitrary
+// ASCII. A scanner that normalises but leaves these in is normalising the
+// characters an author would use by accident and not the ones they would use
+// on purpose.
+const INVISIBLE = /[\u200b-\u200f\u2028\u2029\u00ad\ufeff\u2060-\u2064\u180e\ufe00-\ufe0f]|[\u{E0000}-\u{E007F}]/gu;
+// U+061C ARABIC LETTER MARK is a bidi control and was not in this class.
+const BIDI_CONTROL = /[\u202a-\u202e\u2066-\u2069\u061c]/;
 
 export function normaliseForScan(text: string): string {
   return text.normalize('NFKC').replace(INVISIBLE, '');
