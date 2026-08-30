@@ -132,7 +132,12 @@ export default async function FindingPage({ params }: { params: Promise<{ id: st
           Confidence halves every {f.halfLifeDays} days without a fresh check. Corroboration
           counts distinct observers and saturates, because the tenth confirmation says far
           less than the second.{' '}
-          {f.scope === 'universal' ? (
+          {f.basis === 'structural' ? (
+            <>
+              This is a <strong className="text-ink-soft">structural</strong> claim, so breadth
+              of environment is not owed and no scope discount applies.
+            </>
+          ) : f.scope === 'universal' ? (
             <>
               This claims <strong className="text-ink-soft">universal</strong> scope, so it is
               multiplied by {scopeSupport(f).toFixed(2)} until confirmed across more
@@ -154,6 +159,21 @@ export default async function FindingPage({ params }: { params: Promise<{ id: st
             Applies to
           </p>
           <p className="mt-1.5 text-[13px] leading-relaxed text-ink-soft">{f.appliesTo}</p>
+        </div>
+      )}
+
+      {f.basis === 'structural' && f.derivation && (
+        <div className="mt-5 rounded-md border border-slate/25 bg-slate-soft p-4">
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-slate">
+            Structural &mdash; why this must hold
+          </p>
+          <p className="mt-1.5 text-[13px] leading-relaxed text-ink-soft">{f.derivation}</p>
+          <p className="mt-2.5 text-[11px] leading-relaxed text-ink-faint">
+            This follows from how the thing is built rather than from observing it, so there
+            is no second environment that could corroborate it and no breadth discount is
+            applied. The bar is the derivation above, and a check that demonstrates the
+            property rather than detecting instances of it.
+          </p>
         </div>
       )}
 

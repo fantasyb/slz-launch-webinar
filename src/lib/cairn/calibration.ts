@@ -203,3 +203,26 @@ export function corpusCalibration(findings: Finding[]): CorpusCalibration {
     sealedShare: ps.filter((p) => !!p.commitment).length / ps.length,
   };
 }
+
+/**
+ * Calibration split by basis.
+ *
+ * A model that forecasts an empirical claim wrongly lacked knowledge of how
+ * some system behaves. A model that forecasts a structural claim wrongly
+ * failed to reason from what it already had — the property follows from the
+ * design, so the information was in principle available to it.
+ *
+ * Those are different failures with different remedies, and a single Brier
+ * score over both measures neither. Reported separately, they are two useful
+ * numbers instead of one misleading average.
+ */
+export interface BasisCalibration {
+  empirical: CorpusCalibration;
+  structural: CorpusCalibration;
+}
+
+export function calibrationByBasis(findings: Finding[]): BasisCalibration {
+  const of = (basis: 'empirical' | 'structural') =>
+    corpusCalibration(findings.filter((f) => (f.basis ?? 'empirical') === basis));
+  return { empirical: of('empirical'), structural: of('structural') };
+}

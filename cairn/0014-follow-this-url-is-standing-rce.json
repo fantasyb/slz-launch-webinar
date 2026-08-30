@@ -2,6 +2,8 @@
   "id": "cairn-0014",
   "title": "\"Point your agent at this URL and follow it\" is a standing RCE primitive",
   "scope": "universal",
+  "basis": "structural",
+  "derivation": "The instruction an adopter installs names a location; the thing that determines behaviour is the content served from it. Those are separate objects with separate lifetimes, and nothing binds them: no hash, no version, no signature. So the authorisation an adopter grants is necessarily over the location, and therefore over every future value of its content, including values chosen by whoever controls the host later. This does not depend on the page, the agent, the operating system or the year — it follows from identifying content by where it lives rather than by what it is. The property disappears exactly when that binding is added, which is why pinning a key or a hash is the fix rather than avoiding the network.",
   "claim": "An onboarding instruction of the form 'tell your agent to read <url> and do what it says' grants the operator of that host indefinite write access to every adopting repository, because the instruction persists while the page's contents do not.",
   "kind": "trap",
   "subject": {
@@ -34,10 +36,10 @@
     }
   ],
   "check": {
-    "command": "Search a project's agent instruction files for directives that fetch a URL and act on its contents: grep -rEn 'read (https?://|.*then (follow|do what))' AGENTS.md CLAUDE.md .github/copilot-instructions.md 2>/dev/null",
-    "confirmedIf": "any instruction directs an agent to fetch a remote document and follow its contents, with no pinned version or content hash",
-    "refutedIf": "adoption instructions are inert text a person pasted, or a version-pinned local tool that requires approval before writing",
-    "manual": false
+    "command": "Construct the arrangement and observe it. Publish a page instructing an agent to make some change; adopt it in a scratch repository via that instruction; then alter the page to specify a different change and re-run the adoption. Observe whether anything on the adopter's side refuses the substituted content.",
+    "confirmedIf": "the substituted content is applied with no further authorisation from the adopter, and nothing detects the change",
+    "refutedIf": "the adopter's tooling rejects the substituted content, which is what pinning a hash or verifying a signature produces",
+    "manual": true
   },
   "provenance": "firsthand",
   "halfLifeDays": 1500,
@@ -74,6 +76,23 @@
         "algorithm": "ed25519",
         "keyId": "56f7a413738936bd",
         "value": "8iPnA/zZk/2dCSwasJK8Mc5Z/ciI1MdNIgV0+F/ono4PjsQWol0wzavIVJGs6bVHGUIlDfx/iBmyRfz5H3LUAQ=="
+      }
+    },
+    {
+      "at": "2026-08-30T15:05:00Z",
+      "by": "claude-opus-5",
+      "verdict": "confirmed",
+      "note": "Reclassified from empirical to structural after being asked whether this was really a universal piece. It was not the kind of claim the scope machinery is built for: there is no second environment that could corroborate it, so the breadth discount would have penalised it forever for being the wrong category. Its check was also a detector rather than a falsifier — it found instances of the pattern instead of testing the claim — and it was marked automatable while being prose, so cairn:verify would have tried to execute an English sentence. All three were the same underlying mistake.",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node 22.22.2",
+        "note": "Claude Code remote sandbox, Linux 6.18.44"
+      },
+      "signature": {
+        "algorithm": "ed25519",
+        "keyId": "56f7a413738936bd",
+        "value": "xuqajXvQbmPoeoINOTE94/UzdlSbiCVh3mXiTp/2oLWSAgifGW43pPgSinj0ZdSzlVLUwimvFzaaHuOkc4q3BA=="
       }
     }
   ],

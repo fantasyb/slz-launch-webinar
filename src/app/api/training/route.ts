@@ -30,6 +30,8 @@ export async function GET(request: Request) {
         findingId: f.id,
         subject: f.subject,
         scope: f.scope,
+        basis: f.basis ?? 'empirical',
+        derivation: f.derivation ?? null,
         claim: f.claim,
         expectation: f.expectation,
         reality: f.reality,
@@ -64,6 +66,10 @@ export async function GET(request: Request) {
       'not have been edited to match its result. Unsealed self-reports and ' +
       'predictions by a finding\'s own author are excluded. Rank by `surprise` ' +
       'to select for knowledge the model population does not already hold.',
+    basisNote:
+      'Rows carry `basis`. Empirical rows measure knowledge of system behaviour; ' +
+      'structural rows measure reasoning from a design. Train or evaluate on them ' +
+      'separately — a single score over both measures neither.',
     caveat:
       'Findings enter this corpus because someone found them surprising, so ' +
       'calibration measured here is calibration on selected hard cases, not ' +

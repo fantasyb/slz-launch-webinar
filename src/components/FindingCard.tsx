@@ -48,6 +48,17 @@ export function FindingCard({ finding: f }: { finding: Finding }) {
             >
               {f.scope === 'universal' ? 'universal' : 'env-specific'}
             </span>
+            {f.basis === 'structural' && (
+              <>
+                <span className="text-rule-strong">·</span>
+                <span
+                  title="Follows from how the thing is built, not from observing it. Breadth of environment is not owed."
+                  className="text-slate"
+                >
+                  structural
+                </span>
+              </>
+            )}
           </div>
           <h3 className="font-claim text-[15px] leading-snug text-ink group-hover:underline">
             {f.title}

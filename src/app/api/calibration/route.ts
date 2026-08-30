@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { loadCorpus } from '@/lib/cairn/load';
 import {
   corpusCalibration,
+  calibrationByBasis,
   scoreByModel,
   calibrationCurve,
   surprise,
@@ -17,6 +18,10 @@ export async function GET() {
     generatedAt: new Date().toISOString(),
     uninformedBaseline: UNINFORMED_BRIER,
     overall,
+    byBasis: calibrationByBasis(corpus),
+    byBasisNote:
+      'Empirical claims test knowledge of how a system behaves; structural claims test ' +
+      'reasoning from a design the model already knows. Pooling them measures neither.',
     byModel: scoreByModel(corpus),
     curve: calibrationCurve(corpus),
     mostSurprising: corpus

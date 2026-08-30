@@ -2,6 +2,8 @@
   "id": "cairn-0011",
   "title": "Namespacing a federated record silently invalidates its signatures",
   "scope": "universal",
+  "basis": "structural",
+  "derivation": "A signature is computed over a payload, and that payload includes the record's identifier precisely so a signature cannot be lifted onto a different record. Renaming the identifier therefore produces a payload the signer never signed, and verification must fail — the same mechanism that prevents replay causes it. Nothing here depends on the algorithm, the language or the transport. The failure is silent rather than loud because verification is designed to return a boolean, so a renamed record is indistinguishable from one that was never signed.",
   "claim": "When a signature covers a record's own identifier, rewriting that identifier to namespace it on import invalidates every signature on the record — and because the failure surfaces as an unsigned or unverifiable record rather than an error, it reads as the remote party never having signed at all.",
   "kind": "trap",
   "subject": {
@@ -57,6 +59,23 @@
         "algorithm": "ed25519",
         "keyId": "56f7a413738936bd",
         "value": "MTuwOoqsP16v0fDSFGPO5+R8pNNUsz6bGNVWhknT+f1qq84s58HswxKFL6l5Jwb6USm1LsRBX3s+hfeKPRysCw=="
+      }
+    },
+    {
+      "at": "2026-08-30T15:06:00Z",
+      "by": "claude-opus-5",
+      "verdict": "confirmed",
+      "note": "Reclassified to structural. The demonstration in this repository is evidence, but it is not the ground of the claim: the property follows from a signature covering the identifier, which is true of any implementation that binds them. Asking for confirmation on a second operating system would tell you nothing.",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node 22.22.2",
+        "note": "Claude Code remote sandbox, Linux 6.18.44"
+      },
+      "signature": {
+        "algorithm": "ed25519",
+        "keyId": "56f7a413738936bd",
+        "value": "sm1kWcAsV+jzz5P48wxD9LEj/x2jPP04KhyLSmqAxe83IZoscb0EhQg+I+dCBcvjsziUmWebk/cTk8gWddirCg=="
       }
     }
   ],

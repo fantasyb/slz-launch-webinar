@@ -114,6 +114,12 @@ export function effectiveEnvironments(f: Finding): number {
  * one execution somewhere, and is discounted only if it has none.
  */
 export function scopeSupport(f: Finding): number {
+  // A structural claim follows from how the thing is built, so there is no
+  // second environment that could corroborate it. Discounting it for breadth
+  // would penalise it permanently for being the wrong kind of claim. It is
+  // held to a different bar instead: a derivation, enforced at lint.
+  if (f.basis === 'structural') return 1;
+
   const n = effectiveEnvironments(f);
   if (f.scope === 'environment-specific') return n === 0 ? 0.6 : Math.min(1, 0.8 + 0.2 * n);
   if (n === 0) return 0.45;
@@ -159,7 +165,9 @@ export function decayUrgency(f: Finding, now: Date = new Date()): number {
   // A universal claim standing on one environment is the cheapest place to
   // buy real information: a second environment either earns the scope or
   // exposes it as local.
-  const unearned = f.scope === 'universal' && effectiveEnvironments(f) < 2 ? 1.4 : 1;
+  // Only empirical claims gain from another environment.
+  const unearned =
+    f.basis === 'empirical' && f.scope === 'universal' && effectiveEnvironments(f) < 2 ? 1.4 : 1;
   return uncertainty * stakes * effort * contested * unearned;
 }
 

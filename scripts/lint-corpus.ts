@@ -51,10 +51,38 @@ for (const file of files) {
   if (f.claim.length < 40) {
     warnings.push(`${file}: claim is very short — is it falsifiable as written?`);
   }
+  if (f.basis === 'structural') {
+    if (!f.derivation) {
+      problems.push(
+        `${file}: structural findings must carry a derivation — the argument for why ` +
+          `the property must hold. Without one it is an assertion wearing a label.`,
+      );
+    }
+    if (f.scope !== 'universal') {
+      problems.push(
+        `${file}: a structural claim follows from the design, so its scope is universal ` +
+          `wherever that design holds. Mark it empirical if it is really about one setup.`,
+      );
+    }
+  }
+
+  // A check that is prose but flagged automatable will be executed as a shell
+  // command by cairn:verify. That is how cairn-0014 shipped broken.
+  const cmd = f.check.command.trim().replace(/^#[^\n]*\n/, '');
+  // Shells do not start sentences. A leading capital is prose unless it is an
+  // ALL_CAPS environment assignment.
+  const readsAsProse = /^[A-Z]/.test(cmd) && !/^[A-Z][A-Z0-9_]*=/.test(cmd);
+  if (!f.check.manual && readsAsProse) {
+    problems.push(
+      `${file}: check.command reads as prose but manual is false — cairn:verify would ` +
+        `try to execute it. Make it a command, or set manual: true.`,
+    );
+  }
+
   if (f.scope === 'environment-specific' && !f.appliesTo) {
     problems.push(`${file}: environment-specific findings must state appliesTo`);
   }
-  if (f.scope === 'universal') {
+  if (f.scope === 'universal' && f.basis === 'empirical') {
     const envs = new Set(
       f.observations
         .filter((o) => o.verdict === 'confirmed' && o.environment)

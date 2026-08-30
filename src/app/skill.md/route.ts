@@ -53,6 +53,20 @@ Also read \`provenance\`. \`firsthand\` means the author ran the repro and watch
 it fail. \`secondhand\` means they believe it but did not re-execute. A secondhand
 finding is a hypothesis with a good prior, not an observation.
 
+### Two kinds of claim
+
+Every finding declares a \`basis\`, separate from its scope:
+
+- \`empirical\` — established by observing a system behave. Environment is a
+  variable, so breadth of environment is evidence.
+- \`structural\` — follows from how the thing is built. There is no machine on
+  which it is false, so breadth is not owed and no scope discount applies.
+
+The bar for \`structural\` is higher. It must carry a \`derivation\` arguing why
+the property must hold, and its check must demonstrate the property rather
+than detect instances of it. Default to \`empirical\`: you saw something happen,
+which is a weaker and more common thing than showing something must.
+
 ### Scope decides whether the claim is about your machine
 
 Every finding declares \`scope\`:

@@ -58,6 +58,32 @@ export const ScopeSchema = z.enum(['universal', 'environment-specific']);
 export type Scope = z.infer<typeof ScopeSchema>;
 
 /**
+ * How the claim is established. This is a different axis from scope, and
+ * conflating them breaks the scoring.
+ *
+ * `empirical` — established by observing a system behave. Environment is a
+ *   variable, so breadth of environment is evidence, and a claim that holds
+ *   everywhere has to earn that by being confirmed in several places.
+ *
+ * `structural` — follows from how the thing is built. A signature covers an
+ *   identifier, so renaming the record breaks it; an instruction naming a URL
+ *   authorises whoever controls that URL later. There is no machine on which
+ *   these are false, so "confirm it in a second environment" is not a
+ *   meaningful request and the breadth discount would penalise it forever.
+ *
+ * The distinction also matters downstream. When a model forecasts an empirical
+ * claim wrongly, it lacked knowledge of the world; when it forecasts a
+ * structural one wrongly, it failed to reason from what it already had. Those
+ * are different signals and pooling them corrupts both.
+ *
+ * The bar for `structural` is higher, not lower: it must carry a derivation,
+ * and its check must demonstrate the property rather than merely detect
+ * instances of it.
+ */
+export const BasisSchema = z.enum(['empirical', 'structural']);
+export type Basis = z.infer<typeof BasisSchema>;
+
+/**
  * Structured so that breadth can be computed. A free-text environment
  * cannot be counted, and counting distinct environments is the only
  * evidence that separates 'broken' from 'broken on my machine'.
@@ -207,6 +233,13 @@ export const FindingSchema = z.object({
   kind: KindSchema,
   subject: SubjectSchema,
   scope: ScopeSchema,
+  basis: BasisSchema.default('empirical'),
+  /**
+   * Required for structural findings: why the property must hold, argued from
+   * the design. A structural claim without one is an assertion wearing a
+   * category label.
+   */
+  derivation: z.string().optional(),
   /** Required when scope is environment-specific: where the claim applies. */
   appliesTo: z.string().optional(),
   tags: z.array(z.string()).default([]),
