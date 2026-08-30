@@ -88,7 +88,8 @@ async function main() {
     const results: Adjudication[] = await Promise.all(
       available.map((m) => adjudicate(m, finding, cfg)),
     );
-    const outcome = decide(results);
+    // The denominator is what we set out to consult, not what replied.
+    const outcome = decide(results, available.length);
 
     for (const r of results) {
       if (r.error) console.log(`    ${r.reviewer}: error — ${r.error.slice(0, 90)}`);

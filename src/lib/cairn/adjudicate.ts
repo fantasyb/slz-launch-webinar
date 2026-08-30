@@ -127,20 +127,42 @@ export async function adjudicate(
 }
 
 /**
- * A submission passes only if at least one reviewer answered and none of the
- * answers was hostile or suspicious. Silence is not consent: if every reviewer
- * errored, the submission is held.
+ * A submission passes only if a quorum of the reviewers that were SUPPOSED to
+ * run actually answered, and none of the answers was hostile or suspicious.
+ *
+ * `expected` is the number of reviewers the run set out to consult. It is
+ * load-bearing, and taking the denominator from the answers instead was the
+ * defect this signature exists to prevent: errored reviewers were filtered out
+ * before the tally, so three timeouts and one "clean" passed as unanimous
+ * approval.
+ *
+ * That is worse than a lenient default, because the errors are not
+ * independent of the content. The reviewer most likely to flag a hostile
+ * submission is also the one most likely to refuse to answer at all — and a
+ * refusal carries no JSON, so `parseVerdict` throws and the would-be flag
+ * becomes an error that the old tally discarded. A submission crafted to trip
+ * the stricter models' refusals silenced exactly the reviewers that would have
+ * caught it, and was cleared by whichever model answered. The submitter chose
+ * the panel.
+ *
+ * Silence is therefore counted, not dropped: a reviewer that did not answer is
+ * a reviewer that did not clear this.
  */
-export function decide(results: Adjudication[]): {
+export const QUORUM_FRACTION = 0.5;
+
+export function decide(
+  results: Adjudication[],
+  expected: number = results.length,
+): {
   pass: boolean;
   reason: string;
   flagged: Adjudication[];
 } {
   const answered = results.filter((r) => r.verdict);
   const flagged = answered.filter((r) => r.verdict!.verdict !== 'clean');
-  if (answered.length === 0) {
-    return { pass: false, reason: 'no reviewer produced a verdict; holding rather than merging unreviewed', flagged: [] };
-  }
+  const errored = results.length - answered.length;
+  const quorum = Math.max(1, Math.ceil(expected * QUORUM_FRACTION));
+
   if (flagged.length > 0) {
     return {
       pass: false,
@@ -148,5 +170,29 @@ export function decide(results: Adjudication[]): {
       flagged,
     };
   }
-  return { pass: true, reason: `${answered.length} reviewer(s) returned clean`, flagged: [] };
+  if (answered.length === 0) {
+    return {
+      pass: false,
+      reason: 'no reviewer produced a verdict; holding rather than merging unreviewed',
+      flagged: [],
+    };
+  }
+  if (answered.length < quorum) {
+    return {
+      pass: false,
+      reason:
+        `only ${answered.length} of ${expected} reviewer(s) answered (${errored} errored or ` +
+        `refused); a quorum of ${quorum} is required. A reviewer that did not answer has ` +
+        `not cleared this, and a submission that silences reviewers is the case this ` +
+        `rule exists for`,
+      flagged: [],
+    };
+  }
+  return {
+    pass: true,
+    reason:
+      `${answered.length} of ${expected} reviewer(s) returned clean` +
+      (errored > 0 ? ` (${errored} errored)` : ''),
+    flagged: [],
+  };
 }

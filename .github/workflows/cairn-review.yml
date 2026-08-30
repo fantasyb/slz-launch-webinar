@@ -8,13 +8,40 @@ on:
   pull_request:
     paths: ['cairn/**', 'keys/**']
 
+# Least privilege: this job reads a diff and calls out to review APIs. It has
+# no reason to be able to write to the repository.
+permissions:
+  contents: read
+
 jobs:
   review:
     runs-on: ubuntu-latest
     steps:
+      # The tooling comes from the BASE branch; only the corpus comes from the
+      # pull request.
+      #
+      # `paths:` decides whether this workflow runs, not what gets checked out.
+      # Checking out the merge ref and running `npm ci && npm run cairn:adjudicate`
+      # meant a pull request that touched cairn/** AND scripts/ ran its own
+      # modified adjudicator — with the provider keys in the environment. The
+      # gate was executed by the code it was gating. Fork pull requests are not
+      # given secrets, so that path failed closed; a same-repo branch is not,
+      # and this repository works on same-repo branches.
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.base.sha }}
           fetch-depth: 0
+
+      - name: Take only the corpus from the pull request
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          git fetch --no-tags origin "$HEAD_SHA"
+          # Deletions are not applied, so a PR cannot pass by removing a
+          # finding the base branch still has; lint runs over what remains.
+          git checkout "$HEAD_SHA" -- cairn/ keys/ || true
+          git --no-pager diff --stat "${{ github.event.pull_request.base.sha }}" -- cairn/ keys/
+
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -29,12 +56,20 @@ jobs:
       - name: Ledger audit
         run: npm run cairn:audit
 
-      # Second layer. Fails closed: if no reviewer credential is configured,
-      # the job fails rather than passing an unreviewed submission.
+      # The invariants the scoring depends on. A corpus that lints can still be
+      # scored by code that has regressed.
+      - name: Invariant tests
+        run: npm test
+
+      # Second layer. Fails closed: a quorum of the configured reviewers must
+      # answer, and a reviewer that errored or refused has not cleared anything.
       - name: Adversarial review of changed findings
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
-        run: npm run cairn:adjudicate -- --changed-against origin/${{ github.base_ref }}
+          # Via the environment, never interpolated into the shell line: a
+          # branch name is contributor-controlled text.
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: npm run cairn:adjudicate -- --changed-against "$BASE_SHA"
