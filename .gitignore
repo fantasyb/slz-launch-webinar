@@ -59,3 +59,4 @@ src/generated/
 
 # federated upstream cache
 .cairn-cache/
+panel-runs/*.tmp

@@ -14,6 +14,7 @@ import {
   actualValue,
   UNINFORMED_BRIER,
 } from '@/lib/cairn/calibration';
+import { analysePanel } from '@/lib/cairn/correlation';
 import { cn } from '@/lib/utils';
 
 export const metadata = { title: 'Calibration — Cairn' };
@@ -26,6 +27,7 @@ export default function CalibrationPage() {
   const preds = scorablePredictions(corpus).sort((a, b) => brier(b) - brier(a));
   const integrity = ledgerIntegrity(corpus);
   const unscored = allPredictions(corpus).filter((p) => !p.scorable);
+  const panel = analysePanel(corpus);
   const ranked = corpus
     .map((f) => ({ f, s: surprise(f) }))
     .filter((r): r is { f: (typeof corpus)[number]; s: number } => r.s !== null)
@@ -246,6 +248,155 @@ export default function CalibrationPage() {
             </Link>
           ))}
         </div>
+      </section>
+
+      {/* Panel */}
+      <section className="mt-10">
+        <h2 className="font-claim text-lg">Do rival models share blind spots?</h2>
+        <div className="mt-2 space-y-3 text-[14px] leading-relaxed text-ink-soft">
+          <p>
+            Nobody has this data, because collecting it requires a neutral party. A lab can
+            measure its own model; it cannot credibly publish a calibration ledger across its
+            competitors. Both possible answers are worth publishing.
+          </p>
+          <p>
+            <strong className="font-semibold text-ink">Correlated errors</strong> would mean
+            several models trained on overlapping internet land at high confidence on the same
+            wrong claim &mdash; not several failures, but evidence that the overconfidence
+            lives in the training distribution itself.{' '}
+            <strong className="font-semibold text-ink">Uncorrelated errors</strong> would mean
+            each model is miscalibrated but independently, so the mean forecast across rivals
+            beats every member &mdash; an ensemble of competitors outperforming any single
+            lab&rsquo;s model.
+          </p>
+        </div>
+
+        {panel.verdict === 'insufficient-data' ? (
+          <div className="mt-5 rounded-lg border border-dashed border-rule-strong p-6">
+            <p className="text-[13px] leading-relaxed text-ink-soft">
+              <strong className="font-semibold text-ink">Not yet run.</strong>{' '}
+              {panel.findingsWithPanel} finding
+              {panel.findingsWithPanel === 1 ? ' has' : 's have'} forecasts from two or more
+              panelists; the analysis needs at least 10 before it reports a verdict. The
+              harness is built and smoke-tested &mdash; it needs API keys and a run.
+            </p>
+            <pre className="evidence mt-3 rounded-md border border-rule bg-paper p-3 font-mono text-[12px] text-ink-soft">
+{`npm run cairn:panel -- seal     # solicit, seal, write the manifest
+git add cairn/ panel-runs/ && git commit && git push
+npm run cairn:panel -- reveal   # after the checks have run`}
+            </pre>
+          </div>
+        ) : (
+          <>
+            <div className="mt-5 rounded-lg border border-rule bg-raised p-5">
+              <div className="flex flex-wrap gap-x-8 gap-y-3">
+                <div>
+                  <div className="font-claim text-2xl text-ink">
+                    {panel.meanCorrelation?.toFixed(2) ?? '—'}
+                  </div>
+                  <div className="mt-0.5 text-[10px] uppercase tracking-wider text-ink-faint">
+                    mean error correlation
+                  </div>
+                </div>
+                <div>
+                  <div className="font-claim text-2xl text-ink">
+                    {panel.ensembleBrier?.toFixed(3) ?? '—'}
+                  </div>
+                  <div className="mt-0.5 text-[10px] uppercase tracking-wider text-ink-faint">
+                    ensemble brier
+                  </div>
+                </div>
+                <div>
+                  <div
+                    className={cn(
+                      'font-claim text-2xl',
+                      (panel.ensembleAdvantage ?? 0) > 0 ? 'text-moss' : 'text-ink',
+                    )}
+                  >
+                    {panel.ensembleAdvantage !== null
+                      ? (panel.ensembleAdvantage > 0 ? '+' : '') + panel.ensembleAdvantage.toFixed(3)
+                      : '—'}
+                  </div>
+                  <div className="mt-0.5 text-[10px] uppercase tracking-wider text-ink-faint">
+                    ensemble vs best member
+                  </div>
+                </div>
+                <div>
+                  <div className="font-claim text-2xl text-ink">{panel.sharedBlindSpots.length}</div>
+                  <div className="mt-0.5 text-[10px] uppercase tracking-wider text-ink-faint">
+                    shared blind spots
+                  </div>
+                </div>
+              </div>
+              <p className="mt-4 border-t border-rule pt-3 text-[13px] leading-relaxed text-ink-soft">
+                {panel.verdict === 'correlated' ? (
+                  <>
+                    <strong className="font-semibold text-rust">Errors are correlated.</strong>{' '}
+                    The panel tends to be wrong together, which points at the shared training
+                    distribution rather than at any one model.
+                  </>
+                ) : (
+                  <>
+                    <strong className="font-semibold text-moss">Errors are independent.</strong>{' '}
+                    Members are individually miscalibrated but miss in different directions, so
+                    the mean of rivals is the better instrument.
+                  </>
+                )}
+              </p>
+            </div>
+
+            {panel.pairs.length > 0 && (
+              <div className="evidence mt-5">
+                <table className="w-full text-left text-[13px]">
+                  <thead>
+                    <tr className="border-b border-rule text-[11px] uppercase tracking-wider text-ink-faint">
+                      <th className="pb-2 pr-4 font-medium">pair</th>
+                      <th className="pb-2 pr-4 font-medium">n</th>
+                      <th className="pb-2 font-medium">error correlation</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {panel.pairs.map((p) => (
+                      <tr key={`${p.a}-${p.b}`} className="border-b border-rule/60">
+                        <td className="py-2 pr-4 font-mono text-[12px]">
+                          {p.a} · {p.b}
+                        </td>
+                        <td className="py-2 pr-4 font-mono text-ink-soft">{p.n}</td>
+                        <td
+                          className={cn('py-2 font-mono', p.r >= 0.4 ? 'text-rust' : 'text-moss')}
+                        >
+                          {p.r.toFixed(2)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {panel.sharedBlindSpots.length > 0 && (
+              <div className="mt-5">
+                <h3 className="text-[11px] font-semibold uppercase tracking-wider text-ink-faint">
+                  Every panelist confident, every panelist wrong
+                </h3>
+                <ul className="mt-2 space-y-1.5">
+                  {panel.sharedBlindSpots.map((b) => (
+                    <li key={b.id} className="rounded-md border border-rust/30 bg-rust-soft px-3 py-2 text-[12px]">
+                      <Link href={`/findings/${b.id}`} className="font-mono underline">
+                        {b.id}
+                      </Link>{' '}
+                      <span className="text-ink-soft">{b.title}</span>{' '}
+                      <span className="font-mono text-rust">
+                        panel said {Math.round(b.ensemblePrior * 100)}%, actual{' '}
+                        {b.actual ? 'confirmed' : 'refuted'}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </>
+        )}
       </section>
 
       {/* Excluded */}

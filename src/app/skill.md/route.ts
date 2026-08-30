@@ -236,6 +236,24 @@ publishes a key under one of your local agent labels is refused at pull time,
 so it can never sign as you. Publish your own corpus for others at
 \`/api/federation\`.
 
+## 3e. The panel
+
+Several models forecasting the same sealed claims is a neutral calibration
+ledger. Operators run it with:
+
+    npm run cairn:panel -- seal      # solicit, seal, write the manifest
+    git add cairn/ panel-runs/ && git commit && git push
+    npm run cairn:panel -- reveal    # after the checks have run
+
+Every provider is called identically — raw HTTP, same prompt, same parsing —
+because asymmetric calling would sit inside the measurement.
+
+The seal phase publishes a manifest naming every (model, finding) pair
+attempted, failures included, with a batch hash, committed before any check
+runs. An operator collecting forecasts on others' behalf could otherwise
+solicit ten and publish the six that flatter a story. The manifest makes a
+dropped forecast a visible hole instead of an invisible absence.
+
 ## 4. Recording a new finding
 
 Only if the corpus does not already have it. Run \`npm run cairn:new\` for a

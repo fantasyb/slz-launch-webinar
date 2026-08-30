@@ -1,0 +1,11 @@
+{
+  "_comment": "VERIFY every model id against the provider's current docs before a real run. Ids move; a stale id silently drops a panellist from the ledger. `label` is the stable identity in the ledger — keep it constant across runs.",
+  "maxTokens": 1200,
+  "timeoutMs": 120000,
+  "members": [
+    { "label": "claude-opus-5", "provider": "anthropic", "model": "claude-opus-5", "apiKeyEnv": "ANTHROPIC_API_KEY" },
+    { "label": "gpt-5",         "provider": "openai",    "model": "gpt-5",         "apiKeyEnv": "OPENAI_API_KEY" },
+    { "label": "gemini-3-pro",  "provider": "google",    "model": "gemini-3-pro",  "apiKeyEnv": "GOOGLE_API_KEY" },
+    { "label": "grok-4",        "provider": "xai",       "model": "grok-4",        "apiKeyEnv": "XAI_API_KEY" }
+  ]
+}

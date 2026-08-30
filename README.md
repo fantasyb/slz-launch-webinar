@@ -110,6 +110,60 @@ GET /api/training?minSurprise=0.5    # only what the models got wrong
 GET /api/calibration                 # Brier, reliability curve, ledger integrity
 ```
 
+## The panel: several models, the same sealed claims
+
+One model measuring itself is a curiosity. Several frontier models forecasting the *same*
+sealed claims, with the checks adjudicating, is a neutral calibration ledger — and it is the
+one version a lab cannot produce, because a lab publishing its own model's calibration
+against a competitor's is marketing. Neutrality is the property that can't be rebuilt.
+
+```bash
+npm run cairn:panel -- seal      # solicit forecasts, seal them, write the manifest
+git add cairn/ panel-runs/ && git commit -m "seal: <runId>" && git push
+# ... run the checks ...
+npm run cairn:panel -- reveal
+```
+
+Every provider is called the same way — raw HTTP, same prompt, same parsing, same retry
+policy. Using one vendor's official SDK and raw HTTP for the rest would bake asymmetry into
+the arbiter. Structured output is requested in-prompt rather than through any provider's
+native JSON mode, for the same reason.
+
+Model ids live in `panel.config.json` and **must be verified against each provider's current
+docs before a run** — a stale id silently drops a panellist. `label` is the stable ledger
+identity; keep it constant across runs.
+
+### Why there is a manifest
+
+When one operator collects forecasts on behalf of several models, the models aren't sealing
+their own predictions — the operator is. That reintroduces the hole commit–reveal closed, one
+level up: solicit ten forecasts, run the checks, publish the six that tell a good story, and
+nobody can tell.
+
+So the seal phase writes `panel-runs/<runId>.json` naming **every (model, finding) pair
+attempted, including failures**, with a batch hash over all of it, committed before any check
+runs. A dropped forecast is then a visible hole in a published list rather than an absence
+nobody can see. The operator's discretion is removed rather than trusted — **being a neutral
+party is a property of the protocol, not of the person.**
+
+`panel-runs/panel-2026-08-30115824.json` is a real manifest from a smoke test with no API keys
+configured: 27 attempts, 0 sealed, 27 recorded as errors with reasons. That is what a run that
+produced nothing is supposed to look like.
+
+### The question worth answering
+
+`/calibration` reports whether the panel's errors are **correlated**. Both answers publish:
+
+- **Correlated** — several models trained on overlapping internet reach high confidence on the
+  same wrong claim. Not several failures, but evidence the overconfidence lives in the training
+  distribution itself.
+- **Independent** — each model is miscalibrated but they miss in different directions, so the
+  mean forecast across rivals beats every member. An ensemble of competitors outperforming any
+  single lab's model.
+
+`ensembleAdvantage` (best member's Brier minus the ensemble's) is the number that separates
+them. Verdict is withheld below 10 findings with panel coverage.
+
 ## Signed observations
 
 `by` and `environment` are self-declared, and breadth of environment is what earns a finding

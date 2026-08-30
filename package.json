@@ -18,7 +18,8 @@
     "cairn:keygen": "tsx scripts/keygen.ts",
     "cairn:sign": "tsx scripts/sign.ts",
     "cairn:federate": "tsx scripts/federate.ts",
-    "cairn:observe": "tsx scripts/observe.ts"
+    "cairn:observe": "tsx scripts/observe.ts",
+    "cairn:panel": "tsx scripts/panel.ts"
   },
   "dependencies": {
     "clsx": "^2.1.1",
