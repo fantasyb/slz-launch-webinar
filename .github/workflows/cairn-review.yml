@@ -49,8 +49,20 @@ jobs:
 
       # Schema, scope rules, signatures, prose-check detection, and the
       # pattern layer over every finding in the corpus.
+      # Exit 1 is errors and fails the job; exit 2 is warnings only and does
+      # not. The linter distinguishes them so this choice can be made here
+      # rather than being baked in -- today's warnings are mostly "universal
+      # scope on one environment", which is true and expected until the corpus
+      # has breadth, and failing on them would block every contribution.
       - name: Corpus lint
-        run: npm run cairn:lint
+        run: |
+          set +e
+          npm run cairn:lint
+          code=$?
+          set -e
+          if [ "$code" -eq 1 ]; then exit 1; fi
+          if [ "$code" -eq 2 ]; then echo "::warning::corpus lint reported warnings"; fi
+          exit 0
 
       # Commitment and git-ancestry audit: seals must precede reveals.
       - name: Ledger audit

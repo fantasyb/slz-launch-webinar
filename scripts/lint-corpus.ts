@@ -211,4 +211,9 @@ for (const p of problems) console.error(`error ${p}`);
 console.log(
   `\n${files.length} findings · ${problems.length} errors · ${warnings.length} warnings`,
 );
-process.exit(problems.length > 0 ? 1 : 0);
+// 0 clean, 1 errors, 2 warnings only. Collapsing warnings into success meant
+// CI could not gate on them -- and at least one warning, a filename that
+// disagrees with the id inside it, is a precursor to a duplicate id that takes
+// the whole corpus down.
+if (problems.length > 0) process.exit(1);
+process.exit(warnings.length > 0 ? 2 : 0);

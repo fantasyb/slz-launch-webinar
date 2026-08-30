@@ -89,9 +89,9 @@ export type Basis = z.infer<typeof BasisSchema>;
  * evidence that separates 'broken' from 'broken on my machine'.
  */
 export const EnvironmentSchema = z.object({
-  os: z.string().min(1),
-  arch: z.string().optional(),
-  runtime: z.string().optional(),
+  os: z.string().min(1).max(100),
+  arch: z.string().max(50).optional(),
+  runtime: z.string().max(200).optional(),
   note: z.string().optional(),
 });
 export type Environment = z.infer<typeof EnvironmentSchema>;
@@ -119,9 +119,12 @@ export type Evidence = z.infer<typeof EvidenceSchema>;
  * side-effect free — an agent may run it on a whim to refresh the corpus.
  */
 export const CheckSchema = z.object({
-  command: z.string().min(1),
-  confirmedIf: z.string().min(1),
-  refutedIf: z.string().min(1),
+  // Bounded, like the submission schema's copy. This is the field other
+  // agents execute; leaving it unbounded meant a single record could carry
+  // megabytes of shell into every consumer of the API.
+  command: z.string().min(1).max(4000),
+  confirmedIf: z.string().min(1).max(2000),
+  refutedIf: z.string().min(1).max(2000),
   /** Set when the check needs a human, a paid API, or a specific host. */
   manual: z.boolean().default(false),
 });

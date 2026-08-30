@@ -54,6 +54,7 @@ export const SIGNATURE_VERSION = 'cairn-sig-v2';
  */
 export function findingBodyHash(f: {
   id: string;
+  title: string;
   claim: string;
   expectation: string;
   reality: string;
@@ -63,6 +64,10 @@ export function findingBodyHash(f: {
   appliesTo?: string;
   scope: string;
   basis?: string;
+  kind: string;
+  cost: string;
+  provenance: string;
+  halfLifeDays: number;
   subject: { name: string; ecosystem: string; versions: string };
   check: { command: string; confirmedIf: string; refutedIf: string; manual: boolean };
   evidence: Array<{ command: string; output: string; note?: string }>;
@@ -74,6 +79,15 @@ export function findingBodyHash(f: {
         f.id, f.claim, f.expectation, f.reality,
         f.mechanism ?? '', f.workaround ?? '', f.derivation ?? '', f.appliesTo ?? '',
         f.scope, f.basis ?? 'empirical',
+        // halfLifeDays, provenance, title, kind and cost are authored once and
+        // were outside the signed bytes. An author could sign a finding and
+        // then change halfLifeDays from 30 to 3650 with every signature still
+        // verifying -- keeping a claim "fresh" for a decade and defeating the
+        // decay the schema calls the corpus's central honesty property. Same
+        // for flipping provenance between firsthand and secondhand, and for
+        // rewriting the title a reader actually sees while the signed claim
+        // underneath stays intact.
+        f.kind, f.cost, f.provenance, String(f.halfLifeDays), f.title,
         f.subject.name, f.subject.ecosystem, f.subject.versions,
         f.check.command, f.check.confirmedIf, f.check.refutedIf, f.check.manual,
         f.evidence.map((e) => [e.command, e.output, e.note ?? '']),

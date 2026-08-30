@@ -39,13 +39,23 @@ export function loadCorpus(): Finding[] {
   if (!fs.existsSync(CORPUS_DIR)) return (cache = []);
 
   const findings = fs
-    .readdirSync(CORPUS_DIR)
-    .filter((f) => f.endsWith('.json'))
+    // withFileTypes, so a subdirectory or a dangling symlink named `*.json`
+    // is skipped rather than throwing a raw EISDIR/ENOENT straight past the
+    // CorpusError wrapper -- and a symlink cannot pull content in from outside
+    // the corpus directory.
+    .readdirSync(CORPUS_DIR, { withFileTypes: true })
+    .filter((d) => d.isFile() && d.name.endsWith('.json'))
+    .map((d) => d.name)
     .sort()
     .map((file) => {
-      const raw = fs.readFileSync(path.join(CORPUS_DIR, file), 'utf8');
       let parsed: unknown;
       try {
+        // The read is inside the try. It was outside, so the two failure modes
+        // above escaped as raw errno rather than as a corpus diagnostic.
+        // A BOM is stripped: JSON.parse rejects it, and a zero-byte file gets
+        // a diagnostic naming the file rather than "Unexpected end of input".
+        const raw = fs.readFileSync(path.join(CORPUS_DIR, file), 'utf8').replace(/^\uFEFF/, '');
+        if (raw.trim() === '') throw new Error('file is empty');
         parsed = JSON.parse(raw);
       } catch (e) {
         throw new CorpusError(file, `invalid JSON — ${(e as Error).message}`);

@@ -8,6 +8,8 @@
  * signature over someone else's observation reads as `mislabelled`.
  */
 import fs from 'fs';
+import crypto from 'crypto';
+import { writeJsonAtomic } from '../src/lib/cairn/atomic';
 import path from 'path';
 import { FindingSchema } from '../src/lib/cairn/schema';
 import { signObservation, deriveKeyId, findingBodyHash } from '../src/lib/cairn/signing';
@@ -34,6 +36,24 @@ if (deriveKeyId(key.publicKey) !== keyId) {
   process.exit(2);
 }
 
+// Prove the private half matches the published public half BEFORE writing
+// anything. Checking only that the published record is self-consistent meant a
+// wrong-but-valid private key -- a restored backup, a file copied from another
+// identity -- signed the whole corpus, printed success, exited 0, and left
+// every signature verifying as `broken` for someone else to repair by hand.
+try {
+  const probe = Buffer.from('cairn-key-probe', 'utf8');
+  const sig = crypto.sign(null, probe, crypto.createPrivateKey(privateKey));
+  if (!crypto.verify(null, probe, crypto.createPublicKey(key.publicKey), sig)) {
+    console.error(`the private key at ${path.relative(process.cwd(), privFile)} is not the`);
+    console.error(`private half of the published key ${keyId}. Refusing to sign.`);
+    process.exit(2);
+  }
+} catch (e) {
+  console.error(`cannot use the private key: ${(e as Error).message}`);
+  process.exit(2);
+}
+
 const DIR = path.join(process.cwd(), 'cairn');
 let signed = 0;
 let skipped = 0;
@@ -57,8 +77,11 @@ for (const file of fs.readdirSync(DIR).filter((f) => f.endsWith('.json'))) {
     return { ...raw.observations[i], signature: { algorithm: 'ed25519', keyId, value } };
   });
 
-  if (touched) fs.writeFileSync(full, `${JSON.stringify(raw, null, 2)}\n`);
+  if (touched) writeJsonAtomic(full, raw);
 }
 
 console.log(`signed ${signed} observation(s) as "${key.label}" (${keyId})`);
 if (skipped) console.log(`skipped ${skipped} belonging to other agents`);
+// "Nothing to do" is not the same as "signed something", and a caller that
+// only reads the exit code could not tell them apart.
+if (signed === 0) process.exit(3);

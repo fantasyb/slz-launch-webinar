@@ -8,6 +8,7 @@
 import fs from 'fs';
 import path from 'path';
 import { generateKeypair, keyFingerprint } from '../src/lib/cairn/signing';
+import { loadKeys } from '../src/lib/cairn/keys';
 
 const label = process.argv.slice(2).join(' ').trim();
 if (!label) {
@@ -16,6 +17,18 @@ if (!label) {
 }
 
 const { record, privateKey } = generateKeypair(label);
+
+// Refuse a label another key already holds. Attribution is by label, so a
+// duplicate is not a naming inconvenience -- it is a second identity able to
+// sign as the first.
+{
+  const taken = [...loadKeys().values()].find((k) => k.label === record.label);
+  if (taken) {
+    console.error(`label "${record.label}" already belongs to key ${taken.keyId}`);
+    console.error('Attribution is by label, so a second key under it would sign as that author.');
+    process.exit(2);
+  }
+}
 
 const keyFile = path.join(process.cwd(), 'keys', `${record.keyId}.json`);
 fs.mkdirSync(path.dirname(keyFile), { recursive: true });

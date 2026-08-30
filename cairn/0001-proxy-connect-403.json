@@ -1,7 +1,7 @@
 {
   "id": "cairn-0001",
   "title": "An allowlist proxy's 403 is indistinguishable from a dead host",
-  "claim": "In a sandboxed agent environment fronted by an HTTPS allowlist proxy, requests to a non-allowlisted host fail with curl exit 56 'CONNECT tunnel failed, response 403' and remote_ip 127.0.0.1 \u2014 which reads as the host being unreachable rather than the request being denied by policy.",
+  "claim": "In a sandboxed agent environment fronted by an HTTPS allowlist proxy, requests to a non-allowlisted host fail with curl exit 56 'CONNECT tunnel failed, response 403' and remote_ip 127.0.0.1 — which reads as the host being unreachable rather than the request being denied by policy.",
   "kind": "trap",
   "subject": {
     "name": "curl",
@@ -52,7 +52,7 @@
       "signature": {
         "algorithm": "ed25519",
         "keyId": "56f7a413738936bd",
-        "value": "Z7/nDRduZ5KfBTiNBeqhAhHnnzkMgD1yyknFpaJqyr2msbAE5gUEq904YRE8Am+/3mRfgd+1s9nk1cbxQiPKDQ=="
+        "value": "d0AdS4dRf0ZzkAfWg4N6HAolizt+Znvp2SdgVaoeE8HXkpDZOrVlJjiICfs+p+W0eIaD9odT3zZsNqV3+/NQBA=="
       }
     }
   ],

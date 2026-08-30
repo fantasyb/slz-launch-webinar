@@ -56,7 +56,15 @@ async function main() {
   }
 
   const cfg = loadConfig();
-  const available = cfg.members.filter((m) => process.env[m.apiKeyEnv]);
+  // Members without a key are NOT filtered out. adjudicate() returns an error
+  // for them, exactly as solicit() does, so they count against the quorum.
+  //
+  // Filtering first made `expected` the number of keys that happened to be
+  // set, which is the same defect decide() exists to prevent, one level up: a
+  // CI secret misconfiguration that left one of four keys populated turned a
+  // four-reviewer panel into a one-reviewer panel whose single "clean" passed
+  // as full quorum, and the log read like a healthy run.
+  const withKeys = cfg.members.filter((m) => process.env[m.apiKeyEnv]);
   let failures = 0;
 
   for (const file of files) {
@@ -77,7 +85,7 @@ async function main() {
     console.log('  pattern layer: clean');
 
     // Layer two.
-    if (available.length === 0) {
+    if (withKeys.length === 0) {
       console.error('  REVIEW LAYER: no reviewer credentials configured.');
       console.error('    A submission cannot be cleared by a layer that did not run.');
       console.error('    Set a provider key, or merge only on deliberate human review.');
@@ -86,10 +94,11 @@ async function main() {
     }
 
     const results: Adjudication[] = await Promise.all(
-      available.map((m) => adjudicate(m, finding, cfg)),
+      cfg.members.map((m) => adjudicate(m, finding, cfg)),
     );
-    // The denominator is what we set out to consult, not what replied.
-    const outcome = decide(results, available.length);
+    // The denominator is the configured panel, not what replied and not what
+    // happened to have credentials.
+    const outcome = decide(results, cfg.members.length);
 
     for (const r of results) {
       if (r.error) console.log(`    ${r.reviewer}: error — ${r.error.slice(0, 90)}`);

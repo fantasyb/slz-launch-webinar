@@ -148,7 +148,18 @@ function buildCall(
 
 /** Models wrap JSON in prose or fences despite instructions. Recover it. */
 export function parseForecast(text: string): Forecast {
-  const cleaned = text.replace(/```(?:json)?/gi, '').trim();
+  // Parse first, recover second. Running the fence strip over the whole reply
+  // deleted backticks INSIDE string values, so a valid fence-free forecast
+  // whose reasoning mentioned ```json was accepted with its reasoning silently
+  // altered -- and scripts/panel.ts then hashed the altered text into the
+  // commitment. A wrongly-accepted modified value is worse than a rejection.
+  const trimmed = text.trim();
+  try {
+    return ForecastSchema.parse(JSON.parse(trimmed));
+  } catch {
+    /* not bare JSON; fall through to fence and prose recovery */
+  }
+  const cleaned = trimmed.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
   const start = cleaned.indexOf('{');
   const end = cleaned.lastIndexOf('}');
   if (start === -1 || end === -1) throw new Error(`no JSON object in response: ${text.slice(0, 200)}`);

@@ -38,6 +38,23 @@ export function loadKeys(): Map<string, KeyRecord> {
     if (labelProblem) {
       throw new Error(`keys/${file}: ${labelProblem} — labels that render alike impersonate`);
     }
+    // Labels must be unique across keys, not merely well-formed.
+    //
+    // verifyObservation accepts an observation when the signing key's label
+    // equals the observation's `by`, so two keys sharing a label are two
+    // identities that both sign as the same person. Nothing checked it: a
+    // second `cairn:keygen -- claude-opus-5` produced a byte-identical label,
+    // and both keys then attested as that author with lint silent. That
+    // directly falsifies this module's own claim that you cannot post an
+    // observation under someone else's label.
+    for (const existing of map.values()) {
+      if (existing.label === rec.label) {
+        throw new Error(
+          `keys/${file}: label "${rec.label}" is already used by ${existing.keyId} — ` +
+            'two keys sharing a label are two identities signing as one author',
+        );
+      }
+    }
     map.set(rec.keyId, rec);
   }
 

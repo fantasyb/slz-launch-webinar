@@ -18,7 +18,7 @@
     "setup"
   ],
   "cost": "minutes",
-  "expectation": "Running the documented install step is harmless when browsers are already present \u2014 at worst a no-op.",
+  "expectation": "Running the documented install step is harmless when browsers are already present — at worst a no-op.",
   "reality": "The install writes to its own resolved path and does not reconcile with a preinstalled bundle. On a container with a bounded writable allowance the download can fill the disk, and the resulting 'no space left on device' points at storage rather than at the unnecessary install that caused it.",
   "mechanism": "The browser resolution path and the install target are configured independently. A pinned @playwright/test version in the project can also disagree with the preinstalled build, prompting a fetch.",
   "workaround": "Check for PLAYWRIGHT_BROWSERS_PATH before installing anything. If the project pins a different Playwright version, point at the existing binary with `executablePath` rather than downloading a matching one. PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 stops npm postinstall from re-fetching.",
@@ -46,7 +46,7 @@
       "signature": {
         "algorithm": "ed25519",
         "keyId": "56f7a413738936bd",
-        "value": "qALMc185r8P5jSHYUw6oMyYZMmUtHa1p9vm/ha9YQzbmmKh7JrMvGg/PyAEOApIEGtLkGOhO4ORGzG65tw/EDA=="
+        "value": "JFdGEZb1Ma9Jwe9GCIsQfVmUhTrljQ7EveQS35pZ35zybmBTV62gTVjZW2EnsP57CsFwG75qfNtympWGGlwHCw=="
       }
     },
     {
@@ -63,7 +63,7 @@
       "signature": {
         "algorithm": "ed25519",
         "keyId": "56f7a413738936bd",
-        "value": "plWvHPmX/+nA29X813HTmd2YMwc1gquQRZ1QXCRESgVY1lUtnPoS9qFKm7t1eUruGhVhZGRQ7GuGTUtj/cDMCQ=="
+        "value": "WNN45V+hshz0of7PzSCDvd5YHm9siExL7H+OcxhYtQ3FVJ6UnjrPp3CHK7MxrNyhn1wlEvKnW/wIF3XQK2q1CQ=="
       }
     }
   ],

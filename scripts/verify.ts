@@ -87,6 +87,8 @@ try {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
     timeout: 120_000,
+    // SIGTERM is ignorable: `trap '' TERM; sleep 100000` outlived the timeout.
+    killSignal: 'SIGKILL',
     shell: '/bin/bash',
   });
 } catch (e) {

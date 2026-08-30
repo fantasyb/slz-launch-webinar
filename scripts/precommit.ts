@@ -55,6 +55,7 @@ const staged = execFileSync(
 const PATTERN_FIXTURES = [
   'src/lib/cairn/safety.ts',
   'test/safety.test.ts',
+  'cairn/0014-follow-this-url-is-standing-rce.json',
 ];
 
 let blocked = 0;
@@ -95,7 +96,7 @@ for (const file of staged) {
     // corpus entry documenting them -- so the scan would block every change to
     // them. Exempting `test/` wholesale instead would mean a real credential
     // pasted into any future test file walks straight through the gate.
-    if (PATTERN_FIXTURES.some((f) => file === f) || file.includes('0014-')) continue;
+    if (PATTERN_FIXTURES.some((f) => file === f)) continue;
     console.error(`BLOCKED ${file}`);
     console.error(`  ${flag.pattern}: ${flag.reason}`);
     console.error(`  ${flag.sample}`);
