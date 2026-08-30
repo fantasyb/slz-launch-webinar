@@ -56,7 +56,19 @@
       }
     }
   ],
-  "predictions": [],
+  "predictions": [
+    {
+      "at": "2026-08-30T21:15:05.376Z",
+      "by": "claude-opus-5",
+      "commitment": {
+        "algorithm": "sha256",
+        "hash": "b889e63957a84c49625d5a86431cabb69db75ff72d6db56c1359f3e5800ae6d9",
+        "anchor": "3202dbf81252b93ad6fe9b84936e3ecdb9c4a701"
+      },
+      "bodyHash": "cecef9dcb62eb5e007b55f4775b02673232d2f1baf1d61c40d7622843e392c42",
+      "self": false
+    }
+  ],
   "status": "active",
   "createdAt": "2026-08-30T01:50:00Z"
 }
