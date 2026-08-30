@@ -126,18 +126,57 @@ export type Observation = z.infer<typeof ObservationSchema>;
  * prior observations. An unblinded prediction is nearly worthless: the
  * predictor is reading the answer. The tooling blinds by default.
  */
-export const PredictionSchema = z.object({
-  at: z.string().datetime(),
-  by: z.string().min(1),
-  /** P(the check confirms the claim), stated before running it. */
-  priorConfirmed: z.number().min(0).max(1),
-  /** Why. The reasoning is the part worth training on, not just the number. */
-  reasoning: z.string().min(1),
-  blind: z.boolean().default(true),
-  /** Filled in once the check has been run and judged. */
-  outcome: VerdictSchema.optional(),
-  resolvedAt: z.string().datetime().optional(),
+export const CommitmentSchema = z.object({
+  algorithm: z.literal('sha256'),
+  /** H(version|findingId|by|prior|reasoning|anchor|nonce). See commitment.ts. */
+  hash: z.string().regex(/^[0-9a-f]{64}$/),
+  /** Repo HEAD sha when the seal was created. Bounds the interval from below. */
+  anchor: z.string().min(7),
 });
+export type Commitment = z.infer<typeof CommitmentSchema>;
+
+/**
+ * A forecast, sealed before the check runs and revealed after.
+ *
+ * This is the artifact the corpus exists to produce. A finding on its own is
+ * a fact, and facts can be scraped. A prediction that provably preceded its
+ * own adjudication cannot be, because it requires commitment in advance and
+ * an executable arbiter.
+ *
+ * On seal, only `commitment` is published: `priorConfirmed`, `reasoning` and
+ * `nonce` are absent, held locally in a gitignored file. That commit is
+ * pushed before the check is run. On reveal they are filled in and anyone can
+ * recompute the hash. A revealed prediction whose hash does not recompute is
+ * `broken` and is never scored.
+ *
+ * `self` marks a prediction by the finding's own author, who necessarily
+ * knew the answer. Recorded for the record, excluded from calibration.
+ */
+export const PredictionSchema = z
+  .object({
+    /** When the seal was published. */
+    at: z.string().datetime(),
+    by: z.string().min(1),
+    commitment: CommitmentSchema.optional(),
+
+    /** Revealed phase. Absent while sealed. */
+    revealedAt: z.string().datetime().optional(),
+    nonce: z.string().optional(),
+    priorConfirmed: z.number().min(0).max(1).optional(),
+    reasoning: z.string().optional(),
+
+    outcome: VerdictSchema.optional(),
+    resolvedAt: z.string().datetime().optional(),
+
+    /** True when the predictor authored the finding and knew the answer. */
+    self: z.boolean().default(false),
+  })
+  .refine((p) => !(p.priorConfirmed !== undefined) || p.reasoning !== undefined, {
+    message: 'a revealed prediction must include reasoning',
+  })
+  .refine((p) => !(p.priorConfirmed !== undefined && p.commitment) || !!p.nonce, {
+    message: 'a revealed commitment must include the nonce so the hash can be recomputed',
+  });
 export type Prediction = z.infer<typeof PredictionSchema>;
 
 export const SubjectSchema = z.object({

@@ -20,14 +20,12 @@ export const dynamic = 'force-dynamic';
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const minSurprise = Number(searchParams.get('minSurprise') ?? 0);
-  const blindOnly = searchParams.get('blindOnly') !== 'false';
 
   const rows = loadCorpus().flatMap((f) => {
     const s = surprise(f);
     if (s === null || s < minSurprise) return [];
     return f.predictions
-      .filter(isScorable)
-      .filter((p) => (blindOnly ? p.blind : true))
+      .filter((p) => isScorable(f.id, p))
       .map((p) => ({
         findingId: f.id,
         subject: f.subject,
@@ -42,8 +40,10 @@ export async function GET(request: Request) {
           by: p.by,
           priorConfirmed: p.priorConfirmed,
           reasoning: p.reasoning,
-          blind: p.blind,
           at: p.at,
+          sealedWith: p.commitment
+            ? { hash: p.commitment.hash, anchor: p.commitment.anchor }
+            : null,
         },
         outcome: p.outcome,
         actual: actualValue(p),
@@ -57,11 +57,13 @@ export async function GET(request: Request) {
     generatedAt: new Date().toISOString(),
     count: rows.length,
     note:
-      'Each row pairs a forecast committed before verification with an outcome ' +
-      'adjudicated by executing check.command. Rank by `surprise` to select for ' +
-      'knowledge the model population does not already hold. Predictions are ' +
-      'blinded at collection: the forecaster did not see evidence or prior ' +
-      'observations. This cannot be reconstructed from scraped text.',
+      'Each row pairs a forecast with an outcome adjudicated by executing ' +
+      'check.command. Every row here is cryptographically sealed: the hash in ' +
+      'sealedWith was published to git before the check ran, and recomputes ' +
+      'from the revealed prior and reasoning, so the forecast provably could ' +
+      'not have been edited to match its result. Unsealed self-reports and ' +
+      'predictions by a finding\'s own author are excluded. Rank by `surprise` ' +
+      'to select for knowledge the model population does not already hold.',
     caveat:
       'Findings enter this corpus because someone found them surprising, so ' +
       'calibration measured here is calibration on selected hard cases, not ' +

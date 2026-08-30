@@ -1,0 +1,94 @@
+/**
+ * Audits the prediction ledger against git history.
+ *
+ * A commitment proves the forecast was not edited. Git proves WHEN it was
+ * published. Together they establish that the seal entered public history
+ * before the reveal that resolved it — which is the claim the whole ledger
+ * rests on, and which anyone can now check without trusting us.
+ *
+ *   npm run cairn:audit
+ */
+import { execSync } from 'child_process';
+import { loadCorpus } from '../src/lib/cairn/load';
+import { allPredictions } from '../src/lib/cairn/calibration';
+
+function firstCommitContaining(needle: string): string | null {
+  try {
+    const out = execSync(
+      `git log --format=%H --reverse -S'${needle}' -- cairn/`,
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
+    ).trim();
+    return out.split('\n')[0] || null;
+  } catch {
+    return null;
+  }
+}
+
+function isAncestor(a: string, b: string): boolean {
+  try {
+    execSync(`git merge-base --is-ancestor ${a} ${b}`, { stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+let failures = 0;
+let audited = 0;
+
+for (const p of allPredictions(loadCorpus())) {
+  const label = `${p.findingId} by ${p.by}`;
+
+  if (p.status === 'unanchored') {
+    console.log(`skip   ${label} — unanchored, not scored`);
+    continue;
+  }
+  if (p.status === 'broken') {
+    console.error(`FAIL   ${label} — commitment does not recompute`);
+    failures++;
+    continue;
+  }
+  if (!p.commitment) continue;
+
+  const sealCommit = firstCommitContaining(p.commitment.hash);
+  if (!sealCommit) {
+    console.log(`pend   ${label} — seal not yet in committed history`);
+    continue;
+  }
+
+  // The anchor must precede the seal: you cannot commit to a future HEAD.
+  if (!isAncestor(p.commitment.anchor, sealCommit)) {
+    console.error(`FAIL   ${label} — anchor ${p.commitment.anchor.slice(0, 8)} is not an ancestor of the seal`);
+    failures++;
+    continue;
+  }
+
+  if (p.status === 'sealed') {
+    console.log(`sealed ${label} — awaiting reveal, seal at ${sealCommit.slice(0, 8)}`);
+    continue;
+  }
+
+  const revealCommit = p.nonce ? firstCommitContaining(p.nonce) : null;
+  if (!revealCommit) {
+    console.log(`pend   ${label} — reveal not yet committed`);
+    continue;
+  }
+  if (revealCommit === sealCommit) {
+    console.error(`FAIL   ${label} — seal and reveal in the same commit; the ordering proves nothing`);
+    failures++;
+    continue;
+  }
+  if (!isAncestor(sealCommit, revealCommit)) {
+    console.error(`FAIL   ${label} — seal is not an ancestor of the reveal`);
+    failures++;
+    continue;
+  }
+
+  audited++;
+  console.log(
+    `ok     ${label} — sealed ${sealCommit.slice(0, 8)} -> revealed ${revealCommit.slice(0, 8)}`,
+  );
+}
+
+console.log(`\n${audited} forecast(s) provably sealed before resolution · ${failures} failure(s)`);
+process.exit(failures > 0 ? 1 : 0);

@@ -64,10 +64,10 @@
       "at": "2026-08-30T02:08:00Z",
       "by": "claude-opus-5",
       "priorConfirmed": 0.95,
-      "blind": true,
-      "reasoning": "ripgrep compiles the pattern as a regex before touching any file, and `{` opens a repetition quantifier. Empty braces are not a valid count, so I expect a parse error and exit 2 rather than a clean miss. High confidence: this follows from how the engine is layered, not from a memory of a specific version.",
+      "reasoning": "ripgrep compiles the pattern as a regex before touching any file, and `{` opens a repetition quantifier. Empty braces are not a valid count, so I expect a parse error and exit 2 rather than a clean miss. High confidence: this follows from how the engine is layered, not from a memory of a specific version. [Recorded by the author of this finding, after running the check, with no cryptographic seal. Honest as a record of what I believed, but unverifiable by anyone else \u2014 so it is excluded from scoring.]",
       "outcome": "confirmed",
-      "resolvedAt": "2026-08-30T02:10:00Z"
+      "resolvedAt": "2026-08-30T02:10:00Z",
+      "self": true
     }
   ],
   "status": "active",

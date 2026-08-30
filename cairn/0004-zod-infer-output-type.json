@@ -59,10 +59,10 @@
       "at": "2026-08-30T02:13:00Z",
       "by": "claude-opus-5",
       "priorConfirmed": 0.9,
-      "blind": true,
-      "reasoning": "z.infer aliases z.output, and `.default()` narrows the output by removing undefined while widening the input to allow omission. So the defaulted field should be required on the output type and tsc should reject an object that omits it.",
+      "reasoning": "z.infer aliases z.output, and `.default()` narrows the output by removing undefined while widening the input to allow omission. So the defaulted field should be required on the output type and tsc should reject an object that omits it. [Recorded by the author of this finding, after running the check, with no cryptographic seal. Honest as a record of what I believed, but unverifiable by anyone else \u2014 so it is excluded from scoring.]",
       "outcome": "confirmed",
-      "resolvedAt": "2026-08-30T02:15:00Z"
+      "resolvedAt": "2026-08-30T02:15:00Z",
+      "self": true
     }
   ],
   "status": "active",

@@ -1,4 +1,5 @@
 import type { Finding, Prediction } from './schema';
+import { commitmentStatus, type CommitmentStatus } from './commitment';
 
 /**
  * Scoring for the prediction ledger.
@@ -16,11 +17,34 @@ import type { Finding, Prediction } from './schema';
  * models do not have. Ranking by surprise ranks by information gain.
  */
 
-export type Resolved = Prediction & { outcome: NonNullable<Prediction['outcome']> };
+export type Resolved = Prediction & {
+  outcome: NonNullable<Prediction['outcome']>;
+  priorConfirmed: number;
+  reasoning: string;
+};
 
-/** Only confirmed/refuted resolve to a truth value; inconclusive cannot score. */
-export function isScorable(p: Prediction): p is Resolved {
-  return p.outcome === 'confirmed' || p.outcome === 'refuted';
+export function statusOf(findingId: string, p: Prediction): CommitmentStatus {
+  return commitmentStatus(findingId, p);
+}
+
+/**
+ * A prediction counts toward calibration only if all four hold:
+ *
+ *   1. it resolved to confirmed or refuted (inconclusive has no truth value);
+ *   2. it was revealed, so a prior and reasoning exist;
+ *   3. its commitment recomputes, proving it was sealed before the check and
+ *      not edited afterwards;
+ *   4. it is not a self-prediction by the finding's own author.
+ *
+ * Everything else is displayed and excluded. Scoring unanchored self-reports
+ * would make the headline number meaningless, which is precisely the failure
+ * this corpus was built to avoid reproducing.
+ */
+export function isScorable(findingId: string, p: Prediction): p is Resolved {
+  if (p.outcome !== 'confirmed' && p.outcome !== 'refuted') return false;
+  if (p.priorConfirmed === undefined || p.reasoning === undefined) return false;
+  if (p.self) return false;
+  return statusOf(findingId, p) === 'verified';
 }
 
 export function actualValue(p: Resolved): 0 | 1 {
@@ -34,8 +58,43 @@ export function brier(p: Resolved): number {
 
 export function scorablePredictions(findings: Finding[]): Array<Resolved & { findingId: string }> {
   return findings.flatMap((f) =>
-    f.predictions.filter(isScorable).map((p) => ({ ...p, findingId: f.id })),
+    f.predictions.filter((p) => isScorable(f.id, p)).map((p) => ({ ...p, findingId: f.id })),
   );
+}
+
+/** Every prediction with its commitment status, for display and auditing. */
+export function allPredictions(findings: Finding[]) {
+  return findings.flatMap((f) =>
+    f.predictions.map((p) => ({
+      ...p,
+      findingId: f.id,
+      status: statusOf(f.id, p),
+      scorable: isScorable(f.id, p),
+    })),
+  );
+}
+
+export interface LedgerIntegrity {
+  total: number;
+  verified: number;
+  sealed: number;
+  broken: number;
+  unanchored: number;
+  self: number;
+  scored: number;
+}
+
+export function ledgerIntegrity(findings: Finding[]): LedgerIntegrity {
+  const all = allPredictions(findings);
+  return {
+    total: all.length,
+    verified: all.filter((p) => p.status === 'verified').length,
+    sealed: all.filter((p) => p.status === 'sealed').length,
+    broken: all.filter((p) => p.status === 'broken').length,
+    unanchored: all.filter((p) => p.status === 'unanchored').length,
+    self: all.filter((p) => p.self).length,
+    scored: all.filter((p) => p.scorable).length,
+  };
 }
 
 /**
@@ -44,7 +103,7 @@ export function scorablePredictions(findings: Finding[]): Array<Resolved & { fin
  * the model population lacks.
  */
 export function surprise(f: Finding): number | null {
-  const scored = f.predictions.filter(isScorable);
+  const scored = f.predictions.filter((p) => isScorable(f.id, p));
   if (scored.length === 0) return null;
   return (
     scored.reduce((acc, p) => acc + Math.abs(p.priorConfirmed - actualValue(p)), 0) /
@@ -123,13 +182,14 @@ export interface CorpusCalibration {
   meanConfidence: number;
   /** Positive means better than refusing to guess; negative means worse. */
   edgeOverUninformed: number;
-  blindShare: number;
+  /** All scored predictions are sealed by construction; kept for the API shape. */
+  sealedShare: number;
 }
 
 export function corpusCalibration(findings: Finding[]): CorpusCalibration {
   const ps = scorablePredictions(findings);
   if (ps.length === 0) {
-    return { n: 0, brier: 0, accuracy: 0, meanConfidence: 0, edgeOverUninformed: 0, blindShare: 0 };
+    return { n: 0, brier: 0, accuracy: 0, meanConfidence: 0, edgeOverUninformed: 0, sealedShare: 0 };
   }
   const b = ps.reduce((a, p) => a + brier(p), 0) / ps.length;
   return {
@@ -140,6 +200,6 @@ export function corpusCalibration(findings: Finding[]): CorpusCalibration {
     meanConfidence:
       ps.reduce((a, p) => a + Math.max(p.priorConfirmed, 1 - p.priorConfirmed), 0) / ps.length,
     edgeOverUninformed: UNINFORMED_BRIER - b,
-    blindShare: ps.filter((p) => p.blind).length / ps.length,
+    sealedShare: ps.filter((p) => !!p.commitment).length / ps.length,
   };
 }

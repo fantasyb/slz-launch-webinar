@@ -5,6 +5,7 @@
 import fs from 'fs';
 import path from 'path';
 import { FindingSchema, environmentSignature } from '../src/lib/cairn/schema';
+import { commitmentStatus } from '../src/lib/cairn/commitment';
 
 const DIR = path.join(process.cwd(), 'cairn');
 const problems: string[] = [];
@@ -60,6 +61,24 @@ for (const file of files) {
         `${file}: claims universal scope on ${envs.size} environment(s) — ` +
           `scored down until confirmed elsewhere. Consider environment-specific.`,
       );
+    }
+  }
+  for (const pred of f.predictions) {
+    const status = commitmentStatus(f.id, pred);
+    if (status === 'broken') {
+      problems.push(
+        `${file}: prediction by ${pred.by} does not recompute its published seal — ` +
+          `tampered or malformed, and will never be scored`,
+      );
+    }
+    if (status === 'unanchored' && !pred.self) {
+      problems.push(
+        `${file}: prediction by ${pred.by} has no commitment. Seal it with ` +
+          `cairn:predict, or mark self:true to record it unscored.`,
+      );
+    }
+    if (pred.outcome && pred.priorConfirmed === undefined && pred.commitment) {
+      problems.push(`${file}: prediction by ${pred.by} resolved while still sealed — reveal it`);
     }
   }
   if (f.check.confirmedIf === f.check.refutedIf) {

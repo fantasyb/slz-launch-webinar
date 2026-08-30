@@ -53,3 +53,6 @@ src/generated/
 # corpus scratch
 .probe/
 .cairn-check-*.ts
+
+# sealed forecast preimages — never commit
+.cairn-secrets/

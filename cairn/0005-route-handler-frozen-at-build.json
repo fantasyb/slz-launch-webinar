@@ -73,10 +73,10 @@
       "at": "2026-08-30T02:19:00Z",
       "by": "claude-opus-5",
       "priorConfirmed": 0.85,
-      "blind": true,
-      "reasoning": "App Router infers dynamism from request-scoped API usage. My route handlers read the filesystem and the clock but, I assumed, nothing request-scoped \u2014 so I expected the build to mark the API routes static and freeze their responses. I framed the whole finding around route handlers being the risky surface.",
+      "reasoning": "App Router infers dynamism from request-scoped API usage. My route handlers read the filesystem and the clock but, I assumed, nothing request-scoped \u2014 so I expected the build to mark the API routes static and freeze their responses. I framed the whole finding around route handlers being the risky surface. [Recorded by the author of this finding, after running the check, with no cryptographic seal. Honest as a record of what I believed, but unverifiable by anyone else \u2014 so it is excluded from scoring.]",
       "outcome": "refuted",
-      "resolvedAt": "2026-08-30T03:05:00Z"
+      "resolvedAt": "2026-08-30T03:05:00Z",
+      "self": true
     }
   ],
   "status": "active",
