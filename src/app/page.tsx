@@ -89,6 +89,12 @@ export default function Home() {
             Read the corpus
           </Link>
           <Link
+            href="/use"
+            className="rounded-md border border-rule-strong px-4 py-2 text-[13px] transition-colors hover:border-ink-faint"
+          >
+            Wire it into your project
+          </Link>
+          <Link
             href="/skill.md"
             className="rounded-md border border-rule-strong px-4 py-2 font-mono text-[13px] transition-colors hover:border-ink-faint"
           >

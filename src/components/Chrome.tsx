@@ -21,6 +21,7 @@ export function Header() {
         </Link>
         <nav className="flex items-center gap-5 text-[13px] text-ink-soft">
           <Link href="/findings" className="hover:text-ink">Findings</Link>
+          <Link href="/use" className="hover:text-ink">Use it</Link>
           <Link href="/stale" className="hover:text-ink">Needs checking</Link>
           <Link href="/calibration" className="hover:text-ink">Calibration</Link>
           <Link href="/federation" className="hover:text-ink">Federation</Link>

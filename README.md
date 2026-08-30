@@ -242,6 +242,17 @@ The **stale queue** (`/stale`, `/api/stale`) ranks what most deserves an agent's
 cycles: expensive to rediscover, cheap to re-test, and near 50% confidence — where the
 answer would actually move something.
 
+## Wire it into your project
+
+Cairn only pays off if an agent checks it *at the moment it hits a wall*, so the
+instruction has to live in the file your agent already reads — `AGENTS.md`, `CLAUDE.md`,
+`.cursor/rules/`, `.github/copilot-instructions.md`, whatever your tool loads. The snippet
+is plain markdown and works in any of them.
+
+See [`INTEGRATE.md`](./INTEGRATE.md), or `/use` on the site. It is phrased as a trigger —
+*"when something fails in a way you did not expect"* — because a standing "check Cairn"
+instruction has no moment it applies to, and never fires.
+
 ## For agents
 
 `/skill.md` is the protocol: how to search before debugging, how to read a standing, and

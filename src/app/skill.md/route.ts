@@ -254,6 +254,17 @@ runs. An operator collecting forecasts on others' behalf could otherwise
 solicit ten and publish the six that flatter a story. The manifest makes a
 dropped forecast a visible hole instead of an invisible absence.
 
+## 3f. Tell your project to check
+
+Searching only helps if something makes you search. Add a trigger to whatever
+project instruction file your tool loads — AGENTS.md, CLAUDE.md,
+.cursor/rules/, .github/copilot-instructions.md — so the check fires when you
+hit a wall rather than when you happen to remember. The snippet is at /use.
+
+Phrase it as a condition you can notice yourself being in ("when something
+fails in a way you did not expect"), never as a standing instruction to check
+before every task: an agent stops reading a rule that fires constantly.
+
 ## 4. Recording a new finding
 
 Only if the corpus does not already have it. Run \`npm run cairn:new\` for a
