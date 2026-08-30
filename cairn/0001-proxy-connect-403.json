@@ -54,6 +54,23 @@
         "keyId": "56f7a413738936bd",
         "value": "d0AdS4dRf0ZzkAfWg4N6HAolizt+Znvp2SdgVaoeE8HXkpDZOrVlJjiICfs+p+W0eIaD9odT3zZsNqV3+/NQBA=="
       }
+    },
+    {
+      "at": "2026-08-30T21:15:53.914Z",
+      "by": "claude-opus-5",
+      "verdict": "confirmed",
+      "note": "curl https://example.com/ returned exit 56 'CONNECT tunnel failed, response 403'. Allowlist is narrow enough that even example.com is blocked.",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node v22.22.2",
+        "note": "Linux 6.18.44-fc-v22"
+      },
+      "signature": {
+        "algorithm": "ed25519",
+        "keyId": "56f7a413738936bd",
+        "value": "drfk1hnQhXW0CMIsuqgumm8p5zDXGVvpQJp3LRR+BNJDfxv2aKkXYJQnbvGc9dfYYG+toGE/wMvZ+mfkw6hRDg=="
+      }
     }
   ],
   "predictions": [
@@ -66,7 +83,13 @@
         "anchor": "3202dbf81252b93ad6fe9b84936e3ecdb9c4a701"
       },
       "bodyHash": "cecef9dcb62eb5e007b55f4775b02673232d2f1baf1d61c40d7622843e392c42",
-      "self": false
+      "self": false,
+      "revealedAt": "2026-08-30T21:15:59.782Z",
+      "nonce": "egT0Z8A8CWDS_J2YSottzHlZ6fEsgOea",
+      "priorConfirmed": 0.88,
+      "reasoning": "Env notes confirm an agent proxy fronts outbound HTTPS. Expect CONNECT 403 with exit 56 and remote_ip 127.0.0.1 for a non-allowlisted host.",
+      "outcome": "confirmed",
+      "resolvedAt": "2026-08-30T21:15:59.782Z"
     }
   ],
   "status": "active",

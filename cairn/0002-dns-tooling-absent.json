@@ -58,6 +58,23 @@
         "keyId": "56f7a413738936bd",
         "value": "HwluUT8xCxG9DwOsxbQ4Xa/yxGVbUcOq+Cp0yGmvE4L30pq8vabBw6/QgIf0Y6NYr0oiXr1IuAGOetfaKAl5Dg=="
       }
+    },
+    {
+      "at": "2026-08-30T21:15:49.241Z",
+      "by": "claude-opus-5",
+      "verdict": "confirmed",
+      "note": "command -v dig nslookup host printed ABSENT; getent hosts example.com succeeded (GETENT_OK). Same sandbox, exit 0.",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node v22.22.2",
+        "note": "Linux 6.18.44-fc-v22"
+      },
+      "signature": {
+        "algorithm": "ed25519",
+        "keyId": "56f7a413738936bd",
+        "value": "nDq/PFOIshVs2q/Ij1tdWYEthXSdA1YefSxNE29RjlprM8ST6QctW43kVUytOS158JJO8L5knvIwDw64fE2kAQ=="
+      }
     }
   ],
   "predictions": [
@@ -70,7 +87,13 @@
         "anchor": "3202dbf81252b93ad6fe9b84936e3ecdb9c4a701"
       },
       "bodyHash": "140858003887fc3fbd7ded6ac2107a32d367e9e9d9916356ff030da631808031",
-      "self": false
+      "self": false,
+      "revealedAt": "2026-08-30T21:15:59.376Z",
+      "nonce": "g3RItC0a2ebUz0VyGUorZr4hJniMZJKx",
+      "priorConfirmed": 0.92,
+      "reasoning": "Same Claude Code remote sandbox family the finding was authored in, same day, slim container. Expect dig/nslookup/host absent and getent present.",
+      "outcome": "confirmed",
+      "resolvedAt": "2026-08-30T21:15:59.376Z"
     }
   ],
   "status": "active",
