@@ -33,11 +33,30 @@ function targets(): string[] {
       process.exit(2);
     }
     const base = next ?? 'origin/main';
-    return execFileSync('git', ['diff', '--name-only', `${base}...HEAD`, '--', 'cairn/'], {
-      encoding: 'utf8',
-    })
+    // Range first, then the index.
+    //
+    // CI checks out the base commit and then takes only `cairn/` from the pull
+    // request, so HEAD *is* the base and `base...HEAD` is empty — the review
+    // layer selected zero files and passed vacuously on every pull request,
+    // while lint and audit (which read the filesystem) kept working and made
+    // the run look healthy. The changed findings are staged in the index.
+    const ranged = execFileSync(
+      'git',
+      ['diff', '--name-only', `${base}...HEAD`, '--', 'cairn/'],
+      { encoding: 'utf8' },
+    )
       .split('\n')
-      .filter((f) => f.endsWith('.json') && fs.existsSync(f));
+      .filter(Boolean);
+    const staged = execFileSync(
+      'git',
+      ['diff', '--name-only', '--cached', '--diff-filter=ACM', base, '--', 'cairn/'],
+      { encoding: 'utf8' },
+    )
+      .split('\n')
+      .filter(Boolean);
+    return [...new Set([...ranged, ...staged])].filter(
+      (f) => f.endsWith('.json') && fs.existsSync(f),
+    );
   }
   return process.argv.slice(2).filter((a) => a.endsWith('.json'));
 }

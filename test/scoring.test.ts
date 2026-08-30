@@ -37,9 +37,9 @@ test('an unsigned refutation cannot move confidence or standing', () => {
     ...specs,
     { obs: { at: '2026-08-29T12:00:00Z', by: 'anyone-at-all', verdict: 'refuted' as const } },
   ]);
-  assert.equal(confidence(withNoise, NOW), confidence(clean, NOW));
-  assert.equal(standing(withNoise, NOW), standing(clean, NOW));
-  assert.deepEqual(disagreement(withNoise, NOW).refuters, 0);
+  assert.equal(confidence(withNoise, NOW, KEYS), confidence(clean, NOW, KEYS));
+  assert.equal(standing(withNoise, NOW, KEYS), standing(clean, NOW, KEYS));
+  assert.deepEqual(disagreement(withNoise, NOW, KEYS).refuters, 0);
 });
 
 test('a signed refutation does contest, and clears only at two distinct later signers', () => {
@@ -47,15 +47,15 @@ test('a signed refutation does contest, and clears only at two distinct later si
     { key: A, obs: { at: '2026-08-25T00:00:00Z', by: 'alice', verdict: 'confirmed', environment: env('linux') } },
     { key: B, obs: { at: '2026-08-26T00:00:00Z', by: 'bob', verdict: 'refuted' } },
   ]);
-  assert.equal(standing(contested, NOW), 'contested');
-  assert.equal(confidence(contested, NOW), 0);
+  assert.equal(standing(contested, NOW, KEYS), 'contested');
+  assert.equal(confidence(contested, NOW, KEYS), 0);
 
   const oneAnswer = signedFinding([
     { key: A, obs: { at: '2026-08-25T00:00:00Z', by: 'alice', verdict: 'confirmed', environment: env('linux') } },
     { key: B, obs: { at: '2026-08-26T00:00:00Z', by: 'bob', verdict: 'refuted' } },
     { key: C, obs: { at: '2026-08-27T00:00:00Z', by: 'carol', verdict: 'confirmed', environment: env('darwin') } },
   ]);
-  assert.equal(standing(oneAnswer, NOW), 'contested', 'one confirmation must not clear a refutation');
+  assert.equal(standing(oneAnswer, NOW, KEYS), 'contested', 'one confirmation must not clear a refutation');
 
   const cleared = signedFinding([
     { key: A, obs: { at: '2026-08-25T00:00:00Z', by: 'alice', verdict: 'confirmed', environment: env('linux') } },
@@ -63,8 +63,8 @@ test('a signed refutation does contest, and clears only at two distinct later si
     { key: C, obs: { at: '2026-08-27T00:00:00Z', by: 'carol', verdict: 'confirmed', environment: env('darwin') } },
     { key: D, obs: { at: '2026-08-28T00:00:00Z', by: 'dave', verdict: 'confirmed', environment: env('win32') } },
   ]);
-  assert.notEqual(standing(cleared, NOW), 'contested');
-  assert.ok(confidence(cleared, NOW) > 0);
+  assert.notEqual(standing(cleared, NOW, KEYS), 'contested');
+  assert.ok(confidence(cleared, NOW, KEYS) > 0);
 });
 
 test('a confirmation before the refutation does not help clear it', () => {
@@ -73,8 +73,8 @@ test('a confirmation before the refutation does not help clear it', () => {
     { key: C, obs: { at: '2026-08-21T00:00:00Z', by: 'carol', verdict: 'confirmed', environment: env('darwin') } },
     { key: B, obs: { at: '2026-08-26T00:00:00Z', by: 'bob', verdict: 'refuted' } },
   ]);
-  assert.equal(disagreement(f, NOW).confirmers, 0);
-  assert.equal(standing(f, NOW), 'contested');
+  assert.equal(disagreement(f, NOW, KEYS).confirmers, 0);
+  assert.equal(standing(f, NOW, KEYS), 'contested');
 });
 
 test('future-dated observations contribute nothing, in either direction', () => {
@@ -86,8 +86,8 @@ test('future-dated observations contribute nothing, in either direction', () => 
     ...base,
     { key: B, obs: { at: '2099-01-01T00:00:00Z', by: 'bob', verdict: 'refuted' as const } },
   ]);
-  assert.notEqual(standing(futureRefutation, NOW), 'contested');
-  assert.ok(confidence(futureRefutation, NOW) > 0);
+  assert.notEqual(standing(futureRefutation, NOW, KEYS), 'contested');
+  assert.ok(confidence(futureRefutation, NOW, KEYS) > 0);
 
   // Future confirmations must not clear a real refutation.
   const futureClear = signedFinding([
@@ -96,7 +96,7 @@ test('future-dated observations contribute nothing, in either direction', () => 
     { key: C, obs: { at: '2099-01-01T00:00:00Z', by: 'carol', verdict: 'confirmed' as const, environment: env('darwin') } },
     { key: D, obs: { at: '2099-01-01T00:00:00Z', by: 'dave', verdict: 'confirmed' as const, environment: env('win32') } },
   ]);
-  assert.equal(standing(futureClear, NOW), 'contested');
+  assert.equal(standing(futureClear, NOW, KEYS), 'contested');
 
   // And they buy no breadth.
   const futureBreadth = signedFinding([
@@ -161,19 +161,72 @@ test('derivedVerdict resolves only from evidence inside the window', () => {
     { key: A, obs: { at: '2026-08-20T00:00:00Z', by: 'alice', verdict: 'confirmed' } },
   ]);
   // A seal after all existing evidence resolves to nothing.
-  assert.equal(derivedVerdict(f, { since: new Date('2026-08-25T00:00:00Z') }), 'inconclusive');
+  assert.equal(derivedVerdict(f, { since: new Date('2026-08-25T00:00:00Z') }, KEYS), 'inconclusive');
   // A seal before the later observation resolves from it.
   assert.equal(
-    derivedVerdict(f, { since: new Date('2026-08-10T00:00:00Z'), asOf: NOW }),
+    derivedVerdict(f, { since: new Date('2026-08-10T00:00:00Z'), asOf: NOW }, KEYS),
     'confirmed',
   );
   // asOf excludes evidence recorded after the resolution.
   assert.equal(
-    derivedVerdict(f, { since: new Date('2026-08-10T00:00:00Z'), asOf: new Date('2026-08-15T00:00:00Z') }),
+    derivedVerdict(f, { since: new Date('2026-08-10T00:00:00Z'), asOf: new Date('2026-08-15T00:00:00Z') }, KEYS),
     'inconclusive',
   );
 });
 
 test('latestObservation does not throw on a finding with no observations', () => {
   assert.equal(latestObservation(finding()), undefined);
+});
+
+test('a forged signature buys nothing', () => {
+  // partyOf returned an identity because a `signature` field was present, with
+  // no verification. Sixteen hex digits and any base64 bought a distinct party:
+  // three of them moved a finding from stale to aging, and one forged
+  // refutation contested a two-signer finding for free.
+  const fake = (i: number) => ({
+    algorithm: 'ed25519' as const,
+    keyId: `deadbeef${i}`.padEnd(16, '0').slice(0, 16),
+    value: 'AAAA',
+  });
+  const forged = finding({
+    observations: [
+      { at: '2026-08-29T00:00:00Z', by: 'a', verdict: 'confirmed', environment: env('linux'), signature: fake(1) },
+      { at: '2026-08-29T00:00:00Z', by: 'b', verdict: 'confirmed', environment: env('darwin'), signature: fake(2) },
+      { at: '2026-08-29T00:00:00Z', by: 'c', verdict: 'confirmed', environment: env('win32'), signature: fake(3) },
+    ] as never,
+  });
+  assert.deepEqual(disagreement(forged, NOW, KEYS), { confirmers: 0, refuters: 0 });
+
+  const contested = finding({
+    observations: [
+      { at: '2026-08-28T00:00:00Z', by: 'a', verdict: 'confirmed', environment: env('linux') },
+      { at: '2026-08-29T00:00:00Z', by: 'x', verdict: 'refuted', signature: fake(9) },
+    ] as never,
+  });
+  assert.notEqual(standing(contested, NOW, KEYS), 'contested');
+});
+
+test('invented names cannot buy breadth', () => {
+  // The previous cap was min(environments, distinct `by`) -- worthless, since
+  // `by` is free text. Eight environments under one name capped to 1; the same
+  // eight under eight invented names scored 4.0 and took scopeSupport to 0.956
+  // against 0.505 for an honest single-environment report.
+  const invented = finding({
+    observations: Array.from({ length: 8 }, (_, i) => ({
+      at: '2026-08-29T00:00:00Z',
+      by: `invented-${i}`,
+      verdict: 'confirmed',
+      environment: env(`fake-${i}`),
+    })) as never,
+  });
+  const honest = finding({
+    observations: [
+      { at: '2026-08-29T00:00:00Z', by: 'a', verdict: 'confirmed', environment: env('linux') },
+    ] as never,
+  });
+  assert.equal(
+    effectiveEnvironments(invented, KEYS, NOW),
+    effectiveEnvironments(honest, KEYS, NOW),
+    'unsigned breadth is capped regardless of how many names claim it',
+  );
 });

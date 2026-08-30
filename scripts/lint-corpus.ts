@@ -168,6 +168,19 @@ for (const file of files) {
     // The outcome is the ground truth a forecast is scored against, so it may
     // not be whatever the forecaster wrote. Check it against what the finding's
     // own observations supported at the moment it was resolved.
+    // A recorded outcome with no `resolvedAt` used to skip this check entirely.
+    // `resolvedAt` is optional in the schema and only reveal.ts writes it, so a
+    // hand-edited reveal that copied the real preimage (keeping the hash valid)
+    // and simply omitted the field could record `confirmed` on a refuted
+    // finding: lint passed, audit certified it "provably sealed before
+    // resolution", and a fabricated Brier of 0.0025 reached the training
+    // export. The seal binds the prior; it never bound the answer key.
+    if (pred.outcome && !pred.resolvedAt) {
+      problems.push(
+        `${file}: prediction by ${pred.by} records an outcome with no resolvedAt, so it ` +
+          `cannot be checked against the observations. Reveal with cairn:reveal.`,
+      );
+    }
     if (pred.outcome && pred.resolvedAt) {
       const currentBody = findingBodyHash(f);
       if (pred.bodyHash && pred.bodyHash !== currentBody) {

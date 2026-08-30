@@ -99,6 +99,10 @@ export function isScorableIn(f: Finding, p: Prediction): p is Resolved {
   // exactly these predictions as unscored — the two disagreed once, and the
   // corpus told a reader the opposite of what the scorer did.
   if (!p.bodyHash || p.bodyHash !== findingBodyHash(f)) return false;
+  // No resolvedAt means no moment to check the outcome against, and lint's
+  // cross-check is gated on the same field. Scoring it would trust the
+  // forecaster's own record of the answer.
+  if (!p.resolvedAt) return false;
   return isScorable(f.id, p) && !isSelfPrediction(f, p);
 }
 

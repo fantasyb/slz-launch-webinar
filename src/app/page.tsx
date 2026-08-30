@@ -54,12 +54,17 @@ export default function Home() {
             {/*
               Three quantities that are easy to conflate and were: `verified`
               is how many seals are hash-checkable, `scored` is how many count
-              toward calibration, and `excluded` is the difference. They are
-              not nested — a forecast can be verified and still excluded for
-              being self-authored, which is why labelling `scored` as "sealed
-              and verified" understated the seals, and why pairing `unanchored`
-              with `self` printed "4 excluded — 5 of them", which cannot be
-              true of any set.
+              toward calibration, and `excluded` is the difference.
+
+              `self` is NOT part of the status partition. verified / sealed /
+              broken / unanchored / legacy-encoding partition the total; `self`
+              cuts across all of them, because a forecast can be perfectly
+              sealed and still excluded for being its own author's. Listing it
+              alongside `unanchored` as though the two were alternatives is how
+              this sentence first read "4 excluded — 5 of them", and then, after
+              a fix that corrected only the total, "5 excluded — 5 … 4 … 1".
+              The reasons are stated in two clauses now because they are two
+              different questions about the same five forecasts.
             */}
             <p className="mt-3 max-w-reading text-[13px] leading-relaxed text-ink-soft">
               <strong className="font-semibold text-ink">{integrity.total}</strong>{' '}
@@ -71,15 +76,16 @@ export default function Home() {
               <strong className="font-semibold text-ink-faint">
                 {integrity.total - integrity.scored}
               </strong>{' '}
-              excluded &mdash; {integrity.self} as forecasts by the finding&rsquo;s own author,
-              which nobody else can check, {integrity.unanchored} as unanchored
+              excluded. {integrity.unanchored} carry no seal
               {integrity.legacyEncoding > 0 && (
                 <>
-                  , and {integrity.legacyEncoding} sealed under an earlier encoding that did
-                  not bind the forecast&rsquo;s values
+                  {' '}and {integrity.legacyEncoding} was sealed under an earlier encoding that
+                  did not bind the forecast&rsquo;s values
                 </>
               )}
-              .{' '}
+              ; separately, {integrity.self}{' '}
+              {integrity.self === 1 ? 'is a forecast' : 'are forecasts'} by the finding&rsquo;s
+              own author, which nobody else can check.{' '}
               <Link href="/calibration" className="underline decoration-rule-strong underline-offset-2 hover:text-ink">
                 See the ledger
               </Link>

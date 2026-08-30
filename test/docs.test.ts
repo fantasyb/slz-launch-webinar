@@ -39,7 +39,12 @@ test('no page hardcodes a ledger count in prose', () => {
   // "all four of my own" outlived the ledger having four of anything.
   const pages = ['src/app/page.tsx', 'src/app/skill.md/route.ts'];
   for (const file of pages) {
-    const text = fs.readFileSync(path.join(process.cwd(), file), 'utf8');
+    // Comments are stripped first: this check is about what renders, and it
+    // flagged the very comment explaining why the check exists.
+    const text = fs
+      .readFileSync(path.join(process.cwd(), file), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^\s*\/\/.*$/gm, '');
     const spelled = text.match(
       /\b(?:one|two|three|four|five|six|seven|eight|nine|ten)\s+(?:of\s+(?:my|the)\s+own|forecasts?|predictions?)\b/i,
     );

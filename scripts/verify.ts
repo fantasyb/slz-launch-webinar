@@ -10,6 +10,7 @@
 import { execSync } from 'child_process';
 import fs from 'fs';
 import { resolveFindingFile } from '../src/lib/cairn/resolve';
+import { environmentSignature } from '../src/lib/cairn/schema';
 import path from 'path';
 import { FindingSchema } from '../src/lib/cairn/schema';
 import { scanExecutable } from '../src/lib/cairn/safety';
@@ -108,7 +109,7 @@ if (finding.scope === 'universal') {
       new Set(
         finding.observations
           .filter((o) => o.verdict === 'confirmed' && o.environment)
-          .map((o) => `${o.environment!.os}/${o.environment!.arch ?? 'any'}`),
+          .map((o) => environmentSignature(o.environment!)),
       ).size
     } environment(s).`,
   );

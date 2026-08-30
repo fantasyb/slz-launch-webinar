@@ -93,12 +93,72 @@ test('a forecast bound to text that has since changed is not scored', () => {
   assert.equal(isScorableIn(stale, stale.predictions[0]), false);
 });
 
-test('the finding author cannot score their own forecast by relabelling', () => {
+test('a forecast under the founding observation\'s own label is self-authored', () => {
   const f = finding({
     observations: [{ at: '2026-08-01T00:00:00Z', by: 'author', verdict: 'confirmed' }] as never,
     predictions: [{ at: '2026-08-10T00:00:00Z', by: 'author', priorConfirmed: 0.9 }] as never,
   });
   assert.equal(isSelfPrediction(f, f.predictions[0]), true);
+});
+
+test('relabelling is NOT prevented, and the corpus must not claim otherwise', () => {
+  // Honest negative test. isSelfPrediction resolves the originator through the
+  // signing key where one exists, but a prediction carries no key, so the
+  // forecaster's own label is self-asserted. An earlier test titled itself
+  // "cannot score their own forecast by relabelling" and then used the same
+  // label on both sides, so it asserted nothing and passed.
+  //
+  // This documents the real boundary: binding predictions to keys is what
+  // would close it, and until then the README says so.
+  const f = finding({
+    observations: [{ at: '2026-08-01T00:00:00Z', by: 'author', verdict: 'confirmed' }] as never,
+    predictions: [{ at: '2026-08-10T00:00:00Z', by: 'author-alt', priorConfirmed: 0.9 }] as never,
+  });
+  assert.equal(
+    isSelfPrediction(f, f.predictions[0]),
+    false,
+    'if this ever returns true, predictions became key-bound and the README needs updating',
+  );
+});
+
+test('an outcome with no resolvedAt is not scorable', () => {
+  // A hand-written reveal could copy the real preimage, keep the hash valid,
+  // omit resolvedAt, and record the opposite outcome: lint skipped its
+  // cross-check (gated on the same field) and a fabricated Brier reached the
+  // training export.
+  const base = finding({
+    observations: [{ at: '2026-08-01T00:00:00Z', by: 'author', verdict: 'confirmed' }] as never,
+  });
+  const f = finding({
+    ...base,
+    predictions: [
+      {
+        at: '2026-08-10T00:00:00Z',
+        by: 'someone-else',
+        outcome: 'confirmed',
+        priorConfirmed: 0.95,
+        reasoning: 'because',
+        bodyHash: findingBodyHash(base),
+        commitment: { algorithm: 'sha256', hash: 'a'.repeat(64), anchor: 'abc1234' },
+      },
+    ] as never,
+  });
+  assert.equal(isScorableIn(f, f.predictions[0]), false);
+});
+
+test('ledgerIntegrity: self is orthogonal to the status partition', () => {
+  // The homepage listed `self` beside `unanchored` as if they were
+  // alternatives, so the reasons summed to twice the set they described.
+  const l = ledgerIntegrity(loadCorpus());
+  assert.equal(
+    l.verified + l.sealed + l.broken + l.unanchored + l.legacyEncoding,
+    l.total,
+    'only these five partition the total',
+  );
+  assert.ok(
+    l.self <= l.total,
+    'self cuts across the partition and must never be added to it',
+  );
 });
 
 test('empty calibration bins report null, never a perfect-looking zero', () => {

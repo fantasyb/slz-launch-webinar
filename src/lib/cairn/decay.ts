@@ -46,11 +46,15 @@ export function latestObservation(f: Finding): Observation | undefined {
 }
 
 /** Distinct observers who confirmed. Repeat checks by one agent count once. */
-export function confirmationCount(f: Finding, now: Date = new Date()): number {
+export function confirmationCount(
+  f: Finding,
+  now: Date = new Date(),
+  keys: Map<string, KeyRecord> = loadKeys(),
+): number {
   const confirmers = new Set(
     f.observations
       .filter((o) => o.verdict === 'confirmed' && notInFuture(o, now))
-      .map(partyOf)
+      .map((o) => partyOf(f, o, keys))
       .filter((p): p is string => p !== null),
   );
   return confirmers.size;
@@ -85,8 +89,12 @@ export function freshness(f: Finding, now: Date = new Date()): number {
 }
 
 /** 1 observer -> 0.50, 2 -> 0.75, 3 -> 0.875. Saturating, never reaching 1. */
-export function corroboration(f: Finding, now: Date = new Date()): number {
-  const n = confirmationCount(f, now);
+export function corroboration(
+  f: Finding,
+  now: Date = new Date(),
+  keys: Map<string, KeyRecord> = loadKeys(),
+): number {
+  const n = confirmationCount(f, now, keys);
   return n === 0 ? 0 : 1 - Math.pow(0.5, n);
 }
 
@@ -193,11 +201,22 @@ export function effectiveEnvironments(
       .map((o) => environmentSignature(o.environment!))
       .filter((e) => !signed.environments.has(e)),
   );
-  // `by` is free text, so this is a weak cap — but a weak cap on an
-  // unattributable claim still beats none, and it is the same shape as the
-  // signer cap above.
-  const unsignedParties = new Set(unsignedObs.map((o) => o.by));
-  const unsigned = Math.min(unsignedEnvs.size, unsignedParties.size);
+  // Unsigned breadth is capped at ONE environment, in total, however many are
+  // claimed and by however many names.
+  //
+  // The previous cap was `min(environments, distinct by)` — the same shape as
+  // the signer cap above, and worthless, because `by` is free text nobody
+  // authenticates. Eight invented environments under one name capped to 1;
+  // the same eight under eight invented names scored 4.0, taking scopeSupport
+  // to 0.956 against 0.505 for an honest single-environment report. A cap
+  // keyed on unauthenticated input is not a cap, it is a formality.
+  //
+  // Signing is what makes breadth cost something, so signing is what earns
+  // `universal`. Unsigned reports still carry full weight in freshness — an
+  // honest "I ran this today, still broken" is exactly what should reset the
+  // clock — and they can lift a finding off zero environments. They cannot
+  // buy universality, because nothing about them is attributable.
+  const unsigned = Math.min(unsignedEnvs.size, 1);
 
   return signed.count + 0.5 * unsigned;
 }
@@ -232,7 +251,11 @@ export function scopeSupport(
  * Combined score in [0, 1]. Freshness dominates: a single fresh confirmation
  * (0.75) outranks three stale ones, which is the intended bias.
  */
-export function confidence(f: Finding, now: Date = new Date()): number {
+export function confidence(
+  f: Finding,
+  now: Date = new Date(),
+  keys: Map<string, KeyRecord> = loadKeys(),
+): number {
   if (f.status === 'retired') return 0;
 
   // The refutation gate runs on the same distinct-signer arithmetic as
@@ -246,13 +269,13 @@ export function confidence(f: Finding, now: Date = new Date()): number {
   // happened — while `disagreement` correctly reported no refuters at all.
   // Every other aggregate already refused to let an unattributed observation
   // move the number; this one handed it a veto over the whole corpus.
-  const { confirmers, refuters } = disagreement(f, now);
+  const { confirmers, refuters } = disagreement(f, now, keys);
   if (refuters > 0 && confirmers < 2 * refuters) return 0;
 
   // `now` is threaded through every term. Passing it only to freshness meant
   // an as-of evaluation mixed two clocks: the freshness of a past moment
   // against the corroboration and breadth of the present.
-  return freshness(f, now) * (0.5 + 0.5 * corroboration(f, now)) * scopeSupport(f, now);
+  return freshness(f, now) * (0.5 + 0.5 * corroboration(f, now, keys)) * scopeSupport(f, now, keys);
 }
 
 export type Standing = 'fresh' | 'aging' | 'stale' | 'contested' | 'retired';
@@ -274,7 +297,11 @@ export type Standing = 'fresh' | 'aging' | 'stale' | 'contested' | 'retired';
  * observation is identified only by a string anyone may claim — which is why
  * it is worth less below.
  */
-function partyOf(o: Finding['observations'][number]): string | null {
+function partyOf(
+  f: Finding,
+  o: Finding['observations'][number],
+  keys: Map<string, KeyRecord>,
+): string | null {
   // An unsigned observation is attributable to nobody: `by` is a free string
   // anyone may claim, so it cannot establish that a distinct party spoke.
   // Namespacing signed and unsigned separately was not enough — one party
@@ -286,16 +313,38 @@ function partyOf(o: Finding['observations'][number]): string | null {
   // pointed the other way. Unsigned observations are still recorded, still
   // displayed, and still count toward freshness; they just cannot move a
   // disagreement, because moving one is a claim about who you are.
-  return o.signature ? `key:${o.signature.keyId}` : null;
+  // The signature must VERIFY, not merely be present.
+  //
+  // Returning an identity because a `signature` field existed made every claim
+  // in the comment above false. A signature object is three schema-shaped
+  // strings, so sixteen hex digits and any base64 bought a distinct party:
+  // three of them took a finding from 25% to 47% and `stale` to `aging`, and
+  // one forged refutation took a two-signer finding to 0% and `contested`.
+  // "Anyone could contest any true finding for free" was the thing this was
+  // written to prevent, and it cost the typing.
+  //
+  // Every other aggregate here already went through verifyObservation. This
+  // one -- the identity function behind corroboration, the refutation gate and
+  // derivedVerdict -- did not.
+  if (!o.signature) return null;
+  if (verifyObservation(f.id, o, keys, findingBodyHash(f)) !== 'signed') return null;
+  return `key:${o.signature.keyId}`;
 }
 
-function distinctParties(observations: Finding['observations']): number {
-  return new Set(observations.map(partyOf).filter((p): p is string => p !== null)).size;
+function distinctParties(
+  f: Finding,
+  observations: Finding['observations'],
+  keys: Map<string, KeyRecord>,
+): number {
+  return new Set(
+    observations.map((o) => partyOf(f, o, keys)).filter((p): p is string => p !== null),
+  ).size;
 }
 
 export function disagreement(
   f: Finding,
   now: Date = new Date(),
+  keys: Map<string, KeyRecord> = loadKeys(),
 ): { confirmers: number; refuters: number } {
   // Both sides pass notInFuture before anything else, because a date ahead of
   // the clock is not evidence either way.
@@ -311,12 +360,14 @@ export function disagreement(
 
   const refutations = admissible.filter((o) => o.verdict === 'refuted');
   const refuters = new Set(
-    refutations.map(partyOf).filter((p): p is string => p !== null),
+    refutations.map((o) => partyOf(f, o, keys)).filter((p): p is string => p !== null),
   );
   if (refuters.size === 0) {
     return {
       confirmers: new Set(
-        admissible.filter((o) => o.verdict === 'confirmed').map(partyOf)
+        admissible
+          .filter((o) => o.verdict === 'confirmed')
+          .map((o) => partyOf(f, o, keys))
           .filter((p): p is string => p !== null),
       ).size,
       refuters: 0,
@@ -335,19 +386,23 @@ export function disagreement(
   // cannot be answered, because there is nobody it came from.
   const latestRefutation = Math.max(
     ...refutations
-      .filter((o) => partyOf(o) !== null)
+      .filter((o) => partyOf(f, o, keys) !== null)
       .map((o) => new Date(o.at).getTime()),
   );
   const confirmers = new Set(
     admissible
       .filter((o) => o.verdict === 'confirmed' && new Date(o.at).getTime() > latestRefutation)
-      .map(partyOf)
+      .map((o) => partyOf(f, o, keys))
       .filter((p): p is string => p !== null),
   );
   return { confirmers: confirmers.size, refuters: refuters.size };
 }
 
-export function standing(f: Finding, now: Date = new Date()): Standing {
+export function standing(
+  f: Finding,
+  now: Date = new Date(),
+  keys: Map<string, KeyRecord> = loadKeys(),
+): Standing {
   if (f.status === 'retired') return 'retired';
 
   // A refutation is not erased by whoever speaks next.
@@ -361,9 +416,9 @@ export function standing(f: Finding, now: Date = new Date()): Standing {
   // outnumber refuters two to one. Honest disagreement clears in the ordinary
   // course of people re-running a check; one party cannot clear it alone at
   // any volume.
-  const { confirmers, refuters } = disagreement(f, now);
+  const { confirmers, refuters } = disagreement(f, now, keys);
   if (refuters > 0 && confirmers < 2 * refuters) return 'contested';
-  const c = confidence(f, now);
+  const c = confidence(f, now, keys);
   if (c >= 0.7) return 'fresh';
   if (c >= 0.3) return 'aging';
   return 'stale';
@@ -440,6 +495,7 @@ export function formatConfidence(c: number): string {
 export function derivedVerdict(
   f: Finding,
   window: { since: Date; asOf?: Date },
+  keys: Map<string, KeyRecord> = loadKeys(),
 ): 'confirmed' | 'refuted' | 'inconclusive' {
   const asOf = window.asOf ?? new Date();
   const lo = window.since.getTime();
@@ -454,7 +510,7 @@ export function derivedVerdict(
   };
   if (visible.observations.length === 0) return 'inconclusive';
 
-  const { confirmers, refuters } = disagreement(visible);
+  const { confirmers, refuters } = disagreement(visible, asOf, keys);
   if (refuters > 0 && confirmers < 2 * refuters) return 'refuted';
   if (confirmers > 0) return 'confirmed';
   return 'inconclusive';
