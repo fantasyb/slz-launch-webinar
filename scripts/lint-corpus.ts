@@ -37,6 +37,33 @@ for (const file of files) {
   }
 
   const f = parsed.data;
+  // Scaffold placeholders are an error, not a warning.
+  //
+  // `cairn:new` writes a template whose every prose field reads "TODO — ...".
+  // Nothing checked for them, so a finding with an unfilled claim and a
+  // check command reading "TODO — cheap, hermetic, side-effect free." passed
+  // with 0 errors. An agent that runs cairn:new, gets distracted and opens a
+  // pull request would have had it accepted by CI. Caught this by watching an
+  // agent do exactly that, mid-write.
+  const scaffold: string[] = [];
+  const seek = (v: unknown, at: string): void => {
+    if (typeof v === 'string') {
+      if (v.includes('TODO')) scaffold.push(at);
+    } else if (Array.isArray(v)) {
+      v.forEach((x, i) => seek(x, `${at}[${i}]`));
+    } else if (v && typeof v === 'object') {
+      for (const [k, x] of Object.entries(v)) seek(x, at ? `${at}.${k}` : k);
+    }
+  };
+  seek(data, '');
+  if (scaffold.length > 0) {
+    problems.push(
+      `${file}: ${scaffold.length} field(s) still hold cairn:new scaffold text ` +
+        `(${scaffold.slice(0, 3).join(', ')}${scaffold.length > 3 ? ', …' : ''}) — ` +
+        `fill them in or delete the draft`,
+    );
+  }
+
   if (ids.has(f.id)) problems.push(`${file}: duplicate id ${f.id}`);
   ids.add(f.id);
 

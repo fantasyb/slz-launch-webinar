@@ -9,7 +9,6 @@
     "versions": "any"
   },
   "scope": "universal",
-  "appliesTo": "TODO — where this holds. Delete if you claim universal scope.",
   "tags": [
     "invariants",
     "filtering",
@@ -62,7 +61,7 @@
       "signature": {
         "algorithm": "ed25519",
         "keyId": "56f7a413738936bd",
-        "value": "gAlTpGfEAyo8gTDaR4kmYi9vv0WuS6siEvnYCe6yDGxE6YjIdXzbBG4B4anipLuyfqWdVF/Iwt9RBoFmXe2uCw=="
+        "value": "LFy93vr4iQyRVqPldbBANs4xxThbYqdQ5z0IUuuhiftVqxtUCbUOBevjszK6hunxvp2VgRKLTBJBJLLuArXZDA=="
       }
     }
   ],

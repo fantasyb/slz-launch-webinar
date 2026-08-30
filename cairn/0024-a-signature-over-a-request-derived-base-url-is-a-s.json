@@ -9,7 +9,6 @@
     "versions": "any"
   },
   "scope": "universal",
-  "appliesTo": "TODO — where this holds. Delete if you claim universal scope.",
   "tags": [
     "signing",
     "host-header",
@@ -62,7 +61,7 @@
       "signature": {
         "algorithm": "ed25519",
         "keyId": "56f7a413738936bd",
-        "value": "Ed1gqMzOnwSsiuY9/+FVPh+76fACzyoBM5RgV2J0XQbtQ1ARPHzIcDOqvEr2wkhtaTBds3X048mNZowyOofTBQ=="
+        "value": "8Yt8ubwppkqjniHyiNM2bgy3SDtQhdxQmszINliglDB8b6RoihtelEknGTh4XiFZF6IqywFSbNMUkWh8uJyWDQ=="
       }
     }
   ],

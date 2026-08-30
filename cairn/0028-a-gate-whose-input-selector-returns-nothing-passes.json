@@ -9,7 +9,6 @@
     "versions": "any"
   },
   "scope": "universal",
-  "appliesTo": "TODO — where this holds. Delete if you claim universal scope.",
   "tags": [
     "ci",
     "gates",
@@ -62,7 +61,7 @@
       "signature": {
         "algorithm": "ed25519",
         "keyId": "56f7a413738936bd",
-        "value": "9elNNyeGe0Gj/OGixLc4WmScxXnQQY8Dk7IhcVrHuvtfZ2FUZ62cSjg1bD5tQYGagukiTwwMzDUdTzNvUcLzDg=="
+        "value": "MA8cQdP4maxf8e7LUTnEXOxcZA89FwzR/5WCgeIIKSpIfG5drxQTBapgEaDqfUZm0KC04MAiUWs2Tgn3L1e0AA=="
       }
     }
   ],

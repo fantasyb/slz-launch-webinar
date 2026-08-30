@@ -7,8 +7,9 @@
  *
  *   npm run cairn:verify cairn-0003
  */
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import fs from 'fs';
+import os from 'os';
 import { resolveFindingFile } from '../src/lib/cairn/resolve';
 import { environmentSignature } from '../src/lib/cairn/schema';
 import path from 'path';
@@ -84,14 +85,30 @@ let code = 0;
 try {
   // Merge stderr into stdout: for many findings the diagnostic that decides
   // the verdict is written to stderr, and execSync would otherwise drop it.
-  output = execSync(`( ${finding.check.command} ) 2>&1`, {
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-    timeout: 120_000,
-    // SIGTERM is ignorable: `trap '' TERM; sleep 100000` outlived the timeout.
-    killSignal: 'SIGKILL',
-    shell: '/bin/bash',
-  });
+  // Written to a script and run as a file, rather than wrapped in `( ... )`.
+  //
+  // The subshell wrapper broke any command containing a heredoc: a contributor
+  // wrote a perfectly good check using `python3 - <<'EOF'` and it died with
+  // "unexpected end of file", which reads as the check failing rather than as
+  // the harness mangling it. Multi-line commands, heredocs and trailing
+  // comments all survive a real script file.
+  const scriptFile = path.join(os.tmpdir(), `cairn-check-${process.pid}.sh`);
+  fs.writeFileSync(scriptFile, `${finding.check.command}\n`, { mode: 0o700 });
+  try {
+    output = execFileSync('/bin/bash', [scriptFile], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 120_000,
+      // SIGTERM is ignorable: `trap '' TERM; sleep 100000` outlived the timeout.
+      killSignal: 'SIGKILL',
+    });
+  } finally {
+    try {
+      fs.unlinkSync(scriptFile);
+    } catch {
+      /* best effort */
+    }
+  }
 } catch (e) {
   const err = e as { stdout?: string; stderr?: string; status?: number };
   output = `${err.stdout ?? ''}${err.stderr ?? ''}`;
