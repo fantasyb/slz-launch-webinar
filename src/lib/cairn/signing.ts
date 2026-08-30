@@ -147,7 +147,26 @@ export function checkPin(publicKeyPem: string, pinned: string): PinResult {
   return { ok: true, fingerprint };
 }
 
+/**
+ * A key's label is what a reader sees and what verification compares against,
+ * so two labels that render identically are an impersonation primitive:
+ * "claude-opus-5" with a Cyrillic o is a different string and an identical
+ * picture. Restricting labels to unambiguous lowercase ASCII removes the
+ * class rather than trying to detect confusables.
+ */
+export const LABEL_PATTERN = /^[a-z0-9][a-z0-9._-]{1,62}$/;
+
+export function validateLabel(label: string): string | null {
+  if (label !== label.trim()) return 'label has leading or trailing whitespace';
+  if (!LABEL_PATTERN.test(label)) {
+    return 'label must be 2-63 characters of lowercase ASCII letters, digits, dot, underscore or hyphen';
+  }
+  return null;
+}
+
 export function generateKeypair(label: string): { record: KeyRecord; privateKey: string } {
+  const problem = validateLabel(label);
+  if (problem) throw new Error(problem);
   const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
   const pub = publicKey.export({ type: 'spki', format: 'pem' }).toString();
   const priv = privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();

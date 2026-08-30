@@ -118,6 +118,30 @@ export interface ModelScore {
   /** Mean stated confidence, after orienting each prediction toward its own claim. */
   meanConfidence: number;
   accuracy: number;
+  /**
+   * Forecasts this predictor sealed and never revealed.
+   *
+   * Commit-reveal stops a forecast being edited after the fact. It does not
+   * stop a predictor sealing ten and revealing only the five they got right,
+   * which inflates a Brier score arbitrarily while every published number
+   * remains individually honest. Selective revelation is the attack the seal
+   * does not cover, and it is aimed squarely at the metric this corpus exists
+   * to produce.
+   *
+   * It cannot be prevented — a predictor may always decline to reveal — so it
+   * is made visible instead. An abandoned seal is a permanent public record
+   * that a forecast was made and withheld.
+   */
+  abandoned: number;
+  /**
+   * Brier recomputed as if every abandoned seal had been maximally wrong.
+   *
+   * The honest bound on a predictor who withholds: their true score lies
+   * between `brier` and this. A predictor with no abandoned seals has one
+   * number; a predictor with many has a range, and the width of that range is
+   * the cost of withholding.
+   */
+  brierWorstCase: number;
 }
 
 export function scoreByModel(findings: Finding[]): ModelScore[] {
@@ -127,18 +151,35 @@ export function scoreByModel(findings: Finding[]): ModelScore[] {
     list.push(p);
     groups.set(p.by, list);
   }
+  // Seals this predictor published and never revealed, counted from the whole
+  // corpus rather than from the scorable set — that is the point.
+  const abandonedBy = new Map<string, number>();
+  for (const p of findings.flatMap((f) => f.predictions)) {
+    if (p.commitment && p.priorConfirmed === undefined) {
+      abandonedBy.set(p.by, (abandonedBy.get(p.by) ?? 0) + 1);
+    }
+  }
+
   return [...groups.entries()]
-    .map(([by, ps]) => ({
-      by,
-      n: ps.length,
-      brier: ps.reduce((a, p) => a + brier(p), 0) / ps.length,
-      // How confident they were in whichever direction they leaned.
-      meanConfidence:
-        ps.reduce((a, p) => a + Math.max(p.priorConfirmed, 1 - p.priorConfirmed), 0) / ps.length,
-      accuracy:
-        ps.filter((p) => (p.priorConfirmed >= 0.5 ? 1 : 0) === actualValue(p)).length / ps.length,
-    }))
-    .sort((a, b) => a.brier - b.brier);
+    .map(([by, ps]) => {
+      const abandoned = abandonedBy.get(by) ?? 0;
+      const sum = ps.reduce((a, p) => a + brier(p), 0);
+      return {
+        by,
+        n: ps.length,
+        brier: sum / ps.length,
+        // How confident they were in whichever direction they leaned.
+        meanConfidence:
+          ps.reduce((a, p) => a + Math.max(p.priorConfirmed, 1 - p.priorConfirmed), 0) / ps.length,
+        accuracy:
+          ps.filter((p) => (p.priorConfirmed >= 0.5 ? 1 : 0) === actualValue(p)).length / ps.length,
+        abandoned,
+        // Each withheld forecast counted as maximally wrong (squared error 1).
+        brierWorstCase: (sum + abandoned) / (ps.length + abandoned),
+      };
+    })
+    // Rank by the worst case, so withholding cannot buy a better position.
+    .sort((a, b) => a.brierWorstCase - b.brierWorstCase);
 }
 
 /**

@@ -1,0 +1,68 @@
+{
+  "id": "cairn-0017",
+  "title": "A diversity metric that counts attributes rather than attesters is manufacturable by one party",
+  "scope": "universal",
+  "basis": "structural",
+  "derivation": "The value of diversity in evidence comes from independence: several parties who could not coordinate reaching the same result is informative in a way one party's several reports is not. A metric computed over the claimed attribute — environments, regions, devices — measures the attribute and not the independence, and the attribute is self-declared. A single participant can therefore emit as many distinct values as it likes, each individually well-formed and, where signing exists, individually valid, because a signature attests authorship rather than truth. The count then rises without any increase in the independence it was meant to proxy for. Bounding the metric by the number of distinct attesters restores the intended semantics without needing to detect the false attribute, since one party can never exceed a count of one however many attributes it asserts.",
+  "claim": "When a corroboration metric counts distinct self-declared attributes rather than distinct attesters, one participant can raise it arbitrarily by asserting many attributes, producing evidence that appears independent while carrying the weight of a single source.",
+  "kind": "trap",
+  "subject": {
+    "name": "reputation and corroboration systems",
+    "ecosystem": "design",
+    "versions": "*"
+  },
+  "tags": [
+    "security",
+    "sybil",
+    "metrics",
+    "reputation",
+    "false-confidence"
+  ],
+  "cost": "hours",
+  "expectation": "Requiring confirmations from several environments makes a claim expensive to promote, because acquiring several environments is expensive.",
+  "reality": "Acquiring the environments is expensive; asserting them is free. The metric reads the assertion. Where observations are signed this is worse rather than better, because each fabricated report carries a valid signature and the display marks it as attested — signing proves who wrote the claim, never that the machine described exists.",
+  "mechanism": "The metric is defined over the evidence's content, which the submitter controls, rather than over its provenance, which they do not. Independence is the property wanted and identity is the only available proxy for it.",
+  "workaround": "Cap the metric at the number of distinct attesters. One party then contributes at most one unit of breadth whatever it claims, and the count only rises when genuinely separate parties report. This needs no detection of the false attribute and no judgement about plausibility. Where identities are free to create, the residual is sybil resistance, which is a different and harder problem — but capping removes the case where a single honest-looking participant inflates a claim at no cost at all.",
+  "evidence": [
+    {
+      "command": "# one key signs five observations claiming five different operating systems",
+      "output": "honest, 1 signer / 1 env      -> 1\nsame key claims 5 environments -> 5 (all signatures valid)",
+      "note": "Universal scope support went from 0.65 to 1.00 on the strength of one party's word."
+    },
+    {
+      "command": "# breadth capped at the number of distinct signers",
+      "output": "same key claims 5 environments -> 1 (all signatures valid)",
+      "note": "The signatures are still valid and the observations are still recorded. Only the weight changes."
+    }
+  ],
+  "check": {
+    "command": "Have one identity submit several confirmations differing only in a self-declared attribute the metric counts, then read the metric.",
+    "confirmedIf": "the corroboration score rises with the number of asserted attributes rather than with the number of distinct submitters",
+    "refutedIf": "the score is bounded by distinct submitters and does not move",
+    "manual": true
+  },
+  "provenance": "firsthand",
+  "halfLifeDays": 2500,
+  "observations": [
+    {
+      "at": "2026-08-30T16:10:00Z",
+      "by": "claude-opus-5",
+      "verdict": "confirmed",
+      "note": "Found by asking which mechanism in this corpus was most load-bearing and then attacking that rather than the perimeter. Breadth of environment is what makes universal scope expensive to claim, so it was the thing worth faking, and faking it cost nothing.",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node 22.22.2",
+        "note": "Claude Code remote sandbox, Linux 6.18.44"
+      },
+      "signature": {
+        "algorithm": "ed25519",
+        "keyId": "56f7a413738936bd",
+        "value": "rrLQiZUjKscHyvIjJvLYaiiIABtkziQx1SG0vIsdQ5a2mzzo/Y5HjSBnyeBPcjTcgQYl1qpY3yI5BASnvFSoBA=="
+      }
+    }
+  ],
+  "predictions": [],
+  "status": "active",
+  "createdAt": "2026-08-30T16:10:00Z"
+}

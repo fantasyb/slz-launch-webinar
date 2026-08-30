@@ -257,7 +257,57 @@ const INJECTION: Array<{ re: RegExp; pattern: string; reason: string }> = [
     pattern: 'directs-bulk-collection', reason: 'instructs the reader to sweep the host project' },
 ];
 
+/**
+ * Characters that make text render differently than it reads.
+ *
+ * Zero-width characters split a keyword so a pattern misses it while a human
+ * and an agent both still read the word. Bidirectional overrides reorder a
+ * line so a reviewer sees something benign and the parser sees something else
+ * — the Trojan Source attack. Neither has any legitimate place in a technical
+ * finding.
+ *
+ * Scanning is done on normalised text so a keyword cannot be split apart, and
+ * the presence of a bidi control is itself blocking, because there is no
+ * honest reason for one here.
+ */
+const INVISIBLE = /[\u200b-\u200f\u2028\u2029\u00ad\ufeff]/g;
+const BIDI_CONTROL = /[\u202a-\u202e\u2066-\u2069]/;
+
+export function normaliseForScan(text: string): string {
+  return text.normalize('NFKC').replace(INVISIBLE, '');
+}
+
+export function scanInvisible(text: string): Flag[] {
+  const flags: Flag[] = [];
+  const bidi = BIDI_CONTROL.exec(text);
+  if (bidi) {
+    flags.push({
+      severity: 'block',
+      pattern: 'bidi-override',
+      reason: 'reorders how the text renders, so a reviewer and a parser see different things',
+      sample: `U+${bidi[0].codePointAt(0)!.toString(16).toUpperCase()}`,
+    });
+  }
+  const invisible = text.match(INVISIBLE);
+  if (invisible) {
+    flags.push({
+      severity: 'block',
+      pattern: 'invisible-characters',
+      reason: `${invisible.length} zero-width or formatting character(s) that can split keywords`,
+      sample: invisible.map((c) => `U+${c.codePointAt(0)!.toString(16).toUpperCase()}`).slice(0, 5).join(' '),
+    });
+  }
+  return flags;
+}
+
 export function scanInjection(text: string): Flag[] {
+  // Normalise first: a keyword split by a zero-width space is still the
+  // keyword to every reader that matters.
+  const normalised = normaliseForScan(text);
+  return [...scanInvisible(text), ...scanInjectionRaw(normalised)];
+}
+
+function scanInjectionRaw(text: string): Flag[] {
   return INJECTION.flatMap((d) => {
     const m = d.re.exec(text);
     return m ? [{ severity: 'block' as const, pattern: d.pattern, reason: d.reason, sample: m[0].slice(0, 120) }] : [];

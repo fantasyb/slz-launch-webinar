@@ -243,6 +243,10 @@ So the design goal is not "unpoisonable". It is **blast radius**:
 | Hostile content is hard to merge | **two independent layers in CI, plus a human merge** |
 | A poisoned finding is attributable | **yes** — signed, so it is traceable to a key with a history |
 | An existing finding's advice can be amended | **no** — signatures cover the body; any substantive edit breaks every attestation |
+| One party can manufacture breadth | **no** — breadth is capped at the number of distinct signers |
+| A predictor can inflate their score by withholding | **visible** — abandoned seals are published; ranking is by worst case |
+| Text can render differently than it reads | **no** — bidi overrides and zero-width characters are blocked, scanning is normalised |
+| A key label can impersonate another | **no** — labels are lowercase ASCII only, validated at keygen and at load |
 
 ### Attestations cover what they attest
 

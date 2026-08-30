@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { deriveKeyId, type KeyRecord } from './signing';
+import { deriveKeyId, validateLabel, type KeyRecord } from './signing';
 
 /**
  * Published public keys live in `keys/`, in git. Verification therefore needs
@@ -22,6 +22,10 @@ export function loadKeys(): Map<string, KeyRecord> {
     // it did not earn. Reject any that tries.
     if (deriveKeyId(rec.publicKey) !== rec.keyId) {
       throw new Error(`keys/${file}: keyId does not match the public key material`);
+    }
+    const labelProblem = validateLabel(rec.label);
+    if (labelProblem) {
+      throw new Error(`keys/${file}: ${labelProblem} — labels that render alike impersonate`);
     }
     map.set(rec.keyId, rec);
   }
@@ -45,6 +49,7 @@ export function loadKeys(): Map<string, KeyRecord> {
       }
       for (const rec of bundle.keys ?? []) {
         if (deriveKeyId(rec.publicKey) !== rec.keyId) continue;
+        if (validateLabel(rec.label)) continue; // unrenderable or confusable label
         if (localLabels.has(rec.label)) continue; // impersonation attempt
         if (map.has(rec.keyId)) continue;
         map.set(rec.keyId, { ...rec, origin: upstream });

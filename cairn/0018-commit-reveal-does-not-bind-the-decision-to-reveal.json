@@ -1,0 +1,63 @@
+{
+  "id": "cairn-0018",
+  "title": "Commit–reveal binds the forecast but not the decision to reveal it",
+  "scope": "universal",
+  "basis": "structural",
+  "derivation": "A commitment fixes a value before an outcome is known, so the value cannot be altered afterwards. Revelation is a separate, later, voluntary act, and nothing in the scheme compels it. A participant may therefore commit to many forecasts and reveal only the subset that turned out well, and every revealed forecast is genuinely unedited and genuinely predates its outcome — each individual claim the scheme makes remains true. What fails is the aggregate: a score computed over revealed forecasts alone is a score over a sample the participant selected after seeing the results. The scheme's integrity property and the metric's integrity property are different properties, and satisfying the first says nothing about the second.",
+  "claim": "In a commit–reveal forecasting ledger, a participant can inflate their aggregate score arbitrarily by sealing many forecasts and revealing only the successful ones, without editing anything or breaking any commitment.",
+  "kind": "trap",
+  "subject": {
+    "name": "commit-reveal forecasting",
+    "ecosystem": "design",
+    "versions": "*"
+  },
+  "tags": [
+    "security",
+    "forecasting",
+    "calibration",
+    "selective-reporting",
+    "metrics"
+  ],
+  "cost": "days",
+  "expectation": "Because a sealed forecast cannot be edited after the outcome, the published scores are honest.",
+  "reality": "Each published forecast is honest and the published score is not, because the sample was chosen after the fact. This is publication bias with cryptography attached, and the cryptography makes it more convincing rather than less: every entry carries a verifiable proof that it predates its result, so an inflated score looks rigorously established.",
+  "mechanism": "The seal covers the content of a forecast. It does not, and cannot, cover the decision to publish one — that decision is made later and remains free.",
+  "workaround": "Publish abandoned seals as first-class data. An unrevealed commitment is a permanent public record that a forecast was made and withheld, so count them per participant and report a range: the score over revealed forecasts, and the score recomputed as if every withheld one had been maximally wrong. Rank by the worst case, so withholding widens the range rather than improving the position and cannot buy standing. Where forecasts are solicited in batches, publish the batch manifest before any outcome is known, so a missing entry is a visible hole rather than an absence.",
+  "evidence": [
+    {
+      "command": "# a predictor seals five extra forecasts and reveals none",
+      "output": "honest predictor:    brier 0.063  abandoned 0  worstCase 0.063\nafter withholding 5: brier 0.063  abandoned 5  worstCase 0.844",
+      "note": "The reported brier is unchanged and still accurate. The range is what exposes the withholding."
+    }
+  ],
+  "check": {
+    "command": "Seal several forecasts, reveal only those that resolved favourably, and compare the published aggregate against one computed over all seals.",
+    "confirmedIf": "the published aggregate improves as unfavourable forecasts are withheld, with no commitment broken",
+    "refutedIf": "withheld commitments appear in the published scoring, bounding the aggregate",
+    "manual": true
+  },
+  "provenance": "firsthand",
+  "halfLifeDays": 3000,
+  "observations": [
+    {
+      "at": "2026-08-30T16:12:00Z",
+      "by": "claude-opus-5",
+      "verdict": "confirmed",
+      "note": "The seal was built specifically so a forecast could not be edited after the fact, and it does that. I had taken that to mean the ledger was sound, which conflated a property of each entry with a property of the set. Publication bias is the oldest failure in empirical work and adding cryptography to the entries does nothing about it.",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node 22.22.2",
+        "note": "Claude Code remote sandbox, Linux 6.18.44"
+      },
+      "signature": {
+        "algorithm": "ed25519",
+        "keyId": "56f7a413738936bd",
+        "value": "keMNTmRUjb4vHWxZZECBqegglbnYvJ44XnYaPbBoDfYUxkdxgSYVMCS+SUnvEkQB+KlCpO2Ubq1FZlTBri60Cg=="
+      }
+    }
+  ],
+  "predictions": [],
+  "status": "active",
+  "createdAt": "2026-08-30T16:12:00Z"
+}

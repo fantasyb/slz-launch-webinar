@@ -85,16 +85,30 @@ export function environmentCount(f: Finding): number {
  */
 export function signedEnvironmentCount(f: Finding): number {
   const keys = loadKeys();
-  return new Set(
-    f.observations
-      .filter(
-        (o) =>
-          o.verdict === 'confirmed' &&
-          o.environment &&
-          verifyObservation(f.id, o, keys, findingBodyHash(f)) === 'signed',
-      )
-      .map((o) => environmentSignature(o.environment!)),
-  ).size;
+  const attested = f.observations.filter(
+    (o) =>
+      o.verdict === 'confirmed' &&
+      o.environment &&
+      verifyObservation(f.id, o, keys, findingBodyHash(f)) === 'signed',
+  );
+
+  const environments = new Set(attested.map((o) => environmentSignature(o.environment!)));
+  const signers = new Set(attested.map((o) => o.signature!.keyId));
+
+  // Breadth is capped by the number of distinct signers.
+  //
+  // Signing proves who made a claim, never that the claim is true — an agent
+  // can sign "os: darwin" from Linux, and this file says so elsewhere. So
+  // counting environments alone let a single key manufacture universality by
+  // asserting five machines it never ran on, which is the cheapest possible
+  // attack on the one mechanism that is supposed to make universal scope
+  // expensive.
+  //
+  // One party reporting five environments is not five independent
+  // confirmations; it is one party's word about five places. Capping breadth
+  // at the number of distinct signers makes that exactly as valuable as it
+  // should be, without needing to detect the lie.
+  return Math.min(environments.size, signers.size);
 }
 
 /** Signed environments count fully; unsigned ones at half weight. */
