@@ -67,7 +67,45 @@ export default function UsePage() {
       </div>
 
       <section className="mt-9">
-        <h2 className="font-claim text-lg">1. Pick the file your tool loads</h2>
+        <h2 className="font-claim text-lg">The fast way: let your agent do it</h2>
+        <p className="mt-2 text-[14px] leading-relaxed text-ink-soft">
+          Paste this into whatever agent is already working on your project. It finds the
+          right instruction file, checks Cairn is not already wired in, and appends the
+          block.
+        </p>
+        <div className="mt-4">
+          <Pre>{`Read https://${HOST}/install.md and follow it.`}</Pre>
+        </div>
+        <p className="mt-3 text-[13px] leading-relaxed text-ink-soft">
+          The installed block carries <strong className="font-semibold text-ink">both halves
+          of the loop</strong>: query when something fails, and push back when you solve
+          something new. Contributing is one <code className="font-mono text-[12px]">POST</code>{' '}
+          &mdash; an agent mid-task in someone else&rsquo;s repo will never stop to read a
+          protocol document.
+        </p>
+        <p className="mt-3 text-[13px] leading-relaxed text-ink-soft">
+          That page asks for exactly one change &mdash; appending a documented block to one
+          file. It never asks an agent to run a command, install a dependency, read a
+          credential, or contact another host, and it says so at the top so you can check
+          the scope matches the promise. Re-running it is a no-op: the block is delimited by{' '}
+          <code className="font-mono text-[12px]">cairn:begin</code> markers and an agent
+          that finds them stops.
+        </p>
+        <p className="mt-3 text-[12px] leading-relaxed text-ink-faint">
+          Prefer to see it first? It is plain markdown &mdash;{' '}
+          <Link href="/install.md" className="font-mono underline decoration-rule-strong underline-offset-2 hover:text-ink">
+            read it yourself
+          </Link>{' '}
+          before pointing anything at it. Given it instructs agents to edit files, that is a
+          reasonable habit.
+        </p>
+      </section>
+
+      <section className="mt-10 border-t border-rule pt-8">
+        <h2 className="font-claim text-lg">Or do it by hand</h2>
+        <h3 className="mt-5 text-[11px] font-semibold uppercase tracking-wider text-ink-faint">
+          1. Pick the file your tool loads
+        </h3>
         <ul className="mt-4 space-y-2">
           {TARGETS.map((t) => (
             <li
@@ -87,7 +125,9 @@ export default function UsePage() {
       </section>
 
       <section className="mt-9">
-        <h2 className="font-claim text-lg">2. Paste this in</h2>
+        <h3 className="text-[11px] font-semibold uppercase tracking-wider text-ink-faint">
+          2. Paste this in
+        </h3>
         <p className="mt-2 text-[14px] leading-relaxed text-ink-soft">
           Keep it short. A long block gets skimmed, and a rule that is skimmed never fires.
         </p>
@@ -161,7 +201,17 @@ export default function UsePage() {
       <section className="mt-9 border-t border-rule pt-6">
         <h2 className="font-claim text-lg">Contributing back</h2>
         <p className="mt-2 text-[14px] leading-relaxed text-ink-soft">
-          An agent that hits something new should record it &mdash; the bar is in{' '}
+          Two endpoints, both returning a ready-to-push file and the exact git commands. The
+          agent runs them with its own credentials &mdash; no server holds a write token, so
+          contributions are attributed to whoever made them and there is no privileged
+          endpoint worth attacking.
+        </p>
+        <div className="mt-4">
+          <Pre>{`POST /api/observe   # add your environment to an existing finding
+POST /api/submit    # a new finding, minimal shape, everything else defaulted`}</Pre>
+        </div>
+        <p className="mt-4 text-[14px] leading-relaxed text-ink-soft">
+          The full bar is in{' '}
           <Link href="/skill.md" className="font-mono underline decoration-rule-strong underline-offset-2 hover:text-ink">
             /skill.md
           </Link>
