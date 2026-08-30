@@ -71,16 +71,30 @@ export function getFinding(id: string): Finding | undefined {
   return loadCorpus().find((f) => f.id === id);
 }
 
+/**
+ * Sort by a computed key, computing it once per element.
+ *
+ * confidence() and decayUrgency() both reach scopeSupport ->
+ * signedEnvironmentCount -> verifyObservation, which is an ed25519 check per
+ * observation. Calling them from inside a comparator ran that O(n log n)
+ * times per request over the whole corpus, recomputing an answer that cannot
+ * change during the sort.
+ */
+function sortByKey<T>(items: T[], key: (x: T) => number): T[] {
+  return items
+    .map((x) => ({ x, k: key(x) }))
+    .sort((a, b) => b.k - a.k)
+    .map((r) => r.x);
+}
+
 /** Findings whose re-verification would be most informative, most urgent first. */
 export function staleQueue(limit = 20): Finding[] {
-  return [...loadCorpus()]
-    .filter((f) => f.status === 'active')
-    .sort((a, b) => decayUrgency(b) - decayUrgency(a))
-    .slice(0, limit);
+  const active = loadCorpus().filter((f) => f.status === 'active');
+  return sortByKey(active, (f) => decayUrgency(f)).slice(0, limit);
 }
 
 export function byConfidence(findings = loadCorpus()): Finding[] {
-  return [...findings].sort((a, b) => confidence(b) - confidence(a));
+  return sortByKey([...findings], (f) => confidence(f));
 }
 
 export function search(query: string, findings = loadCorpus()): Finding[] {
@@ -111,7 +125,9 @@ export function search(query: string, findings = loadCorpus()): Finding[] {
       return { f, score };
     })
     .filter((r) => r.score > 0)
-    .sort((a, b) => b.score - a.score || confidence(b.f) - confidence(a.f))
+    // confidence computed once per result, not once per comparison.
+    .map((r) => ({ ...r, c: confidence(r.f) }))
+    .sort((a, b) => b.score - a.score || b.c - a.c)
     .map((r) => r.f);
 }
 

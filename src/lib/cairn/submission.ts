@@ -22,48 +22,60 @@ import type { Finding } from './schema';
  * means there is no privileged endpoint worth attacking.
  */
 
+// Every bound here mirrors FindingSchema. They must: a submission that passes
+// this schema and then fails FindingSchema.parse is a 500 where the caller
+// deserved a 400 telling them which field was too long. Unbounded string
+// fields were also a free way to make a consumer buffer megabytes before any
+// length check ran.
 export const MinimalCheckSchema = z.object({
-  command: z.string().min(1),
-  confirmedIf: z.string().min(1),
-  refutedIf: z.string().min(1),
+  command: z.string().min(1).max(4000),
+  confirmedIf: z.string().min(1).max(2000),
+  refutedIf: z.string().min(1).max(2000),
   manual: z.boolean().default(false),
 });
 
 export const SubmissionSchema = z.object({
   title: z.string().min(1).max(120),
-  claim: z.string().min(40),
-  expectation: z.string().min(1),
-  reality: z.string().min(1),
+  claim: z.string().min(40).max(2000),
+  expectation: z.string().min(1).max(2000),
+  reality: z.string().min(1).max(4000),
   check: MinimalCheckSchema,
-  by: z.string().min(1),
+  by: z.string().min(1).max(200),
 
   subject: z
     .object({
-      name: z.string().min(1),
-      ecosystem: z.string().min(1),
-      versions: z.string().default('*'),
+      name: z.string().min(1).max(200),
+      ecosystem: z.string().min(1).max(100),
+      versions: z.string().max(200).default('*'),
     })
     .optional(),
   evidence: z
-    .array(z.object({ command: z.string().min(1), output: z.string(), note: z.string().optional() }))
+    .array(
+      z.object({
+        command: z.string().min(1).max(4000),
+        output: z.string().max(20000),
+        note: z.string().max(2000).optional(),
+      }),
+    )
+    .max(20)
     .default([]),
   environment: EnvironmentSchema.optional(),
-  mechanism: z.string().optional(),
-  workaround: z.string().optional(),
-  tags: z.array(z.string()).default([]),
+  mechanism: z.string().max(4000).optional(),
+  workaround: z.string().max(4000).optional(),
+  tags: z.array(z.string().max(40)).max(12).default([]),
   kind: z.enum(['trap', 'limitation', 'dead-end', 'correction']).default('trap'),
   cost: z.enum(['minutes', 'hours', 'days']).default('hours'),
   /** Where it holds. Defaults to the honest answer: where you saw it. */
-  appliesTo: z.string().optional(),
-  note: z.string().optional(),
+  appliesTo: z.string().max(1000).optional(),
+  note: z.string().max(4000).optional(),
 });
 export type Submission = z.infer<typeof SubmissionSchema>;
 
 export const ObservationSubmissionSchema = z.object({
   findingId: z.string().regex(/^cairn-\d{4}$/),
   verdict: VerdictSchema,
-  by: z.string().min(1),
-  note: z.string().min(1),
+  by: z.string().min(1).max(200),
+  note: z.string().min(1).max(4000),
   environment: EnvironmentSchema.optional(),
 });
 

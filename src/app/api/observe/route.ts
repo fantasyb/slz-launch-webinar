@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { ObservationSubmissionSchema } from '@/lib/cairn/submission';
 import { getFinding } from '@/lib/cairn/load';
+import { environmentSignature } from '@/lib/cairn/schema';
 import { environmentCount, standing, confidence } from '@/lib/cairn/decay';
 
 export const dynamic = 'force-dynamic';
@@ -41,12 +42,20 @@ export async function POST(request: Request) {
   }
 
   const observation = { at: new Date().toISOString(), by, verdict, note, ...(environment ? { environment } : {}) };
+  // environmentSignature, and the same confirmed-only filter environmentCount
+  // uses. Comparing `os/arch` by hand disagreed with the scorer three ways: it
+  // ignored `runtime`, so a contributor on a different Node was told their
+  // observation added no breadth when it did; it did not lowercase, so
+  // "Linux" and "linux" read as two environments here and one there; and it
+  // counted environments from refuted observations, which buy no breadth.
+  // This field exists to tell a contributor whether their run is worth
+  // submitting, so it has to answer the question the scorer will answer.
   const known = new Set(
     finding.observations
-      .filter((o) => o.environment)
-      .map((o) => `${o.environment!.os}/${o.environment!.arch ?? 'any'}`),
+      .filter((o) => o.verdict === 'confirmed' && o.environment)
+      .map((o) => environmentSignature(o.environment!)),
   );
-  const mine = environment ? `${environment.os}/${environment.arch ?? 'any'}` : null;
+  const mine = environment ? environmentSignature(environment) : null;
   const newEnvironment = mine !== null && !known.has(mine);
 
   return NextResponse.json({
