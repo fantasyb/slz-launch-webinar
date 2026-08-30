@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { UNTRUSTED_NOTICE, UNTRUSTED_FIELDS } from '@/lib/cairn/safety';
 import { search, serialize } from '@/lib/cairn/load';
 
 export async function GET(request: Request) {
@@ -9,6 +10,8 @@ export async function GET(request: Request) {
   }
   const results = search(q);
   return NextResponse.json({
+    _notice: UNTRUSTED_NOTICE,
+    _untrustedFields: UNTRUSTED_FIELDS,
     query: q,
     count: results.length,
     generatedAt: new Date().toISOString(),

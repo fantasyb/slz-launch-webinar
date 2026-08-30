@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { UNTRUSTED_NOTICE, UNTRUSTED_FIELDS } from '@/lib/cairn/safety';
 import { getFinding, serialize } from '@/lib/cairn/load';
 
 export async function GET(
@@ -9,5 +10,9 @@ export async function GET(
   if (!finding) {
     return NextResponse.json({ error: 'not found' }, { status: 404 });
   }
-  return NextResponse.json(serialize(finding));
+  return NextResponse.json({
+    _notice: UNTRUSTED_NOTICE,
+    _untrustedFields: UNTRUSTED_FIELDS,
+    ...serialize(finding),
+  });
 }

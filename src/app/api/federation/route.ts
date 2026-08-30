@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { UNTRUSTED_NOTICE, UNTRUSTED_FIELDS } from '@/lib/cairn/safety';
 import { loadCorpus } from '@/lib/cairn/load';
 import { loadKeys } from '@/lib/cairn/keys';
 import { loadConfig } from '@/lib/cairn/federation';
@@ -12,6 +13,8 @@ export const dynamic = 'force-dynamic';
  */
 export async function GET() {
   return NextResponse.json({
+    _notice: UNTRUSTED_NOTICE,
+    _untrustedFields: UNTRUSTED_FIELDS,
     origin: loadConfig().origin,
     generatedAt: new Date().toISOString(),
     findings: loadCorpus(),

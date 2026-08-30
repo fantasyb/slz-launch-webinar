@@ -222,6 +222,32 @@ If you clone this repository you do not need to copy it at all — `keys/` carri
 key, and the installer cross-checks the served key against it automatically and refuses on
 mismatch. **Cloning is the easiest way to get the independent channel for free.**
 
+## Threat model
+
+What Cairn structurally cannot do, followed by what it does instead. Stated this way round
+deliberately: a security claim that is not bounded is not a security claim.
+
+**Cairn cannot stop an agent obeying text it reads.** Nothing outside an agent can. An agent
+that acts on instructions embedded in fetched prose is vulnerable to a web page, a dependency's
+error message, a GitHub issue, and a Cairn finding equally. That is a property of the agent, not
+of this corpus, and any project claiming to have solved it for you is lying.
+
+So the design goal is not "unpoisonable". It is **blast radius**:
+
+| | status |
+|---|---|
+| Cairn executes something | **no** — `cairn:verify` requires `--run`; blocking patterns refused even then |
+| Cairn writes to your files | **no** — install appends one block, signed, shape-checked, diffed, `--yes` |
+| Cairn transmits your data | **no** — querying is a GET; contributions are local drafts a human sends |
+| Cairn's content is marked untrusted | **yes** — every response carries `_untrustedFields` |
+| Hostile content is hard to merge | **partly** — scanners at lint and submit; a human merges every finding |
+| A poisoned finding is attributable | **yes** — signed, so it is traceable to a key with a history |
+
+The scanners are review aids and are described that way in the code. Pattern matching on shell
+text is evadable; pattern matching on natural language is *more* evadable. They catch the blunt
+phrasings and give a reviewer's eye somewhere to land. **What defends the corpus is that a human
+merges every finding** — the same thing that defends any package registry.
+
 ## Known limits
 
 Stated here rather than discovered later.

@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { SubmissionSchema, normalise, likelyDuplicates } from '@/lib/cairn/submission';
 import { FindingSchema } from '@/lib/cairn/schema';
 import { loadConfig } from '@/lib/cairn/federation';
-import { scanExecutable, scanSensitive, draftSurface } from '@/lib/cairn/safety';
+import { scanExecutable, scanInjection, scanSensitive, draftSurface } from '@/lib/cairn/safety';
 
 export const dynamic = 'force-dynamic';
 
@@ -48,12 +48,14 @@ export async function POST(request: Request) {
   // fetch-and-execute or credential-reading command, whatever its intent.
   const surface = draftSurface(parsed.data as unknown as Record<string, unknown>);
   const dangerous = scanExecutable(surface);
-  const blocking = dangerous.filter((f) => f.severity === 'block');
+  const injection = scanInjection(surface);
+  const blocking = [...dangerous, ...injection].filter((f) => f.severity === 'block');
   if (blocking.length) {
     return NextResponse.json(
       {
         ok: false,
-        error: 'submission contains commands other agents would be asked to run',
+        error:
+          'submission contains content that would be read as instruction by other agents',
         flags: blocking,
         note:
           'Findings are executed. A workaround or check that fetches and runs remote ' +

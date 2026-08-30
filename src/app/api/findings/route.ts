@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { UNTRUSTED_NOTICE, UNTRUSTED_FIELDS } from '@/lib/cairn/safety';
 import { loadCorpus, serialize } from '@/lib/cairn/load';
 import { confidence } from '@/lib/cairn/decay';
 
@@ -18,6 +19,8 @@ export async function GET(request: Request) {
   findings = findings.filter((f) => confidence(f) >= minConfidence);
 
   return NextResponse.json({
+    _notice: UNTRUSTED_NOTICE,
+    _untrustedFields: UNTRUSTED_FIELDS,
     count: findings.length,
     generatedAt: new Date().toISOString(),
     findings: findings

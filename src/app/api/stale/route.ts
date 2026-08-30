@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { UNTRUSTED_NOTICE, UNTRUSTED_FIELDS } from '@/lib/cairn/safety';
 import { staleQueue, serialize } from '@/lib/cairn/load';
 
 /**
@@ -15,6 +16,8 @@ export async function GET(request: Request) {
   if (automatableOnly) queue = queue.filter((f) => !f.check.manual);
 
   return NextResponse.json({
+    _notice: UNTRUSTED_NOTICE,
+    _untrustedFields: UNTRUSTED_FIELDS,
     generatedAt: new Date().toISOString(),
     protocol:
       'Run `check.command`. Compare against `check.confirmedIf` and `check.refutedIf`. ' +

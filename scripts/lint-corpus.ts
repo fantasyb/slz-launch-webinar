@@ -8,7 +8,7 @@ import { FindingSchema, environmentSignature } from '../src/lib/cairn/schema';
 import { commitmentStatus } from '../src/lib/cairn/commitment';
 import { verifyObservation } from '../src/lib/cairn/signing';
 import { loadKeys } from '../src/lib/cairn/keys';
-import { scanExecutable } from '../src/lib/cairn/safety';
+import { scanExecutable, scanInjection } from '../src/lib/cairn/safety';
 
 const DIR = path.join(process.cwd(), 'cairn');
 const problems: string[] = [];
@@ -95,6 +95,23 @@ for (const file of files) {
       );
     }
   }
+  // Prose fields are read by agents while they decide what to do, which is the
+  // position an injection wants. Blocking, not warning.
+  for (const [field, text] of [
+    ['title', f.title], ['claim', f.claim], ['expectation', f.expectation],
+    ['reality', f.reality], ['mechanism', f.mechanism ?? ''],
+    ['workaround', f.workaround ?? ''], ['derivation', f.derivation ?? ''],
+    ['appliesTo', f.appliesTo ?? ''],
+    ...f.evidence.map((e, i) => [`evidence[${i}]`, `${e.output}\n${e.note ?? ''}`] as const),
+    ...f.observations.map((o, i) => [`observations[${i}].note`, o.note ?? ''] as const),
+  ] as Array<[string, string]>) {
+    for (const flag of scanInjection(text)) {
+      problems.push(
+        `${file}: ${field} contains ${flag.pattern} (${flag.reason}) — ${flag.sample}`,
+      );
+    }
+  }
+
   // Findings are executed by agents, so the corpus is a supply chain.
   for (const [field, text] of [
     ['check.command', f.check.command],
@@ -151,6 +168,23 @@ for (const file of files) {
   if (f.check.confirmedIf === f.check.refutedIf) {
     problems.push(`${file}: confirmedIf and refutedIf are identical — the check decides nothing`);
   }
+  // Prose fields are read by agents while they decide what to do, which is the
+  // position an injection wants. Blocking, not warning.
+  for (const [field, text] of [
+    ['title', f.title], ['claim', f.claim], ['expectation', f.expectation],
+    ['reality', f.reality], ['mechanism', f.mechanism ?? ''],
+    ['workaround', f.workaround ?? ''], ['derivation', f.derivation ?? ''],
+    ['appliesTo', f.appliesTo ?? ''],
+    ...f.evidence.map((e, i) => [`evidence[${i}]`, `${e.output}\n${e.note ?? ''}`] as const),
+    ...f.observations.map((o, i) => [`observations[${i}].note`, o.note ?? ''] as const),
+  ] as Array<[string, string]>) {
+    for (const flag of scanInjection(text)) {
+      problems.push(
+        `${file}: ${field} contains ${flag.pattern} (${flag.reason}) — ${flag.sample}`,
+      );
+    }
+  }
+
   // Findings are executed by agents, so the corpus is a supply chain.
   for (const [field, text] of [
     ['check.command', f.check.command],

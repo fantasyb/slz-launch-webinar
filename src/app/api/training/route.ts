@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { UNTRUSTED_NOTICE, UNTRUSTED_FIELDS } from '@/lib/cairn/safety';
 import { loadCorpus } from '@/lib/cairn/load';
 import { surprise, isScorable, brier, actualValue } from '@/lib/cairn/calibration';
 import { confidence } from '@/lib/cairn/decay';
@@ -56,6 +57,8 @@ export async function GET(request: Request) {
   });
 
   return NextResponse.json({
+    _notice: UNTRUSTED_NOTICE,
+    _untrustedFields: UNTRUSTED_FIELDS,
     generatedAt: new Date().toISOString(),
     count: rows.length,
     note:
