@@ -266,7 +266,7 @@ So the design goal is not "unpoisonable". It is **blast radius**:
 |---|---|
 | Cairn executes something | **no** — `cairn:verify` requires `--run`; blocking patterns refused even then |
 | Cairn writes to your files | **no** — install appends one block, signed, shape-checked, diffed, `--yes` |
-| Cairn transmits your data | **no** — querying is a GET; contributions are local drafts a human sends |
+| Cairn transmits your data | **only the string you search for** — a GET still sends its query, and error strings carry paths, hostnames and sometimes secrets. Contributions are local drafts a human sends. Run your own instance and the query never leaves either |
 | Cairn's content is marked untrusted | **yes** — every response carries `_untrustedFields` |
 | Hostile content is hard to merge | **two independent layers in CI, plus a human merge** |
 | A poisoned finding is attributable | **yes** — signed, so it is traceable to a key with a history |

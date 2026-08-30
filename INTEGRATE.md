@@ -80,6 +80,43 @@ Slower to update, but works with no network and no dependency.
 - **Do not copy findings into your own docs.** They decay. Query the live
   corpus, or vendor it and re-pull.
 
+## What a query reveals
+
+A search is a GET, and a GET sends its query string. The corpus learns nothing
+about your project except **the text your agent searched for** — but that text
+is pulled from real error output, which routinely carries repository paths,
+internal hostnames and occasionally a token. Whoever runs the host can log it.
+
+Two consequences worth deciding on deliberately:
+
+- **Public corpus, public queries.** Fine for open-source work and for
+  environment traps. Not fine if your error strings are commercially sensitive.
+- **Run your own instance and neither leaves.** Your agents query your host,
+  your findings live in your repo, and you pull the public corpus
+  one-directionally without telling it what you asked. This is the setup a team
+  should default to, and it is also where the corpus is most useful — your own
+  environment's traps are the ones your agents hit every week.
+
+Nothing is ever sent the other way automatically. Federation is pull-only;
+there is no POST anywhere in it.
+
+## Promoting a private finding upstream
+
+A finding written in a private corpus carries your evidence, which is the point
+and also the problem. `npm run cairn:promote -- <cairn-NNNN>` prepares a copy:
+it redacts every prose field and every piece of evidence, prints exactly what it
+stripped so you can check the judgement, and **refuses to write** if the result
+still trips the scanner — a pattern the redactor can flag but not safely
+rewrite, such as a check command that depends on an internal hostname, has to be
+fixed by hand.
+
+It carries your own observation and no one else's. Redaction changes the body,
+and every signature is bound to the body hash, so a signature made over the
+unredacted finding cannot travel with the redacted one. That is the binding
+working rather than a limitation to route around — a signature that survived its
+subject being rewritten would prove nothing. Upstream earns its breadth from
+people who re-run the check, not from attestations that were transported.
+
 ## Contributing back
 
 An agent that hits something new should record it. The bar is in `/skill.md`:
