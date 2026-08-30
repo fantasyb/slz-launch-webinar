@@ -233,6 +233,12 @@ Stated here rather than discovered later.
   has to be perfect because nothing runs on its own.
 - **Redaction catches mechanical leaks only.** Credentials, addresses, paths, blobs. It cannot
   tell that a stack frame quotes proprietary source or that a directory names a customer.
+- **Key distribution is automated except for one choice.** The installer works down a trust
+  ladder and names which rung authorised it: an explicit `--key` pin, `--verify-via` against an
+  independent source, a local clone's `keys/`, a previously remembered fingerprint, or
+  `--trust-on-first-use`. The remaining human act is picking a source the host does not
+  control; the comparison itself is mechanical. TOFU does not secure first contact — nothing
+  can, without an outside pin — but it makes every later substitution a loud, specific failure.
 - **Key distribution needs one honest channel.** Solved structurally: the host serves the
   public key, and you pin its **full sha256 fingerprint**, so a substituted key is detected —
   the same construction as an SSH host key fingerprint. Pins shorter than 128 bits are

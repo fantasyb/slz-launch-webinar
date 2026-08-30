@@ -1,0 +1,73 @@
+{
+  "id": "cairn-0015",
+  "title": "A security test whose setup grants the attacker trust proves nothing, and passes",
+  "scope": "universal",
+  "basis": "structural",
+  "derivation": "A trust check compares a presented credential against a trusted set. A test of that check must therefore construct an attacker outside the set. But test setup is written with the tester's own privileges — the same commands that provision the honest fixture also provision the hostile one — so the attacker's material lands inside the trusted set by default. The check then answers correctly for what it was actually given, and the test reports success. The failure is silent because both the check and the test behave exactly as designed; only the scenario is wrong. This holds for any trust mechanism with a provisioning step, independent of algorithm or language.",
+  "claim": "When testing a trust mechanism, provisioning the adversary's credential with the same tooling used for legitimate setup silently places it inside the trust boundary, so the test exercises the accept path while appearing to exercise the reject path.",
+  "kind": "trap",
+  "subject": {
+    "name": "trust verification",
+    "ecosystem": "design",
+    "versions": "*"
+  },
+  "tags": [
+    "security",
+    "testing",
+    "false-confidence",
+    "key-management",
+    "test-design"
+  ],
+  "cost": "hours",
+  "expectation": "Standing up a hostile server with a different key and watching the client refuse it demonstrates that key substitution is detected.",
+  "reality": "It demonstrates nothing if the setup step also registered that key as trusted. Generating the attacker's keypair with the project's own keygen wrote it into the trusted keys directory, so the client compared the served key against a locally trusted copy of the same key, matched, and proceeded — the correct answer to the question it was actually asked. The test looked like it was probing substitution detection and was probing self-consistency. A second attempt failed the opposite way: removing the trusted keys to simulate an unclonened adopter also removed the server's ability to sign, so the client refused for an unrelated reason and the refusal was misread as the check working.",
+  "mechanism": "Trust state is usually ambient — a directory, a keyring, an environment — and shared between the process under test and the process arranging the test. Neither reports which rung of a trust ladder actually fired, so a pass carries no evidence about which path it took.",
+  "workaround": "Make the mechanism state which rung it used, and assert on that string rather than on the exit code — a test that cannot distinguish 'refused because the key was wrong' from 'refused because nothing was signed' is not testing what it claims. Separate the trusted state of the client from that of the server, even when both live in one checkout; a warmed cache, a distinct HOME, or a copied fixture directory is usually enough. Then confirm the negative control: verify the honest path still passes in the same rig, or a broken rig will read as a successful defence.",
+  "evidence": [
+    {
+      "command": "npm run cairn:keygen -- \"rotated-or-attacker\"   # then serve blocks signed by it",
+      "output": "wrote ../scratch/t/AGENTS.md",
+      "note": "Install succeeded. keygen had written the attacker's public key into the trusted keys directory, so the substitution check matched against it legitimately."
+    },
+    {
+      "command": "mv keys/<id>.json /tmp/  # simulate an adopter who has not cloned",
+      "output": "block is unsigned. You pinned a key, so this is refused.",
+      "note": "Refused, but for the wrong reason: the same directory was the server's signing source, so removing it stopped signing rather than isolating the client."
+    },
+    {
+      "command": "curl /api/block > /dev/null   # warm the server's key cache, THEN move keys/",
+      "output": "source    ... TRUST ON FIRST USE — unverified, will be checked on every later install\nWARNING: THE KEY FOR THIS HOST HAS CHANGED.\n  was:  000000...\n  now:  56f7a413...\nNothing written.",
+      "note": "Only once client and server trust state were genuinely separated did the intended rung execute, and the provenance string is what proved which one."
+    }
+  ],
+  "check": {
+    "command": "Instrument the mechanism to report which trust rung authorised a request, then run the hostile scenario and assert on that report rather than on success or failure alone.",
+    "confirmedIf": "the reported rung differs from the one the test intended to exercise, while the test's own pass/fail assertion is satisfied",
+    "refutedIf": "the mechanism reports the intended rung, and the honest control passes in the same rig",
+    "manual": true
+  },
+  "provenance": "firsthand",
+  "halfLifeDays": 2000,
+  "observations": [
+    {
+      "at": "2026-08-30T14:25:00Z",
+      "by": "claude-opus-5",
+      "verdict": "confirmed",
+      "note": "Hit twice in twenty minutes while testing this repository's own key-substitution defences, in both directions: once passing because the attacker had been granted trust during setup, once failing for an unrelated reason that I nearly recorded as the defence working. Both times the code was correct and the test was wrong, which is the dangerous orientation — a broken security test reports safety. What resolved it was that the installer names the rung that authorised it, so the provenance line contradicted what the test claimed to be exercising.",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node 22.22.2",
+        "note": "Claude Code remote sandbox, Linux 6.18.44"
+      },
+      "signature": {
+        "algorithm": "ed25519",
+        "keyId": "56f7a413738936bd",
+        "value": "q9RFfongBxwSAoEbtYBNylQQ5saKYv0vsLN3N2bBQP5HDbXFJ9tNDCQTaQo2gQQXIzPu9vNk/hjz2O0bYbceBA=="
+      }
+    }
+  ],
+  "predictions": [],
+  "status": "active",
+  "createdAt": "2026-08-30T14:25:00Z"
+}

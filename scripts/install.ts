@@ -22,6 +22,7 @@
  *   3. you approve the printed diff with --yes.
  */
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import {
   installBlock,
@@ -33,6 +34,55 @@ import {
 import { loadKeys } from '../src/lib/cairn/keys';
 import { checkPin, keyFingerprint, MIN_PIN_HEX } from '../src/lib/cairn/signing';
 
+/**
+ * Remembered fingerprints, per host. The SSH known_hosts model.
+ *
+ * Trust-on-first-use does not secure the first contact — nothing can, without
+ * a pin from outside — but it secures every contact after it, and turns a
+ * later substitution into a loud, specific failure rather than a silent one.
+ * That is the difference between an attacker needing to win once at a moment
+ * of their choosing, and needing to have won the very first time.
+ */
+const KNOWN_KEYS = path.join(os.homedir(), '.cairn', 'known-keys.json');
+
+type Known = Record<string, { fingerprint: string; firstSeen: string; source: string }>;
+
+function loadKnown(): Known {
+  try {
+    return JSON.parse(fs.readFileSync(KNOWN_KEYS, 'utf8')) as Known;
+  } catch {
+    return {};
+  }
+}
+
+function rememberKey(host: string, fingerprint: string, source: string) {
+  const known = loadKnown();
+  if (known[host]) return;
+  known[host] = { fingerprint, firstSeen: new Date().toISOString(), source };
+  fs.mkdirSync(path.dirname(KNOWN_KEYS), { recursive: true });
+  fs.writeFileSync(KNOWN_KEYS, `${JSON.stringify(known, null, 2)}\n`);
+}
+
+/**
+ * Fetch the same key from a second, independent source and require agreement.
+ *
+ * This is the human step, automated. The adopter still has to supply a URL
+ * they can see is not the host being verified — a raw GitHub path, a package
+ * registry — but comparing the two is mechanical, and an attacker must then
+ * compromise both channels rather than one.
+ */
+async function fetchIndependentFingerprint(url: string): Promise<string | null> {
+  try {
+    const res = await fetch(url, { headers: { accept: 'application/json' } });
+    if (!res.ok) return null;
+    const body = (await res.json()) as { publicKey?: string; signature?: { publicKey?: string } };
+    const pem = body.publicKey ?? body.signature?.publicKey;
+    return pem ? keyFingerprint(pem) : null;
+  } catch {
+    return null;
+  }
+}
+
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
   return i === -1 ? undefined : process.argv[i + 1];
@@ -41,6 +91,7 @@ function arg(name: string): string | undefined {
 const target = path.resolve(arg('into') ?? process.cwd());
 const from = arg('from');
 const pinnedKey = arg('key');
+const verifyVia = arg('verify-via');
 const approved = process.argv.includes('--yes');
 
 if (!fs.existsSync(target) || !fs.statSync(target).isDirectory()) {
@@ -52,13 +103,6 @@ async function resolveBlock(): Promise<{ base: string; block: string; provenance
   if (!from) {
     const base = arg('base') ?? 'https://CAIRN_HOST';
     return { base, block: installBlock(base), provenance: 'generated locally' };
-  }
-
-  if (!pinnedKey) {
-    console.error('--from requires --key <fingerprint>.');
-    console.error('Fetching without pinning is the failure recorded as cairn-0014: it');
-    console.error('authorises whoever controls that URL, indefinitely.');
-    process.exit(2);
   }
 
   const res = await fetch(from, { headers: { accept: 'application/json' } });
@@ -80,11 +124,11 @@ async function resolveBlock(): Promise<{ base: string; block: string; provenance
     console.error('block is unsigned. You pinned a key, so this is refused.');
     process.exit(1);
   }
-  // The key may come from the host. The FINGERPRINT must not: it is pinned by
-  // the adopter from an independent channel, and it is what makes a substituted
-  // key detectable. Local keys/ is only a fallback for an offline clone.
+  // The key may come from the host. The assurance that it is the RIGHT key
+  // must not. These are the ways to establish that, strongest first — every
+  // one of them is a channel the host does not control, except the last.
   const servedKey = payload.signature.publicKey;
-  const localKey = loadKeys().get(pinnedKey.slice(0, 16))?.publicKey;
+  const localKey = loadKeys().get(payload.signature.keyId)?.publicKey;
   const publicKey = servedKey ?? localKey;
 
   if (!publicKey) {
@@ -92,34 +136,95 @@ async function resolveBlock(): Promise<{ base: string; block: string; provenance
     process.exit(1);
   }
 
-  // The tool cannot know where the pin came from, and that is exactly the step
-  // it cannot enforce. It can at least say so at the moment it matters.
-  if (!localKey) {
-    const host = (() => { try { return new URL(from).host; } catch { return from; } })();
-    console.log(`\nNo local copy of this key, so the pin is doing all the work.`);
-    console.log(`If you copied that fingerprint from ${host}, this check proves nothing —`);
-    console.log(`whoever serves the key also served the fingerprint. Get it from the git`);
-    console.log(`repository, a package, or a person, and compare.\n`);
-  }
+  const served = keyFingerprint(publicKey);
+  const host = (() => { try { return new URL(from).host; } catch { return from; } })();
+  const known = loadKnown()[host];
 
-  const pin = checkPin(publicKey, pinnedKey);
-  if (!pin.ok) {
-    console.error(`PIN CHECK FAILED: ${pin.reason}`);
-    if (pin.fingerprint) {
-      console.error(`  served key fingerprint: ${pin.fingerprint}`);
-      console.error(`  you pinned:             ${pinnedKey}`);
-      console.error('\nEither this host is not who you think, or you have the wrong');
-      console.error('fingerprint. Do not resolve this by copying the value above —');
-      console.error('that is the value under attack. Nothing written.');
-    } else {
-      console.error(`\nUse the full ${MIN_PIN_HEX}+ character fingerprint, not the short keyId.`);
+  let assurance: string | null = null;
+
+  // 1. An explicit pin the adopter carried in from elsewhere.
+  if (pinnedKey) {
+    const pin = checkPin(publicKey, pinnedKey);
+    if (!pin.ok) {
+      console.error(`PIN CHECK FAILED: ${pin.reason}`);
+      if (pin.fingerprint) {
+        console.error(`  served:  ${pin.fingerprint}`);
+        console.error(`  pinned:  ${pinnedKey}`);
+        console.error('\nEither this host is not who you think, or you have the wrong');
+        console.error('fingerprint. Do not resolve this by copying the served value —');
+        console.error('that is the value under attack. Nothing written.');
+      } else {
+        console.error(`\nUse the full ${MIN_PIN_HEX}+ character fingerprint, not the short keyId.`);
+      }
+      process.exit(1);
     }
-    process.exit(1);
+    assurance = 'pinned fingerprint';
   }
 
-  if (localKey && localKey.trim() !== publicKey.trim()) {
-    console.error('served key differs from the one held locally for this id. Refusing.');
-    process.exit(1);
+  // 2. The same key, fetched from a source the adopter names and can see is
+  //    not this host. The human comparison, done mechanically.
+  if (!assurance && verifyVia) {
+    const independent = await fetchIndependentFingerprint(verifyVia);
+    if (!independent) {
+      console.error(`could not read a public key from ${verifyVia}. Refusing.`);
+      process.exit(1);
+    }
+    if (independent !== served) {
+      console.error('INDEPENDENT SOURCES DISAGREE. Nothing written.\n');
+      console.error(`  ${host} served:  ${served}`);
+      console.error(`  ${verifyVia} has: ${independent}`);
+      console.error('\nOne of these is lying. Do not guess which.');
+      process.exit(1);
+    }
+    if (new URL(verifyVia).host === host) {
+      console.error(`--verify-via points at ${host}, the same host being verified.`);
+      console.error('That is circular and proves nothing. Use an independent source.');
+      process.exit(1);
+    }
+    assurance = `corroborated by ${new URL(verifyVia).host}`;
+  }
+
+  // 3. A clone of the corpus already carries the key.
+  if (!assurance && localKey) {
+    if (localKey.trim() !== publicKey.trim()) {
+      console.error('served key differs from the one in your local keys/. Refusing.');
+      process.exit(1);
+    }
+    assurance = 'matches the key in your local clone';
+  }
+
+  // 4. Seen before from this host, and unchanged.
+  if (!assurance && known) {
+    if (known.fingerprint !== served) {
+      console.error('WARNING: THE KEY FOR THIS HOST HAS CHANGED.\n');
+      console.error(`  first seen ${known.firstSeen} via ${known.source}`);
+      console.error(`  was:  ${known.fingerprint}`);
+      console.error(`  now:  ${served}`);
+      console.error('\nThis is what a substituted host looks like. It is also what a');
+      console.error('legitimate key rotation looks like, so confirm through the publisher');
+      console.error(`before proceeding. To accept deliberately, delete the entry in`);
+      console.error(`${KNOWN_KEYS}. Nothing written.`);
+      process.exit(1);
+    }
+    assurance = `unchanged since first seen ${known.firstSeen.slice(0, 10)}`;
+  }
+
+  // 5. Nothing. First contact, no pin, no second source.
+  if (!assurance) {
+    if (!process.argv.includes('--trust-on-first-use')) {
+      console.error('NO WAY TO VERIFY THIS KEY.\n');
+      console.error(`  ${host} served fingerprint:`);
+      console.error(`  ${served}\n`);
+      console.error('Pick one, best first:');
+      console.error(`  --key <fingerprint>        a pin you obtained elsewhere`);
+      console.error(`  --verify-via <url>         the same key from an independent source,`);
+      console.error(`                             e.g. a raw git host path`);
+      console.error(`  clone the corpus           keys/ is then checked automatically`);
+      console.error(`  --trust-on-first-use       accept this key now and detect any later`);
+      console.error(`                             change, which does not secure this install`);
+      process.exit(1);
+    }
+    assurance = 'TRUST ON FIRST USE — unverified, will be checked on every later install';
   }
 
   if (!verifyBlockSignature(payload.base, payload.block, payload.signature.value, publicKey)) {
@@ -128,12 +233,12 @@ async function resolveBlock(): Promise<{ base: string; block: string; provenance
     process.exit(1);
   }
 
+  rememberKey(host, served, assurance);
+
   return {
     base: payload.base,
     block: payload.block,
-    provenance:
-      `fetched from ${from}; key fingerprint ${keyFingerprint(publicKey).slice(0, 32)}… ` +
-      `matches pin; signature verified`,
+    provenance: `fetched from ${from}; ${assurance}; signature verified`,
   };
 }
 
