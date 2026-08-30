@@ -8,6 +8,7 @@ import { FindingSchema, environmentSignature } from '../src/lib/cairn/schema';
 import { commitmentStatus } from '../src/lib/cairn/commitment';
 import { verifyObservation } from '../src/lib/cairn/signing';
 import { loadKeys } from '../src/lib/cairn/keys';
+import { scanExecutable } from '../src/lib/cairn/safety';
 
 const DIR = path.join(process.cwd(), 'cairn');
 const problems: string[] = [];
@@ -66,6 +67,20 @@ for (const file of files) {
       );
     }
   }
+  // Findings are executed by agents, so the corpus is a supply chain.
+  for (const [field, text] of [
+    ['check.command', f.check.command],
+    ['workaround', f.workaround ?? ''],
+    ...f.evidence.map((e, i) => [`evidence[${i}].command`, e.command] as const),
+  ] as Array<[string, string]>) {
+    for (const flag of scanExecutable(text)) {
+      const msg =
+        `${file}: ${field} contains ${flag.pattern} (${flag.reason}) — ${flag.sample}`;
+      if (flag.severity === 'block') problems.push(msg);
+      else warnings.push(msg);
+    }
+  }
+
   for (const o of f.observations) {
     const sig = verifyObservation(f.id, o, keys);
     if (sig === 'broken') {
@@ -108,6 +123,20 @@ for (const file of files) {
   if (f.check.confirmedIf === f.check.refutedIf) {
     problems.push(`${file}: confirmedIf and refutedIf are identical — the check decides nothing`);
   }
+  // Findings are executed by agents, so the corpus is a supply chain.
+  for (const [field, text] of [
+    ['check.command', f.check.command],
+    ['workaround', f.workaround ?? ''],
+    ...f.evidence.map((e, i) => [`evidence[${i}].command`, e.command] as const),
+  ] as Array<[string, string]>) {
+    for (const flag of scanExecutable(text)) {
+      const msg =
+        `${file}: ${field} contains ${flag.pattern} (${flag.reason}) — ${flag.sample}`;
+      if (flag.severity === 'block') problems.push(msg);
+      else warnings.push(msg);
+    }
+  }
+
   for (const o of f.observations) {
     if (new Date(o.at).getTime() > Date.now() + 86_400_000) {
       problems.push(`${file}: observation dated in the future (${o.at})`);

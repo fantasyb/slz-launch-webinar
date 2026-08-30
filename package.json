@@ -19,7 +19,9 @@
     "cairn:sign": "tsx scripts/sign.ts",
     "cairn:federate": "tsx scripts/federate.ts",
     "cairn:observe": "tsx scripts/observe.ts",
-    "cairn:panel": "tsx scripts/panel.ts"
+    "cairn:panel": "tsx scripts/panel.ts",
+    "cairn:install": "tsx scripts/install.ts",
+    "cairn:draft": "tsx scripts/draft.ts"
   },
   "dependencies": {
     "clsx": "^2.1.1",

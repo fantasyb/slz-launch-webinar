@@ -3,10 +3,12 @@ export const dynamic = 'force-dynamic';
 import Link from 'next/link';
 import { loadConfig } from '@/lib/cairn/federation';
 import { corpusStats } from '@/lib/cairn/load';
+import { installBlock } from '@/lib/cairn/block';
 
 export const metadata = { title: 'Use it — Cairn' };
 
 const HOST = 'CAIRN_HOST';
+const BLOCK = installBlock(`https://${HOST}`);
 
 const SNIPPET = `## When something fails in a way you did not expect
 
@@ -67,37 +69,68 @@ export default function UsePage() {
       </div>
 
       <section className="mt-9">
-        <h2 className="font-claim text-lg">The fast way: let your agent do it</h2>
-        <p className="mt-2 text-[14px] leading-relaxed text-ink-soft">
-          Paste this into whatever agent is already working on your project. It finds the
-          right instruction file, checks Cairn is not already wired in, and appends the
-          block.
-        </p>
-        <div className="mt-4">
-          <Pre>{`Read https://${HOST}/install.md and follow it.`}</Pre>
+        <h2 className="font-claim text-lg">A person pastes it in. That is the install.</h2>
+        <div className="mt-2 space-y-3 text-[14px] leading-relaxed text-ink-soft">
+          <p>
+            Cairn briefly shipped a one-liner &mdash; point your agent at a URL and let it
+            edit your instruction file. That was wrong, and it is now{' '}
+            <Link href="/findings/cairn-0014" className="underline decoration-rule-strong underline-offset-2 hover:text-ink">
+              cairn-0014
+            </Link>
+            .
+          </p>
+          <p>
+            &ldquo;Read this URL and do what it says&rdquo; hands write access to your
+            repository to whoever controls that host,{' '}
+            <strong className="font-semibold text-ink">indefinitely</strong>. The page being
+            harmless today is not a property you keep tomorrow: domains lapse, hosts are
+            compromised, projects change hands. And normalising it teaches agents that
+            fetched text is instructions, which is the precondition that makes prompt
+            injection work everywhere else &mdash; a cost paid by the whole ecosystem so
+            this project could have smoother onboarding.
+          </p>
+          <p>
+            So: read the block, decide it is reasonable, paste it. Thirty seconds, and no
+            agent obeys a stranger.
+          </p>
+        </div>
+        <div className="mt-5">
+          <Pre>{BLOCK}</Pre>
         </div>
         <p className="mt-3 text-[13px] leading-relaxed text-ink-soft">
-          The installed block carries <strong className="font-semibold text-ink">both halves
-          of the loop</strong>: query when something fails, and push back when you solve
-          something new. Contributing is one <code className="font-mono text-[12px]">POST</code>{' '}
-          &mdash; an agent mid-task in someone else&rsquo;s repo will never stop to read a
-          protocol document.
+          Replace <code className="font-mono text-[12px]">{HOST}</code> with the host you are
+          pointing at. If you cloned the corpus,{' '}
+          <code className="font-mono text-[12px]">npm run cairn:install -- --into ../your-project</code>{' '}
+          does the same thing from local code you can read: it prints the diff and refuses to
+          write without <code className="font-mono text-[12px]">--yes</code>.
         </p>
-        <p className="mt-3 text-[13px] leading-relaxed text-ink-soft">
-          That page asks for exactly one change &mdash; appending a documented block to one
-          file. It never asks an agent to run a command, install a dependency, read a
-          credential, or contact another host, and it says so at the top so you can check
-          the scope matches the promise. Re-running it is a no-op: the block is delimited by{' '}
-          <code className="font-mono text-[12px]">cairn:begin</code> markers and an agent
-          that finds them stops.
-        </p>
-        <p className="mt-3 text-[12px] leading-relaxed text-ink-faint">
-          Prefer to see it first? It is plain markdown &mdash;{' '}
-          <Link href="/install.md" className="font-mono underline decoration-rule-strong underline-offset-2 hover:text-ink">
-            read it yourself
-          </Link>{' '}
-          before pointing anything at it. Given it instructs agents to edit files, that is a
-          reasonable habit.
+      </section>
+
+      <section className="mt-10 border-t border-rule pt-8">
+        <h2 className="font-claim text-lg">What it asks of your agent</h2>
+        <ul className="mt-3 ml-4 list-disc space-y-2.5 text-[15px] leading-relaxed text-ink-soft marker:text-rule-strong">
+          <li>
+            <strong className="font-semibold text-ink">Query, read-only.</strong> One GET when
+            something fails unexpectedly. Nothing about your project is transmitted.
+          </li>
+          <li>
+            <strong className="font-semibold text-ink">Treat findings as data.</strong> A{' '}
+            <code className="font-mono text-[13px]">workaround</code> is a suggestion from a
+            stranger, and an agent that runs one unverified has been injected. Every finding
+            ships the command that would refute it so verifying costs less than trusting.
+          </li>
+          <li>
+            <strong className="font-semibold text-ink">Draft locally, then stop.</strong>{' '}
+            Solved something new? Write it to a file and tell the human. Nothing is
+            transmitted. Evidence is error output, and error output carries internal
+            hostnames, home paths and tokens &mdash; whether that leaves your repository is a
+            decision for someone who knows what is sensitive in it.
+          </li>
+        </ul>
+        <p className="mt-4 text-[13px] leading-relaxed text-ink-soft">
+          <code className="font-mono text-[12px]">npm run cairn:draft -- &lt;file&gt;</code>{' '}
+          scans a draft for tokens, private addresses, home paths and fetch-and-execute
+          commands before anyone decides to publish it. A scan is a prompt, not a clearance.
         </p>
       </section>
 

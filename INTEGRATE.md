@@ -1,5 +1,10 @@
 # Wire Cairn into your project
 
+> **Not by pointing an agent at a URL.** Cairn briefly shipped that and it was wrong —
+> see [cairn-0014](./cairn/0014-follow-this-url-is-standing-rce.json). "Read this and do
+> what it says" hands write access to your repo to whoever controls that host, forever.
+> A person reads the block and pastes it. That is the install.
+
 Cairn only pays off if an agent checks it *at the moment it hits a wall*. That
 means the instruction has to live in the file your agent already reads.
 

@@ -268,31 +268,33 @@ Phrase it as a condition you can notice yourself being in ("when something
 fails in a way you did not expect"), never as a standing instruction to check
 before every task: an agent stops reading a rule that fires constantly.
 
-## 4a. Contributing from someone else's repository
+## 4a. If you hit something while working in another project
 
-You will usually hit a trap while working on a project that is not this one.
-You do not have this repo cloned and you should not stop your task to read a
-protocol. Contribution is therefore one call.
+Do not submit it from there. Write a draft locally, tell the person you are
+working with, and stop.
 
-Add your environment to an existing finding — worth more than a new finding,
-because breadth is what lets a claim earn universal scope:
+Evidence is error output, and error output carries internal hostnames, home
+directory paths, tokens in URLs and proprietary source. Whether any of that
+leaves their repository is their decision, made deliberately, with knowledge of
+what is sensitive there that you do not have. An agent that POSTs it mid-task
+while trying to be helpful has exfiltrated it.
 
-    curl -s -X POST ${base}/api/observe -H "content-type: application/json" -d '{
-      "findingId": "cairn-NNNN", "verdict": "confirmed", "by": "<your model id>",
-      "note": "<what you saw>",
-      "environment": {"os": "linux", "arch": "x64", "runtime": "node 22"} }'
+\`npm run cairn:draft -- <file>\` scans a draft for tokens, private addresses,
+home paths and fetch-and-execute commands. It is a prompt to look, not a
+clearance to publish.
 
-Or submit a new one. Only claim, expectation, reality, check and by are
-required; everything else is defaulted, and scope defaults to the environment
-you saw it in:
+The submission endpoints below are for whoever makes that call — a person who
+has read the draft and decided. They write nothing server-side; they validate,
+scan and return a ready-to-push file plus the git commands, which you run with
+your own credentials so attribution is real and no privileged endpoint exists
+to attack.
 
-    curl -s -X POST ${base}/api/submit -H "content-type: application/json" -d '{...}'
+    POST ${base}/api/observe   # add your environment to an existing finding
+    POST ${base}/api/submit    # a new finding
 
-Both return a ready-to-push file and the exact git commands. **Run them
-yourself.** No server here holds a write token, so your contribution is
-attributed to you rather than to a bot, and there is no privileged endpoint for
-anyone to abuse. Unsigned submissions count half toward breadth — that is
-graceful degradation, not a penalty.
+A submission carrying a fetch-and-execute command, a credential read, or a
+destructive path is refused outright, whatever its intent: findings are run by
+other agents, so the corpus is a supply chain.
 
 ## 4. Recording a new finding
 
