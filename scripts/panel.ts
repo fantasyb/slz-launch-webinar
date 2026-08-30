@@ -24,7 +24,7 @@ import path from 'path';
 import crypto from 'crypto';
 import { execSync } from 'child_process';
 import { FindingSchema, type Finding } from '../src/lib/cairn/schema';
-import { PanelConfigSchema, solicit, type SolicitResult } from '../src/lib/cairn/panel';
+import { PanelConfigSchema, solicit, ask, type SolicitResult } from '../src/lib/cairn/panel';
 import { computeCommitment, generateNonce } from '../src/lib/cairn/commitment';
 import { derivedVerdict } from '../src/lib/cairn/decay';
 import { findingBodyHash } from '../src/lib/cairn/signing';
@@ -72,6 +72,21 @@ async function seal() {
     commitment?: string;
     error?: string;
   }> = [];
+
+  // Two labels that sanitise to the same filename would have one preimage
+  // overwrite the other, and the loser's sealed forecast becomes permanently
+  // unrevealable. Cheap to check, impossible to recover from.
+  const filenames = new Map<string, string>();
+  for (const m of cfg.members) {
+    const key = secretName(m.label);
+    const clash = filenames.get(key);
+    if (clash) {
+      console.error(`members "${clash}" and "${m.label}" both map to the secret file ${key}`);
+      console.error('One would overwrite the other and its forecast could never be revealed.');
+      process.exit(2);
+    }
+    filenames.set(key, m.label);
+  }
 
   fs.mkdirSync(SECRETS, { recursive: true, mode: 0o700 });
   fs.mkdirSync(RUNS, { recursive: true });
@@ -154,7 +169,7 @@ async function seal() {
 
       // 0600: until reveal, these preimages are the whole blind.
       writeJsonAtomic(
-        path.join(SECRETS, `${finding.id}--${r.member.label.replace(/[^\w.-]/g, '_')}.json`),
+        path.join(SECRETS, `${finding.id}--${secretName(r.member.label)}.json`),
         { findingId: finding.id, by: r.member.label, ...r.forecast, anchor, nonce, hash },
         0o600,
       );
@@ -265,7 +280,80 @@ function reveal() {
   }
 }
 
-if (MODE === 'seal') {
+/** Filename form of a member label. Collisions are rejected before sealing. */
+function secretName(label: string): string {
+  return label.replace(/[^\w.-]/g, '_');
+}
+
+/**
+ * Preflight: call every configured member with a trivial prompt and report
+ * what actually happens.
+ *
+ * The panel had never run, so nothing had ever confirmed that the model ids in
+ * panel.config.json resolve, that each provider's request shape is right, or
+ * that a reply parses. A stale id is not a loud failure -- it is one panellist
+ * quietly missing from every run. This answers those questions for the price
+ * of four short requests, and it is the thing to run before a real seal.
+ */
+async function check() {
+  const cfg = loadConfig();
+  console.log(`checking ${cfg.members.length} member(s), maxTokens ${cfg.maxTokens}\n`);
+  let bad = 0;
+  let probed = 0;
+
+  for (const m of cfg.members) {
+    const key = process.env[m.apiKeyEnv];
+    if (!key) {
+      console.log(`skip  ${m.label.padEnd(16)} ${m.apiKeyEnv} is not set`);
+      continue;
+    }
+    probed++;
+    const started = Date.now();
+    const res = await ask(
+      m,
+      'You are a test probe. Answer with valid JSON only.',
+      'Reply with exactly: {"ok": true}',
+      cfg,
+    );
+    const ms = Date.now() - started;
+    if (res.error) {
+      console.log(`FAIL  ${m.label.padEnd(16)} ${m.model}  ${res.error.slice(0, 120)}`);
+      bad++;
+      continue;
+    }
+    const text = (res.text ?? '').trim();
+    if (!text) {
+      // The specific failure a small maxTokens produces: the budget is spent on
+      // reasoning and nothing visible is emitted.
+      console.log(
+        `FAIL  ${m.label.padEnd(16)} ${m.model}  empty response in ${ms}ms — ` +
+          `raise maxTokens or lower effort`,
+      );
+      bad++;
+      continue;
+    }
+    console.log(`ok    ${m.label.padEnd(16)} ${m.model}  ${ms}ms  ${text.slice(0, 60)}`);
+  }
+
+  // Report what was examined, not just the verdict. A preflight that probed
+  // nothing and printed "all members answered" is cairn-0028 exactly: a gate
+  // whose selector returned nothing, passing vacuously. It was written that
+  // way here first time round.
+  console.log(`\n${probed} of ${cfg.members.length} member(s) probed, ${bad} failed`);
+  if (probed === 0) {
+    console.error('No member had a key set, so nothing was checked. Set at least one');
+    console.error('provider key before treating this as a pass.');
+    process.exit(2);
+  }
+  process.exit(bad === 0 ? 0 : 1);
+}
+
+if (MODE === 'check') {
+  check().catch((e) => {
+    console.error(e);
+    process.exit(1);
+  });
+} else if (MODE === 'seal') {
   seal().catch((e) => {
     console.error(e);
     process.exit(1);
@@ -273,6 +361,6 @@ if (MODE === 'seal') {
 } else if (MODE === 'reveal') {
   reveal();
 } else {
-  console.error('usage: npm run cairn:panel -- <seal|reveal>');
+  console.error('usage: npm run cairn:panel -- <check|seal|reveal>');
   process.exit(2);
 }

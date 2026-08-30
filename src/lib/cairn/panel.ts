@@ -81,7 +81,7 @@ interface ProviderCall {
   extract: (json: unknown) => string;
 }
 
-function buildCall(
+export function buildCall(
   m: PanelMember,
   apiKey: string,
   prompt: string,
@@ -119,7 +119,12 @@ function buildCall(
         headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
         body: {
           model: m.model,
-          max_completion_tokens: maxTokens,
+          // OpenAI renamed this for reasoning models; xAI's chat-completions
+          // API documents the original name. Sending the wrong one is either
+          // ignored (no output cap) or a 400 on every call.
+          ...(m.provider === 'openai'
+            ? { max_completion_tokens: maxTokens }
+            : { max_tokens: maxTokens }),
           messages: [
             { role: 'system', content: system },
             { role: 'user', content: prompt },
@@ -132,8 +137,11 @@ function buildCall(
 
     case 'google':
       return {
-        url: `https://generativelanguage.googleapis.com/v1beta/models/${m.model}:generateContent?key=${apiKey}`,
-        headers: { 'content-type': 'application/json' },
+        // Key in a header, never the query string: a URL ends up in proxy logs,
+        // error text and stack traces, and this environment routes through a
+        // logging proxy.
+        url: `https://generativelanguage.googleapis.com/v1beta/models/${m.model}:generateContent`,
+        headers: { 'content-type': 'application/json', 'x-goog-api-key': apiKey },
         body: {
           systemInstruction: { parts: [{ text: system }] },
           contents: [{ role: 'user', parts: [{ text: prompt }] }],
@@ -167,12 +175,59 @@ export function parseForecast(text: string): Forecast {
 }
 
 /**
+ * Node's fetch reports transport failures as a bare "fetch failed" with the
+ * real reason on `cause`, and drops a timeout's error name. Flattening to
+ * `.message` made every manifest entry undiagnosable.
+ */
+/** Max bytes accepted from a provider before the read is abandoned. */
+export const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
+
+/**
+ * Read a response body with a size bound.
+ *
+ * `await res.json()` buffers whatever arrives. The timeout bounds how long a
+ * provider may take; nothing bounded how much it could send, so a provider or
+ * middlebox streaming steadily inside the timeout window could make the
+ * process buffer without limit. fetchJson already did this for federation;
+ * the panel transport did not.
+ */
+async function readBounded(res: Response): Promise<string> {
+  const reader = res.body?.getReader();
+  if (!reader) return '';
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.length;
+    if (total > MAX_RESPONSE_BYTES) {
+      await reader.cancel();
+      throw new Error(`response exceeded ${MAX_RESPONSE_BYTES} bytes`);
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString('utf8');
+}
+
+function describeError(e: unknown): string {
+  const err = e as { name?: string; message?: string; cause?: unknown };
+  const cause = err?.cause ? ` (${String((err.cause as Error)?.message ?? err.cause)})` : '';
+  const name = err?.name && err.name !== 'Error' ? `${err.name}: ` : '';
+  return `${name}${err?.message ?? String(e)}${cause}`;
+}
+
+/**
  * One request to one provider, returning raw text.
  *
  * Shared by forecasting and adversarial review so that both go through the
- * identical transport — same retries, same timeouts, same parsing. A reviewer
- * called differently from a forecaster is a reviewer whose results cannot be
- * compared with theirs.
+ * identical transport — same timeouts, same body bound, same parsing. A
+ * reviewer called differently from a forecaster is a reviewer whose results
+ * cannot be compared with theirs.
+ *
+ * There are deliberately no retries. A retry would have to be recorded, or the
+ * manifest would under-report how many attempts a forecast took; until that is
+ * designed, an error is an error. The docstring here previously claimed "same
+ * retries", which was never true of any code path.
  */
 export async function ask(
   m: PanelMember,
@@ -190,10 +245,10 @@ export async function ask(
       body: JSON.stringify(call.body),
       signal: AbortSignal.timeout(cfg.timeoutMs),
     });
-    if (!res.ok) return { error: `HTTP ${res.status}: ${(await res.text()).slice(0, 300)}` };
-    return { text: call.extract(await res.json()) };
+    if (!res.ok) return { error: `HTTP ${res.status}: ${(await readBounded(res)).slice(0, 300)}` };
+    return { text: call.extract(JSON.parse(await readBounded(res))) };
   } catch (e) {
-    return { error: (e as Error).message };
+    return { error: describeError(e) };
   }
 }
 
@@ -214,24 +269,19 @@ export async function solicit(
   f: Finding,
   cfg: PanelConfig,
 ): Promise<SolicitResult> {
-  const apiKey = process.env[m.apiKeyEnv];
-  if (!apiKey) {
-    return { member: m, findingId: f.id, error: `${m.apiKeyEnv} is not set` };
+  // Through ask(), not a second copy of the transport. This function used to
+  // reimplement the fetch, so the size bound, the error-cause handling and the
+  // key placement all had to be fixed twice -- and `ask`'s own docstring says
+  // the whole point is that a reviewer and a forecaster go through identical
+  // transport. Two copies is how that stops being true without anyone editing
+  // the sentence.
+  const res = await ask(m, SYSTEM_PROMPT, buildPrompt(f), cfg);
+  if (res.error || !res.text) {
+    return { member: m, findingId: f.id, error: res.error ?? 'empty response' };
   }
-  const call = buildCall(m, apiKey, buildPrompt(f), cfg.maxTokens);
-
   try {
-    const res = await fetch(call.url, {
-      method: 'POST',
-      headers: call.headers,
-      body: JSON.stringify(call.body),
-      signal: AbortSignal.timeout(cfg.timeoutMs),
-    });
-    if (!res.ok) {
-      return { member: m, findingId: f.id, error: `HTTP ${res.status}: ${(await res.text()).slice(0, 300)}` };
-    }
-    return { member: m, findingId: f.id, forecast: parseForecast(call.extract(await res.json())) };
+    return { member: m, findingId: f.id, forecast: parseForecast(res.text) };
   } catch (e) {
-    return { member: m, findingId: f.id, error: (e as Error).message };
+    return { member: m, findingId: f.id, error: describeError(e) };
   }
 }
