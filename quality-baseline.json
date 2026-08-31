@@ -32,9 +32,12 @@
   "agent": {
     "_source": "npm run cairn:agent-eval \u2014 real commands, real stderr",
     "_note": [
-      "silentOnUnknown now counts 'returned nothing' OR 'returned only weak-labelled",
-      "matches' -- both are safe, and only a confident wrong answer is not.",
-      "All three unknown-ground cases pass. minCoveredHits must stay perfect."
+      "silentOnUnknown counts 'returned nothing' OR 'returned only weak-labelled",
+      "matches' -- both safe; only a confident wrong answer is not.",
+      "3/3 since the failing command became evidence. Six statistical methods could",
+      "not get the third; the program name that produced the error got all three,",
+      "because it is a different KIND of evidence rather than a better weighting of",
+      "the same one."
     ],
     "minCoveredHits": 5,
     "minSilentOnUnknown": 3
