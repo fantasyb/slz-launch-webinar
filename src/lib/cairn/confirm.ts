@@ -166,11 +166,27 @@ async function runCheckCommand(
         // NOT try to interpret the output — an LLM reading stdout to decide
         // whether a claim held is exactly the unfalsifiable judgment the
         // executable check exists to replace.
+        /*
+         * Exit 77 means the check could not decide.
+         *
+         * Without it every non-zero exit read as "did not reproduce", so a
+         * check that could not run at all -- a missing build artifact, an
+         * absent tool, no network -- was recorded as evidence AGAINST the
+         * finding. That is the worst possible direction for the error to go:
+         * confirmations are strong and refutations are weak precisely because
+         * a failure to reproduce usually means the environment differed, and
+         * here the environment differing was being counted as the finding
+         * being wrong.
+         *
+         * 77 rather than a new convention because it is what autotools,
+         * automake and GNU test suites already use for "skipped", so a check
+         * author who knows the shell already knows this.
+         */
         const fired: Fired = timedOut
           ? 'inconclusive'
           : code === 0
             ? 'fires'
-            : code === null
+            : code === 77 || code === null
               ? 'inconclusive'
               : 'does-not-fire';
 

@@ -216,3 +216,12 @@ test('stderr survives, because the decisive line is often on it', async () => {
   const r = await runCommand('test-stderr', 'echo "on stderr" >&2; exit 0', 5000);
   assert.match(r.detail, /on stderr/);
 });
+
+test('exit 77 means the check could not decide, not that the claim failed', async () => {
+  // Every other non-zero exit reads as "did not reproduce". A check that could
+  // not run — no build artifact, no tool, no network — must not be recorded as
+  // evidence against the finding.
+  const r = await runCommand('test-skip', 'echo "no build artifact"; exit 77', 5000);
+  assert.equal(r.fired, 'inconclusive');
+  assert.equal(r.exitCode, 77);
+});
