@@ -31,7 +31,8 @@
     "cairn:match": "tsx scripts/match.ts",
     "cairn:find": "tsx scripts/find.ts",
     "cairn:eval": "tsx scripts/eval.ts",
-    "cairn:doctor": "tsx scripts/doctor.ts"
+    "cairn:doctor": "tsx scripts/doctor.ts",
+    "cairn:bench": "tsx scripts/bench.ts"
   },
   "dependencies": {
     "clsx": "^2.1.1",

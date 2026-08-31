@@ -105,6 +105,35 @@ async function main() {
       `${fires.length} live · ${quiet.length} quiet · ${unclear.length} inconclusive`,
   );
 
+  /*
+   * Checks too expensive to run unattended.
+   *
+   * The corpus asks for checks that are "cheap and hermetic" because another
+   * agent will run them without watching. Measuring the whole corpus at once
+   * is what makes a violation visible: one check takes 18 seconds -- it runs a
+   * full framework build -- and accounts for 88% of the time to verify
+   * everything. Seven others finish in under 10ms each.
+   *
+   * This is not a style complaint. An expensive check is one nobody runs, and
+   * a finding whose check nobody runs decays on a timer forever without ever
+   * being re-tested, which is the exact rot the half-life was meant to expose.
+   * The cost shows up as a slow command and the consequence shows up months
+   * later as a confident stale claim, so the two are worth connecting here.
+   */
+  const SLOW_MS = 5_000;
+  const slow = results
+    .filter((r) => r.ms >= SLOW_MS)
+    .sort((a, b) => b.ms - a.ms);
+  if (slow.length) {
+    console.log(
+      `\n${slow.length} check(s) took over ${SLOW_MS / 1000}s. A check nobody will run ` +
+        'unattended is a\nfinding that decays forever without being re-tested:',
+    );
+    for (const r of slow) {
+      console.log(`  ${r.id}  ${(r.ms / 1000).toFixed(1)}s  ${byId.get(r.id)!.title.slice(0, 46)}`);
+    }
+  }
+
   if (suspicious.length) {
     console.log(
       `\n${suspicious.length} finding(s) stand "fresh" but did not reproduce, with their\n` +
