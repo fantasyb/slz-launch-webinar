@@ -46,7 +46,22 @@ const plain = (s: string): string[] => (s.toLowerCase().match(/[a-z0-9]+/g) ?? [
 const rich = (s: string): string[] => tokenize(s).map((t) => t.text);
 
 function buildBm25(tok: (s: string) => string[]) {
-  const docs = all.map((f) => ({ f, terms: tok(docText(f)) }));
+  /*
+   * Term frequencies precomputed at INDEX time, not per query.
+   *
+   * The first version of this rebuilt a tf map for every document on every
+   * query -- O(N x document length) per query -- and then "measured" cairn as
+   * six times faster than BM25. That was not a result, it was a badly written
+   * competitor, and reporting it would have been the most flattering mistake
+   * available. Any real BM25 index precomputes this, exactly as the BM25 pass
+   * inside retrieval.ts does, so the comparison is now like for like.
+   */
+  const docs = all.map((f) => {
+    const terms = tok(docText(f));
+    const tf = new Map<string, number>();
+    for (const t of terms) tf.set(t, (tf.get(t) ?? 0) + 1);
+    return { f, terms, tf, length: terms.length };
+  });
   const df = new Map<string, number>();
   for (const d of docs) for (const t of new Set(d.terms)) df.set(t, (df.get(t) ?? 0) + 1);
   const avgdl = docs.reduce((a, d) => a + d.terms.length, 0) / docs.length;
@@ -57,16 +72,14 @@ function buildBm25(tok: (s: string) => string[]) {
   return (query: string) => {
     const q = tok(query);
     const scored = docs.map((d) => {
-      const tf = new Map<string, number>();
-      for (const t of d.terms) tf.set(t, (tf.get(t) ?? 0) + 1);
       let s = 0;
       for (const t of new Set(q)) {
         const n = df.get(t) ?? 0;
         if (n === 0) continue;
-        const f = tf.get(t) ?? 0;
+        const f = d.tf.get(t) ?? 0;
         if (f === 0) continue;
         const idf = Math.log(1 + (N - n + 0.5) / (n + 0.5));
-        s += idf * ((f * (k1 + 1)) / (f + k1 * (1 - b + (b * d.terms.length) / avgdl)));
+        s += idf * ((f * (k1 + 1)) / (f + k1 * (1 - b + (b * d.length) / avgdl)));
       }
       return { id: d.f.id, s };
     });
@@ -181,6 +194,32 @@ for (const [name, rank] of arms) {
     `  ${name.padEnd(12)}${(hit / machine.length).toFixed(3)}   ` +
       (misses.length ? 'missed: ' + misses.join(' ') : 'all correct'),
   );
+}
+
+/*
+ * Speed, on the same footing.
+ *
+ * Accuracy was compared and cost was not, which is half a comparison: a method
+ * that wins by 8 points and costs 50x is not obviously the better choice. Both
+ * arms are indexed once and then queried warm, so this measures retrieval
+ * rather than start-up.
+ *
+ * Note what is being compared. The cairn arm CONTAINS a BM25 pass -- the two
+ * rankers are fused -- so it cannot be faster than BM25 and is not claimed to
+ * be. The number that matters is what the rest of the pipeline costs on top:
+ * typed tokenisation, errno aliasing, length-normalised scoring, sibling
+ * links, confusion links and the weak-match annotation.
+ */
+const speedQueries = machine.map(([, q]) => q);
+console.log('\nSPEED (warm, index already built, 2000 queries each)');
+console.log('  arm          mean per query');
+for (const [name, rank] of arms) {
+  for (let i = 0; i < 50; i++) rank(speedQueries[i % speedQueries.length]);
+  const t = process.hrtime.bigint();
+  const N = 2000;
+  for (let i = 0; i < N; i++) rank(speedQueries[i % speedQueries.length]);
+  const ms = Number(process.hrtime.bigint() - t) / 1e6 / N;
+  console.log(`  ${name.padEnd(12)}${ms.toFixed(4)} ms`);
 }
 
 console.log('\nCOVERED GROUND — failures the corpus documents');
