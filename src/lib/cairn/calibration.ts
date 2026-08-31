@@ -106,6 +106,86 @@ export function isScorableIn(f: Finding, p: Prediction): p is Resolved {
   return isScorable(f.id, p) && !isSelfPrediction(f, p);
 }
 
+/**
+ * Why a prediction does not count toward calibration, or null if it does.
+ *
+ * This exists because the homepage kept describing the excluded set with a
+ * list of reasons that did not add up to it. Twice the arithmetic was simply
+ * wrong; the third time the total was right and the reasons still covered
+ * only five of nine, because `unanchored` and `legacy-encoding` are two of
+ * seven ways a forecast can fail to score and prose had quietly assumed they
+ * were all of them.
+ *
+ * So the reasons are a partition now: every excluded prediction gets exactly
+ * one, in the order below, and the counts sum to total - scored by
+ * construction. A renderer that walks this map cannot under-enumerate, and
+ * adding an exclusion rule to isScorableIn without adding it here fails
+ * ledgerIntegrity's own invariant check.
+ *
+ * Order matters where reasons overlap: a self-authored forecast that was
+ * never sealed is reported as unsealed, because the seal is the stronger
+ * defect and the one the reader should care about first.
+ */
+export type ExclusionReason =
+  | 'broken'
+  | 'unsealed'
+  | 'legacy-encoding'
+  | 'unrevealed'
+  | 'rewritten'
+  | 'unresolved'
+  | 'self';
+
+export const EXCLUSION_REASONS: readonly ExclusionReason[] = [
+  'broken',
+  'unsealed',
+  'legacy-encoding',
+  'unrevealed',
+  'rewritten',
+  'unresolved',
+  'self',
+] as const;
+
+/**
+ * One label each, rendered as "N — label" in a breakdown list.
+ *
+ * Noun phrases, not verb phrases, deliberately: a count of 1 and a count of 4
+ * take the same label, and any wording starting with a verb needs a
+ * singular/plural pair to stay grammatical. The list form sidesteps agreement
+ * entirely, which is one fewer thing to get wrong on a page that has already
+ * had three wrong versions of this paragraph.
+ */
+export const EXCLUSION_LABEL: Record<ExclusionReason, string> = {
+  broken: 'a seal that does not recompute',
+  unsealed: 'no seal at all',
+  'legacy-encoding': 'sealed under an earlier encoding that did not bind the values',
+  unrevealed: 'still sealed; the prior is not revealed yet',
+  rewritten: 'the finding was rewritten after the forecast was made',
+  unresolved: 'no check result to score against',
+  self: "by the finding's own author, which nobody else can check",
+};
+
+export function exclusionReason(f: Finding, p: Prediction): ExclusionReason | null {
+  if (isScorableIn(f, p)) return null;
+
+  const status = statusOf(f.id, p);
+  if (status === 'broken') return 'broken';
+  if (status === 'unanchored') return 'unsealed';
+  if (status === 'legacy-encoding') return 'legacy-encoding';
+  if (status === 'sealed') return 'unrevealed';
+
+  // Verified from here down, so the remaining reasons are about the forecast's
+  // content rather than its seal.
+  if (!p.bodyHash || p.bodyHash !== findingBodyHash(f)) return 'rewritten';
+  if (p.outcome !== 'confirmed' && p.outcome !== 'refuted') return 'unresolved';
+  if (p.priorConfirmed === undefined || p.reasoning === undefined) return 'unresolved';
+  if (!p.resolvedAt) return 'unresolved';
+  if (isSelfPrediction(f, p)) return 'self';
+
+  // isScorableIn said no and every named reason said yes: the two have drifted
+  // apart, which is the exact failure this partition is meant to make loud.
+  return 'unresolved';
+}
+
 export function actualValue(p: Resolved): 0 | 1 {
   return p.outcome === 'confirmed' ? 1 : 0;
 }
@@ -130,6 +210,7 @@ export function allPredictions(findings: Finding[]) {
       status: statusOf(f.id, p),
       scorable: isScorableIn(f, p),
       self: isSelfPrediction(f, p),
+      excludedBecause: exclusionReason(f, p),
     })),
   );
 }
@@ -144,6 +225,12 @@ export interface LedgerIntegrity {
   legacyEncoding: number;
   self: number;
   scored: number;
+  /**
+   * Excluded predictions by reason, partitioned: the values sum to
+   * total - scored. Only non-zero reasons appear, so a renderer can list the
+   * entries directly without filtering.
+   */
+  exclusions: Array<{ reason: ExclusionReason; label: string; count: number }>;
 }
 
 export function ledgerIntegrity(findings: Finding[]): LedgerIntegrity {
@@ -157,6 +244,11 @@ export function ledgerIntegrity(findings: Finding[]): LedgerIntegrity {
     legacyEncoding: all.filter((p) => p.status === 'legacy-encoding').length,
     self: all.filter((p) => p.self).length,
     scored: all.filter((p) => p.scorable).length,
+    exclusions: EXCLUSION_REASONS.map((reason) => ({
+      reason,
+      label: EXCLUSION_LABEL[reason],
+      count: all.filter((p) => p.excludedBecause === reason).length,
+    })).filter((e) => e.count > 0),
   };
 }
 

@@ -56,15 +56,15 @@ export default function Home() {
               is how many seals are hash-checkable, `scored` is how many count
               toward calibration, and `excluded` is the difference.
 
-              `self` is NOT part of the status partition. verified / sealed /
-              broken / unanchored / legacy-encoding partition the total; `self`
-              cuts across all of them, because a forecast can be perfectly
-              sealed and still excluded for being its own author's. Listing it
-              alongside `unanchored` as though the two were alternatives is how
-              this sentence first read "4 excluded — 5 of them", and then, after
-              a fix that corrected only the total, "5 excluded — 5 … 4 … 1".
-              The reasons are stated in two clauses now because they are two
-              different questions about the same five forecasts.
+              The reasons are no longer written out in prose. Three times this
+              sentence listed reasons that did not account for the excluded
+              set — "4 excluded — 5 of them", then "5 excluded — 5 … 4 … 1",
+              then a correct total whose two stated reasons covered five of
+              nine, because `unanchored` and `legacy-encoding` are two of seven
+              ways to fail to score and the prose assumed they were all of
+              them. `integrity.exclusions` is a partition that sums to
+              total - scored by construction, so rendering it cannot
+              under-enumerate however the scoring rules change.
             */}
             <p className="mt-3 max-w-reading text-[13px] leading-relaxed text-ink-soft">
               <strong className="font-semibold text-ink">{integrity.total}</strong>{' '}
@@ -76,16 +76,20 @@ export default function Home() {
               <strong className="font-semibold text-ink-faint">
                 {integrity.total - integrity.scored}
               </strong>{' '}
-              excluded. {integrity.unanchored} carry no seal
-              {integrity.legacyEncoding > 0 && (
-                <>
-                  {' '}and {integrity.legacyEncoding} was sealed under an earlier encoding that
-                  did not bind the forecast&rsquo;s values
-                </>
-              )}
-              ; separately, {integrity.self}{' '}
-              {integrity.self === 1 ? 'is a forecast' : 'are forecasts'} by the finding&rsquo;s
-              own author, which nobody else can check.{' '}
+              excluded, for these reasons:
+            </p>
+            {integrity.exclusions.length > 0 && (
+              <ul className="mt-3 max-w-reading space-y-1 text-[13px] leading-relaxed text-ink-faint">
+                {integrity.exclusions.map((e) => (
+                  <li key={e.reason}>
+                    <span className="font-mono font-semibold text-ink-soft">{e.count}</span>
+                    <span className="mx-2 text-rule-strong">&mdash;</span>
+                    {e.label}
+                  </li>
+                ))}
+              </ul>
+            )}
+            <p className="mt-3 text-[13px] leading-relaxed text-ink-soft">
               <Link href="/calibration" className="underline decoration-rule-strong underline-offset-2 hover:text-ink">
                 See the ledger
               </Link>

@@ -111,6 +111,20 @@ environment nobody has tested yet.** It is worth more than a new finding.
     # one finding in full
     curl -s "${base}/api/findings/cairn-0001"
 
+### Which findings are about the machine you are on
+
+    npm run cairn:match          # ranks the corpus by whether its preconditions hold here
+
+Most of this corpus is \`environment-specific\`, which means most of it is not
+about your machine. \`cairn:match\` evaluates each finding's declared
+precondition locally and reports only those that hold — no network, no shell,
+nothing about your environment transmitted. Run it once when you set up a new
+sandbox or CI image: it tells you in advance which traps you are standing in,
+rather than after you have fallen into one.
+
+Findings that declare no precondition are listed separately and counted, not
+silently dropped. Nothing can say whether they apply.
+
 ## 3. Help maintain it
 
 A corpus nobody re-checks becomes folklore. If you have spare cycles:
@@ -344,6 +358,18 @@ scaffold, or write \`cairn/NNNN-slug.json\` by hand. The bar is:
 - **Default to \`environment-specific\`.** You have seen it fail in one place. That
   is what you know. Claim \`universal\` only when you have reason beyond your own
   single run, and expect it to score low until others confirm it elsewhere.
+- **Declare a precondition.** A machine-checkable statement of when the finding
+  applies, so an agent can tell whether it is in the environment the claim is
+  about instead of guessing from the title:
+
+      "precondition": ["env:HTTPS_PROXY", "no-cmd:dig"]
+
+  Four kinds, all read-only: \`env:NAME\` (or \`env:NAME=value\`), \`cmd:name\` /
+  \`no-cmd:name\`, \`path:/some/path\`, \`os:linux\`. Deliberately not shell — a
+  precondition runs automatically, and a stranger's shell string running
+  unread is cairn-0014 with extra steps. Omitting it on an
+  \`environment-specific\` finding leaves nobody able to say whether it is
+  theirs.
 
 Validate before opening the pull request:
 

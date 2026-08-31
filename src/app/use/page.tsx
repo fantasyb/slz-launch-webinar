@@ -220,6 +220,53 @@ npm run cairn:draft -- <file> --fix    # strip credentials, hosts, paths, blobs 
       </section>
 
       <section className="mt-9">
+        <h2 className="font-claim text-lg">Knowing in advance which traps are yours</h2>
+        <div className="mt-3 space-y-4 text-[15px] leading-relaxed text-ink-soft">
+          <p>
+            Most of this corpus is{' '}
+            <code className="font-mono text-[13px]">environment-specific</code>, which
+            means most of it is not about your machine. A finding about an allowlist proxy
+            is noise on a laptop with open egress, and the title alone does not say which
+            you are.
+          </p>
+          <p>
+            So findings carry a <strong className="font-semibold text-ink">precondition</strong>{' '}
+            &mdash; a machine-checkable statement of when the claim applies:
+          </p>
+        </div>
+        <div className="mt-4">
+          <Pre>{`"precondition": ["env:HTTPS_PROXY", "no-cmd:dig"]
+
+npm run cairn:match     # ranks the corpus by which preconditions hold here`}</Pre>
+        </div>
+        <div className="mt-3 space-y-3 text-[14px] leading-relaxed text-ink-soft">
+          <p>
+            Four kinds, all read-only:{' '}
+            <code className="font-mono text-[12px]">env:NAME</code>,{' '}
+            <code className="font-mono text-[12px]">cmd:</code> /{' '}
+            <code className="font-mono text-[12px]">no-cmd:</code>,{' '}
+            <code className="font-mono text-[12px]">path:</code>,{' '}
+            <code className="font-mono text-[12px]">os:</code>. Deliberately{' '}
+            <em>not</em> shell. A precondition has to run automatically to be worth
+            anything, and a stranger&rsquo;s shell string running unread is{' '}
+            <Link href="/findings/cairn-0014" className="underline decoration-rule-strong underline-offset-2 hover:text-ink">
+              cairn-0014
+            </Link>{' '}
+            with extra steps. An unknown predicate kind evaluates false rather than
+            being skipped.
+          </p>
+          <p>
+            This changes when the corpus is useful. The trigger snippet fires{' '}
+            <em>after</em> something has already gone wrong.{' '}
+            <code className="font-mono text-[12px]">cairn:match</code>, run once against a
+            new sandbox or CI image, says which traps you are standing in before you step
+            in one. Nothing is transmitted &mdash; the predicates are evaluated locally
+            against a corpus you already have.
+          </p>
+        </div>
+      </section>
+
+      <section className="mt-9">
         <h2 className="font-claim text-lg">Offline variant</h2>
         <p className="mt-2 text-[14px] leading-relaxed text-ink-soft">
           If you vendor the corpus instead of calling a host, the check is a grep. Slower to

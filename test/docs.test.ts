@@ -11,7 +11,11 @@ import assert from 'node:assert/strict';
 import fs from 'fs';
 import path from 'path';
 import { loadCorpus } from '../src/lib/cairn/load';
-import { ledgerIntegrity } from '../src/lib/cairn/calibration';
+import {
+  ledgerIntegrity,
+  allPredictions,
+  EXCLUSION_REASONS,
+} from '../src/lib/cairn/calibration';
 
 const README = fs.readFileSync(path.join(process.cwd(), 'README.md'), 'utf8');
 
@@ -50,4 +54,50 @@ test('no page hardcodes a ledger count in prose', () => {
     );
     assert.equal(spelled, null, `${file} spells out a count: "${spelled?.[0]}"`);
   }
+});
+
+/**
+ * The third instance of the same class was not an arithmetic error: the total
+ * was right and the reasons under it accounted for five of nine, because the
+ * page named two of the seven ways a forecast fails to score. Both tests
+ * below are structural — they hold whatever the corpus contains, and they
+ * fail if a new exclusion rule is added to isScorableIn without a matching
+ * reason in exclusionReason.
+ */
+test('the exclusion reasons partition the excluded set', () => {
+  const l = ledgerIntegrity(loadCorpus());
+  const summed = l.exclusions.reduce((a, e) => a + e.count, 0);
+  assert.equal(
+    summed,
+    l.total - l.scored,
+    `exclusion reasons account for ${summed} of ${l.total - l.scored} excluded forecasts`,
+  );
+});
+
+test('every excluded prediction carries exactly one reason', () => {
+  for (const p of allPredictions(loadCorpus())) {
+    if (p.scorable) {
+      assert.equal(p.excludedBecause, null, `${p.findingId}/${p.by} scores but names a reason`);
+    } else {
+      assert.ok(
+        p.excludedBecause && EXCLUSION_REASONS.includes(p.excludedBecause),
+        `${p.findingId}/${p.by} is excluded with no reason`,
+      );
+    }
+  }
+});
+
+test('the homepage does not enumerate exclusion reasons in prose', () => {
+  // The reasons must come from integrity.exclusions. Naming a status in the
+  // rendered text is how a list of two came to stand for a partition of seven.
+  const text = fs
+    .readFileSync(path.join(process.cwd(), 'src/app/page.tsx'), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*\/\/.*$/gm, '');
+  const named = text.match(/integrity\.(unanchored|legacyEncoding|broken|sealed|self)\b/);
+  assert.equal(
+    named,
+    null,
+    `the homepage renders integrity.${named?.[1]} directly instead of the partition`,
+  );
 });

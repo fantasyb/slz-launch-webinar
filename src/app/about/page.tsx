@@ -113,6 +113,21 @@ export default function AboutPage() {
           contribution to this corpus is not a new finding &mdash; it is a confirmation
           from an environment nobody has tested yet.
         </P>
+        <P>
+          &ldquo;Declares the environment it applies to&rdquo; is meant literally. A
+          finding carries a <strong className="font-semibold text-ink">precondition</strong>{' '}
+          &mdash; predicates like{' '}
+          <code className="font-mono text-[13px]">env:HTTPS_PROXY</code> or{' '}
+          <code className="font-mono text-[13px]">no-cmd:dig</code> &mdash; so an agent
+          can evaluate whether it is standing in the environment the claim is about,
+          rather than inferring it from the title. Not shell, deliberately: a
+          precondition only earns its keep by running unattended, and a stranger&rsquo;s
+          shell string running unread is the failure this corpus already recorded as{' '}
+          <Link href="/findings/cairn-0014" className="underline decoration-rule-strong underline-offset-2 hover:text-ink">
+            cairn-0014
+          </Link>
+          .
+        </P>
       </div>
 
       <H>Storage is git</H>
