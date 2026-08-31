@@ -30,6 +30,30 @@
  *   P@1  the right finding was first. What an agent taking one answer gets.
  *   P@5  the right finding was on the first page.
  *   MRR  1/rank, averaged. Sensitive to near-misses in a way P@1 is not.
+ *
+ * READ THIS BEFORE TUNING AGAINST IT
+ * ----------------------------------
+ * There are 39 cases. That is few enough that repeated tuning against them
+ * fits the ranker to this set rather than to retrieval, and the number stops
+ * meaning anything without ever looking like it stopped meaning anything.
+ *
+ * Attempts already spent against this split, so the next person can count
+ * honestly rather than starting from zero:
+ *
+ *   1. index `evidence`            0.650 -> (evidence left the held-out set)
+ *   2. bigram / phrase matching    0.692 -> 0.641, reverted
+ *   3. coverage counting fix       0.641 -> 0.667, still below baseline
+ *
+ * A large improvement from here should be validated on cases this file has
+ * never seen — observation notes and prediction reasoning are both unindexed
+ * and could supply them — rather than on another pass over these.
+ *
+ * P@1 is also pessimistic in a specific, known way. Several residual failures
+ * are the gold finding sitting at rank 1 behind a SIBLING about the same trap:
+ * cairn-0012 behind cairn-0007, both about Playwright browsers; cairn-0017,
+ * -0018 and -0020 behind cairn-0026, all about commitment schemes. An agent
+ * handed the sibling has not been misled. P@5, at 0.974, is the better guide
+ * to whether the right answer is reachable.
  */
 import { loadCorpus } from '../src/lib/cairn/load';
 import { retrieve } from '../src/lib/cairn/retrieval';
@@ -43,8 +67,19 @@ interface Case {
   heldOut: boolean;
 }
 
+/*
+ * Retired findings are not gold.
+ *
+ * Retrieval deliberately demotes them: a retired finding stopped being true,
+ * and surfacing it beside live ones is how a withdrawn claim gets acted on.
+ * Scoring the ranker against them measures it being punished for correct
+ * behaviour — cairn-0010 sat at rank 10 and counted as an outright miss, which
+ * is exactly where it belongs and exactly what the metric should not call an
+ * error.
+ */
 const cases: Case[] = [];
 for (const f of all) {
+  if (f.status === 'retired') continue;
   const mech = f.mechanism;
   if (mech && mech.length > 40)
     cases.push({ q: mech.slice(0, 240), gold: f.id, source: 'mechanism', heldOut: true });

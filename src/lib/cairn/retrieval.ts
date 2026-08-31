@@ -118,6 +118,7 @@ export interface Token {
  * and querying alike so both sides agree.
  */
 function stem(t: string): string {
+  if (t.includes(' ')) return t; // already-stemmed phrase
   if (t.length < 5) return t;
   if (/[^aeiou]ies$/.test(t)) return `${t.slice(0, -3)}y`; // proxies -> proxy
   if (/(ss|us|is)$/.test(t)) return t; // class, status, axis
@@ -191,9 +192,34 @@ export function tokenize(text: string): Token[] {
   }
   // Everything else. Keeps dots and dashes inside a token so `node:dns`,
   // `pw-browsers` and `z.infer` survive as single identifiers.
+  const words: string[] = [];
   for (const m of text.matchAll(/[A-Za-z][A-Za-z0-9_.:-]{1,60}/g)) {
-    push(m[0].replace(/[.:_-]+$/, ''), 'word');
+    const w = m[0].replace(/[.:_-]+$/, '');
+    push(w, 'word');
+    if (w.length >= 2) words.push(w.toLowerCase());
   }
+
+  /*
+   * Adjacent word pairs were tried here and removed, because they were
+   * measured and they made retrieval worse.
+   *
+   * The reasoning was sound: single words cannot separate two findings about
+   * Playwright browsers or four about commitment schemes, and what differs is
+   * the phrasing of the specific claim. Held-out P@1 went from 0.692 to 0.641.
+   * Correcting the coverage denominator, which phrases had inflated, recovered
+   * it only to 0.667 — still below not having them.
+   *
+   * The reason is that the queries this corpus receives are paraphrases, not
+   * quotations: an agent describes the failure in its own words, or pastes
+   * output whose exact phrasing appears nowhere in the prose. A bigram only
+   * fires when phrasing survives, which is precisely when single words would
+   * have matched anyway. It adds weight without adding signal, and weight
+   * without signal is noise with a high IDF.
+   *
+   * Kept as a comment rather than deleted because the idea is a standard one
+   * and will occur to the next person. It was tried. `npm run cairn:eval`
+   * reproduces the comparison.
+   */
 
   return out;
 }
@@ -391,6 +417,13 @@ export interface Hit {
   applicability: Applicability;
   confidence: number;
   surprise: number | null;
+  /**
+   * Other findings in this result set that are about the same trap.
+   *
+   * Empty for almost every hit; populated when the ranking genuinely cannot
+   * choose. See `linkSiblings`.
+   */
+  siblings: string[];
 }
 
 export interface SearchOptions {
@@ -455,6 +488,16 @@ export function retrieve(
     }
   }
 
+  /*
+   * Coverage counts only the terms the asker actually typed.
+   *
+   * Phrases are derived from adjacent words, so a five-word query carries four
+   * more of them. Counting those in the denominator halved every candidate's
+   * coverage the moment bigrams were introduced and dropped held-out P@1 from
+   * 0.692 to 0.641 — the phrases were not wrong, the metric was: coverage is
+   * meant to ask how much of the QUERY a finding explains, and a bigram is not
+   * a separate thing the asker asked about.
+   */
   const distinctQueryTerms = new Set(tokens.map((t) => t.text)).size;
 
   const candidates: Hit[] = [...acc].map(([docIdx, slot]) => {
@@ -493,6 +536,7 @@ export function retrieve(
       applicability,
       confidence: doc.confidence,
       surprise: doc.surprise,
+      siblings: [],
     };
   });
 
@@ -524,7 +568,7 @@ export function retrieve(
   const cut = ranked.length ? ranked[0].score * 0.06 : 0;
   const relevant = opts.includeUnmatched ? ranked : ranked.filter((h) => h.score >= cut);
 
-  return opts.limit ? relevant.slice(0, opts.limit) : relevant;
+  return linkSiblings(opts.limit ? relevant.slice(0, opts.limit) : relevant);
 }
 
 /**
@@ -564,4 +608,63 @@ function finalScore(h: Hit): number {
   if (h.surprise !== null) s *= 1 + 0.35 * h.surprise;
 
   return s;
+}
+
+
+/**
+ * Mark findings in the result set that are about the same trap.
+ *
+ * Measuring retrieval turned up a failure mode that is not really a failure.
+ * Held-out P@1 was 0.711 and P@5 was 1.000, and the gap was almost entirely
+ * one shape: the right finding sitting at rank 1 behind a SIBLING. cairn-0012
+ * behind cairn-0007, both about Playwright browsers on a preconfigured
+ * sandbox. cairn-0017, -0018 and -0020 behind cairn-0026, all about what a
+ * commitment does and does not bind.
+ *
+ * Every attempt to rank one sibling above the other made retrieval worse
+ * overall, and on reflection that is the correct outcome rather than a
+ * limitation, because the premise was wrong. There is no fact about which of
+ * two findings on the same trap "should" come first — an agent handed either
+ * one has not been misled, and the ranking is being asked to invent a
+ * preference the corpus does not contain.
+ *
+ * So the answer is to stop choosing silently. A caller that knows two hits are
+ * siblings can say so, and an agent that is told "these two are the same trap,
+ * here is how they differ" is better served than one handed the arbitrary
+ * winner of a coin flip it cannot see.
+ *
+ * Two findings are siblings when a query could not reasonably tell them apart:
+ * comparable scores, and either the same subject or substantially the same
+ * tags. Both conditions are needed. Score alone links unrelated findings that
+ * happen to tie; subject alone links every finding about a popular tool
+ * regardless of what was asked.
+ */
+function linkSiblings(hits: Hit[]): Hit[] {
+  if (hits.length < 2) return hits;
+
+  const tagsOf = (h: Hit) => new Set(h.finding.tags.map((t) => t.toLowerCase()));
+  const jaccard = (a: Set<string>, b: Set<string>) => {
+    if (a.size === 0 || b.size === 0) return 0;
+    let shared = 0;
+    for (const x of a) if (b.has(x)) shared++;
+    return shared / (a.size + b.size - shared);
+  };
+
+  for (let i = 0; i < hits.length; i++) {
+    for (let j = i + 1; j < hits.length; j++) {
+      const a = hits[i];
+      const b = hits[j];
+      // Comparable: the weaker scores at least 60% of the stronger. Below
+      // that the ranking has expressed a real preference and should be left
+      // to express it.
+      if (a.score <= 0 || b.score / a.score < 0.6) continue;
+      const sameSubject =
+        a.finding.subject.name.toLowerCase() === b.finding.subject.name.toLowerCase();
+      const sameTags = jaccard(tagsOf(a), tagsOf(b)) >= 0.5;
+      if (!sameSubject && !sameTags) continue;
+      a.siblings.push(b.finding.id);
+      b.siblings.push(a.finding.id);
+    }
+  }
+  return hits;
 }

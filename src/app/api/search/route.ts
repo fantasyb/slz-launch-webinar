@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { UNTRUSTED_NOTICE, UNTRUSTED_FIELDS } from '@/lib/cairn/safety';
-import { search, serialize, summarise } from '@/lib/cairn/load';
+import { loadCorpus, serialize, summarise } from '@/lib/cairn/load';
+import { retrieve } from '@/lib/cairn/retrieval';
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -13,7 +14,17 @@ export async function GET(request: Request) {
   // beside live ones, with nothing to distinguish them at the summary
   // projection, is how a withdrawn claim gets acted on.
   const includeRetired = searchParams.get('includeRetired') === 'true';
-  const results = includeRetired ? search(q) : search(q).filter((f) => f.status !== 'retired');
+  /*
+   * Preconditions are NOT evaluated here, and that is deliberate.
+   *
+   * This server is not the machine asking. Gating a remote query on whether
+   * THIS process has HTTPS_PROXY set would hide exactly the findings the asker
+   * needs and surface ones about a container they are not in. `cairn:find`
+   * runs on the asker's own machine and does use them.
+   */
+  const hits = retrieve(q, loadCorpus());
+  const kept = includeRetired ? hits : hits.filter((h) => h.finding.status !== 'retired');
+  const results = kept.map((h) => h.finding);
   // Default to the minimal projection. Full prose is a deliberate second
   // request for one finding, not a side effect of asking a broad question.
   const full = searchParams.get('full') === 'true';
@@ -23,7 +34,19 @@ export async function GET(request: Request) {
     query: q,
     count: results.length,
     generatedAt: new Date().toISOString(),
-    findings: results.map((f) => (full ? serialize(f) : summarise(f))),
+    findings: kept.map((h) =>
+      full
+        ? serialize(h.finding)
+        : {
+            ...summarise(h.finding),
+            // Why this was returned, so an agent can judge the match rather
+            // than trust the order — and which other findings in this result
+            // are about the same trap, so it does not read a coin flip as a
+            // preference.
+            matched: h.matched.slice(0, 6).map((m) => m.term),
+            siblings: h.siblings,
+          },
+    ),
     projection: full ? 'full' : 'summary',
     hint: full
       ? undefined

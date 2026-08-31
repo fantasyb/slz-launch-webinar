@@ -113,3 +113,31 @@ test('checks refuse to run for findings that did not come from disk', async () =
 test('the local corpus itself is accepted', () => {
   assert.doesNotThrow(() => assertLocalCorpus(corpus.slice(0, 3)));
 });
+
+test('findings about the same trap are linked, not silently ordered', () => {
+  const hits = retrieve('playwright browsers already installed', corpus, { limit: 3 });
+  const seven = hits.find((h) => h.finding.id === 'cairn-0007');
+  assert.ok(seven, 'expected the playwright install finding');
+  assert.ok(
+    seven.siblings.includes('cairn-0012'),
+    'the two playwright-browser findings were not linked as siblings',
+  );
+  // Symmetric, or an agent reading only the winner never learns of the other.
+  const twelve = hits.find((h) => h.finding.id === 'cairn-0012');
+  assert.ok(twelve?.siblings.includes('cairn-0007'), 'sibling link is one-way');
+});
+
+test('unrelated findings are not linked just because they tie', () => {
+  for (const h of retrieve('ENOSPC no space left on device', corpus)) {
+    for (const sib of h.siblings) {
+      const other = corpus.find((f) => f.id === sib)!;
+      const sameSubject =
+        other.subject.name.toLowerCase() === h.finding.subject.name.toLowerCase();
+      const shared = h.finding.tags.filter((t) => other.tags.includes(t)).length;
+      assert.ok(
+        sameSubject || shared > 0,
+        `${h.finding.id} linked to ${sib} with neither subject nor tags in common`,
+      );
+    }
+  }
+});

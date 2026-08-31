@@ -44,6 +44,12 @@ for (const h of hits) {
       `confidence ${(h.confidence * 100).toFixed(0)}%${applies}`,
   );
   console.log(`      matched: ${h.matched.slice(0, 5).map((m) => m.term).join(', ')}`);
+  if (h.siblings.length) {
+    console.log(
+      `      same trap as ${h.siblings.join(', ')} — read both; the ranking ` +
+        'between them is not meaningful',
+    );
+  }
 }
 
 if (!confirm) {
