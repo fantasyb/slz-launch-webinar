@@ -45,6 +45,13 @@ export async function GET(request: Request) {
             // preference.
             matched: h.matched.slice(0, 6).map((m) => m.term),
             siblings: h.siblings,
+            // Honest self-report. This code cannot tell a lexical accident
+            // from a real match -- six different statistics were measured and
+            // none separates them -- but the caller has semantics, and what it
+            // cannot recover on its own is HOW the match was made.
+            strength: h.strength,
+            caveats: h.caveats,
+            explained: Number(h.explained.toFixed(2)),
           },
     ),
     projection: full ? 'full' : 'summary',

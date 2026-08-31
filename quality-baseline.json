@@ -14,35 +14,37 @@
   ],
   "recordedAt": "2026-08-31",
   "heldOut": {
-    "_source": "npm run cairn:eval — mechanism and appliesTo, never indexed",
+    "_source": "npm run cairn:eval \u2014 mechanism and appliesTo, never indexed",
     "_note": [
-      "P@5 was 1.000 before a language prior stopped common English anchoring a hit.",
-      "The three cases lost are abstract prose with no technical identifier in them",
-      "at all ('Latest-wins is the natural reduction over a log'), anchored only by",
-      "ordinary words. Production queries are machine output and contain none of",
-      "this shape, so the loss is accepted; the alternative was answering a Python",
-      "traceback with a finding about reputation logs."
+      "Recovered to the pre-language-prior values, and raised, once weak matches",
+      "were LABELLED rather than suppressed. Suppression was the only tool while a",
+      "weak match and a strong one looked identical in the output; it cost P@5",
+      "1.000 -> 0.921. Annotation costs nothing and protects better, because a",
+      "caveat an LLM reads in a dozen tokens beats a threshold wrong in both",
+      "directions."
     ],
-    "minP1": 0.68,
-    "minP5": 0.92,
-    "minMRR": 0.78
+    "minP1": 0.71,
+    "minP5": 1.0,
+    "minMRR": 0.83
   },
   "agent": {
-    "_source": "npm run cairn:agent-eval — real commands, real stderr",
+    "_source": "npm run cairn:agent-eval \u2014 real commands, real stderr",
     "_note": [
-      "coveredHits must stay perfect: these are failures the corpus documents, and",
-      "missing one is a straightforward regression.",
-      "silentOnUnknown is the safety property. One known failure remains, a git error",
-      "matching on 'git', which appears in exactly one finding. Fixing it means",
-      "tuning thresholds against eight cases, which is how a number stops meaning",
-      "anything without appearing to."
+      "silentOnUnknown now counts 'returned nothing' OR 'returned only weak-labelled",
+      "matches' -- both are safe, and only a confident wrong answer is not.",
+      "All three unknown-ground cases pass. minCoveredHits must stay perfect."
     ],
     "minCoveredHits": 5,
-    "minSilentOnUnknown": 2
+    "minSilentOnUnknown": 3
   },
   "corpus": {
     "_source": "npm run cairn:lint and npm run cairn:doctor",
     "maxLintErrors": 0,
     "maxCheckSeconds": 5
+  },
+  "maxFalseWeak": {
+    "_source": "fraction of CORRECT answers labelled weak",
+    "_note": "If this climbs the label becomes noise and agents will ignore it.",
+    "max": 0.2
   }
 }

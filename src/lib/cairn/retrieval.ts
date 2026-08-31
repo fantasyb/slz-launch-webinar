@@ -666,6 +666,8 @@ export interface Hit {
      * cannot anchor a hit on the strength of being rare in a small corpus.
      */
     anchorInformation: number;
+    /** Whether the language prior rates this term as ordinary English. */
+    common: boolean;
   }>;
   applicability: Applicability;
   confidence: number;
@@ -677,6 +679,21 @@ export interface Hit {
    * choose. See `linkSiblings`.
    */
   siblings: string[];
+  /**
+   * How much of the query this finding accounts for, 0 to 1.
+   *
+   * Reported rather than used as a threshold. See `strength`.
+   */
+  explained: number;
+  /** 'strong' when the match stands on its own; 'weak' when it may be lexical accident. */
+  strength: 'strong' | 'weak';
+  /**
+   * Why the match is weak, in plain language, empty when it is not.
+   *
+   * Written for a reader that has semantics — which the caller always is, and
+   * this code never will be.
+   */
+  caveats: string[];
 }
 
 export interface SearchOptions {
@@ -741,9 +758,24 @@ export function retrieve(
      * damped `anchorInformation` used only to decide whether a hit may exist
      * at all. A common word can help rank a finding; it cannot summon one.
      */
-    const anchorInformation = isCommonWord(tok.text)
-      ? Math.min(information, SIGNAL_FLOOR - 0.01)
-      : information;
+    /*
+     * Common words no longer BLOCK a hit; they annotate it.
+     *
+     * Suppression was the only tool available while a weak match and a strong
+     * one were indistinguishable in the output, and it cost held-out P@5
+     * 1.000 -> 0.921: three prose queries whose only anchors were ordinary
+     * words vanished entirely. Now that a match carries its own reservations,
+     * hiding it buys nothing a caveat does not buy more cheaply, and hiding
+     * costs recall that a caveat does not.
+     *
+     * The information is kept intact and the commonness is remembered, so a
+     * hit resting entirely on ordinary English can say so.
+     */
+    // Kept as a distinct name: the annotation path reads it, and collapsing it
+    // into  would hide that anchoring and scoring were once
+    // different quantities, which is the change this file records.
+    const anchorInformation = information;
+    const common = isCommonWord(tok.text);
     // A term in almost every finding distinguishes nothing, and letting it
     // contribute a sliver still puts the finding in the RESULT SET even when
     // it cannot affect the order. Ranking correctly is not enough: an agent
@@ -764,6 +796,7 @@ export function retrieve(
         contribution,
         information,
         anchorInformation,
+        common,
       });
       acc.set(doc, slot);
     }
@@ -818,6 +851,9 @@ export function retrieve(
       confidence: doc.confidence,
       surprise: doc.surprise,
       siblings: [],
+      explained: 0,
+      strength: 'strong',
+      caveats: [],
     };
   });
 
@@ -847,7 +883,7 @@ export function retrieve(
    * believe is relevant.
    */
   const cut = ranked.length ? ranked[0].score * 0.06 : 0;
-  let relevant = opts.includeUnmatched ? ranked : ranked.filter((h) => h.score >= cut);
+  const relevant = opts.includeUnmatched ? ranked : ranked.filter((h) => h.score >= cut);
 
   /*
    * Absolute floor: how much of the QUERY did the best hit actually explain?
@@ -918,7 +954,67 @@ export function retrieve(
        * different kind of signal entirely rather than a sixth weighting of
        * this one.
        */
-      if (explains(relevant[0]) < MIN_QUERY_EXPLAINED) relevant = [];
+      /*
+       * Report weakness; do not suppress it.
+       *
+       * Every attempt tonight to make the ranker DECIDE ran into the same
+       * wall. Six of them: bigrams, machine-versus-prose ratio, strong-field
+       * membership, external word frequency, signal fusion, peak-to-background
+       * ratio. Each either failed to separate the cases or cost more recall
+       * than it bought, and the last one made the reason explicit — a query
+       * that correctly returns one finding and a query that wrongly returns
+       * one finding have IDENTICAL spectra. There is no shape in the numbers
+       * to tell them apart.
+       *
+       * The assumption underneath all six was that this code has to decide.
+       * It does not, and it is the worst-placed thing in the system to try:
+       * the caller is a language model, so the semantics are already in the
+       * loop, downstream, at no cost. What the caller cannot recover on its
+       * own is HOW the match was made — which terms carried it, how much of
+       * the question went unexplained, whether any machine identifier was
+       * involved at all.
+       *
+       * So a weak match is labelled and returned rather than dropped. That
+       * also dissolves the trade that has cost recall all evening: nothing has
+       * to be hidden to be safe, because a caveat an LLM reads in a dozen
+       * tokens is stronger protection than a threshold that is wrong in both
+       * directions.
+       */
+      for (const h of relevant) {
+        h.explained = explains(h);
+        const typed = h.matched.filter((m) => m.kind !== 'word');
+        const caveats: string[] = [];
+        // A hit resting only on ordinary English is the shape every false
+        // positive tonight has had: "most recent call last" against "the most
+        // recent record". Reported, not suppressed.
+        const distinctive = h.matched.filter(
+          (m) => m.anchorInformation >= SIGNAL_FLOOR && !m.common,
+        );
+        if (distinctive.length === 0) {
+          caveats.push('matched only on ordinary words, not on anything distinctive');
+        }
+        // "Distinctive" means informative AND not ordinary English. Using raw
+        // information here counted "file", "did" and "not" as distinctive the
+        // moment the common-word cap was removed, so a git error matching one
+        // real term plus four filler words stopped looking thin.
+        const discriminating = new Set(distinctive.map((m) => m.term));
+        // Only when there IS exactly one: zero distinctive terms is already
+        // reported above, and saying both produced "matched only on ordinary
+        // words; matched on no distinctive term", which is one fact twice.
+        if (discriminating.size === 1) {
+          caveats.push(`matched on only one distinctive term, "${[...discriminating][0]}"`);
+        }
+        if (h.explained < MIN_QUERY_EXPLAINED) {
+          caveats.push(`accounts for ${(h.explained * 100).toFixed(0)}% of your query`);
+        }
+        if (typed.length === 0) {
+          caveats.push('no error code, path or flag in common');
+        }
+        h.caveats = caveats;
+        // Two independent reservations is where a match stops standing on its
+        // own. One is normal: plenty of correct matches share no path.
+        h.strength = caveats.length >= 2 ? 'weak' : 'strong';
+      }
     }
   }
 
