@@ -41,6 +41,7 @@ import type { Finding } from './schema';
 import { surprise } from './calibration';
 import { confidence } from './decay';
 import { matchEnvironment } from './precondition';
+import { coOccurrence } from './graph';
 
 /**
  * POSIX errno symbols and their plain-English meanings.
@@ -699,4 +700,110 @@ function linkSiblings(hits: Hit[]): Hit[] {
     }
   }
   return hits;
+}
+
+
+/*
+ * Spreading activation was built here and removed. The reasoning was the best
+ * idea in this file and the measurement killed it, so the reasoning is kept.
+ *
+ * A brain does not scan; a cue activates a node and activation propagates
+ * along its edges, attenuating with distance, so findings that several strong
+ * matches all point at light up even though nothing pointed at them directly.
+ * We have edges — co-occurrence records which traps were actually hit together
+ * on one machine — and that connects findings sharing no vocabulary at all,
+ * which is exactly what ranking over a query can never do.
+ *
+ * It did not work, and the reason is worth more than the feature:
+ *
+ * CO-OCCURRENCE IS VACUOUS ON A SINGLE-CONTRIBUTOR CORPUS. One agent working
+ * one machine confirms everything in the same environment, so every finding
+ * co-occurs with every other and the graph comes out very nearly complete —
+ * 27 of 31 findings connected, 18 of 31 adjacent to a single query's seed set.
+ * A complete graph carries no information. Activation normalised across ~26
+ * edges delivers a rounding error to each, and no threshold distinguishes a
+ * real association from the fact that one agent had a long afternoon.
+ *
+ * Two attempts to fix it by tuning failed, and the second failure was the
+ * instructive one: the admission bar sat at 0.12 of the best direct match
+ * while the maximum reachable activation was ~0.05, so the feature was dead
+ * code that looked like a working feature — "returns nothing extra" and
+ * "found nothing to add" are indistinguishable from outside. Making the bar
+ * reachable then admitted nothing anyway, for the density reason above.
+ *
+ * On the eval it was a wash: P@1 identical at 0.711, MRR 0.832 -> 0.831. So it
+ * was removed rather than kept dormant against a future that might switch it
+ * on, because untested code that activates later is how a corpus of careful
+ * claims acquires a component nobody has ever seen run.
+ *
+ * What would make it worth rebuilding is not a better constant. It is a corpus
+ * where distinct attesters confirm distinct subsets from distinct environments,
+ * because that is when co-occurrence starts carrying information instead of
+ * recording that one machine had many problems. `associationStatus()` measures
+ * exactly that and says whether the corpus has got there yet.
+ */
+
+
+/**
+ * Whether the co-occurrence graph carries information yet, and if not, why not.
+ *
+ * A dormant capability that returns nothing looks exactly like a working one
+ * with nothing to add, and that ambiguity is what let spreading activation sit
+ * in this file as dead code that read like a feature. This makes the state
+ * checkable instead of inferred.
+ *
+ * Density is the test that matters and the one that currently fails. With a
+ * single contributor working a single machine, every confirmation shares an
+ * attester and an environment, so every finding co-occurs with every other and
+ * the graph comes out near-complete. A complete graph says only that one
+ * machine had many problems. It is not weak evidence of association; it is no
+ * evidence of association.
+ */
+export function associationStatus(findings: Finding[]): {
+  live: boolean;
+  edges: number;
+  maxAttesters: number;
+  density: number;
+  reason: string;
+} {
+  const g = coOccurrence(findings);
+  let edges = 0;
+  let maxAttesters = 0;
+  for (const list of g.values()) {
+    edges += list.length;
+    for (const e of list) maxAttesters = Math.max(maxAttesters, e.attesters);
+  }
+  if (edges === 0) {
+    return {
+      live: false,
+      edges,
+      maxAttesters,
+      density: 0,
+      reason: 'no co-occurrence edges: no confirmations share an attester and an environment',
+    };
+  }
+  const nodes = g.size;
+  const possible = nodes * (nodes - 1);
+  const density = possible > 0 ? edges / possible : 0;
+  if (density > 0.5) {
+    return {
+      live: false,
+      edges,
+      maxAttesters,
+      density,
+      reason:
+        `the graph is ${(density * 100).toFixed(0)}% complete — with this few contributors every ` +
+        'finding co-occurs with every other, so the edges carry no information',
+    };
+  }
+  if (maxAttesters < 2) {
+    return {
+      live: false,
+      edges,
+      maxAttesters,
+      density,
+      reason: `every edge rests on ${maxAttesters} attester, which is one agent's session rather than a pattern`,
+    };
+  }
+  return { live: true, edges, maxAttesters, density, reason: 'informative' };
 }

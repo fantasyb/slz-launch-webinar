@@ -9,7 +9,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { loadCorpus } from '../src/lib/cairn/load';
-import { retrieve, tokenize, buildIndex } from '../src/lib/cairn/retrieval';
+import { retrieve, tokenize, buildIndex, associationStatus } from '../src/lib/cairn/retrieval';
 import { assertLocalCorpus } from '../src/lib/cairn/confirm';
 import { coOccurrence, alsoSeenWith } from '../src/lib/cairn/graph';
 
@@ -173,4 +173,14 @@ test('only confirmations build edges', () => {
   for (const f of refutedOnly) {
     assert.equal(g.get(f.id), undefined, `${f.id} has edges from non-confirmations`);
   }
+});
+
+test('association status reports why the graph is not yet informative', () => {
+  const st = associationStatus(corpus);
+  assert.ok(st.edges > 0, 'expected co-occurrence edges to exist');
+  assert.ok(st.reason.length > 0, 'status must always give a reason');
+  // A dormant capability that returns nothing looks exactly like a working one
+  // with nothing to add. The status is what distinguishes them, so it must
+  // never claim to be live while the graph is near-complete.
+  if (st.density > 0.5) assert.equal(st.live, false, 'a near-complete graph claimed to be informative');
 });
