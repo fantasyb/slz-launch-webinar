@@ -548,37 +548,81 @@ const SIGNAL_FLOOR = 0.6;
 const MIN_TERM_INFORMATION = 0.5;
 
 /**
- * Common English, damped regardless of how rare it looks in this corpus.
+ * Language prior: measured where measurement works, listed where it does not.
  *
- * IDF measures rarity HERE, and at thirty-one documents that is a poor
- * estimate of rarity anywhere. "recent" appears in one finding and scores
- * 3.47 — identical to "quantifier" and "/dev/vda" — so a Python traceback
- * anchored on "most recent call last" and the corpus answered, confidently,
- * with a finding about append-only reputation logs. A git error anchored on
- * "match", "did" and "any" and got one about signing oracles.
+ * The first version was ~150 English words I chose. That is judgement in a
+ * project arguing judgement should be replaced by a number wherever one can be
+ * had, so it was replaced by a measurement: term frequencies over 421k tokens
+ * of markdown, committed to data/word-frequency.json so every machine ranks
+ * from the same table rather than from whatever is installed locally.
  *
- * This is not the stoplist rejected earlier in this file. That one would have
- * needed to know that `dig`, `rg` and `df` are not noise, which no English
- * list can. This corrects a small-sample error in the opposite direction:
- * these words are common in the language whatever a 31-document sample says,
- * so their apparent rarity is an artefact of corpus size. Technical vocabulary
- * is untouched, and as the corpus grows the IDF estimate improves and this
- * correction quietly stops mattering.
+ * The guard rejected it. Silence-on-unknown fell from 2 of 3 to 1 of 3, and
+ * the measurement predicted exactly that: `dig` and `recent` both occur at 7.1
+ * per million, so the table cannot tell a command name from an ordinary word.
+ *
+ * Two further derivations were tried and measured. Machine-versus-prose ratio
+ * within the corpus: no separation at all (`dig` 0.25 against `any` 0.25,
+ * `playwright` 0.33 against `match` 0.33). Whether a term appears in any
+ * finding's title, subject or tags: 8 of 13 good terms anchorable but 2 of 12
+ * bad ones too, and it rejects `enospc` and `vda`, which are exactly the terms
+ * that should anchor hardest.
+ *
+ * WHY NONE OF THEM WORK, WHICH IS THE USEFUL PART
+ *
+ * The failing case is a Python traceback reading "most recent call last"
+ * matching a finding titled "Reading only the most recent record lets one
+ * party erase a disagreement". That is the SAME lexical event in both texts.
+ * No statistic over characters, frequencies or field positions can separate
+ * them, because the difference is what the words mean, and the words are
+ * identical. A frequency table can only ever damp terms that are common
+ * everywhere; it cannot damp a term that is rare, English, and irrelevant.
+ *
+ * So the two are combined, and the split is stated rather than blurred: the
+ * measured table carries every term above COMMON_RATE, which is where it
+ * separates cleanly (file 1383, any 1226, error 1040, string 2181 against
+ * quantifier 0, vda 0, playwright 0, enospc 2.4). RESIDUAL_COMMON carries only
+ * what the table misses -- ordinary words rare in developer documentation --
+ * and it is the honest remainder, small enough to read and audit in full.
+ *
+ * What would actually close it is semantic similarity, which means embeddings
+ * and a model, and that is a dependency this deliberately does not take. The
+ * gap is real and named rather than papered over.
  */
-const COMMON_ENGLISH = new Set([
-  'the','be','to','of','and','in','that','have','it','for','not','on','with','as','do','at',
-  'this','but','his','by','from','they','we','say','her','she','or','an','will','my','one',
-  'all','would','there','their','what','so','up','out','if','about','who','get','which','go',
-  'me','when','make','can','like','time','no','just','him','know','take','people','into','year',
-  'your','good','some','could','them','see','other','than','then','now','look','only','come',
-  'its','over','think','also','back','after','use','two','how','our','work','first','well','way',
-  'even','new','want','because','any','these','give','day','most','us','is','are','was','were',
-  'been','has','had','did','does','more','very','such','may','should','must','through','before',
-  'while','where','why','both','each','few','many','much','own','same','too','last','next',
-  'recent','line','lines','file','files','error','errors','found','call','calls','string',
-  'name','names','value','values','set','run','running','start','end','used','using','made',
-  'match','matches','known','part','type','case','point','number','result','results','check',
+const WORD_RATES: Record<string, number> = loadWordRates();
+
+/** Occurrences per million above which the measured table damps a term. */
+const COMMON_RATE = 100;
+
+/**
+ * Ordinary English the developer-documentation sample rates as rare.
+ *
+ * Everything here is a word the measured table failed on, kept because
+ * removing it costs a measured safety property. It is a hand list and calling
+ * it anything else would be dishonest; it is 40 words rather than 150, and
+ * each is one the table places under COMMON_RATE despite being unremarkable
+ * English.
+ */
+const RESIDUAL_COMMON = new Set([
+  'recent', 'did', 'does', 'known', 'unknown', 'last', 'least', 'most', 'much',
+  'many', 'few', 'own', 'same', 'such', 'very', 'quite', 'rather', 'either',
+  'neither', 'whether', 'while', 'whom', 'whose', 'toward', 'towards', 'upon',
+  'beyond', 'within', 'without', 'across', 'along', 'among', 'behind', 'below',
+  'beside', 'besides', 'despite', 'except', 'unless', 'until',
 ]);
+
+function loadWordRates(): Record<string, number> {
+  try {
+    const file = path.join(process.cwd(), 'data', 'word-frequency.json');
+    return (JSON.parse(fs.readFileSync(file, 'utf8')) as { rates: Record<string, number> }).rates;
+  } catch {
+    // Absent table means a weaker prior, not a crash. Retrieval still works.
+    return {};
+  }
+}
+
+function isCommonWord(t: string): boolean {
+  return (WORD_RATES[t] ?? 0) >= COMMON_RATE || RESIDUAL_COMMON.has(t);
+}
 
 /**
  * Fraction of a query's information the best hit must account for, or the
@@ -688,7 +732,7 @@ export function retrieve(
      * damped `anchorInformation` used only to decide whether a hit may exist
      * at all. A common word can help rank a finding; it cannot summon one.
      */
-    const anchorInformation = COMMON_ENGLISH.has(tok.text)
+    const anchorInformation = isCommonWord(tok.text)
       ? Math.min(information, SIGNAL_FLOOR - 0.01)
       : information;
     // A term in almost every finding distinguishes nothing, and letting it
