@@ -10,7 +10,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { loadCorpus } from '../src/lib/cairn/load';
 import { retrieve, tokenize, buildIndex, associationStatus } from '../src/lib/cairn/retrieval';
-import { assertLocalCorpus } from '../src/lib/cairn/confirm';
+import { assertLocalCorpus, runCommand } from '../src/lib/cairn/confirm';
 import { coOccurrence, alsoSeenWith } from '../src/lib/cairn/graph';
 
 const corpus = loadCorpus();
@@ -183,4 +183,36 @@ test('association status reports why the graph is not yet informative', () => {
   // with nothing to add. The status is what distinguishes them, so it must
   // never claim to be live while the graph is near-complete.
   if (st.density > 0.5) assert.equal(st.live, false, 'a near-complete graph claimed to be informative');
+});
+
+/**
+ * Negative controls for the check harness.
+ *
+ * `cairn:doctor` reported 17 of 17 findings live on two consecutive runs with
+ * zero negatives. A result set with no negatives in it cannot tell a healthy
+ * corpus apart from a harness that says yes to everything — which is
+ * cairn-0028, a gate whose input selector returns nothing passing everything,
+ * reproduced in the code that runs cairn-0028's own check.
+ */
+test('a check that fails reports does-not-fire', async () => {
+  const r = await runCommand('test-negative', 'exit 1', 5000);
+  assert.equal(r.fired, 'does-not-fire');
+  assert.equal(r.exitCode, 1);
+});
+
+test('a check that succeeds reports fires', async () => {
+  const r = await runCommand('test-positive', 'echo hello; exit 0', 5000);
+  assert.equal(r.fired, 'fires');
+  assert.equal(r.exitCode, 0);
+  assert.match(r.detail, /hello/);
+});
+
+test('a check that hangs is inconclusive, not a pass', async () => {
+  const r = await runCommand('test-timeout', 'sleep 30', 700);
+  assert.equal(r.fired, 'inconclusive', 'a timeout must never read as a verdict');
+});
+
+test('stderr survives, because the decisive line is often on it', async () => {
+  const r = await runCommand('test-stderr', 'echo "on stderr" >&2; exit 0', 5000);
+  assert.match(r.detail, /on stderr/);
 });

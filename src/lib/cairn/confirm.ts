@@ -109,11 +109,37 @@ export function assertLocalCorpus(findings: Finding[]): void {
  * in the verifier: a check's decisive line is very often on stderr, and losing
  * it silently turned a real reproduction into an inconclusive one.
  */
+export async function runCommand(
+  id: string,
+  command: string,
+  timeoutMs: number,
+): Promise<Confirmation> {
+  return runCheckCommand(id, command, timeoutMs);
+}
+
 async function runCheck(f: Finding, timeoutMs: number): Promise<Confirmation> {
+  return runCheckCommand(f.id, f.check.command, timeoutMs);
+}
+
+/*
+ * Exported through `runCommand` so the exit-code-to-verdict mapping can be
+ * tested directly.
+ *
+ * `cairn:doctor` reported 17 of 17 findings live, twice, with zero negatives —
+ * and a result set containing no negatives cannot distinguish a healthy corpus
+ * from a harness that says yes to everything. That is cairn-0028 exactly: a
+ * gate whose input selector returns nothing passes everything. The negative
+ * path needs its own test rather than an argument that it must work.
+ */
+async function runCheckCommand(
+  id: string,
+  command: string,
+  timeoutMs: number,
+): Promise<Confirmation> {
   const started = Date.now();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cairn-confirm-'));
   const script = path.join(dir, `${crypto.randomBytes(6).toString('hex')}.sh`);
-  fs.writeFileSync(script, `exec 2>&1\n${f.check.command}\n`, { mode: 0o700 });
+  fs.writeFileSync(script, `exec 2>&1\n${command}\n`, { mode: 0o700 });
 
   return new Promise<Confirmation>((resolve) => {
     execFile(
@@ -149,7 +175,7 @@ async function runCheck(f: Finding, timeoutMs: number): Promise<Confirmation> {
               : 'does-not-fire';
 
         resolve({
-          id: f.id,
+          id,
           fired,
           detail: timedOut
             ? `timed out after ${timeoutMs}ms`
