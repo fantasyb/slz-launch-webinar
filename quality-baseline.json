@@ -1,0 +1,48 @@
+{
+  "_comment": [
+    "Measured quality floors. A change that drops below any of these fails the guard.",
+    "",
+    "These are FLOORS, not targets. Raise them when a change earns it, deliberately,",
+    "in the same commit that earns it. Lowering one is a decision that must be argued",
+    "in a commit message, never a convenience to make a build pass.",
+    "",
+    "Two suites are tracked because they measure different query distributions and",
+    "have disagreed. heldOut queries are author prose, plentiful and unbiased but not",
+    "what production receives. agent queries are real tool stderr, representative but",
+    "few. A change that improves one and damages the other is a trade to be made",
+    "consciously, which is why both appear here."
+  ],
+  "recordedAt": "2026-08-31",
+  "heldOut": {
+    "_source": "npm run cairn:eval — mechanism and appliesTo, never indexed",
+    "_note": [
+      "P@5 was 1.000 before a language prior stopped common English anchoring a hit.",
+      "The three cases lost are abstract prose with no technical identifier in them",
+      "at all ('Latest-wins is the natural reduction over a log'), anchored only by",
+      "ordinary words. Production queries are machine output and contain none of",
+      "this shape, so the loss is accepted; the alternative was answering a Python",
+      "traceback with a finding about reputation logs."
+    ],
+    "minP1": 0.68,
+    "minP5": 0.92,
+    "minMRR": 0.78
+  },
+  "agent": {
+    "_source": "npm run cairn:agent-eval — real commands, real stderr",
+    "_note": [
+      "coveredHits must stay perfect: these are failures the corpus documents, and",
+      "missing one is a straightforward regression.",
+      "silentOnUnknown is the safety property. One known failure remains, a git error",
+      "matching on 'git', which appears in exactly one finding. Fixing it means",
+      "tuning thresholds against eight cases, which is how a number stops meaning",
+      "anything without appearing to."
+    ],
+    "minCoveredHits": 5,
+    "minSilentOnUnknown": 2
+  },
+  "corpus": {
+    "_source": "npm run cairn:lint and npm run cairn:doctor",
+    "maxLintErrors": 0,
+    "maxCheckSeconds": 5
+  }
+}

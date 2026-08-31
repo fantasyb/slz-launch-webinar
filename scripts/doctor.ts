@@ -99,6 +99,24 @@ async function main() {
     .filter((f) => standing(f) === 'fresh')
     .filter((f) => !f.precondition?.length || matchEnvironment(f.precondition).matches);
 
+  /*
+   * A machine-readable line, emitted unconditionally.
+   *
+   * The quality guard parsed the human-readable slow-check section, which
+   * doctor prints only when a check IS slow. With nothing slow there was no
+   * line, the guard read zero, and a threshold of one millisecond passed --
+   * a gate whose input selector returns nothing passing everything, which is
+   * cairn-0028, occurring in the guard built to prevent regressions.
+   *
+   * Always emitted, whatever the result, so absence of a problem and absence
+   * of a measurement can never look the same.
+   */
+  const slowestMs = results.reduce((m, r) => Math.max(m, r.ms), 0);
+  console.log(
+    `\nSUMMARY checks=${results.length} live=${fires.length} quiet=${quiet.length} ` +
+      `inconclusive=${unclear.length} slowest_ms=${slowestMs} total_ms=${elapsed}`,
+  );
+
   console.log('\n' + '-'.repeat(64));
   console.log(
     `${results.length} checks in ${(elapsed / 1000).toFixed(1)}s · ` +

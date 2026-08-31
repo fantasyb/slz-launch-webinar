@@ -1,0 +1,123 @@
+/**
+ * cairn:guard — quality must not regress, and nobody will notice if it does.
+ *
+ *   npm run cairn:guard
+ *
+ * Retrieval quality is invisible when it degrades. Nothing throws, no test goes
+ * red, the answers just get slightly worse and stay that way. Three separate
+ * regressions in this project were found only because somebody happened to
+ * measure: a bigram change that cost 0.05 P@1, a language prior that cost 0.08
+ * P@5, and a relevance gate that could not fire at all. Every one of them
+ * looked fine.
+ *
+ * So the measured numbers are committed to quality-baseline.json and this
+ * enforces them. It is the same discipline the corpus applies to its own
+ * claims: a number nobody re-runs is an assumption.
+ *
+ * The three suites run CONCURRENTLY and against the same working tree, so they
+ * cannot disagree about which code they measured. Run one after another, a
+ * slow suite gives an edit time to land between them, and the report becomes a
+ * blend of two versions that never existed together.
+ */
+import { execFile } from 'child_process';
+import { promisify } from 'util';
+import fs from 'fs';
+
+const exec = promisify(execFile);
+
+interface Baseline {
+  heldOut: { minP1: number; minP5: number; minMRR: number };
+  agent: { minCoveredHits: number; minSilentOnUnknown: number };
+  corpus: { maxLintErrors: number; maxCheckSeconds: number };
+}
+
+const baseline: Baseline = JSON.parse(fs.readFileSync('quality-baseline.json', 'utf8'));
+
+const failures: string[] = [];
+const notes: string[] = [];
+
+function check(name: string, actual: number, floor: number, higherIsBetter = true) {
+  const ok = higherIsBetter ? actual >= floor : actual <= floor;
+  const cmp = higherIsBetter ? '>=' : '<=';
+  const line = `  ${ok ? 'ok  ' : 'FAIL'}  ${name.padEnd(28)} ${actual
+    .toFixed(3)
+    .padStart(7)}  ${cmp} ${floor}`;
+  notes.push(line);
+  if (!ok) failures.push(`${name}: ${actual.toFixed(3)} ${higherIsBetter ? '<' : '>'} ${floor}`);
+}
+
+async function run(cmd: string, args: string[]) {
+  try {
+    const r = await exec(cmd, args, { maxBuffer: 1 << 24 });
+    return r.stdout + r.stderr;
+  } catch (e) {
+    const err = e as { stdout?: string; stderr?: string };
+    return (err.stdout ?? '') + (err.stderr ?? '');
+  }
+}
+
+async function main() {
+  console.log('\nCAIRN QUALITY GUARD — three suites, concurrently, one working tree');
+  console.log('='.repeat(66));
+
+  const [evalOut, agentOut, lintOut, doctorOut] = await Promise.all([
+    run('npx', ['tsx', 'scripts/eval.ts']),
+    run('npx', ['tsx', 'scripts/agent-eval.ts']),
+    run('npx', ['tsx', 'scripts/lint-corpus.ts']),
+    run('npx', ['tsx', 'scripts/doctor.ts']),
+  ]);
+
+  // --- held-out retrieval accuracy ---
+  const heldOut = evalOut.match(/TOTAL\s+\d+\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)/);
+  if (!heldOut) {
+    failures.push('could not parse cairn:eval output — the guard is blind, which is a failure');
+  } else {
+    check('heldOut P@1', Number(heldOut[1]), baseline.heldOut.minP1);
+    check('heldOut P@5', Number(heldOut[2]), baseline.heldOut.minP5);
+    check('heldOut MRR', Number(heldOut[3]), baseline.heldOut.minMRR);
+  }
+
+  // --- agent simulation: covered ground, and silence on unknown ground ---
+  const covered = (agentOut.match(/^HIT/gm) ?? []).length;
+  const silent = (agentOut.match(/^QUIET/gm) ?? []).length;
+  const noisy = (agentOut.match(/^NOISE/gm) ?? []).length;
+  check('agent covered hits', covered, baseline.agent.minCoveredHits);
+  check('agent silent on unknown', silent, baseline.agent.minSilentOnUnknown);
+  notes.push(
+    `  note  ${'agent false positives'.padEnd(28)} ${String(noisy).padStart(7)}  (documented, not gated)`,
+  );
+
+  // --- corpus integrity ---
+  const lintErrors = Number(lintOut.match(/(\d+)\s+errors?/)?.[1] ?? '99');
+  check('corpus lint errors', lintErrors, baseline.corpus.maxLintErrors, false);
+
+  // --- no check may become too expensive to run unattended ---
+  // Parsed from doctor's unconditional SUMMARY line. The previous version read
+  // the human-readable slow-check section, which is printed only when a check
+  // is slow -- so with nothing slow it found no line, reported 0, and passed a
+  // threshold of one millisecond. A guard that cannot fail is not a guard.
+  const summary = doctorOut.match(/SUMMARY .*slowest_ms=(\d+)/);
+  if (!summary) {
+    failures.push('could not parse doctor SUMMARY — the guard is blind to check cost');
+  } else {
+    check('slowest check (seconds)', Number(summary[1]) / 1000, baseline.corpus.maxCheckSeconds, false);
+  }
+
+  console.log(notes.join('\n'));
+  console.log('='.repeat(66));
+
+  if (failures.length === 0) {
+    console.log('PASS — nothing regressed below its recorded floor.\n');
+    return;
+  }
+  console.log(`FAIL — ${failures.length} regression(s):\n`);
+  for (const f of failures) console.log('  ' + f);
+  console.log(
+    '\nIf this change is a deliberate trade, say so in the commit message and move\n' +
+      'the floor in quality-baseline.json in the SAME commit. Lowering a floor to\n' +
+      'make a build pass is how a measurement stops measuring anything.\n',
+  );
+  process.exitCode = 1;
+}
+
+void main();

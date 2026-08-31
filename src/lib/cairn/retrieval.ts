@@ -607,6 +607,12 @@ export interface Hit {
     contribution: number;
     /** IDF of the term in this corpus — how much matching it narrowed things. */
     information: number;
+    /**
+     * Information for the purpose of deciding whether a hit exists at all.
+     * Equal to `information` except for common English, which is damped so it
+     * cannot anchor a hit on the strength of being rare in a small corpus.
+     */
+    anchorInformation: number;
   }>;
   applicability: Applicability;
   confidence: number;
@@ -662,18 +668,29 @@ export function retrieve(
   const acc = new Map<number, { score: number; matched: Hit['matched'] }>();
 
   for (const tok of tokens) {
-    let information = idf(index.df.get(tok.text) ?? 0, index.n);
+    const information = idf(index.df.get(tok.text) ?? 0, index.n);
     // A word common in English cannot anchor a hit on the strength of being
     // rare in thirty-one documents. Capped rather than dropped: it still
     // contributes to a finding already anchored by something discriminating.
-    // Capped just BELOW the anchoring threshold, which is the stated intent
-    // stated exactly: a common word may contribute to a finding something
-    // discriminating already anchored, and may never anchor one alone. The
-    // first attempt capped at 0.25, an arbitrary number, and cost held-out
-    // P@5 1.000 -> 0.921 by gutting the contribution as well as the anchoring.
-    if (COMMON_ENGLISH.has(tok.text)) {
-      information = Math.min(information, SIGNAL_FLOOR - 0.01);
-    }
+    /*
+     * The damping applies to ANCHORING, not to scoring, and separating the two
+     * is what makes it free.
+     *
+     * One value was doing both jobs. Capping it stopped "recent" from
+     * anchoring a Python traceback onto a finding about reputation logs --
+     * correct -- but it also stripped the weight common words legitimately
+     * contribute to a finding already anchored by something discriminating,
+     * and that cost held-out P@5 1.000 -> 0.921. Prose queries lean on
+     * ordinary English; machine output does not. Both are real, and they
+     * wanted different things from the same number.
+     *
+     * So the term keeps its full weight in the score, and carries a separate,
+     * damped `anchorInformation` used only to decide whether a hit may exist
+     * at all. A common word can help rank a finding; it cannot summon one.
+     */
+    const anchorInformation = COMMON_ENGLISH.has(tok.text)
+      ? Math.min(information, SIGNAL_FLOOR - 0.01)
+      : information;
     // A term in almost every finding distinguishes nothing, and letting it
     // contribute a sliver still puts the finding in the RESULT SET even when
     // it cannot affect the order. Ranking correctly is not enough: an agent
@@ -688,7 +705,13 @@ export function retrieve(
       const contribution = information * tok.weight * saturation * boost;
       const slot = acc.get(doc) ?? { score: 0, matched: [] };
       slot.score += contribution;
-      slot.matched.push({ term: tok.text, kind: tok.kind, contribution, information });
+      slot.matched.push({
+        term: tok.text,
+        kind: tok.kind,
+        contribution,
+        information,
+        anchorInformation,
+      });
       acc.set(doc, slot);
     }
   }
@@ -749,7 +772,7 @@ export function retrieve(
     .filter(
       (h) =>
         opts.includeUnmatched ||
-        (h.score > 0 && h.matched.some((m) => m.information >= SIGNAL_FLOOR)),
+        (h.score > 0 && h.matched.some((m) => m.anchorInformation >= SIGNAL_FLOOR)),
     )
     .map((h) => ({ ...h, confidence: h.confidence, surprise: h.surprise }));
 
