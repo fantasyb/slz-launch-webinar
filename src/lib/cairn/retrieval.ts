@@ -634,6 +634,15 @@ function isCommonWord(t: string): boolean {
  */
 const MIN_QUERY_EXPLAINED = 0.28;
 
+/**
+ * Explained fraction at which a single signal is allowed to stand alone.
+ *
+ * Above this the query is so nearly accounted for that demanding a second
+ * independent detector would only reject short, precise questions — "proxies"
+ * explains ~1.0 of itself and can never carry more than one signal.
+ */
+const MIN_EXPLAINED_ALONE = 0.6;
+
 function idf(df: number, n: number): number {
   if (df <= 0) return 0;
   return Math.max(0, Math.log((n + 1) / df));
@@ -883,6 +892,32 @@ export function retrieve(
           (a, t) => a + (queryInformation.get(t) ?? 0),
           0,
         ) / total;
+      /*
+       * Signal fusion was built here and removed, and the measurement is why.
+       *
+       * The idea was sound and it separated cleanly on the cases it was built
+       * for: three detectors that fail independently -- a discriminating
+       * ordinary word, a machine identifier (errno, path, status, flag), and
+       * the query naming an executable the finding's check actually runs.
+       * Every genuine hit in the agent simulation carried two or three of
+       * them; the one surviving false positive carried exactly one.
+       *
+       * Requiring two agreeing signals took held-out P@1 from 0.684 to 0.237.
+       * Long prose queries carry lexical signal and nothing else -- no error
+       * codes, no paths, no tool names -- so three quarters of them were
+       * rejected outright. The gate was calibrated on machine output and prose
+       * cannot satisfy it, which is the same distribution split that made the
+       * language prior a trade rather than a win, arriving here as a cliff.
+       *
+       * Five approaches have now been measured against the one remaining false
+       * positive: bigrams, machine-versus-prose ratio, strong-field
+       * membership, external word frequency, and this. Each either failed to
+       * separate the cases or cost more than it bought. The honest reading is
+       * that a git error matching a finding on the word "git" is not a
+       * lexical-methods problem, and the next thing to try should be a
+       * different kind of signal entirely rather than a sixth weighting of
+       * this one.
+       */
       if (explains(relevant[0]) < MIN_QUERY_EXPLAINED) relevant = [];
     }
   }
@@ -1125,3 +1160,23 @@ export function associationStatus(findings: Finding[]): {
   }
   return { live: true, edges, maxAttesters, density, reason: 'informative' };
 }
+
+
+/*
+ * `toolsOf` -- extracting the executables a check invokes -- was written here
+ * and removed with the fusion gate that was its only consumer.
+ *
+ * It is worth recording because it is the one genuinely semantic signal this
+ * corpus can compute without a model: a finding whose check runs `curl` is
+ * about curl, whatever words its prose happens to use, and no corpus of prose
+ * could derive that. It failed only because its consumer failed. If a
+ * different consumer appears -- something that uses it to rank rather than to
+ * gate, or applies it only to queries that are demonstrably machine output --
+ * it is a dozen lines of shell-position matching plus a `command -v` case, and
+ * the measurement that motivated it is in the comment above.
+ *
+ * It is not left in place unused. Code that runs but is read by nothing is
+ * indistinguishable from code that is wrong.
+ */
+
+
