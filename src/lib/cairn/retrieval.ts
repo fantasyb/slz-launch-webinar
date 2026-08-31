@@ -325,6 +325,21 @@ export interface CorpusIndex {
   avgdl: number;
   /** Mean typed-token document length, for the typed ranker's normalisation. */
   avgTypedLen: number;
+  /**
+   * Plain token -> the documents containing it, with frequency. The BM25 arm's
+   * postings, for the same reason the typed arm has them: scoring every
+   * document per query is linear in the corpus however fast the inner loop.
+   */
+  bm25Postings: Map<string, Array<{ doc: number; tf: number }>>;
+  /**
+   * Program name -> findings that concern it, precomputed.
+   *
+   * This was a regex built and run against every document on every query --
+   * the exact cost this file criticised in the BM25 baseline, present in its
+   * own hot path. A program name is a fixed string, so the mapping is known at
+   * index time and is a lookup at query time.
+   */
+  byCommand: Map<string, Set<string>>;
 }
 
 /**
@@ -533,8 +548,30 @@ export function buildIndex(findings: Finding[]): CorpusIndex {
   const avgdl = docs.reduce((a, d) => a + d.bm25.length, 0) / Math.max(1, docs.length);
   const avgTypedLen = docs.reduce((a, d) => a + d.length, 0) / Math.max(1, docs.length);
 
+  const bm25Postings = new Map<string, Array<{ doc: number; tf: number }>>();
+  docs.forEach((d, i) => {
+    for (const [t, tf] of d.bm25.tf) {
+      const list = bm25Postings.get(t);
+      if (list) list.push({ doc: i, tf });
+      else bm25Postings.set(t, [{ doc: i, tf }]);
+    }
+  });
+
+  // Every program name a finding concerns, from the text a finding uses to say
+  // what it is about. Built once; queried by exact lookup.
+  const byCommand = new Map<string, Set<string>>();
+  for (const d of docs) {
+    const surface = `${d.finding.check.command} ${d.finding.title} ${d.finding.subject.name}`;
+    for (const t of plainTokens(surface)) {
+      const set = byCommand.get(t);
+      if (set) set.add(d.finding.id);
+      else byCommand.set(t, new Set([d.finding.id]));
+    }
+  }
+
   const index: CorpusIndex = {
     docs, df, postings, n: docs.length, builtAt: Date.now(), bm25Df, avgdl, avgTypedLen,
+    bm25Postings, byCommand,
   };
   indexCache.set(findings, index);
   return index;
@@ -1014,11 +1051,13 @@ export function retrieve(
     }
     const total = [...queryInformation.values()].reduce((a, b) => a + b, 0);
     if (total > 0) {
-      const explains = (h: Hit) =>
-        [...new Set(h.matched.map((m) => m.term))].reduce(
-          (a, t) => a + (queryInformation.get(t) ?? 0),
-          0,
-        ) / total;
+      // Sums distinct matched terms without materialising an array and a Set
+      // per hit; `matched` is already deduplicated per term by the accumulator.
+      const explains = (h: Hit) => {
+        let sum = 0;
+        for (const m of h.matched) sum += queryInformation.get(m.term) ?? 0;
+        return sum / total;
+      };
       /*
        * Signal fusion was built here and removed, and the measurement is why.
        *
@@ -1083,7 +1122,7 @@ export function retrieve(
        *   cost those queries nothing.
        */
       const cmd = failingCommand(query);
-      const concerned = cmd ? findingsNaming(cmd, index.docs) : null;
+      const concerned = cmd ? (index.byCommand.get(cmd) ?? new Set<string>()) : null;
 
       /*
        * Annotate the head, not the tail.
@@ -1293,7 +1332,15 @@ function linkSiblings(hits: Hit[]): Hit[] {
   const LINK_WINDOW = 20;
   const window = hits.slice(0, LINK_WINDOW);
 
-  const tagsOf = (h: Hit) => new Set(h.finding.tags.map((t) => t.toLowerCase()));
+  /*
+   * Tag sets built once per hit, not once per comparison.
+   *
+   * They were constructed inside the pairwise loop, so an eight-hit result
+   * allocated over a hundred Sets per query to compare fifty-six pairs. The
+   * loop is bounded now, so this is not a scaling bug -- it is simply the
+   * largest remaining allocation in the hot path, and hoisting it is free.
+   */
+  const tags = window.map((h) => new Set(h.finding.tags.map((t) => t.toLowerCase())));
   const jaccard = (a: Set<string>, b: Set<string>) => {
     if (a.size === 0 || b.size === 0) return 0;
     let shared = 0;
@@ -1311,7 +1358,7 @@ function linkSiblings(hits: Hit[]): Hit[] {
       if (a.score <= 0 || b.score / a.score < 0.6) continue;
       const sameSubject =
         a.finding.subject.name.toLowerCase() === b.finding.subject.name.toLowerCase();
-      const sameTags = jaccard(tagsOf(a), tagsOf(b)) >= 0.5;
+      const sameTags = jaccard(tags[i], tags[j]) >= 0.5;
       if (!sameSubject && !sameTags) continue;
       a.siblings.push(b.finding.id);
       b.siblings.push(a.finding.id);
@@ -1465,21 +1512,22 @@ function bm25Doc(f: Finding): { tf: Map<string, number>; length: number } {
 function bm25Rank(query: string, index: CorpusIndex): string[] {
   const K1 = 1.2;
   const B = 0.75;
-  const q = new Set(plainTokens(query));
-  const scored: Array<{ id: string; s: number }> = [];
-  for (const d of index.docs) {
-    let s = 0;
-    for (const t of q) {
-      const n = index.bm25Df.get(t) ?? 0;
-      if (n === 0) continue;
-      const f = d.bm25.tf.get(t) ?? 0;
-      if (f === 0) continue;
-      const idfw = Math.log(1 + (index.n - n + 0.5) / (n + 0.5));
-      s += idfw * ((f * (K1 + 1)) / (f + K1 * (1 - B + (B * d.bm25.length) / index.avgdl)));
+  // Accumulate over postings, not over documents: only documents containing a
+  // query term are touched, so cost tracks the answer rather than the corpus.
+  const acc = new Map<number, number>();
+  for (const t of new Set(plainTokens(query))) {
+    const n = index.bm25Df.get(t) ?? 0;
+    if (n === 0) continue;
+    const idfw = Math.log(1 + (index.n - n + 0.5) / (n + 0.5));
+    for (const { doc, tf } of index.bm25Postings.get(t) ?? []) {
+      const dl = index.docs[doc].bm25.length;
+      const add = idfw * ((tf * (K1 + 1)) / (tf + K1 * (1 - B + (B * dl) / index.avgdl)));
+      acc.set(doc, (acc.get(doc) ?? 0) + add);
     }
-    if (s > 0) scored.push({ id: d.finding.id, s });
   }
-  return scored.sort((a, b) => b.s - a.s).map((x) => x.id);
+  return [...acc]
+    .sort((a, b) => b[1] - a[1])
+    .map(([doc]) => index.docs[doc].finding.id);
 }
 
 /**
@@ -1564,21 +1612,14 @@ export function failingCommand(text: string): string | undefined {
     : c;
 }
 
-/**
- * Findings that concern a given program.
- *
- * Drawn from the check command, the declared subject and the title, because a
- * finding ABOUT a tool nearly always runs it, names it, or both.
+/*
+ * `findingsNaming` was here. It built a regex and tested it against every
+ * document, on every query -- linear in the corpus, in the hot path, and the
+ * precise cost this file had just criticised in the BM25 baseline. A program
+ * name is a fixed string, so the mapping belongs in the index. See
+ * `byCommand`.
  */
-function findingsNaming(cmd: string, docs: Indexed[]): Set<string> {
-  const re = new RegExp(`\\b${cmd.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`);
-  const out = new Set<string>();
-  for (const d of docs) {
-    const hay = `${d.finding.check.command} ${d.finding.title} ${d.finding.subject.name}`.toLowerCase();
-    if (re.test(hay)) out.add(d.finding.id);
-  }
-  return out;
-}
+
 
 /**
  * Which findings this retriever actually confuses, measured on itself.
