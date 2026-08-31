@@ -14,6 +14,7 @@
  * Everything here is measured on the real corpus. Nothing is extrapolated.
  */
 import { execFile } from 'child_process';
+import { existsSync } from 'fs';
 import { promisify } from 'util';
 import { loadCorpus } from '../src/lib/cairn/load';
 import { retrieve, buildIndex, associationStatus } from '../src/lib/cairn/retrieval';
@@ -50,17 +51,26 @@ async function main() {
   // Spawned as a real process, because the cost being measured is node boot,
   // module load, corpus parse and signature verification -- none of which an
   // in-process timer can see, and all of which the agent waits for.
+  // Measures what actually ships. Pointing this at `tsx` measured the
+  // transpiler, which is how 614ms of TypeScript compilation hid inside a
+  // number reported as retrieval latency for two rounds.
+  const bundled = existsSync('dist/cli/find.js');
   const cold: number[] = [];
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; i < 5; i++) {
     const t = process.hrtime.bigint();
-    await exec('npx', ['tsx', 'scripts/find.ts', QUERIES[i % QUERIES.length]], {
-      cwd: process.cwd(),
-      maxBuffer: 1 << 22,
-    });
+    if (bundled) {
+      await exec(process.execPath, ['dist/cli/find.js', QUERIES[i % QUERIES.length]], {
+        cwd: process.cwd(), maxBuffer: 1 << 22,
+      });
+    } else {
+      await exec('npx', ['tsx', 'scripts/find.ts', QUERIES[i % QUERIES.length]], {
+        cwd: process.cwd(), maxBuffer: 1 << 22,
+      });
+    }
     cold.push(Number(process.hrtime.bigint() - t) / 1e6);
   }
   const c = stats(cold);
-  console.log('\nCOLD START (spawn -> ranked answer on stdout)');
+  console.log(`\nCOLD START — spawn to ranked answer${bundled ? '' : '  (tsx fallback: run cairn:build-cli)'}`);
   console.log(`  mean ${ms(c.mean)}   p50 ${ms(c.p50)}   max ${ms(c.max)}`);
   console.log('  This is the number an agent feels. Everything below is inside it.');
 

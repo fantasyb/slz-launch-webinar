@@ -29,10 +29,11 @@
     "test": "tsx --test test/*.test.ts",
     "cairn:promote": "tsx scripts/promote.ts",
     "cairn:match": "tsx scripts/match.ts",
-    "cairn:find": "tsx scripts/find.ts",
+    "cairn:find": "node -e \"const f=require('fs');const p='dist/cli/find.js';if(f.existsSync(p)){require('child_process').spawn(process.execPath,[p,...process.argv.slice(1)],{stdio:'inherit'}).on('exit',c=>process.exit(c))}else{require('child_process').spawn('npx',['tsx','scripts/find.ts',...process.argv.slice(1)],{stdio:'inherit'}).on('exit',c=>process.exit(c))}\"",
     "cairn:eval": "tsx scripts/eval.ts",
     "cairn:doctor": "tsx scripts/doctor.ts",
-    "cairn:bench": "tsx scripts/bench.ts"
+    "cairn:bench": "tsx scripts/bench.ts",
+    "cairn:build-cli": "node scripts/build-cli.mjs"
   },
   "dependencies": {
     "clsx": "^2.1.1",

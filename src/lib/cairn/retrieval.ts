@@ -37,6 +37,9 @@
  * Stages 0-2 are pure, offline, and complete in well under a millisecond over
  * a corpus this size. Stage 3 costs seconds and is never automatic.
  */
+import fs from 'fs';
+import path from 'path';
+import crypto from 'crypto';
 import type { Finding } from './schema';
 import { surprise } from './calibration';
 import { confidence } from './decay';
@@ -319,6 +322,115 @@ const INDEX_TTL_MS = 60 * 60 * 1000;
 
 const indexCache = new WeakMap<object, CorpusIndex>();
 
+/*
+ * On-disk index cache.
+ *
+ * Cold start is what an agent actually pays, and it was 681ms. Precompiling
+ * the CLI removed 614ms of TypeScript transpilation; of the 79ms that remained,
+ * building the index was 49 -- 22ms of ed25519 verification to cache
+ * confidence, and 18ms of tokenising every field of every finding. Both produce
+ * exactly the same answer every run until the corpus changes, which makes them
+ * the definition of work worth doing once.
+ *
+ * The cache key is a hash of the corpus content, not a timestamp or a file
+ * count. A retrieval tool that answers from a stale index is worse than a slow
+ * one: it would return findings that no longer say what it thinks they say,
+ * silently, which is the exact failure this corpus exists to record about
+ * other systems.
+ *
+ * Every filesystem operation here is best-effort. A read-only deployment, a
+ * missing directory or a corrupted file must all degrade to "compute it
+ * again", never to an error -- retrieval works without this and is only
+ * slower.
+ */
+const CACHE_DIR = path.join(process.cwd(), '.cairn-cache');
+
+/*
+ * One file per corpus, named by fingerprint.
+ *
+ * A single shared filename was safe -- a mismatched fingerprint is never
+ * served -- but it thrashed: benchmarking builds indexes over synthetic
+ * corpora, and each one evicted the real corpus's cache, so the next real
+ * lookup paid full price again. Any process that indexes more than one corpus
+ * hits this, and a cache that is correct but never warm is just slower code.
+ */
+function cacheFileFor(fingerprint: string): string {
+  return path.join(CACHE_DIR, `index-v${CACHE_SCHEMA}-${fingerprint.slice(0, 16)}.json`);
+}
+
+/** Keep the directory from growing without bound as the corpus changes. */
+const MAX_CACHE_FILES = 4;
+
+/** Cache shape version. Bump when the cached fields change meaning. */
+const CACHE_SCHEMA = 2;
+
+function corpusFingerprint(findings: Finding[]): string {
+  const h = crypto.createHash('sha256');
+  h.update(String(CACHE_SCHEMA));
+  // Full content, not ids or mtimes: an edit that leaves the id alone is
+  // exactly the change a weaker key would miss.
+  for (const f of findings) h.update(JSON.stringify(f));
+  return h.digest('hex');
+}
+
+interface CachedDoc {
+  id: string;
+  confidence: number;
+  surprise: number | null;
+  terms: Array<[string, number]>;
+  strong: string[];
+}
+
+function readDiskCache(fingerprint: string): CachedDoc[] | null {
+  try {
+    const raw = JSON.parse(fs.readFileSync(cacheFileFor(fingerprint), 'utf8')) as {
+      fingerprint: string;
+      builtAt: number;
+      docs: CachedDoc[];
+    };
+    if (raw.fingerprint !== fingerprint) return null;
+    // Confidence decays with wall-clock time, so the cache expires on the same
+    // TTL the in-memory index uses. Everything else in here is time-invariant.
+    if (Date.now() - raw.builtAt >= INDEX_TTL_MS) return null;
+    return raw.docs;
+  } catch {
+    return null;
+  }
+}
+
+function writeDiskCache(fingerprint: string, docs: CachedDoc[]): void {
+  try {
+    fs.mkdirSync(CACHE_DIR, { recursive: true });
+    // Written via a temp file and renamed, so a reader never sees a half-written
+    // index and a crash mid-write leaves the previous one intact.
+    const file = cacheFileFor(fingerprint);
+    const tmp = `${file}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify({ fingerprint, builtAt: Date.now(), docs }));
+    fs.renameSync(tmp, file);
+    pruneCache();
+  } catch {
+    /* read-only filesystem, or no space. The index is simply rebuilt next time. */
+  }
+}
+
+/** Drop all but the newest MAX_CACHE_FILES indexes. Best-effort, like the rest. */
+function pruneCache(): void {
+  try {
+    const files = fs
+      .readdirSync(CACHE_DIR)
+      .filter((f) => f.startsWith(`index-v${CACHE_SCHEMA}-`) && f.endsWith('.json'))
+      .map((f) => {
+        const full = path.join(CACHE_DIR, f);
+        return { full, mtime: fs.statSync(full).mtimeMs };
+      })
+      .sort((a, b) => b.mtime - a.mtime);
+    for (const stale of files.slice(MAX_CACHE_FILES)) fs.unlinkSync(stale.full);
+  } catch {
+    /* nothing here is load-bearing */
+  }
+}
+
+
 /**
  * Build (and memoize) an inverted index.
  *
@@ -332,7 +444,22 @@ export function buildIndex(findings: Finding[]): CorpusIndex {
   if (hit && Date.now() - hit.builtAt < INDEX_TTL_MS) return hit;
   const at = new Date();
 
+  const fingerprint = corpusFingerprint(findings);
+  const cached = readDiskCache(fingerprint);
+  const byId = cached ? new Map(cached.map((d) => [d.id, d])) : null;
+
   const docs: Indexed[] = findings.map((f) => {
+    const hit = byId?.get(f.id);
+    if (hit) {
+      return {
+        id: f.id,
+        finding: f,
+        confidence: hit.confidence,
+        surprise: hit.surprise,
+        terms: new Map(hit.terms),
+        strong: new Set(hit.strong),
+      };
+    }
     const terms = new Map<string, number>();
     for (const t of tokenize(findingText(f))) {
       terms.set(t.text, (terms.get(t.text) ?? 0) + 1);
@@ -346,6 +473,19 @@ export function buildIndex(findings: Finding[]): CorpusIndex {
       strong: new Set(tokenize(strongText(f)).map((t) => t.text)),
     };
   });
+
+  if (!cached) {
+    writeDiskCache(
+      fingerprint,
+      docs.map((d) => ({
+        id: d.id,
+        confidence: d.confidence,
+        surprise: d.surprise,
+        terms: [...d.terms],
+        strong: [...d.strong],
+      })),
+    );
+  }
 
   const df = new Map<string, number>();
   const postings = new Map<string, Array<{ doc: number; tf: number }>>();
