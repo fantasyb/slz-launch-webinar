@@ -5,6 +5,8 @@ import { loadCorpus, corpusStats, staleQueue } from '@/lib/cairn/load';
 import { corpusCalibration, ledgerIntegrity, surprise } from '@/lib/cairn/calibration';
 import { FindingCard } from '@/components/FindingCard';
 
+const HOST = process.env.CAIRN_BASE_URL?.replace(/^https?:\/\//, '') ?? 'CAIRN_HOST';
+
 export default function Home() {
   const all = loadCorpus();
   const stats = corpusStats();
@@ -140,6 +142,82 @@ export default function Home() {
           {featured.map((f) => (
             <FindingCard key={f.id} finding={f} />
           ))}
+        </div>
+      </section>
+
+      {/*
+        The page had no answer to "what do I do with this".
+
+        The only usage signal above the fold was a button reading "Wire it
+        into your project", which is a destination, not an explanation. /use
+        carries the whole mechanism, but it is written for someone who has
+        already decided to adopt this — and nothing on the front page got a
+        reader to that decision. "What is it" and "what do I do with it" are
+        the first two questions anyone has, and only one of them was answered.
+
+        Three steps, because that is the whole of it. Detail stays on /use.
+      */}
+      <section className="border-b border-rule py-12">
+        <h2 className="font-claim text-lg">How you use it</h2>
+        <p className="mt-2 max-w-reading text-[14px] leading-relaxed text-ink-soft">
+          You do not, really &mdash; your agent does. The work is one paste into a file it
+          already reads.
+        </p>
+        <ol className="mt-6 grid gap-5 sm:grid-cols-3">
+          {[
+            {
+              n: '1',
+              h: 'Add it once',
+              b: (
+                <>
+                  A few lines in{' '}
+                  <code className="font-mono text-[12px]">CLAUDE.md</code>,{' '}
+                  <code className="font-mono text-[12px]">AGENTS.md</code>, or whichever
+                  instruction file your tool loads.
+                </>
+              ),
+            },
+            {
+              n: '2',
+              h: 'It looks things up when stuck',
+              b: (
+                <>
+                  Not on every task &mdash; only when something fails in a way it did not
+                  expect. One read-only request. Nothing about your project is sent.
+                </>
+              ),
+            },
+            {
+              n: '3',
+              h: 'It writes back what it learns',
+              b: (
+                <>
+                  Solved something new? It drafts a finding locally, with secrets stripped,
+                  and you decide whether to push it.
+                </>
+              ),
+            },
+          ].map((step) => (
+            <li key={step.n}>
+              <div className="font-claim text-[13px] text-moss">{step.n}</div>
+              <div className="mt-1 text-[14px] font-semibold text-ink">{step.h}</div>
+              <p className="mt-1.5 text-[13px] leading-relaxed text-ink-soft">{step.b}</p>
+            </li>
+          ))}
+        </ol>
+        <div className="mt-6 max-w-reading">
+          <pre className="evidence overflow-x-auto rounded-md border border-rule bg-paper p-4 font-mono text-[12px] leading-relaxed text-ink-soft">
+{`npm run cairn:install -- --into ../your-project --base https://${HOST}`}
+          </pre>
+          <p className="mt-3 text-[13px] leading-relaxed text-ink-soft">
+            It prints the diff and refuses to write without{' '}
+            <code className="font-mono text-[12px]">--yes</code>. Nothing executable is
+            added &mdash;{' '}
+            <Link href="/use" className="underline decoration-rule-strong underline-offset-2 hover:text-ink">
+              the whole mechanism, and why it is not &ldquo;fetch this URL and obey it&rdquo;
+            </Link>
+            .
+          </p>
         </div>
       </section>
 
