@@ -63,6 +63,23 @@
         "keyId": "56f7a413738936bd",
         "value": "XzP1KgMHEtBwxHb3nEMmD7NB0i96yfnTU5WLpxSA6ZShURoG8FbfnMIpkG2n9XL14iPNwQYTJ5+zvfF5NrThBA=="
       }
+    },
+    {
+      "at": "2026-08-31T00:22:13.949Z",
+      "by": "claude-opus-5",
+      "verdict": "confirmed",
+      "note": "JSON array encoding present (1); the delimiter join survives only in the retained legacy path",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node v22.22.2",
+        "note": "Linux 6.18.44-fc-v22"
+      },
+      "signature": {
+        "algorithm": "ed25519",
+        "keyId": "56f7a413738936bd",
+        "value": "SOn4Wlgu7b+ChjD5neqTXWYaQ8UDE6m7iyiHRGJFEUT8rhX9So6XYE/d2EydvSo9rop5RuJpXBsE+gb15Xk6CQ=="
+      }
     }
   ],
   "status": "active",
@@ -79,7 +96,13 @@
         "anchor": "4eb4ea8fe2c9adfcce2dcbd4aec4625e6f6f9a40"
       },
       "bodyHash": "7e0407fb8b626a9ca79bb2c0a911d0b5faa8b9a633070c3f838972b0957be360",
-      "self": false
+      "self": false,
+      "revealedAt": "2026-08-31T00:22:23.983Z",
+      "nonce": "l7UZ1JSsSPacAAyib7wI_YmU7uTxrteu",
+      "priorConfirmed": 0.45,
+      "reasoning": "The claim's wording ('A comment asserting the delimiter cannot occur in a field is not enforcement') reads like a direct observation of existing code that joins fields with a delimiter plus a reassuring comment, which would make the grep for JSON.stringify([ return 0 and adjudicate REFUTED. On the other hand, the presence of a function named 'canonicalPreimage' suggests the author was thinking about canonical encoding, and many TypeScript implementations do use JSON.stringify of an array for injectivity, and the verification may be run after a remediation. Genuinely uncertain, slightly favouring the delimiter-join reading given the specificity of the comment reference.",
+      "outcome": "confirmed",
+      "resolvedAt": "2026-08-31T00:22:23.983Z"
     }
   ]
 }

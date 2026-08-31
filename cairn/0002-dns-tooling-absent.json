@@ -75,6 +75,23 @@
         "keyId": "56f7a413738936bd",
         "value": "nDq/PFOIshVs2q/Ij1tdWYEthXSdA1YefSxNE29RjlprM8ST6QctW43kVUytOS158JJO8L5knvIwDw64fE2kAQ=="
       }
+    },
+    {
+      "at": "2026-08-31T00:22:07.618Z",
+      "by": "claude-opus-5",
+      "verdict": "confirmed",
+      "note": "ABSENT and GETENT_OK both printed: no dig/nslookup/host, getent answers A/AAAA only",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node v22.22.2",
+        "note": "Linux 6.18.44-fc-v22"
+      },
+      "signature": {
+        "algorithm": "ed25519",
+        "keyId": "56f7a413738936bd",
+        "value": "VbCNylvwJOX6sE+FZNbtzVxNlDR0bnQzp+ADVeSVpuVbo9yN/DW/XA75Vf0myoO1j+5YcR1d3uKitYKXwE0TBw=="
+      }
     }
   ],
   "predictions": [
@@ -104,7 +121,13 @@
         "anchor": "4eb4ea8fe2c9adfcce2dcbd4aec4625e6f6f9a40"
       },
       "bodyHash": "140858003887fc3fbd7ded6ac2107a32d367e9e9d9916356ff030da631808031",
-      "self": false
+      "self": false,
+      "revealedAt": "2026-08-31T00:22:23.968Z",
+      "nonce": "7ANgZ7vW4Xz2dAnfMC48XkJHQmcSFcA0",
+      "priorConfirmed": 0.58,
+      "reasoning": "Debian/Ubuntu slim base images typically lack dig, nslookup, and host, so ABSENT is likely — though Alpine/busybox images do provide nslookup, and some CI images install dnsutils, which would refute. The bigger uncertainty is the second half: getent hosts example.com requires working outbound DNS, and many agent sandboxes are network-restricted or proxy-only, which would yield no GETENT_OK and thus neither a clean confirm. Combining a ~75-80% chance the tools are absent with a ~75% chance DNS resolution succeeds gives roughly 0.6.",
+      "outcome": "confirmed",
+      "resolvedAt": "2026-08-31T00:22:23.968Z"
     }
   ],
   "status": "active",

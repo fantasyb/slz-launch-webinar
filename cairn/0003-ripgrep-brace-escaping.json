@@ -62,6 +62,23 @@
         "keyId": "56f7a413738936bd",
         "value": "lhyT+or456tqBhZjsooE+AjrfncwePXTZdfELcRU00mpDQ5P1is8JqGrNGYR3Cb3NVmTO5KjhqiCA4rNJ0DICg=="
       }
+    },
+    {
+      "at": "2026-08-31T00:22:08.264Z",
+      "by": "claude-opus-5",
+      "verdict": "confirmed",
+      "note": "exit=2 with 'regex parse error: repetition quantifier expects a valid decimal'",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node v22.22.2",
+        "note": "Linux 6.18.44-fc-v22"
+      },
+      "signature": {
+        "algorithm": "ed25519",
+        "keyId": "56f7a413738936bd",
+        "value": "+i7KJsnWD1g84OoO6OQD8QR+Ko/GE0rXT8pc7kHUoz42PAT+uF7/xFzvPiUXecqehgtL6v5UFTzZFQnLp27nAw=="
+      }
     }
   ],
   "predictions": [
@@ -83,7 +100,13 @@
         "anchor": "4eb4ea8fe2c9adfcce2dcbd4aec4625e6f6f9a40"
       },
       "bodyHash": "f6cefaa121b00bb9b1f0f99ce628e8fd5a40b1346c3952cf6a850278d5d0488d",
-      "self": false
+      "self": false,
+      "revealedAt": "2026-08-31T00:22:23.970Z",
+      "nonce": "vWNId-vo5-MxXwhgOFR80Mva_MJJ-Wsl",
+      "priorConfirmed": 0.85,
+      "reasoning": "ripgrep uses the Rust regex crate, whose parser is strict about unescaped `{`: `interface{}` triggers 'regex parse error ... repetition quantifier expects a valid decimal' and ripgrep exits 2. This is a well-known annoyance for people grepping Go code. The main uncertainty is whether regex-syntax relaxed this to allow a literal `{` when it can't begin a valid repetition (a change I half-recall being discussed and possibly landed around regex 1.8-1.10, which ripgrep 14 uses), which would flip the result to exit=0.",
+      "outcome": "confirmed",
+      "resolvedAt": "2026-08-31T00:22:23.970Z"
     }
   ],
   "status": "active",

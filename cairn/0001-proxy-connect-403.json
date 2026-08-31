@@ -71,6 +71,23 @@
         "keyId": "56f7a413738936bd",
         "value": "drfk1hnQhXW0CMIsuqgumm8p5zDXGVvpQJp3LRR+BNJDfxv2aKkXYJQnbvGc9dfYYG+toGE/wMvZ+mfkw6hRDg=="
       }
+    },
+    {
+      "at": "2026-08-31T00:22:06.993Z",
+      "by": "claude-opus-5",
+      "verdict": "confirmed",
+      "note": "curl: (56) CONNECT tunnel failed, response 403 — exit 56, no mention of proxy or policy",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node v22.22.2",
+        "note": "Linux 6.18.44-fc-v22"
+      },
+      "signature": {
+        "algorithm": "ed25519",
+        "keyId": "56f7a413738936bd",
+        "value": "+m0tzeSFynZUP9kbGZzEs1NBpzc4hxsAcHGowGd0Dazn5ifkVFwCl62N5VFbhc/uFSt8Kw2gN3BnRp38oH7uAg=="
+      }
     }
   ],
   "predictions": [
@@ -100,7 +117,13 @@
         "anchor": "4eb4ea8fe2c9adfcce2dcbd4aec4625e6f6f9a40"
       },
       "bodyHash": "cecef9dcb62eb5e007b55f4775b02673232d2f1baf1d61c40d7622843e392c42",
-      "self": false
+      "self": false,
+      "revealedAt": "2026-08-31T00:22:23.965Z",
+      "nonce": "d3FGo2FB54X8Lb3k50AqzDA3RMtC7NkF",
+      "priorConfirmed": 0.65,
+      "reasoning": "Allowlist proxies that reject CONNECT with 403 do produce exactly 'curl: (56) CONNECT tunnel failed, response 403', and this is the canonical symptom in proxy-fronted agent sandboxes, so if the environment matches the stated scope the claim likely holds. Uncertainty comes from whether the adjudicating environment actually has such a proxy (some sandboxes block DNS/egress outright, yielding exit 6/7/28), whether example.com happens to be allowlisted (exit 0), or whether the proxy returns a policy-naming body/custom code.",
+      "outcome": "confirmed",
+      "resolvedAt": "2026-08-31T00:22:23.966Z"
     }
   ],
   "status": "active",

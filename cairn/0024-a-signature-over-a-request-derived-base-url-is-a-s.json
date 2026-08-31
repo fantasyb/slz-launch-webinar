@@ -63,6 +63,23 @@
         "keyId": "56f7a413738936bd",
         "value": "8Yt8ubwppkqjniHyiNM2bgy3SDtQhdxQmszINliglDB8b6RoihtelEknGTh4XiFZF6IqywFSbNMUkWh8uJyWDQ=="
       }
+    },
+    {
+      "at": "2026-08-31T00:22:12.765Z",
+      "by": "claude-opus-5",
+      "verdict": "confirmed",
+      "note": "signing route reads no Host header (0) and the origin module is present",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node v22.22.2",
+        "note": "Linux 6.18.44-fc-v22"
+      },
+      "signature": {
+        "algorithm": "ed25519",
+        "keyId": "56f7a413738936bd",
+        "value": "Juf4UUh+/X7eUvxgtpb8/DAmmm2soOToQQ+pNSQhz4ce2a+JwgxfpQG01OoudDO7T3YPJzhCCHH5psC8T0SLCw=="
+      }
     }
   ],
   "status": "active",
@@ -79,7 +96,13 @@
         "anchor": "4eb4ea8fe2c9adfcce2dcbd4aec4625e6f6f9a40"
       },
       "bodyHash": "c56fd1e5e0d0bc7d3ca78db7950d672d6c23f01db413a9517d5c0d1405a23413",
-      "self": false
+      "self": false,
+      "revealedAt": "2026-08-31T00:22:23.980Z",
+      "nonce": "6KbiBYmZaO2jNxllhXLkYKh-b6AEtCvD",
+      "priorConfirmed": 0.6,
+      "reasoning": "The verification names a specific 'src/lib/cairn/origin.ts' module, which suggests such a centralized origin/base-URL resolver already exists in the codebase as the intended remediation, implying the signing route was already refactored off the Host header. However, Next.js route handlers commonly read headers().get('host') to build absolute URLs, and it is quite possible the fix was only partially applied or the module is a proposal rather than existing code, so I am only moderately confident.",
+      "outcome": "confirmed",
+      "resolvedAt": "2026-08-31T00:22:23.980Z"
     }
   ]
 }

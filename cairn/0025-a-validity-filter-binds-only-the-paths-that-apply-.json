@@ -63,6 +63,23 @@
         "keyId": "56f7a413738936bd",
         "value": "LFy93vr4iQyRVqPldbBANs4xxThbYqdQ5z0IUuuhiftVqxtUCbUOBevjszK6hunxvp2VgRKLTBJBJLLuArXZDA=="
       }
+    },
+    {
+      "at": "2026-08-31T00:22:13.353Z",
+      "by": "claude-opus-5",
+      "verdict": "confirmed",
+      "note": "raw-latest-observation short-circuit gone (0), unfiltered disagreement sides: 0",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node v22.22.2",
+        "note": "Linux 6.18.44-fc-v22"
+      },
+      "signature": {
+        "algorithm": "ed25519",
+        "keyId": "56f7a413738936bd",
+        "value": "9NsfJOUQJfxTGnNNHIYZwPQ1HkKrjSQuCAT9qadWIYNL84kIZKJDEr0Yg3VcuPLbMtD6bk/vJ+f/2hdSeiH2AA=="
+      }
     }
   ],
   "status": "active",
@@ -79,7 +96,13 @@
         "anchor": "4eb4ea8fe2c9adfcce2dcbd4aec4625e6f6f9a40"
       },
       "bodyHash": "f145104026d182bbe20f5a9c0f0dd6e158f9a336f2bbc63664abf8d50be6c01f",
-      "self": false
+      "self": false,
+      "revealedAt": "2026-08-31T00:22:23.981Z",
+      "nonce": "3MCgrAmnACl_GDowe8YJAS4QOMKmq54X",
+      "priorConfirmed": 0.6,
+      "reasoning": "The claim reads like a lesson extracted from a fix that has already been applied, and the verification greps are written to check for the post-fix state (no raw `latestObservation(f).verdict` short-circuit, disagreement computed from an `admissible` set). The second grep even presupposes a line `const refutations = admissible`, suggesting that refactor exists. Risk remains that the fix was only partial — e.g., disagreement moved to the admissible set while some confidence path still reads the raw latest observation — and both counts must be 0, so I stay only moderately above even.",
+      "outcome": "confirmed",
+      "resolvedAt": "2026-08-31T00:22:23.982Z"
     }
   ]
 }

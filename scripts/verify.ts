@@ -93,7 +93,12 @@ try {
   // the harness mangling it. Multi-line commands, heredocs and trailing
   // comments all survive a real script file.
   const scriptFile = path.join(os.tmpdir(), `cairn-check-${process.pid}.sh`);
-  fs.writeFileSync(scriptFile, `${finding.check.command}\n`, { mode: 0o700 });
+  // `exec 2>&1` inside the script, since execFileSync returns stdout only and
+  // the diagnostic that decides the verdict is very often on stderr. The old
+  // subshell wrapper did this with `( ... ) 2>&1`; moving to a script file
+  // dropped it, and cairn-0001's decisive "CONNECT tunnel failed, response
+  // 403" silently vanished from the output while exit=56 still showed.
+  fs.writeFileSync(scriptFile, `exec 2>&1\n${finding.check.command}\n`, { mode: 0o700 });
   try {
     output = execFileSync('/bin/bash', [scriptFile], {
       encoding: 'utf8',

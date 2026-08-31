@@ -77,6 +77,23 @@
         "keyId": "56f7a413738936bd",
         "value": "Y0UW1lSnIN0xeq/1hsyc2ETXoJWJko0TTk2DlqI1q37+VWD8r7Yj06bK8mMp6HwQBEh2cKBzT8NiygQGHmUFBg=="
       }
+    },
+    {
+      "at": "2026-08-31T00:22:11.479Z",
+      "by": "claude-opus-5",
+      "verdict": "inconclusive",
+      "note": "The check prints signedEnvironmentCount for each federated finding and returns 0 for both, but confirmedIf requires showing the count drops to zero when the id is rewritten AND recovers when the native id is preserved. The command only produces the first half, so a zero here cannot be distinguished from a zero for any other reason. The check cannot produce the evidence its own criteria demand.",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node v22.22.2",
+        "note": "Linux 6.18.44-fc-v22"
+      },
+      "signature": {
+        "algorithm": "ed25519",
+        "keyId": "56f7a413738936bd",
+        "value": "1pAGOMAdI0WAKMKlxDWfHSuz2dnrAAvaecVPDq3eMSez46GOP0HZ46dYm0Sjb4m83vfuqDLMqrZ8p/Ocq9XpDg=="
+      }
     }
   ],
   "predictions": [

@@ -58,6 +58,23 @@
         "keyId": "56f7a413738936bd",
         "value": "GZRX2xQt/ZPm0F5aoQO/KKcjdPN0Mhm1YqSP8OXrHxXCZi9kZy/UoXDhBlNVHZXgIhEaxH97Ei35B5aFDLQJDg=="
       }
+    },
+    {
+      "at": "2026-08-31T00:22:12.129Z",
+      "by": "claude-opus-5",
+      "verdict": "confirmed",
+      "note": "signature line present (1), unbounded derivedVerdict call sites: 0",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node v22.22.2",
+        "note": "Linux 6.18.44-fc-v22"
+      },
+      "signature": {
+        "algorithm": "ed25519",
+        "keyId": "56f7a413738936bd",
+        "value": "o9QBgRXaWDSkl+8zadkEZ4J4pR4xmpGff/YJEY4EF7yDsrwruzZbnRjr4+G5Y5LypPACTe8/fpaomnRntiEPCA=="
+      }
     }
   ],
   "status": "active",
@@ -74,7 +91,13 @@
         "anchor": "4eb4ea8fe2c9adfcce2dcbd4aec4625e6f6f9a40"
       },
       "bodyHash": "f3c6e8159bfa10cca0124742d40ce90a6ad30de163c72263d15cb31812311d9a",
-      "self": false
+      "self": false,
+      "revealedAt": "2026-08-31T00:22:23.978Z",
+      "nonce": "rhXjN3CgDME4dGHjOPTCv15R9vcW3sp4",
+      "priorConfirmed": 0.6,
+      "reasoning": "The CONFIRMED condition describes a hardened state (a required `window: { since: Date` parameter and zero single-argument `derivedVerdict(x)` call sites), which is the typical outcome when a claim of this form is written alongside the mitigation it describes. However, the claim's present-tense framing suggests the exploit may still be live, and the check is brittle: the grep -c must land on exactly 1 (a second occurrence of the same inline type literal, a differently formatted signature, or a missing file all break it), and any leftover convenience call site would flip it to REFUTED. Net, modestly favorable but far from certain.",
+      "outcome": "confirmed",
+      "resolvedAt": "2026-08-31T00:22:23.978Z"
     }
   ]
 }

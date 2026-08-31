@@ -63,6 +63,23 @@
         "keyId": "56f7a413738936bd",
         "value": "MA8cQdP4maxf8e7LUTnEXOxcZA89FwzR/5WCgeIIKSpIfG5drxQTBapgEaDqfUZm0KC04MAiUWs2Tgn3L1e0AA=="
       }
+    },
+    {
+      "at": "2026-08-31T00:22:15.754Z",
+      "by": "claude-opus-5",
+      "verdict": "confirmed",
+      "note": "selector consults the index (1), so a staged change is reviewed",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node v22.22.2",
+        "note": "Linux 6.18.44-fc-v22"
+      },
+      "signature": {
+        "algorithm": "ed25519",
+        "keyId": "56f7a413738936bd",
+        "value": "7EvkG8NRmZoI1QuWMXmlVWzLKkhWzYdKWMkO6jeBrKVbRgfaYXkottFtsBD5/p4hG1YmnneZC+//9NRkkZiyDQ=="
+      }
     }
   ],
   "status": "active",
@@ -79,7 +96,13 @@
         "anchor": "4eb4ea8fe2c9adfcce2dcbd4aec4625e6f6f9a40"
       },
       "bodyHash": "71ee40d5750766a78549de1de62054ebbc28d431885a0e05085de0d921f11b6b",
-      "self": false
+      "self": false,
+      "revealedAt": "2026-08-31T00:22:23.986Z",
+      "nonce": "L0EmmVzK4SD_SdjfpsU7meClaV4mvBAg",
+      "priorConfirmed": 0.6,
+      "reasoning": "The verification hinges on whether scripts/adjudicate.ts literally contains the argument pair \"'--cached', '--diff-filter=ACM'\", which is the standard idiom for including staged changes alongside a commit range. The pattern is oddly specific (exact ordering and quoting), which suggests it was drawn from actual source text rather than invented, favoring confirmation; but such claims are often framed as warnings precisely because the hardening is absent, and a missing file or slightly different argument order would yield zero. Net: modest lean toward CONFIRMED with real uncertainty.",
+      "outcome": "confirmed",
+      "resolvedAt": "2026-08-31T00:22:23.986Z"
     }
   ]
 }

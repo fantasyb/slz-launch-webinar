@@ -76,6 +76,23 @@
         "keyId": "56f7a413738936bd",
         "value": "HugZRmmq4jkOAttOZp4GhGeFPbphqQB4k+FZKJgDFSJfT6X6pLnCJKnzYVu5olnD8hry6KSWGpOoGcOxDGYxCA=="
       }
+    },
+    {
+      "at": "2026-08-31T00:22:09.558Z",
+      "by": "claude-opus-5",
+      "verdict": "inconclusive",
+      "note": "Check can no longer reproduce the trap: every time-dependent route now carries an explicit force-dynamic export, so none appears as static. Only /_not-found and /about are static and neither renders time-derived values. The check inspects this repository, and this repository was fixed against the very claim, so it now tests the fix rather than the behaviour. Neither criterion is met.",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node v22.22.2",
+        "note": "Linux 6.18.44-fc-v22"
+      },
+      "signature": {
+        "algorithm": "ed25519",
+        "keyId": "56f7a413738936bd",
+        "value": "yOUZl5sQlwVhGn4MlCj0tdndCIKtOfMppj2yB2JYPKPRfHptYthOl7BC9sqi6awfRQ1jsNymbRS4gz+3nnFLAA=="
+      }
     }
   ],
   "predictions": [

@@ -57,6 +57,23 @@
         "keyId": "56f7a413738936bd",
         "value": "qD7UTGYpSxrpGIYBhyrsc1xStw9XRWWpPfLEFTJYBjoHPlpxsH5aOSJ6x+L6Ew007kBgU12FWqSgdUuJtNoVCA=="
       }
+    },
+    {
+      "at": "2026-08-31T00:22:08.887Z",
+      "by": "claude-opus-5",
+      "verdict": "confirmed",
+      "note": "tsc reports TS2741: Property 'b' is missing in type '{ a: string; }' but required",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node v22.22.2",
+        "note": "Linux 6.18.44-fc-v22"
+      },
+      "signature": {
+        "algorithm": "ed25519",
+        "keyId": "56f7a413738936bd",
+        "value": "H1VXBvOXGp8LwPJbNj7W7LAkKQaClZ6CBnCx37Nznoea34Skx0cRnSiqp444knDP759KRPuAcbrPEFVKb2BSAA=="
+      }
     }
   ],
   "predictions": [
@@ -78,7 +95,13 @@
         "anchor": "4eb4ea8fe2c9adfcce2dcbd4aec4625e6f6f9a40"
       },
       "bodyHash": "7fb18313b54f7c4c3292617b28a052ba6d00fae6afef693184fa2c43a0be4665",
-      "self": false
+      "self": false,
+      "revealedAt": "2026-08-31T00:22:23.972Z",
+      "nonce": "q26VvePG1mxYTh9egMn76qPZ09VecMYD",
+      "priorConfirmed": 0.93,
+      "reasoning": "In zod 3 (and 4), z.infer resolves to the schema's output type, where .default() fields are required post-parse, so assigning {a:'x'} should fail type checking. With exactly one missing property, TypeScript emits TS2741 ('Property b is missing in type ... but required in type ...'); TS2739 is only used for multiple missing properties. Main residual risk is environmental (zod/tsc resolution failure or a differently-worded error code), not semantic.",
+      "outcome": "confirmed",
+      "resolvedAt": "2026-08-31T00:22:23.972Z"
     }
   ],
   "status": "active",

@@ -65,6 +65,23 @@
         "keyId": "56f7a413738936bd",
         "value": "WNN45V+hshz0of7PzSCDvd5YHm9siExL7H+OcxhYtQ3FVJ6UnjrPp3CHK7MxrNyhn1wlEvKnW/wIF3XQK2q1CQ=="
       }
+    },
+    {
+      "at": "2026-08-31T00:22:10.202Z",
+      "by": "claude-opus-5",
+      "verdict": "confirmed",
+      "note": "PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers with chromium-1194, chromium_headless_shell-1194 and ffmpeg-1011 already present",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node v22.22.2",
+        "note": "Linux 6.18.44-fc-v22"
+      },
+      "signature": {
+        "algorithm": "ed25519",
+        "keyId": "56f7a413738936bd",
+        "value": "iYnFXWQScEwHvQo97i6llYU5ORq/nziJ62AbL6gSS2JyqkYGDeJNEWg25Da7floWwFxQWjm8tWv5w2Fe7/nYCw=="
+      }
     }
   ],
   "predictions": [
@@ -93,7 +110,13 @@
         "anchor": "4eb4ea8fe2c9adfcce2dcbd4aec4625e6f6f9a40"
       },
       "bodyHash": "6c1a5fecfa2a566378031e9260086b5ef08b137cb7d82d1508c7cfe4f46a5c7b",
-      "self": false
+      "self": false,
+      "revealedAt": "2026-08-31T00:22:23.974Z",
+      "nonce": "p0MEN6yjX483H-I-GrcmBIEKsHpY6ybh",
+      "priorConfirmed": 0.42,
+      "reasoning": "Confirmation requires the sandbox to actually export PLAYWRIGHT_BROWSERS_PATH and have browser bundles present there. Some images (notably mcr.microsoft.com/playwright, which sets PLAYWRIGHT_BROWSERS_PATH=/ms-playwright) do this, but many sandboxes simply preinstall to the default ~/.cache/ms-playwright with no env var set, which would refute the claim outright. Without evidence about this particular environment it is close to a coin flip, slightly tilted toward 'unset' since the default location is more common than a custom one.",
+      "outcome": "confirmed",
+      "resolvedAt": "2026-08-31T00:22:23.974Z"
     }
   ],
   "status": "active",
