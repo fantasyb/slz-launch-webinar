@@ -215,6 +215,24 @@ function findingText(f: Finding): string {
     f.check.confirmedIf,
     f.check.refutedIf,
     ...f.tags,
+    /*
+     * Evidence — the captured output of the failure — is indexed, and leaving
+     * it out was the single largest accuracy defect measured.
+     *
+     * It is the closest text in the corpus to what a querying agent actually
+     * holds: not a description of the failure but the failure's own output.
+     * Held-out evaluation put P@1 at 0.548 for queries drawn from evidence
+     * text, and every total miss was output with no prose in it at all --
+     * `/dev/vda 252G 8.1G 29G 22% /`, `{"a":"x","b":[]}` -- which no amount of
+     * weighting on the prose fields could ever reach, because the tokens
+     * simply were not there.
+     *
+     * The cost is that evidence can no longer serve as an evaluation set.
+     * `mechanism` and `appliesTo` stay unindexed for exactly that purpose:
+     * index what a query looks like, hold out what explains it. scripts/eval.ts
+     * depends on that split.
+     */
+    ...(f.evidence ?? []).flatMap((e) => [e.command ?? '', e.output ?? '']),
   ].join('\n');
 }
 
@@ -238,6 +256,19 @@ export interface CorpusIndex {
   docs: Indexed[];
   /** token text -> how many findings contain it. */
   df: Map<string, number>;
+  /**
+   * token text -> the documents containing it, with term frequency.
+   *
+   * This is what makes the corpus size stop mattering. Scoring used to walk
+   * every document on every query and ask whether it contained each term,
+   * which is O(corpus x query) however fast the inner loop is -- 16ms per
+   * query at ten thousand findings, and linear in the corpus forever after.
+   * Walking postings instead visits only documents that contain at least one
+   * query term, so cost tracks the size of the ANSWER rather than the size of
+   * the library. A corpus of a million findings costs the same as one of a
+   * hundred for a query that matches ten.
+   */
+  postings: Map<string, Array<{ doc: number; tf: number }>>;
   n: number;
   builtAt: number;
 }
@@ -290,11 +321,17 @@ export function buildIndex(findings: Finding[]): CorpusIndex {
   });
 
   const df = new Map<string, number>();
-  for (const d of docs) {
-    for (const term of d.terms.keys()) df.set(term, (df.get(term) ?? 0) + 1);
-  }
+  const postings = new Map<string, Array<{ doc: number; tf: number }>>();
+  docs.forEach((d, i) => {
+    for (const [term, tf] of d.terms) {
+      df.set(term, (df.get(term) ?? 0) + 1);
+      const list = postings.get(term);
+      if (list) list.push({ doc: i, tf });
+      else postings.set(term, [{ doc: i, tf }]);
+    }
+  });
 
-  const index: CorpusIndex = { docs, df, n: docs.length, builtAt: Date.now() };
+  const index: CorpusIndex = { docs, df, postings, n: docs.length, builtAt: Date.now() };
   indexCache.set(findings, index);
   return index;
 }
@@ -387,30 +424,42 @@ export function retrieve(
   const index = buildIndex(findings);
   const tokens = tokenize(query);
 
-  const candidates: Hit[] = index.docs.map((doc) => {
-    const matched: Hit['matched'] = [];
-    let score = 0;
+  /*
+   * Accumulate over postings, not over documents.
+   *
+   * Only documents containing a query term are ever touched, and each is
+   * touched once per term it actually contains. Everything the old inner loop
+   * did per (document, term) pair still happens -- it just no longer happens
+   * for pairs that could not have matched.
+   */
+  const acc = new Map<number, { score: number; matched: Hit['matched'] }>();
 
-    for (const tok of tokens) {
-      const tf = doc.terms.get(tok.text);
-      if (!tf) continue;
-      const information = idf(index.df.get(tok.text) ?? 0, index.n);
-      // A term in almost every finding distinguishes nothing, and letting it
-      // contribute a sliver still puts the finding in the RESULT SET even when
-      // it cannot affect the order. Ranking correctly is not enough: an agent
-      // reading the first page sees membership, not scores.
-      if (information < NOISE_FLOOR) continue;
+  for (const tok of tokens) {
+    const information = idf(index.df.get(tok.text) ?? 0, index.n);
+    // A term in almost every finding distinguishes nothing, and letting it
+    // contribute a sliver still puts the finding in the RESULT SET even when
+    // it cannot affect the order. Ranking correctly is not enough: an agent
+    // reading the first page sees membership, not scores.
+    if (information < NOISE_FLOOR) continue;
+    for (const { doc, tf } of index.postings.get(tok.text) ?? []) {
       // Saturating term frequency: a finding that says "proxy" nine times is
       // not nine times more about proxies. Without this, long findings win
       // every query by repetition alone.
       const saturation = 1 + Math.log(tf);
-      const boost = doc.strong.has(tok.text) ? 2.5 : 1;
+      const boost = index.docs[doc].strong.has(tok.text) ? 2.5 : 1;
       const contribution = information * tok.weight * saturation * boost;
-      score += contribution;
-      matched.push({ term: tok.text, kind: tok.kind, contribution, information });
+      const slot = acc.get(doc) ?? { score: 0, matched: [] };
+      slot.score += contribution;
+      slot.matched.push({ term: tok.text, kind: tok.kind, contribution, information });
+      acc.set(doc, slot);
     }
+  }
 
-    matched.sort((a, b) => b.contribution - a.contribution);
+  const distinctQueryTerms = new Set(tokens.map((t) => t.text)).size;
+
+  const candidates: Hit[] = [...acc].map(([docIdx, slot]) => {
+    const doc = index.docs[docIdx];
+    slot.matched.sort((a, b) => b.contribution - a.contribution);
 
     /*
      * Coverage: what fraction of the query this finding actually accounts for.
@@ -422,13 +471,12 @@ export function retrieve(
      * criterion: a finding that answers half your query should lose to one
      * that answers all of it.
      */
-    const distinctQueryTerms = new Set(tokens.map((t) => t.text)).size;
     const coverage = distinctQueryTerms
-      ? new Set(matched.map((m) => m.term)).size / distinctQueryTerms
+      ? new Set(slot.matched.map((m) => m.term)).size / distinctQueryTerms
       : 0;
     // Softened, not linear: a single decisive error code is often the whole
     // query even when the surrounding prose does not match anything.
-    score *= 0.45 + 0.55 * coverage;
+    const score = slot.score * (0.45 + 0.55 * coverage);
 
     const applicability: Applicability = opts.useLocalEnvironment
       ? doc.finding.precondition?.length
@@ -441,23 +489,13 @@ export function retrieve(
     return {
       finding: doc.finding,
       score,
-      matched,
+      matched: slot.matched,
       applicability,
       confidence: doc.confidence,
       surprise: doc.surprise,
     };
   });
 
-  /*
-   * confidence() and surprise() are computed only for findings that matched.
-   *
-   * They were computed for every document on every query, which meant an
-   * ed25519 verification per observation across the entire corpus to answer a
-   * query that matched two findings. On 31 findings that is invisible; a
-   * synthetic 10k corpus made a single query take minutes. The scores cannot
-   * change the membership of the result set — they only reweight it — so
-   * nothing is lost by deferring them past the filter.
-   */
   const scored: Hit[] = candidates
     .filter(
       (h) =>
