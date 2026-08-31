@@ -1,0 +1,529 @@
+/**
+ * Retrieval for a corpus whose queries are machine output, not prose.
+ *
+ * Every general-purpose memory system indexes English and retrieves by
+ * semantic similarity. That is the right call when the query is a question a
+ * person typed. It is the wrong call here, because the query that matters is
+ * almost never a question — it is the error the agent just got:
+ *
+ *     Error: ENOSPC: no space left on device, write
+ *     CONNECT tunnel failed, response 403
+ *     rg: regex parse error: repetition quantifier expects a valid decimal
+ *
+ * That text has structure English does not. Error codes, exit statuses, absolute
+ * paths and tool names are near-unique identifiers, and the words around them
+ * are filler. Matching stderr against stderr is a different problem from
+ * matching a question against documents, and it is one we can solve exactly
+ * rather than approximately.
+ *
+ * So there are no embeddings here, and that is not a resource compromise. Four
+ * stages, each cheaper than the one after it, each discarding work the next
+ * would waste:
+ *
+ *   0. APPLICABILITY  Does this finding's precondition hold on this machine?
+ *                     Microseconds, no query needed. Nobody else can do this
+ *                     because nobody else's entries declare machine-checkable
+ *                     scope.
+ *   1. SIGNATURE      Weight each query term by its information content in
+ *                     this corpus. `ENOSPC` is worth a great deal; `on` is
+ *                     worth nothing, arithmetically rather than by a stoplist.
+ *   2. INFORMATION    Break ties toward findings that models forecast WRONG.
+ *                     The searcher is usually a model; the finding it cannot
+ *                     derive is the one worth surfacing.
+ *   3. CONFIRMATION   Run the check. A finding that fires on this machine now
+ *                     is not a search result, it is a diagnosis. See
+ *                     `confirmCandidates`, which is opt-in and local-only.
+ *
+ * Stages 0-2 are pure, offline, and complete in well under a millisecond over
+ * a corpus this size. Stage 3 costs seconds and is never automatic.
+ */
+import type { Finding } from './schema';
+import { surprise } from './calibration';
+import { confidence } from './decay';
+import { matchEnvironment } from './precondition';
+
+/**
+ * POSIX errno symbols and their plain-English meanings.
+ *
+ * This is the vocabulary gap that sank the old search: an agent pastes
+ * `ENOSPC` and the finding about disks says "no space", so a substring match
+ * returns nothing and a reader concludes the corpus is empty on the single
+ * most likely query it will ever get.
+ *
+ * An embedding model learns this mapping fuzzily and expensively. It is in
+ * fact a small closed table that has not changed in decades, so it is written
+ * down. Both directions are indexed: the code finds prose findings, and prose
+ * queries find findings that quote the raw code.
+ */
+const ERRNO_ALIASES: Record<string, string[]> = {
+  ENOSPC: ['no space', 'disk full', 'out of space', 'quota', 'disk'],
+  ENOENT: ['no such file', 'not found', 'missing file'],
+  EACCES: ['permission denied', 'access denied', 'forbidden'],
+  EPERM: ['operation not permitted', 'permission'],
+  ECONNREFUSED: ['connection refused', 'refused', 'not listening'],
+  ECONNRESET: ['connection reset', 'reset by peer', 'transfer closed'],
+  ETIMEDOUT: ['timed out', 'timeout', 'hang'],
+  EADDRINUSE: ['address in use', 'port in use', 'already bound'],
+  EMFILE: ['too many open files', 'file descriptor'],
+  EPIPE: ['broken pipe'],
+  ENOTFOUND: ['dns', 'getaddrinfo', 'could not resolve', 'unknown host'],
+  EHOSTUNREACH: ['host unreachable', 'no route'],
+  ENETUNREACH: ['network unreachable', 'no route'],
+  EISDIR: ['is a directory'],
+  ENOTDIR: ['not a directory'],
+  EEXIST: ['already exists'],
+  EAGAIN: ['resource temporarily unavailable', 'try again'],
+};
+
+/**
+ * HTTP statuses worth aliasing. Only the ones that mean something specific
+ * when an agent hits them — a bare 500 says nothing a finding could be about.
+ */
+const STATUS_ALIASES: Record<string, string[]> = {
+  '401': ['unauthorized', 'auth', 'credential'],
+  '403': ['forbidden', 'denied', 'blocked', 'allowlist', 'proxy'],
+  '404': ['not found', 'missing'],
+  '407': ['proxy authentication', 'proxy'],
+  '429': ['rate limit', 'too many requests', 'throttle'],
+  '502': ['bad gateway', 'upstream'],
+  '504': ['gateway timeout', 'upstream', 'timeout'],
+};
+
+/** What a token is, which decides how much a match on it is worth. */
+export type TokenKind =
+  | 'errno' // ENOSPC, ECONNREFUSED — near-unique
+  | 'path' // /opt/pw-browsers — near-unique
+  | 'status' // 403, 404
+  | 'flag' // --no-sandbox
+  | 'word'; // everything else
+
+export interface Token {
+  text: string;
+  kind: TokenKind;
+  /** Multiplier applied on top of the term's information content. */
+  weight: number;
+}
+
+/**
+ * Strip the handful of English suffixes that cost real recall.
+ *
+ * `proxies` returned nothing while `proxy` returned four findings, which is
+ * indefensible on a corpus about tooling — an agent writes whichever the error
+ * text used. This is not a stemmer in the Porter sense and should not grow
+ * into one: aggressive stemming collapses identifiers that mean different
+ * things (`dns`/`dn`, `install`/`instal`), and identifiers are most of what
+ * this corpus is about.
+ *
+ * Guarded on length so short tokens survive intact, and applied to indexing
+ * and querying alike so both sides agree.
+ */
+function stem(t: string): string {
+  if (t.length < 5) return t;
+  if (/[^aeiou]ies$/.test(t)) return `${t.slice(0, -3)}y`; // proxies -> proxy
+  if (/(ss|us|is)$/.test(t)) return t; // class, status, axis
+  if (/(ches|shes|xes|ses)$/.test(t)) return t.slice(0, -2); // caches -> cache
+  if (/[^s]s$/.test(t)) return t.slice(0, -1); // browsers -> browser
+  return t;
+}
+
+const KIND_WEIGHT: Record<TokenKind, number> = {
+  errno: 4,
+  path: 3,
+  flag: 2.5,
+  status: 2,
+  word: 1,
+};
+
+/**
+ * Split text into typed tokens.
+ *
+ * Deliberately not a natural-language tokenizer. It preserves the things that
+ * identify a failure — paths keep their slashes, flags keep their dashes,
+ * error codes keep their case — because those are exactly the tokens a
+ * word-splitter destroys and they carry nearly all the signal.
+ */
+export function tokenize(text: string): Token[] {
+  const out: Token[] = [];
+  const seen = new Set<string>();
+
+  const push = (raw: string, kind: TokenKind) => {
+    const t = raw.toLowerCase();
+    // Single characters and pure punctuation identify nothing.
+    if (t.length < 2) return;
+    const key = `${kind}:${t}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push({ text: t, kind, weight: KIND_WEIGHT[kind] });
+    // The stem is emitted as a second, slightly cheaper token rather than
+    // replacing the surface form, so an exact match still outranks a
+    // morphological one.
+    const st = stem(t);
+    if (st !== t && !seen.has(`${kind}:${st}`)) {
+      seen.add(`${kind}:${st}`);
+      out.push({ text: st, kind, weight: KIND_WEIGHT[kind] * 0.85 });
+    }
+  };
+
+  // Absolute paths first, before the generic splitter eats the slashes.
+  for (const m of text.matchAll(/(?:^|[\s"'`(<=])(\/[A-Za-z0-9_.\-/]{2,})/g)) {
+    push(m[1], 'path');
+  }
+  // Long flags.
+  for (const m of text.matchAll(/(?:^|\s)(--[A-Za-z][A-Za-z0-9-]{1,40})/g)) {
+    push(m[1], 'flag');
+  }
+  // errno-shaped symbols: all caps, E-prefixed or not, standing alone.
+  for (const m of text.matchAll(/\b([A-Z]{2,}[A-Z0-9_]{1,20})\b/g)) {
+    const sym = m[1];
+    push(sym, ERRNO_ALIASES[sym] ? 'errno' : 'word');
+    for (const alias of ERRNO_ALIASES[sym] ?? []) {
+      for (const w of alias.split(/\s+/)) push(w, 'word');
+    }
+  }
+  // HTTP statuses.
+  for (const m of text.matchAll(/\b([1-5]\d{2})\b/g)) {
+    const code = m[1];
+    if (!STATUS_ALIASES[code]) continue;
+    push(code, 'status');
+    for (const alias of STATUS_ALIASES[code]) {
+      for (const w of alias.split(/\s+/)) push(w, 'word');
+    }
+  }
+  // Everything else. Keeps dots and dashes inside a token so `node:dns`,
+  // `pw-browsers` and `z.infer` survive as single identifiers.
+  for (const m of text.matchAll(/[A-Za-z][A-Za-z0-9_.:-]{1,60}/g)) {
+    push(m[0].replace(/[.:_-]+$/, ''), 'word');
+  }
+
+  return out;
+}
+
+/** The text of a finding that a query could reasonably match against. */
+function findingText(f: Finding): string {
+  return [
+    f.title,
+    f.claim,
+    f.subject.name,
+    f.subject.ecosystem,
+    f.expectation,
+    f.reality,
+    f.workaround ?? '',
+    // The check is machine text about a machine failure, so it carries the
+    // error strings the prose paraphrases. Including it is most of why an
+    // error-code query finds anything at all.
+    f.check.command,
+    f.check.confirmedIf,
+    f.check.refutedIf,
+    ...f.tags,
+  ].join('\n');
+}
+
+/** Fields whose match counts for more, because they are what the finding is about. */
+function strongText(f: Finding): string {
+  return [f.title, f.subject.name, f.subject.ecosystem, ...f.tags].join('\n');
+}
+
+interface Indexed {
+  id: string;
+  finding: Finding;
+  /** Cached at index build; see INDEX_TTL_MS. */
+  confidence: number;
+  surprise: number | null;
+  /** token text -> occurrences, over the whole finding. */
+  terms: Map<string, number>;
+  strong: Set<string>;
+}
+
+export interface CorpusIndex {
+  docs: Indexed[];
+  /** token text -> how many findings contain it. */
+  df: Map<string, number>;
+  n: number;
+  builtAt: number;
+}
+
+/**
+ * How long a built index may be reused.
+ *
+ * The index caches each finding's confidence, which is the expensive part of
+ * scoring by a wide margin: confidence() verifies an ed25519 signature per
+ * observation, and computing it per query per matched finding cost 7.5ms where
+ * the text matching itself costs microseconds.
+ *
+ * An hour is safe because confidence decays on a half-life measured in days —
+ * twenty at the fastest, three thousand at the slowest. The most a cached
+ * value can be wrong by is an hour of decay on a twenty-day half-life, which
+ * is under 0.15%, well below the precision anything displays it at. Without a
+ * TTL a long-running server would freeze these values for its whole lifetime,
+ * which is a different and much worse bug.
+ */
+const INDEX_TTL_MS = 60 * 60 * 1000;
+
+const indexCache = new WeakMap<object, CorpusIndex>();
+
+/**
+ * Build (and memoize) an inverted index.
+ *
+ * Memoized on the findings array identity, so repeated queries in one process
+ * pay for tokenizing the corpus once. The old search re-scanned and
+ * re-lowercased every field of every finding on every keystroke; this is the
+ * difference between O(corpus x query) per call and O(query).
+ */
+export function buildIndex(findings: Finding[]): CorpusIndex {
+  const hit = indexCache.get(findings);
+  if (hit && Date.now() - hit.builtAt < INDEX_TTL_MS) return hit;
+  const at = new Date();
+
+  const docs: Indexed[] = findings.map((f) => {
+    const terms = new Map<string, number>();
+    for (const t of tokenize(findingText(f))) {
+      terms.set(t.text, (terms.get(t.text) ?? 0) + 1);
+    }
+    return {
+      id: f.id,
+      finding: f,
+      confidence: confidence(f, at),
+      surprise: surprise(f),
+      terms,
+      strong: new Set(tokenize(strongText(f)).map((t) => t.text)),
+    };
+  });
+
+  const df = new Map<string, number>();
+  for (const d of docs) {
+    for (const term of d.terms.keys()) df.set(term, (df.get(term) ?? 0) + 1);
+  }
+
+  const index: CorpusIndex = { docs, df, n: docs.length, builtAt: Date.now() };
+  indexCache.set(findings, index);
+  return index;
+}
+
+/**
+ * Inverse document frequency, the fix for the failure that started this.
+ *
+ * `no space left on device` used to return the entire corpus, because `on` is
+ * a substring of *connection*, *confidence* and *python*, and every term
+ * counted the same. Weighting a term by how much it narrows the corpus makes
+ * that arithmetic instead of a judgment call: a term in every finding scores
+ * zero without anyone maintaining a stoplist, and a term in one finding
+ * dominates. No English-specific knowledge, so it works on tool names and
+ * error codes that no stoplist would ever contain.
+ */
+/**
+ * Below this, a term appears in so much of the corpus that matching it is not
+ * evidence of anything. log(32/28) on a 31-finding corpus — roughly "in more
+ * than 85% of findings".
+ */
+const NOISE_FLOOR = 0.15;
+
+/**
+ * A hit needs at least one term this informative to exist at all.
+ *
+ * Two floors rather than one, because they answer different questions. The
+ * noise floor decides what a term is worth; this decides whether a match
+ * happened. Without it, a query of nothing but common words still produced
+ * hits — each scoring almost nothing, all scoring almost the same, so the
+ * relative cutoff had no gap to cut on and returned two thirds of the corpus
+ * ranked by rounding error.
+ *
+ * Low-information terms still contribute to the score of a hit anchored by a
+ * discriminating one; they just cannot conjure a hit on their own. On a corpus
+ * of 31 this is roughly "appears in no more than half of it".
+ */
+const SIGNAL_FLOOR = 0.6;
+
+function idf(df: number, n: number): number {
+  if (df <= 0) return 0;
+  return Math.max(0, Math.log((n + 1) / df));
+}
+
+export type Applicability = 'holds' | 'fails' | 'unknown';
+
+export interface Hit {
+  finding: Finding;
+  score: number;
+  /** Why it matched — the terms that carried the score, best first. */
+  matched: Array<{
+    term: string;
+    kind: TokenKind;
+    contribution: number;
+    /** IDF of the term in this corpus — how much matching it narrowed things. */
+    information: number;
+  }>;
+  applicability: Applicability;
+  confidence: number;
+  surprise: number | null;
+}
+
+export interface SearchOptions {
+  /**
+   * Evaluate preconditions against the CURRENT process's environment.
+   *
+   * Off by default, and the default is the important part: on a server
+   * answering /api/search the asker is on a different machine, so the server's
+   * own environment is not evidence about theirs. Gating a remote query on
+   * local preconditions would hide exactly the findings the asker needs. Turn
+   * it on in a CLI, where the process and the question share a machine.
+   */
+  useLocalEnvironment?: boolean;
+  /** Include findings whose score is zero. Off by default. */
+  includeUnmatched?: boolean;
+  limit?: number;
+}
+
+/**
+ * Rank findings against a query.
+ *
+ * Pure and synchronous. No network, no execution, no state — running this
+ * tells the corpus nothing about you, which is a property the install block
+ * promises and this preserves.
+ */
+export function retrieve(
+  query: string,
+  findings: Finding[],
+  opts: SearchOptions = {},
+): Hit[] {
+  const index = buildIndex(findings);
+  const tokens = tokenize(query);
+
+  const candidates: Hit[] = index.docs.map((doc) => {
+    const matched: Hit['matched'] = [];
+    let score = 0;
+
+    for (const tok of tokens) {
+      const tf = doc.terms.get(tok.text);
+      if (!tf) continue;
+      const information = idf(index.df.get(tok.text) ?? 0, index.n);
+      // A term in almost every finding distinguishes nothing, and letting it
+      // contribute a sliver still puts the finding in the RESULT SET even when
+      // it cannot affect the order. Ranking correctly is not enough: an agent
+      // reading the first page sees membership, not scores.
+      if (information < NOISE_FLOOR) continue;
+      // Saturating term frequency: a finding that says "proxy" nine times is
+      // not nine times more about proxies. Without this, long findings win
+      // every query by repetition alone.
+      const saturation = 1 + Math.log(tf);
+      const boost = doc.strong.has(tok.text) ? 2.5 : 1;
+      const contribution = information * tok.weight * saturation * boost;
+      score += contribution;
+      matched.push({ term: tok.text, kind: tok.kind, contribution, information });
+    }
+
+    matched.sort((a, b) => b.contribution - a.contribution);
+
+    /*
+     * Coverage: what fraction of the query this finding actually accounts for.
+     *
+     * Without it, one rare term decides everything. `disk full` ranked a
+     * finding about DNS above the finding about disks, because it happened to
+     * contain the word "full" (in "full DNS works") and "full" is rarer in
+     * this corpus than "disk". Rarity is a good weight and a terrible sole
+     * criterion: a finding that answers half your query should lose to one
+     * that answers all of it.
+     */
+    const distinctQueryTerms = new Set(tokens.map((t) => t.text)).size;
+    const coverage = distinctQueryTerms
+      ? new Set(matched.map((m) => m.term)).size / distinctQueryTerms
+      : 0;
+    // Softened, not linear: a single decisive error code is often the whole
+    // query even when the surrounding prose does not match anything.
+    score *= 0.45 + 0.55 * coverage;
+
+    const applicability: Applicability = opts.useLocalEnvironment
+      ? doc.finding.precondition?.length
+        ? matchEnvironment(doc.finding.precondition).matches
+          ? 'holds'
+          : 'fails'
+        : 'unknown'
+      : 'unknown';
+
+    return {
+      finding: doc.finding,
+      score,
+      matched,
+      applicability,
+      confidence: doc.confidence,
+      surprise: doc.surprise,
+    };
+  });
+
+  /*
+   * confidence() and surprise() are computed only for findings that matched.
+   *
+   * They were computed for every document on every query, which meant an
+   * ed25519 verification per observation across the entire corpus to answer a
+   * query that matched two findings. On 31 findings that is invisible; a
+   * synthetic 10k corpus made a single query take minutes. The scores cannot
+   * change the membership of the result set — they only reweight it — so
+   * nothing is lost by deferring them past the filter.
+   */
+  const scored: Hit[] = candidates
+    .filter(
+      (h) =>
+        opts.includeUnmatched ||
+        (h.score > 0 && h.matched.some((m) => m.information >= SIGNAL_FLOOR)),
+    )
+    .map((h) => ({ ...h, confidence: h.confidence, surprise: h.surprise }));
+
+  const ranked = scored
+    .map((h) => ({ h, final: finalScore(h) }))
+    .sort((a, b) => b.final - a.final || b.h.confidence - a.h.confidence)
+    .map(({ h, final }) => ({ ...h, score: final }));
+
+  /*
+   * Relative cutoff.
+   *
+   * An absolute threshold cannot work: scores are unnormalised and a
+   * one-rare-term query scores an order of magnitude below a five-term one.
+   * What is stable is the gap WITHIN a result set — a finding scoring 2% of
+   * the top hit matched something incidental, whatever the absolute numbers.
+   *
+   * This is about the result set, not the order. Returning a long tail ranked
+   * correctly still hands an agent a list it will read from the top of and
+   * believe is relevant.
+   */
+  const cut = ranked.length ? ranked[0].score * 0.06 : 0;
+  const relevant = opts.includeUnmatched ? ranked : ranked.filter((h) => h.score >= cut);
+
+  return opts.limit ? relevant.slice(0, opts.limit) : relevant;
+}
+
+/**
+ * Fold applicability, decay and information gain into the text score.
+ *
+ * Each is a multiplier rather than an additive bonus, so none of them can
+ * manufacture a hit out of a finding the query did not match. A finding that
+ * is perfectly applicable and highly surprising still scores zero if it is not
+ * about what you asked.
+ */
+function finalScore(h: Hit): number {
+  let s = h.score;
+
+  // A precondition that provably does not hold here is strong evidence this
+  // finding is not yours — stronger than any amount of text similarity, since
+  // similarity cannot distinguish "about proxies" from "about YOUR proxy".
+  // Demoted rather than dropped: a precondition can be incomplete, and being
+  // buried is recoverable where being hidden is not.
+  if (h.applicability === 'fails') s *= 0.15;
+  else if (h.applicability === 'holds') s *= 1.6;
+
+  // Decay, so a stale claim loses to a fresh one that matched equally well.
+  // Floored: a stale finding is a lead worth seeing, not noise.
+  s *= 0.4 + 0.6 * h.confidence;
+
+  /*
+   * Information gain. The searcher here is nearly always a model, and this
+   * corpus knows which of its findings models get WRONG — that is what
+   * `surprise` measures, and it is the one ranking signal in this file that no
+   * other retrieval system could compute.
+   *
+   * Ranking by relevance alone surfaces what the asker could most easily have
+   * derived. Weighting by surprise surfaces what it could not. Kept small: it
+   * breaks ties between comparable matches, and must never outrank being about
+   * the right subject.
+   */
+  if (h.surprise !== null) s *= 1 + 0.35 * h.surprise;
+
+  return s;
+}

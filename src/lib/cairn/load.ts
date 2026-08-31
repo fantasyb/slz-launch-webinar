@@ -10,6 +10,7 @@ import {
   standing,
   type Standing,
 } from './decay';
+import { retrieve } from './retrieval';
 
 /**
  * The corpus is a directory of JSON files in git. That is the whole store.
@@ -107,38 +108,19 @@ export function byConfidence(findings = loadCorpus()): Finding[] {
   return sortByKey([...findings], (f) => confidence(f));
 }
 
+/**
+ * Rank findings against a query.
+ *
+ * A thin wrapper over `retrieve`, kept because every caller wants findings
+ * rather than scored hits. The scoring itself moved to `retrieval.ts` after
+ * this function's substring matching was measured: `no space left on device`
+ * returned all 31 findings, because `on` is a substring of *connection* and
+ * every term counted equally, while `ENOSPC` returned none. Both are the same
+ * bug — a term's weight has to come from how much it narrows the corpus, not
+ * from whether it appears.
+ */
 export function search(query: string, findings = loadCorpus()): Finding[] {
-  const q = query.trim().toLowerCase();
-  if (!q) return findings;
-  const terms = q.split(/\s+/);
-  return findings
-    .map((f) => {
-      const haystack = [
-        f.title,
-        f.claim,
-        f.subject.name,
-        f.subject.ecosystem,
-        f.expectation,
-        f.reality,
-        f.workaround ?? '',
-        ...f.tags,
-      ]
-        .join(' ')
-        .toLowerCase();
-      // Title and subject hits weigh more than body hits.
-      const strong = `${f.title} ${f.subject.name} ${f.tags.join(' ')}`.toLowerCase();
-      const score = terms.reduce(
-        (acc, t) =>
-          acc + (strong.includes(t) ? 3 : 0) + (haystack.includes(t) ? 1 : 0),
-        0,
-      );
-      return { f, score };
-    })
-    .filter((r) => r.score > 0)
-    // confidence computed once per result, not once per comparison.
-    .map((r) => ({ ...r, c: confidence(r.f) }))
-    .sort((a, b) => b.score - a.score || b.c - a.c)
-    .map((r) => r.f);
+  return retrieve(query, findings).map((h) => h.finding);
 }
 
 export interface CorpusStats {

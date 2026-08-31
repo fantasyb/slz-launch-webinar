@@ -28,7 +28,8 @@
     "cairn:hooks": "git config core.hooksPath .githooks && echo \"pre-commit hook enabled\"",
     "test": "tsx --test test/*.test.ts",
     "cairn:promote": "tsx scripts/promote.ts",
-    "cairn:match": "tsx scripts/match.ts"
+    "cairn:match": "tsx scripts/match.ts",
+    "cairn:find": "tsx scripts/find.ts"
   },
   "dependencies": {
     "clsx": "^2.1.1",

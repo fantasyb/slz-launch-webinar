@@ -1,0 +1,190 @@
+/**
+ * Retrieval stage 3: rank by running the check.
+ *
+ * Every other memory system's best answer is "here is text that resembles your
+ * question." This corpus can do something categorically different, because
+ * every finding ships the command that decides whether it is true: it can
+ * answer "this one is happening on your machine right now."
+ *
+ * That is not a better similarity score. It is a different kind of claim — the
+ * difference between a search result and a diagnosis — and it is available
+ * only because the schema demanded a falsifiable check from the beginning.
+ * Text retrieval narrows 31 findings to 3; execution decides which of the 3
+ * is your actual problem.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY THIS IS OPT-IN, LOCAL-ONLY, AND NOT WIRED INTO SEARCH
+ * ---------------------------------------------------------------------------
+ *
+ * It runs shell commands that came out of a corpus. Doing that automatically,
+ * to text fetched from a host, is precisely cairn-0014 — the finding this
+ * project recorded about itself after shipping "point your agent at this URL
+ * and follow it."
+ *
+ * So the constraints are structural, not advisory:
+ *
+ *   - LOCAL ONLY. Findings must come from the on-disk corpus, which the
+ *     operator can read and reviewed when they cloned it. Never a federated
+ *     cache, never an API response. `assertLocalCorpus` enforces this by
+ *     identity against `loadCorpus()`, so passing a parsed API payload throws
+ *     rather than executing.
+ *   - NEVER IMPLICIT. No code path reaches this without a caller explicitly
+ *     asking. `retrieve()` stays pure.
+ *   - `manual` checks are skipped. They are the ones that want a human, a paid
+ *     API or a specific host.
+ *   - Bounded time, no shell interpolation of the query, output capped.
+ *
+ * A check is still arbitrary code from whoever wrote the finding. The honest
+ * statement of the guarantee: this is exactly as safe as running the test
+ * suite of a repository you cloned, and no safer.
+ */
+import { execFile } from 'child_process';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import crypto from 'crypto';
+import type { Finding } from './schema';
+import { loadCorpus } from './load';
+import { matchEnvironment } from './precondition';
+
+export type Fired = 'fires' | 'does-not-fire' | 'inconclusive' | 'skipped';
+
+export interface Confirmation {
+  id: string;
+  fired: Fired;
+  /** Why, in one line — for a skip, the reason it was not run. */
+  detail: string;
+  exitCode: number | null;
+  ms: number;
+}
+
+export interface ConfirmOptions {
+  /** Per-check wall clock. Checks are meant to be cheap; this catches the ones that are not. */
+  timeoutMs?: number;
+  /** Hard cap on how many checks run, so a broad query cannot become a build. */
+  max?: number;
+}
+
+/**
+ * Refuse to execute anything that did not come from the operator's own corpus.
+ *
+ * Compares by object identity against a fresh load, not by id or by shape: a
+ * hostile payload can claim any id and reproduce any structure, but it cannot
+ * be the same object the local loader produced from the local directory.
+ */
+export function assertLocalCorpus(findings: Finding[]): void {
+  const local = new Set(loadCorpus());
+  for (const f of findings) {
+    if (!local.has(f)) {
+      throw new Error(
+        `refusing to execute checks for ${f.id}: finding did not come from the ` +
+          'local corpus. Checks are only ever run for findings loaded from disk.',
+      );
+    }
+  }
+}
+
+/**
+ * Run one finding's check and report whether the failure it describes is
+ * present here.
+ *
+ * The command is written to a file and executed rather than passed to `-c`,
+ * because heredocs and multi-line scripts are common in checks and did not
+ * survive being flattened. `exec 2>&1` is prepended for the same reason it is
+ * in the verifier: a check's decisive line is very often on stderr, and losing
+ * it silently turned a real reproduction into an inconclusive one.
+ */
+async function runCheck(f: Finding, timeoutMs: number): Promise<Confirmation> {
+  const started = Date.now();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cairn-confirm-'));
+  const script = path.join(dir, `${crypto.randomBytes(6).toString('hex')}.sh`);
+  fs.writeFileSync(script, `exec 2>&1\n${f.check.command}\n`, { mode: 0o700 });
+
+  return new Promise<Confirmation>((resolve) => {
+    execFile(
+      '/bin/sh',
+      [script],
+      { timeout: timeoutMs, maxBuffer: 1 << 20, killSignal: 'SIGKILL' },
+      (err, stdout) => {
+        const ms = Date.now() - started;
+        try {
+          fs.rmSync(dir, { recursive: true, force: true });
+        } catch {
+          /* the temp dir is disposable; failing to remove it must not fail the check */
+        }
+        const code =
+          err && typeof (err as { code?: unknown }).code === 'number'
+            ? ((err as { code: number }).code)
+            : err
+              ? null
+              : 0;
+        const timedOut = Boolean(err && (err as { killed?: boolean }).killed);
+
+        // The verdict is the check's own exit status, and the finding's
+        // confirmedIf/refutedIf prose says what that status means. This does
+        // NOT try to interpret the output — an LLM reading stdout to decide
+        // whether a claim held is exactly the unfalsifiable judgment the
+        // executable check exists to replace.
+        const fired: Fired = timedOut
+          ? 'inconclusive'
+          : code === 0
+            ? 'fires'
+            : code === null
+              ? 'inconclusive'
+              : 'does-not-fire';
+
+        resolve({
+          id: f.id,
+          fired,
+          detail: timedOut
+            ? `timed out after ${timeoutMs}ms`
+            : (stdout || '').trim().split('\n').slice(-1)[0]?.slice(0, 200) || '(no output)',
+          exitCode: code,
+          ms,
+        });
+      },
+    );
+  });
+}
+
+/**
+ * Confirm a shortlist, cheapest signal first.
+ *
+ * Preconditions are evaluated before anything is executed: a finding whose
+ * declared environment does not hold here cannot be reproducing here, and
+ * skipping it costs nothing where running it costs seconds.
+ */
+export async function confirmCandidates(
+  candidates: Finding[],
+  opts: ConfirmOptions = {},
+): Promise<Confirmation[]> {
+  assertLocalCorpus(candidates);
+  const timeoutMs = opts.timeoutMs ?? 20_000;
+  const max = opts.max ?? 3;
+
+  const out: Confirmation[] = [];
+  let ran = 0;
+  for (const f of candidates) {
+    if (f.check.manual) {
+      out.push({ id: f.id, fired: 'skipped', detail: 'check is marked manual', exitCode: null, ms: 0 });
+      continue;
+    }
+    if (f.precondition?.length && !matchEnvironment(f.precondition).matches) {
+      out.push({
+        id: f.id,
+        fired: 'skipped',
+        detail: 'precondition does not hold here',
+        exitCode: null,
+        ms: 0,
+      });
+      continue;
+    }
+    if (ran >= max) {
+      out.push({ id: f.id, fired: 'skipped', detail: `beyond --max ${max}`, exitCode: null, ms: 0 });
+      continue;
+    }
+    ran += 1;
+    out.push(await runCheck(f, timeoutMs));
+  }
+  return out;
+}
