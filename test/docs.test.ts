@@ -101,3 +101,40 @@ test('the homepage does not enumerate exclusion reasons in prose', () => {
     `the homepage renders integrity.${named?.[1]} directly instead of the partition`,
   );
 });
+
+/**
+ * The repository carries two licenses for two different assets, and the split
+ * only works if it is stated in one place and agreed with everywhere else.
+ * package.json is the file tooling reads; NOTICE is the file people read.
+ * They drifting apart is how a project ends up with an SPDX identifier that
+ * contradicts its own LICENSE.
+ */
+test('the license files exist and agree with package.json', () => {
+  const root = process.cwd();
+  const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+  assert.equal(pkg.license, 'Apache-2.0', 'package.json must declare the code license');
+
+  const license = fs.readFileSync(path.join(root, 'LICENSE'), 'utf8');
+  assert.match(license, /Apache License\s+Version 2\.0/, 'LICENSE must be Apache-2.0');
+
+  const corpus = fs.readFileSync(path.join(root, 'LICENSE-CORPUS'), 'utf8');
+  assert.match(corpus, /SPDX-License-Identifier: CC-BY-4\.0/);
+
+  const notice = fs.readFileSync(path.join(root, 'NOTICE'), 'utf8');
+  for (const required of ['Apache License 2.0', 'Creative Commons Attribution 4.0']) {
+    assert.ok(notice.includes(required), `NOTICE must name ${required}`);
+  }
+});
+
+test('every corpus file is covered by the corpus license', () => {
+  // LICENSE-CORPUS names the paths it applies to. A new corpus directory that
+  // nobody adds there is code-licensed by default, which is the wrong terms
+  // and, worse, a silent change of terms.
+  const corpus = fs.readFileSync(path.join(process.cwd(), 'LICENSE-CORPUS'), 'utf8');
+  const dirs = ['cairn/', 'panel-runs/'].filter((d) =>
+    fs.existsSync(path.join(process.cwd(), d)),
+  );
+  for (const d of dirs) {
+    assert.ok(corpus.includes(d), `LICENSE-CORPUS does not cover ${d}`);
+  }
+});

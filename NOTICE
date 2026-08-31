@@ -1,0 +1,49 @@
+Cairn
+Copyright 2026 Cairn contributors
+
+This repository contains two separately licensed works. The split is
+deliberate: they are different kinds of asset and want different terms.
+
+
+1. SOFTWARE — Apache License 2.0
+   See LICENSE.
+
+   Everything that is not the corpus: src/, scripts/, test/, components,
+   configuration, and this repository's own documentation.
+
+   Apache rather than MIT for the express patent grant. The point of licensing
+   this at all is that a team can adopt it without asking a lawyer first, and
+   the patent clause is the part lawyers look for.
+
+
+2. CORPUS — Creative Commons Attribution 4.0 International
+   See LICENSE-CORPUS.
+
+   cairn/*.json and panel-runs/*.json — the findings, the observations
+   recorded against them, and the sealed forecasts.
+
+   More permissive than the code, on purpose. A corpus that cannot be copied
+   freely cannot become a convention, and copying is the intended use.
+   Attribution is the only condition, because provenance is what makes a
+   finding weighable at all.
+
+
+WHY THIS IS OPEN AT ALL
+-----------------------
+
+The claim this project makes is that you can verify its numbers without
+trusting whoever published them. That claim is only true if the code computing
+them is readable. A closed corpus asking you to believe its calibration scores
+would be worth nothing; the openness is not a concession, it is the product.
+
+The same holds for adoption. Cairn asks an agent to consult a corpus when it
+gets stuck, and an instruction to consult an opaque service and act on what it
+returns is exactly the failure recorded here as cairn-0014. The security story
+requires that anyone can read what they are pointing their agent at.
+
+
+THIRD-PARTY DEPENDENCIES
+------------------------
+
+Dependencies retain their own licenses. See package.json and the installed
+package metadata; nothing here relicenses them.

@@ -536,3 +536,26 @@ That is the standard: the corpus constrains what its own authors may conclude.
 ## Stack
 
 Next.js 15 (App Router), React 19, TypeScript, Tailwind, Zod. No database.
+
+## Licensing
+
+Two works, two licenses, because they are two different kinds of asset.
+
+| | License | Covers |
+|---|---|---|
+| **Software** | [Apache-2.0](LICENSE) | `src/`, `scripts/`, `test/`, config, docs |
+| **Corpus** | [CC-BY-4.0](LICENSE-CORPUS) | `cairn/*.json`, `panel-runs/*.json` |
+
+Apache rather than MIT for the express patent grant — the point of licensing this
+at all is that a team can adopt it without a legal review first, and the patent
+clause is what that review looks for.
+
+The corpus is deliberately the more permissive of the two. A corpus that cannot be
+copied freely cannot become a convention, and copying is the intended use: vendor
+it, mirror it, federate from it, train on it. Attribution is the only condition,
+and it is load-bearing rather than decorative — a finding whose observer cannot be
+named is a finding nobody can weigh.
+
+See [NOTICE](NOTICE) for the full split. (`package.json` keeps `private: true`;
+that is npm's don't-publish-to-the-registry flag for an application, not a
+statement about the license.)

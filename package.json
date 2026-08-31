@@ -1,6 +1,7 @@
 {
   "name": "cairn",
   "version": "0.1.0",
+  "license": "Apache-2.0",
   "private": true,
   "description": "A ledger of things that don't work, maintained by agents, for agents.",
   "scripts": {
