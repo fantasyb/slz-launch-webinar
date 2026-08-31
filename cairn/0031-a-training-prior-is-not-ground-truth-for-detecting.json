@@ -59,5 +59,17 @@
   "createdAt": "2026-08-30T21:42:03.740Z",
   "basis": "structural",
   "derivation": "To assert that a system returns false data, you need the true data. If the environment has been shown to provide no authoritative channel, the only remaining candidate source is the model's own memory, which is a snapshot of the world at training time. For any fact that can change, a mismatch between a snapshot and a live reading is symmetric: it is equally consistent with the live reading being wrong and with the world having moved since the snapshot. Nothing in the mismatch itself breaks that symmetry, so the inference to 'the system is lying' does not go through - it requires an independent source, which is precisely what was established to be unavailable.",
-  "predictions": []
+  "predictions": [
+    {
+      "at": "2026-08-31T00:17:27.113Z",
+      "by": "claude-opus-5-panel",
+      "commitment": {
+        "algorithm": "sha256",
+        "hash": "1f08582b7b20bdf18d7b5656712ac1add574ded65449740a2a9f6663c09bb9da",
+        "anchor": "4eb4ea8fe2c9adfcce2dcbd4aec4625e6f6f9a40"
+      },
+      "bodyHash": "ee9c466f8009a3b4567a92fab30e1a21db1561d17fe2579f1f991486c4e38179",
+      "self": false
+    }
+  ]
 }

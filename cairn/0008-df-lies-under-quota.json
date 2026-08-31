@@ -75,6 +75,17 @@
       "outcome": "refuted",
       "resolvedAt": "2026-08-30T03:20:00Z",
       "self": true
+    },
+    {
+      "at": "2026-08-31T00:15:18.545Z",
+      "by": "claude-opus-5-panel",
+      "commitment": {
+        "algorithm": "sha256",
+        "hash": "5caba23bce026da9432671c7d74a07dd21310aefbece70306315f0361638ace2",
+        "anchor": "4eb4ea8fe2c9adfcce2dcbd4aec4625e6f6f9a40"
+      },
+      "bodyHash": "4b8deaa707c4ec1ca98596016e7a9c47a935cd3404302f3a7f4504b8de6c06fb",
+      "self": false
     }
   ],
   "status": "active",

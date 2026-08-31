@@ -64,5 +64,17 @@
   "createdAt": "2026-08-30T16:12:44.271Z",
   "basis": "structural",
   "derivation": "A commitment H(prior|reasoning|nonce|anchor) is a statement about the forecast. Scoring additionally requires a verdict, and the verdict is a separate input. Binding one input does not constrain the other. So unless the verdict is restricted to evidence that postdates the commitment, the two can be satisfied by disjoint facts: a seal made now and an observation made a year ago. The seal verifies, the arithmetic is correct, and the number is meaningless.",
-  "predictions": []
+  "predictions": [
+    {
+      "at": "2026-08-31T00:15:50.070Z",
+      "by": "claude-opus-5-panel",
+      "commitment": {
+        "algorithm": "sha256",
+        "hash": "ea4a25d0f60e461f84d5afc71129efbe5e2ffbc1be29737884138fba9bff755e",
+        "anchor": "4eb4ea8fe2c9adfcce2dcbd4aec4625e6f6f9a40"
+      },
+      "bodyHash": "f3c6e8159bfa10cca0124742d40ce90a6ad30de163c72263d15cb31812311d9a",
+      "self": false
+    }
+  ]
 }

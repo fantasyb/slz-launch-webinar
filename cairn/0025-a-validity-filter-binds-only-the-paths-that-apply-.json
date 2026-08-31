@@ -69,5 +69,17 @@
   "createdAt": "2026-08-30T16:56:21.324Z",
   "basis": "structural",
   "derivation": "An admissibility rule is a property of the data, but implementing it per-consumer makes it a property of each consumer. The set of consumers is open and grows over time, so the invariant holds only over the subset that happened to apply it. Since any one consumer can determine the output on its own — a short-circuit returns before the others run — the effective guarantee is the intersection of what every reader enforces, which is the minimum, not the maximum. Adding a reader can therefore weaken a system without modifying any existing rule.",
-  "predictions": []
+  "predictions": [
+    {
+      "at": "2026-08-31T00:16:16.007Z",
+      "by": "claude-opus-5-panel",
+      "commitment": {
+        "algorithm": "sha256",
+        "hash": "ab4c022ceeab67df94550287cc31136b7150de5bf5c4c15d11c220ad641d57d6",
+        "anchor": "4eb4ea8fe2c9adfcce2dcbd4aec4625e6f6f9a40"
+      },
+      "bodyHash": "f145104026d182bbe20f5a9c0f0dd6e158f9a336f2bbc63664abf8d50be6c01f",
+      "self": false
+    }
+  ]
 }

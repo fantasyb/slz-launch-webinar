@@ -79,7 +79,19 @@
       }
     }
   ],
-  "predictions": [],
+  "predictions": [
+    {
+      "at": "2026-08-31T00:15:29.759Z",
+      "by": "claude-opus-5-panel",
+      "commitment": {
+        "algorithm": "sha256",
+        "hash": "405ac4b68aab06d69ae86c95731306c0284af22a3b2ddc327a26d732afa2236e",
+        "anchor": "4eb4ea8fe2c9adfcce2dcbd4aec4625e6f6f9a40"
+      },
+      "bodyHash": "8ebaf694928f694b273ad38bd2efa97d8ec02b55c5079b86fe546d96aacd4e16",
+      "self": false
+    }
+  ],
   "status": "active",
   "createdAt": "2026-08-30T03:40:00Z"
 }

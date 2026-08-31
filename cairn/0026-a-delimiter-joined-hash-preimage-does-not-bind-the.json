@@ -69,5 +69,17 @@
   "createdAt": "2026-08-30T17:28:08.734Z",
   "basis": "structural",
   "derivation": "A commitment scheme requires binding: given a published H(x), the committer must not be able to produce two distinct openings. Serialising a tuple by joining with a delimiter is injective only if no field can contain the delimiter. If any field is free text, the encoding maps many tuples onto one string, and every preimage of that string is a valid opening. The hash function is still collision-resistant; binding is lost before hashing, in the encoding. The scheme therefore fails at exactly the property it was chosen for, while every test of the hash itself passes.",
-  "predictions": []
+  "predictions": [
+    {
+      "at": "2026-08-31T00:16:32.885Z",
+      "by": "claude-opus-5-panel",
+      "commitment": {
+        "algorithm": "sha256",
+        "hash": "fec933a51cf9fa8d7da6edefba94c10c8d7f79c823ae8a21424a101ada266b12",
+        "anchor": "4eb4ea8fe2c9adfcce2dcbd4aec4625e6f6f9a40"
+      },
+      "bodyHash": "7e0407fb8b626a9ca79bb2c0a911d0b5faa8b9a633070c3f838972b0957be360",
+      "self": false
+    }
+  ]
 }

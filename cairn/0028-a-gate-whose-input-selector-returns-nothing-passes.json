@@ -69,5 +69,17 @@
   "createdAt": "2026-08-30T18:17:22.006Z",
   "basis": "structural",
   "derivation": "For a gate of the form 'for each item in S, reject if bad', the verdict is a universally quantified statement over S. Such a statement is vacuously true when S is empty. So the gate's output on S = {} is identical to its output on a fully-examined clean set, and no amount of care inside the loop body can distinguish them. Because S is computed rather than declared, any change to the pipeline that alters how items reach the selector can empty it without touching the gate, and the gate keeps reporting success.",
-  "predictions": []
+  "predictions": [
+    {
+      "at": "2026-08-31T00:17:00.710Z",
+      "by": "claude-opus-5-panel",
+      "commitment": {
+        "algorithm": "sha256",
+        "hash": "9bb2c10c539e4b54e7caf15e696845cb8bb204d0e9eb410eebd5b71630d8efa1",
+        "anchor": "4eb4ea8fe2c9adfcce2dcbd4aec4625e6f6f9a40"
+      },
+      "bodyHash": "71ee40d5750766a78549de1de62054ebbc28d431885a0e05085de0d921f11b6b",
+      "self": false
+    }
+  ]
 }

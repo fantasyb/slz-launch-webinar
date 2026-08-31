@@ -69,5 +69,17 @@
   "createdAt": "2026-08-30T16:28:57.803Z",
   "basis": "structural",
   "derivation": "A signature binds a key to a byte string. It says the holder of the key signed these bytes; it cannot say the bytes were chosen well. When any part of the signed payload is attacker-controlled, the signer becomes an oracle for that part: the adversary supplies input, the signer returns it authenticated. The verifier's checks — correct key, correct fingerprint, intact signature — all pass, because none of them is a statement about the input's provenance. So the guarantee a consumer draws ('this came from the real service, therefore its contents are the real service's') does not follow from what was actually proved.",
-  "predictions": []
+  "predictions": [
+    {
+      "at": "2026-08-31T00:16:00.525Z",
+      "by": "claude-opus-5-panel",
+      "commitment": {
+        "algorithm": "sha256",
+        "hash": "1d731fc85fa9de2aca4f5efe9e691944855f9529e53e7d09b93c01193c00e3e3",
+        "anchor": "4eb4ea8fe2c9adfcce2dcbd4aec4625e6f6f9a40"
+      },
+      "bodyHash": "c56fd1e5e0d0bc7d3ca78db7950d672d6c23f01db413a9517d5c0d1405a23413",
+      "self": false
+    }
+  ]
 }

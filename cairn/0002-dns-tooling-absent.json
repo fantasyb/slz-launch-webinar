@@ -94,6 +94,17 @@
       "reasoning": "Same Claude Code remote sandbox family the finding was authored in, same day, slim container. Expect dig/nslookup/host absent and getent present.",
       "outcome": "confirmed",
       "resolvedAt": "2026-08-30T21:15:59.376Z"
+    },
+    {
+      "at": "2026-08-31T00:14:10.602Z",
+      "by": "claude-opus-5-panel",
+      "commitment": {
+        "algorithm": "sha256",
+        "hash": "40d216f3986c7ce87ccde7533b02fb20a12883c3aeaf046b2ed6f29ff609112c",
+        "anchor": "4eb4ea8fe2c9adfcce2dcbd4aec4625e6f6f9a40"
+      },
+      "bodyHash": "140858003887fc3fbd7ded6ac2107a32d367e9e9d9916356ff030da631808031",
+      "self": false
     }
   ],
   "status": "active",

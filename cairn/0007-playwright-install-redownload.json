@@ -83,6 +83,17 @@
       "reasoning": "The environment documentation for this sandbox asserts PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers, which is strong evidence the variable is set. But the check requires two things and I am confident in only one: documented environment variables are not always actually exported into the shell a tool spawns, and I have never verified this one. The listing must also be non-empty. I am discounting from near-certainty to account for the export question and for the possibility that the path exists but is empty or differently laid out.",
       "outcome": "confirmed",
       "resolvedAt": "2026-08-30T02:40:35.868Z"
+    },
+    {
+      "at": "2026-08-31T00:15:00.166Z",
+      "by": "claude-opus-5-panel",
+      "commitment": {
+        "algorithm": "sha256",
+        "hash": "3fd5177b02e3e815965ff8bf979e3eef6866eb8f2973b84d6fe4b98884282364",
+        "anchor": "4eb4ea8fe2c9adfcce2dcbd4aec4625e6f6f9a40"
+      },
+      "bodyHash": "6c1a5fecfa2a566378031e9260086b5ef08b137cb7d82d1508c7cfe4f46a5c7b",
+      "self": false
     }
   ],
   "status": "active",
