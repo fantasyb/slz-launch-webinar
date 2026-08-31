@@ -2,15 +2,40 @@ export const dynamic = 'force-dynamic';
 
 import Link from 'next/link';
 import { loadCorpus, corpusStats, staleQueue } from '@/lib/cairn/load';
-import { corpusCalibration, ledgerIntegrity } from '@/lib/cairn/calibration';
+import { corpusCalibration, ledgerIntegrity, surprise } from '@/lib/cairn/calibration';
 import { FindingCard } from '@/components/FindingCard';
 
 export default function Home() {
   const all = loadCorpus();
   const stats = corpusStats();
-  const recent = [...all]
-    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-    .slice(0, 5);
+  const byRecency = [...all].sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+  );
+
+  /*
+   * The front-page five are ranked by surprise, not recency.
+   *
+   * Recency is the maintainer's sort. It put this repository's own DNS and
+   * CI-gate internals at the top of the page, which are the least legible
+   * findings in the corpus to anyone who does not already work on it. Sorting
+   * by surprise puts up `df` and `playwright install` instead — findings about
+   * tooling a stranger already uses.
+   *
+   * That is not a cosmetic swap. Surprise is mean prediction error, so ranking
+   * by it ranks by what models did not already know, which is the claim this
+   * whole project rests on. The front page should be the argument, made with
+   * instances rather than asserted in a paragraph.
+   *
+   * Unscored findings have no surprise value and are not hidden — they fill
+   * the remaining slots by recency, so a new finding still reaches the page.
+   */
+  const scored = all
+    .map((f) => ({ f, s: surprise(f) }))
+    .filter((x): x is { f: (typeof all)[number]; s: number } => x.s !== null)
+    .sort((a, b) => b.s - a.s)
+    .map((x) => x.f);
+  const featured = [...scored, ...byRecency.filter((f) => !scored.includes(f))].slice(0, 5);
+  const anyScored = scored.length > 0;
   const needsChecking = staleQueue(3);
   const cal = corpusCalibration(all);
   const integrity = ledgerIntegrity(all);
@@ -39,8 +64,88 @@ export default function Home() {
           </p>
         </div>
 
+        <dl className="mt-8 flex flex-wrap gap-x-10 gap-y-4">
+          {[
+            { k: 'findings', v: stats.total },
+            { k: 'firsthand', v: stats.firsthand },
+            { k: 'fresh', v: stats.byStanding.fresh },
+            { k: 'need checking', v: stats.byStanding.aging + stats.byStanding.stale },
+            { k: 'retired', v: stats.byStanding.retired },
+          ].map(({ k, v }) => (
+            <div key={k}>
+              <dd className="font-claim text-2xl text-ink">{v}</dd>
+              <dt className="mt-0.5 text-[11px] uppercase tracking-wider text-ink-faint">{k}</dt>
+            </div>
+          ))}
+        </dl>
+
+        <div className="mt-8 flex flex-wrap gap-3">
+          <Link
+            href="/findings"
+            className="rounded-md bg-ink px-4 py-2 text-[13px] font-medium text-paper transition-opacity hover:opacity-85"
+          >
+            Read the corpus
+          </Link>
+          <Link
+            href="/use"
+            className="rounded-md border border-rule-strong px-4 py-2 text-[13px] transition-colors hover:border-ink-faint"
+          >
+            Wire it into your project
+          </Link>
+          <Link
+            href="/skill.md"
+            className="rounded-md border border-rule-strong px-4 py-2 font-mono text-[13px] transition-colors hover:border-ink-faint"
+          >
+            skill.md &mdash; for agents
+          </Link>
+        </div>
+      </section>
+
+      {/*
+        Order is the whole argument of this page.
+
+        It used to run: what this is -> commit-reveal forecasting -> stats ->
+        findings. Which put the single most abstract idea in the project in
+        position two, ahead of any concrete instance of the thing it is about.
+        A stranger got sealed hashes and an exclusion breakdown before they had
+        seen one finding, and the honest test — could someone landing cold say
+        what this is — failed.
+
+        Examples first. The forecasting machinery is the most interesting part
+        to whoever already understands the corpus, and the least useful part to
+        whoever does not; it earns its place after the reader has seen what a
+        finding is, not before.
+      */}
+      <section className="border-b border-rule py-12">
+        <div className="mb-2 flex items-baseline justify-between gap-4">
+          <h2 className="font-claim text-lg">This is what an entry looks like</h2>
+          <Link href="/findings" className="text-[13px] text-ink-soft hover:text-ink">
+            all {stats.total} &rarr;
+          </Link>
+        </div>
+        <p className="mb-5 max-w-reading text-[14px] leading-relaxed text-ink-soft">
+          {anyScored ? (
+            <>
+              Ranked by how wrong the models forecasting them turned out to be. One that
+              everyone predicts correctly is already common knowledge; these were not.
+            </>
+          ) : (
+            <>
+              The {featured.length} most recently added. Each one cost somebody an
+              afternoon, and each carries the command that would prove it wrong.
+            </>
+          )}
+        </p>
+        <div className="grid gap-3">
+          {featured.map((f) => (
+            <FindingCard key={f.id} finding={f} />
+          ))}
+        </div>
+      </section>
+
+      <section className="border-b border-rule py-12">
         {integrity.total > 0 && (
-          <div className="mt-8 rounded-lg border border-rule bg-raised p-5">
+          <div className="rounded-lg border border-rule bg-raised p-5">
             <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-faint">
               The part that cannot be scraped
             </p>
@@ -97,65 +202,14 @@ export default function Home() {
             </p>
           </div>
         )}
-
-        <dl className="mt-8 flex flex-wrap gap-x-10 gap-y-4">
-          {[
-            { k: 'findings', v: stats.total },
-            { k: 'firsthand', v: stats.firsthand },
-            { k: 'fresh', v: stats.byStanding.fresh },
-            { k: 'need checking', v: stats.byStanding.aging + stats.byStanding.stale },
-            { k: 'retired', v: stats.byStanding.retired },
-          ].map(({ k, v }) => (
-            <div key={k}>
-              <dd className="font-claim text-2xl text-ink">{v}</dd>
-              <dt className="mt-0.5 text-[11px] uppercase tracking-wider text-ink-faint">{k}</dt>
-            </div>
-          ))}
-        </dl>
-
-        <div className="mt-8 flex flex-wrap gap-3">
-          <Link
-            href="/findings"
-            className="rounded-md bg-ink px-4 py-2 text-[13px] font-medium text-paper transition-opacity hover:opacity-85"
-          >
-            Read the corpus
-          </Link>
-          <Link
-            href="/use"
-            className="rounded-md border border-rule-strong px-4 py-2 text-[13px] transition-colors hover:border-ink-faint"
-          >
-            Wire it into your project
-          </Link>
-          <Link
-            href="/skill.md"
-            className="rounded-md border border-rule-strong px-4 py-2 font-mono text-[13px] transition-colors hover:border-ink-faint"
-          >
-            skill.md &mdash; for agents
-          </Link>
-        </div>
-      </section>
-
-      <section className="border-b border-rule py-12">
-        <div className="mb-5 flex items-baseline justify-between gap-4">
-          <h2 className="font-claim text-lg">Most recent</h2>
-          <Link href="/findings" className="text-[13px] text-ink-soft hover:text-ink">
-            all {stats.total} &rarr;
-          </Link>
-        </div>
-        <div className="grid gap-3">
-          {recent.map((f) => (
-            <FindingCard key={f.id} finding={f} />
-          ))}
-        </div>
       </section>
 
       <section className="py-12">
         <h2 className="font-claim text-lg">Wants a second pair of eyes</h2>
         <p className="mt-2 max-w-reading text-[14px] leading-relaxed text-ink-soft">
-          Re-checking is only worth doing where the answer would change something. These rank
-          highest on expensive-to-rediscover, cheap-to-re-test, and currently uncertain &mdash;
-          a claim sitting near 50% confidence is the one worth probing. If you have spare
-          cycles, run its check and open a pull request with what you saw.
+          Re-checking only pays where the answer would change something, so these rank
+          highest on expensive-to-rediscover, cheap-to-re-test and currently uncertain.
+          Run one and open a pull request with what you saw.
         </p>
         <div className="mt-5 grid gap-3">
           {needsChecking.map((f) => (
