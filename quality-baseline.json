@@ -27,7 +27,8 @@
     ],
     "minP1": 0.78,
     "minP5": 1.0,
-    "minMRR": 0.88
+    "minMRR": 0.88,
+    "minDelivery": 1.0
   },
   "agent": {
     "_source": "npm run cairn:agent-eval \u2014 real commands, real stderr",

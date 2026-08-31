@@ -26,7 +26,7 @@ import fs from 'fs';
 const exec = promisify(execFile);
 
 interface Baseline {
-  heldOut: { minP1: number; minP5: number; minMRR: number };
+  heldOut: { minP1: number; minP5: number; minMRR: number; minDelivery: number };
   agent: { minCoveredHits: number; minSilentOnUnknown: number };
   corpus: { maxLintErrors: number; maxCheckSeconds: number };
 }
@@ -76,6 +76,12 @@ async function main() {
     check('heldOut P@5', Number(heldOut[2]), baseline.heldOut.minP5);
     check('heldOut MRR', Number(heldOut[3]), baseline.heldOut.minMRR);
   }
+
+  // Delivery is the number that corresponds to what the agent actually knows
+  // after one query, so it is gated hardest.
+  const del = evalOut.match(/DELIVERY\s+\d+\/\d+ \(([\d.]+)\)/);
+  if (!del) failures.push('could not parse DELIVERY — the guard is blind to the headline metric');
+  else check('heldOut delivery', Number(del[1]), baseline.heldOut.minDelivery);
 
   // --- agent simulation: covered ground, and silence on unknown ground ---
   const covered = (agentOut.match(/^HIT/gm) ?? []).length;

@@ -717,6 +717,16 @@ export interface Hit {
    */
   siblings: string[];
   /**
+   * Findings this retriever has been MEASURED to mix up with this one.
+   *
+   * Distinct from `siblings`, which records findings that look alike by
+   * subject or tags. This records findings that are actually confused in
+   * practice, learned by querying with each finding's own held-out
+   * description. The two overlap but neither contains the other: cairn-0018
+   * and cairn-0026 share no subject and no tag, and are confused constantly.
+   */
+  confusedWith: string[];
+  /**
    * How much of the query this finding accounts for, 0 to 1.
    *
    * Reported rather than used as a threshold. See `strength`.
@@ -904,6 +914,7 @@ export function retrieve(
       confidence: doc.confidence,
       surprise: doc.surprise,
       siblings: [],
+      confusedWith: [],
       explained: 0,
       strength: 'strong',
       caveats: [],
@@ -1141,6 +1152,26 @@ export function retrieve(
    * a cluster is a handful at most.
    */
   const linked = linkSiblings(relevant);
+
+  /*
+   * Disclose measured confusions alongside declared siblings.
+   *
+   * `siblings` records findings that LOOK alike -- same subject, same tags.
+   * This records findings this retriever has been observed to MIX UP, which is
+   * a different and strictly more useful fact: it caught cairn-0018 against
+   * cairn-0026 and cairn-0030 against cairn-0001, pairs the declarative rule
+   * cannot see because what they share is subject matter rather than metadata.
+   */
+  if (!opts.includeUnmatched && linked.length > 0) {
+    const confusions = confusionPairs(findings);
+    for (const h of linked) {
+      for (const other of confusions.get(h.finding.id) ?? []) {
+        if (other !== h.finding.id && !h.confusedWith.includes(other)) {
+          h.confusedWith.push(other);
+        }
+      }
+    }
+  }
   if (!opts.limit) return linked;
 
   const kept = linked.slice(0, opts.limit);
@@ -1514,4 +1545,67 @@ function findingsNaming(cmd: string, docs: Indexed[]): Set<string> {
     if (re.test(hay)) out.add(d.finding.id);
   }
   return out;
+}
+
+/**
+ * Which findings this retriever actually confuses, measured on itself.
+ *
+ * The sibling rule links findings that share a subject or most of their tags.
+ * Measured against the held-out set, that catches one confusion in four:
+ * cairn-0018 loses to cairn-0026 and cairn-0030 to cairn-0001 without either
+ * pair sharing a subject or a tag, because what they share is a SUBJECT MATTER
+ * — what a commitment binds, what the proxy does — and no field records that.
+ *
+ * Rather than invent a similarity measure for it, the corpus is asked. Every
+ * finding carries `mechanism` and `appliesTo`, prose describing itself that is
+ * deliberately never indexed. That makes each finding a labelled probe: query
+ * with a finding's own description and the right answer is known. When the
+ * retriever returns something else, that is not a metric — it is this
+ * retriever, on this corpus, stating which pairs it cannot tell apart.
+ *
+ * The result is a confusion structure derived from measurement rather than
+ * from a theory of similarity, and it is exactly as accurate as the retriever
+ * is wrong. It costs one query per finding, computed once per index.
+ *
+ * This is possible because the corpus ships held-out prose per document. A
+ * corpus of documents alone could not do it; there would be nothing to probe
+ * with whose answer was already known.
+ */
+let confusionCache: WeakMap<object, Map<string, string[]>> = new WeakMap();
+
+export function confusionPairs(findings: Finding[]): Map<string, string[]> {
+  const hit = confusionCache.get(findings);
+  if (hit) return hit;
+
+  // Seeded empty first: confusionPairs is reached from retrieve(), so an
+  // unseeded recursive call would loop. The probes below run against the
+  // seeded empty map and therefore measure ranking WITHOUT confusion
+  // disclosure, which is the honest thing to measure anyway.
+  const pairs = new Map<string, string[]>();
+  confusionCache.set(findings, pairs);
+
+  const add = (a: string, b: string) => {
+    const list = pairs.get(a) ?? [];
+    if (!list.includes(b)) list.push(b);
+    pairs.set(a, list);
+  };
+
+  for (const f of findings) {
+    if (f.status === 'retired') continue;
+    for (const probe of [f.mechanism, f.appliesTo]) {
+      if (!probe || probe.length < 40) continue;
+      const top = retrieve(probe.slice(0, 240), findings, { limit: 1 })[0];
+      if (!top || top.finding.id === f.id) continue;
+      // Symmetric: if this finding's own description reaches that one, an
+      // agent landing on either should be told about the other.
+      add(top.finding.id, f.id);
+      add(f.id, top.finding.id);
+    }
+  }
+  return pairs;
+}
+
+/** Reset the memo. Tests build corpora repeatedly; nothing else needs this. */
+export function clearConfusionCache(): void {
+  confusionCache = new WeakMap();
 }

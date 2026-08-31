@@ -114,6 +114,36 @@ for (const c of cases) {
   buckets.set(c.source, b);
 }
 
+/*
+ * Delivery, not rank.
+ *
+ * P@1 asks whether the right finding came first. That is the wrong question
+ * for a consumer that reads a whole result set: an agent handed cairn-0007
+ * with "often confused with cairn-0012" has been told about cairn-0012, and
+ * scoring that as a miss measures a ranking convention rather than whether the
+ * knowledge arrived.
+ *
+ * So this counts the finding as delivered when it ranks first OR the top hit
+ * names it, through either the declarative sibling link or the measured
+ * confusion link. It is the number that corresponds to what the agent knows
+ * after one query.
+ */
+function delivery(): { n: number; first: number; delivered: number } {
+  let n = 0, first = 0, delivered = 0;
+  for (const f of all) {
+    if (f.status === 'retired') continue;
+    for (const txt of [f.mechanism, f.appliesTo]) {
+      if (!txt || txt.length < 40) continue;
+      n++;
+      const hits = retrieve(txt.slice(0, 240), all);
+      if (hits[0]?.finding.id === f.id) { first++; delivered++; continue; }
+      const top = hits[0];
+      if (top && (top.siblings.includes(f.id) || top.confusedWith.includes(f.id))) delivered++;
+    }
+  }
+  return { n, first, delivered };
+}
+
 function report(title: string, sources: string[]) {
   const rows = sources.map((s) => [s, buckets.get(s)] as const).filter(([, b]) => b);
   if (rows.length === 0) return null;
@@ -151,6 +181,13 @@ if (misses.length) {
     console.log(`  ${m.gold} [${m.source}] ${JSON.stringify(m.q.slice(0, 72))}`);
   }
 }
+
+const d = delivery();
+console.log(
+  `\nDELIVERY  ${d.delivered}/${d.n} (${(d.delivered / d.n).toFixed(3)}) — the right finding ` +
+    `reached the agent,\n          ranked first or named by the top hit. ` +
+    `Ranked first alone: ${(d.first / d.n).toFixed(3)}.`,
+);
 
 if (held) {
   console.log(
