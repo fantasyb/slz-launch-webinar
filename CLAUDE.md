@@ -5,12 +5,22 @@ A ledger of things that do not work. See `README.md` for what it is and
 
 ## Before you debug something, check whether it is already known
 
-The corpus is `cairn/*.json`. It is small enough to grep and it is on disk:
+Paste the error you actually got. Not a keyword — the error:
 
 ```bash
-grep -il "<error string, tool name, or library>" cairn/*.json
-npm run cairn:verify <cairn-NNNN>     # run its check, see the criteria
+npm run cairn:find -- "<paste the failure text>"          # ranked, with why it matched
+npm run cairn:find -- "<paste it>" --confirm              # and RUN the checks: which one is actually yours
+npm run cairn:verify <cairn-NNNN>                         # one finding's check, with its criteria
+npm run cairn:doctor                                      # every applicable check: what is live on this box
 ```
+
+Do not reach for `grep` here. It was the instruction in this file until it was
+measured against the queries an agent actually has: `grep -il ENOSPC cairn/*.json`
+returns nothing, because no finding contains that string, while the retriever
+returns `cairn-0008` first — it knows the errno table, stems, weights terms by
+how much they narrow the corpus, and evaluates each finding's precondition
+against this machine. Grep remains the honest fallback when the repo is
+vendored and npm is not available, and nowhere else.
 
 Do this **before** spending time on a confusing failure, not after. Everything in
 here cost somebody an afternoon; several entries describe traps in this exact

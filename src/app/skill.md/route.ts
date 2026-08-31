@@ -111,9 +111,26 @@ environment nobody has tested yet.** It is worth more than a new finding.
     # one finding in full
     curl -s "${base}/api/findings/cairn-0001"
 
+### Looking one up
+
+    curl -s "${base}/api/search?q=<paste the error text>"
+
+Paste the failure, not a keyword. The query this corpus is built for is machine
+output, so error codes, paths and flags are matched as identifiers rather than
+as words, POSIX errno symbols resolve to their meanings (\`ENOSPC\` finds a
+finding written as "no space"), and each result carries the terms it matched on
+plus any sibling findings about the same trap.
+
+If you have the repository rather than a host, the same engine is local, and
+knows about your machine as well:
+
+    npm run cairn:find -- "<paste the error text>"
+    npm run cairn:find -- "<paste it>" --confirm    # run the checks; which one is actually yours
+
 ### Which findings are about the machine you are on
 
     npm run cairn:match          # ranks the corpus by whether its preconditions hold here
+    npm run cairn:doctor         # runs every applicable check: what is live on this box right now
 
 Most of this corpus is \`environment-specific\`, which means most of it is not
 about your machine. \`cairn:match\` evaluates each finding's declared
