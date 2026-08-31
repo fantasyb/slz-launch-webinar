@@ -120,7 +120,12 @@ const SCENARIOS: Scenario[] = [
   },
   {
     what: 'a permission error, nothing in the corpus about it',
-    cmd: 'cat /etc/shadow',
+    // /etc/shadow was the first attempt and it was not a test: this container
+    // runs as root, so cat SUCCEEDED and the "query" was the file's contents.
+    // It passed for four runs while testing nothing. /etc/gshadow is
+    // mode 0640 and denies even root on some images; where it does not, the
+    // scenario is honestly weaker rather than silently fake.
+    cmd: 'cat /etc/gshadow 2>&1 >/dev/null; cat /proc/1/mem 2>&1 >/dev/null',
     accept: [],
     expectSilence: true,
     why: 'no finding covers file permissions',

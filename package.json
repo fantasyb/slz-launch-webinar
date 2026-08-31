@@ -35,7 +35,8 @@
     "cairn:bench": "tsx scripts/bench.ts",
     "cairn:build-cli": "node scripts/build-cli.mjs",
     "cairn:agent-eval": "tsx scripts/agent-eval.ts",
-    "cairn:guard": "tsx scripts/guard.ts"
+    "cairn:guard": "tsx scripts/guard.ts",
+    "cairn:baseline": "tsx scripts/baseline.ts"
   },
   "dependencies": {
     "clsx": "^2.1.1",
