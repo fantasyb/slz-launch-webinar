@@ -274,12 +274,30 @@ function strongText(f: Finding): string {
 interface Indexed {
   id: string;
   finding: Finding;
+  /** Plain-token frequencies and length, for the BM25 arm. */
+  bm25: { tf: Map<string, number>; length: number };
+  /** Typed-token count, for length normalisation in the typed ranker. */
+  length: number;
   /** Cached at index build; see INDEX_TTL_MS. */
   confidence: number;
   surprise: number | null;
   /** token text -> occurrences, over the whole finding. */
   terms: Map<string, number>;
   strong: Set<string>;
+}
+
+/**
+ * Plain tokenisation for the BM25 arm: lowercase alphanumeric runs.
+ *
+ * Deliberately NOT this file's tokeniser. Feeding BM25 the typed tokeniser was
+ * measured and it was worse than plain — 0.763 against 0.868 P@1 — because
+ * stems and errno aliases are extra tokens that inflate document length, and
+ * length normalisation then penalises exactly the documents that carry the
+ * most alternate spellings. The two methods want different inputs, which is
+ * the whole reason they are kept as separate rankers below.
+ */
+export function plainTokens(text: string): string[] {
+  return text.toLowerCase().match(/[a-z0-9]+/g) ?? [];
 }
 
 export interface CorpusIndex {
@@ -301,6 +319,12 @@ export interface CorpusIndex {
   postings: Map<string, Array<{ doc: number; tf: number }>>;
   n: number;
   builtAt: number;
+  /** Plain-token document frequencies, for the BM25 arm. */
+  bm25Df: Map<string, number>;
+  /** Mean plain-token document length, for BM25 length normalisation. */
+  avgdl: number;
+  /** Mean typed-token document length, for the typed ranker's normalisation. */
+  avgTypedLen: number;
 }
 
 /**
@@ -454,6 +478,8 @@ export function buildIndex(findings: Finding[]): CorpusIndex {
       return {
         id: f.id,
         finding: f,
+        bm25: bm25Doc(f),
+        length: hit.terms.reduce((a, [, n]) => a + n, 0),
         confidence: hit.confidence,
         surprise: hit.surprise,
         terms: new Map(hit.terms),
@@ -467,6 +493,8 @@ export function buildIndex(findings: Finding[]): CorpusIndex {
     return {
       id: f.id,
       finding: f,
+      bm25: bm25Doc(f),
+      length: [...terms.values()].reduce((a, b) => a + b, 0),
       confidence: confidence(f, at),
       surprise: surprise(f),
       terms,
@@ -498,7 +526,16 @@ export function buildIndex(findings: Finding[]): CorpusIndex {
     }
   });
 
-  const index: CorpusIndex = { docs, df, postings, n: docs.length, builtAt: Date.now() };
+  const bm25Df = new Map<string, number>();
+  for (const d of docs) {
+    for (const t of d.bm25.tf.keys()) bm25Df.set(t, (bm25Df.get(t) ?? 0) + 1);
+  }
+  const avgdl = docs.reduce((a, d) => a + d.bm25.length, 0) / Math.max(1, docs.length);
+  const avgTypedLen = docs.reduce((a, d) => a + d.length, 0) / Math.max(1, docs.length);
+
+  const index: CorpusIndex = {
+    docs, df, postings, n: docs.length, builtAt: Date.now(), bm25Df, avgdl, avgTypedLen,
+  };
   indexCache.set(findings, index);
   return index;
 }
@@ -785,7 +822,23 @@ export function retrieve(
       // Saturating term frequency: a finding that says "proxy" nine times is
       // not nine times more about proxies. Without this, long findings win
       // every query by repetition alone.
-      const saturation = 1 + Math.log(tf);
+      /*
+       * Saturating term frequency WITH length normalisation.
+       *
+       * The scorer had saturation but no notion of document length, so a long
+       * finding accumulated matches a short one could not and won queries it
+       * was only incidentally related to. Measured against textbook BM25 --
+       * which normalises by length as a matter of course -- this scorer lost
+       * author prose 0.711 to 0.868 on P@1, and prose queries are exactly
+       * where many mid-weight terms accumulate.
+       *
+       * Same form BM25 uses, and B is BM25's default rather than a number
+       * chosen here: tf damped toward an asymptote, divided by how much longer
+       * this document is than average.
+       */
+      const doclen = index.docs[doc].length;
+      const norm = 1 - LENGTH_B + (LENGTH_B * doclen) / index.avgTypedLen;
+      const saturation = ((tf * (LENGTH_K1 + 1)) / (tf + LENGTH_K1 * norm)) || 0;
       const boost = index.docs[doc].strong.has(tok.text) ? 2.5 : 1;
       const contribution = information * tok.weight * saturation * boost;
       const slot = acc.get(doc) ?? { score: 0, matched: [] };
@@ -865,10 +918,37 @@ export function retrieve(
     )
     .map((h) => ({ ...h, confidence: h.confidence, surprise: h.surprise }));
 
-  const ranked = scored
+  /*
+   * Two rankers, fused on position.
+   *
+   * The typed ranker decides MEMBERSHIP -- which findings are candidates at
+   * all, and which are silent -- because that is where its errno aliases and
+   * anchoring rules do work BM25 cannot: BM25 has no way to return nothing,
+   * and no way to reach cairn-0008 from the string "ENOSPC".
+   *
+   * Ordering is then fused with BM25, which is measurably the better ranker
+   * once the candidate set exists. Nothing outside the typed ranker's
+   * candidates can be introduced by BM25, so the safety properties measured on
+   * unknown ground are preserved exactly while the ordering improves.
+   */
+  const candidateIds = new Set(scored.map((h) => h.finding.id));
+  const typedOrder = scored
     .map((h) => ({ h, final: finalScore(h) }))
-    .sort((a, b) => b.final - a.final || b.h.confidence - a.h.confidence)
-    .map(({ h, final }) => ({ ...h, score: final }));
+    .sort((a, b) => b.final - a.final || b.h.confidence - a.h.confidence);
+  const bm25Order = bm25Rank(query, index).filter((id) => candidateIds.has(id));
+  const fused = fuse([
+    { order: typedOrder.map((x) => x.h.finding.id), weight: 1 },
+    { order: bm25Order, weight: Number(process.env.CAIRN_BM25_WEIGHT ?? BM25_WEIGHT) },
+  ]);
+
+  const ranked = typedOrder
+    .map(({ h, final }) => ({ ...h, score: final }))
+    .sort(
+      (a, b) =>
+        (fused.get(b.finding.id) ?? 0) - (fused.get(a.finding.id) ?? 0) ||
+        b.score - a.score ||
+        b.confidence - a.confidence,
+    );
 
   /*
    * Relative cutoff.
@@ -1276,3 +1356,86 @@ export function associationStatus(findings: Finding[]): {
  */
 
 
+
+/** Plain-token frequencies and length for one finding. */
+function bm25Doc(f: Finding): { tf: Map<string, number>; length: number } {
+  const terms = plainTokens(findingText(f));
+  const tf = new Map<string, number>();
+  for (const t of terms) tf.set(t, (tf.get(t) ?? 0) + 1);
+  return { tf, length: terms.length };
+}
+
+/**
+ * Okapi BM25, as the second ranker.
+ *
+ * Standard parameters, standard formula, standard tokenisation. It is here
+ * because it was measured and it BEAT this file's own scorer on author prose
+ * by a wide margin — P@1 0.868 against 0.711 — and the honest response to that
+ * is to use it rather than to defend the thing that lost.
+ */
+function bm25Rank(query: string, index: CorpusIndex): string[] {
+  const K1 = 1.2;
+  const B = 0.75;
+  const q = new Set(plainTokens(query));
+  const scored: Array<{ id: string; s: number }> = [];
+  for (const d of index.docs) {
+    let s = 0;
+    for (const t of q) {
+      const n = index.bm25Df.get(t) ?? 0;
+      if (n === 0) continue;
+      const f = d.bm25.tf.get(t) ?? 0;
+      if (f === 0) continue;
+      const idfw = Math.log(1 + (index.n - n + 0.5) / (n + 0.5));
+      s += idfw * ((f * (K1 + 1)) / (f + K1 * (1 - B + (B * d.bm25.length) / index.avgdl)));
+    }
+    if (s > 0) scored.push({ id: d.finding.id, s });
+  }
+  return scored.sort((a, b) => b.s - a.s).map((x) => x.id);
+}
+
+/**
+ * Reciprocal rank fusion of the two rankers.
+ *
+ * The measurement that motivated this is unusually clean. BM25 over plain
+ * tokens wins on author prose (P@1 0.868 vs 0.711); the typed ranker — errno
+ * aliases, paths, HTTP statuses, light stemming — wins on machine output
+ * (1.000 vs 0.875) and is the only one that finds `ENOSPC` at all, since no
+ * finding contains that string. Combining them INSIDE one scorer was tried and
+ * made both worse, because they want incompatible inputs: derived tokens are
+ * alternate spellings, and BM25 reads them as extra length.
+ *
+ * So they are not combined. They rank independently and are fused on POSITION,
+ * which needs no shared scale, no shared tokenisation, and no weight to tune
+ * between two quantities that are not comparable. A document both rankers like
+ * rises; one that only a single ranker likes still places, but behind.
+ *
+ * k=60 is the value from the original RRF work and is left alone deliberately:
+ * this file has three separate records of a threshold tuned against eight
+ * cases and then found to mean nothing.
+ */
+/** BM25's standard saturation and length-normalisation constants, unchanged. */
+const LENGTH_K1 = 1.2;
+const LENGTH_B = 0.75;
+
+const RRF_K = 60;
+
+/**
+ * How much the BM25 ordering counts against the typed ordering.
+ *
+ * Equal weight was measured first and it was a trade, not a win: prose P@1
+ * rose 0.711 -> 0.763 and machine output fell 1.000 -> 0.875, because BM25
+ * over plain tokens cannot match "proxies" to "proxy" and pulled the wrong
+ * finding up. A ranker that is confidently wrong on a case should not be able
+ * to override one that is right about it.
+ */
+const BM25_WEIGHT = 0.3;
+
+function fuse(rankings: Array<{ order: string[]; weight: number }>): Map<string, number> {
+  const fused = new Map<string, number>();
+  for (const { order, weight } of rankings) {
+    order.forEach((id, i) => {
+      fused.set(id, (fused.get(id) ?? 0) + weight / (RRF_K + i + 1));
+    });
+  }
+  return fused;
+}

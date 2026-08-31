@@ -16,16 +16,18 @@
   "heldOut": {
     "_source": "npm run cairn:eval \u2014 mechanism and appliesTo, never indexed",
     "_note": [
-      "Recovered to the pre-language-prior values, and raised, once weak matches",
-      "were LABELLED rather than suppressed. Suppression was the only tool while a",
-      "weak match and a strong one looked identical in the output; it cost P@5",
-      "1.000 -> 0.921. Annotation costs nothing and protects better, because a",
-      "caveat an LLM reads in a dozen tokens beats a threshold wrong in both",
-      "directions."
+      "Raised after two fixes measured against a real baseline. The scorer had",
+      "saturating term frequency but NO document-length normalisation, so long",
+      "findings won queries they were only incidentally related to; textbook BM25",
+      "beat it 0.868 to 0.711 on prose P@1 for that reason alone. Adding BM25's own",
+      "length normalisation took it to 0.763, and fusing BM25's ordering at weight",
+      "0.3 to 0.789 / MRR 0.882, with machine-output accuracy held at 1.000.",
+      "Plain BM25 still wins prose P@1 (0.868). That gap is real and unexplained;",
+      "npm run cairn:baseline reproduces the comparison."
     ],
-    "minP1": 0.71,
+    "minP1": 0.78,
     "minP5": 1.0,
-    "minMRR": 0.83
+    "minMRR": 0.88
   },
   "agent": {
     "_source": "npm run cairn:agent-eval \u2014 real commands, real stderr",
