@@ -11,6 +11,7 @@
 import { loadCorpus } from '../src/lib/cairn/load';
 import { retrieve } from '../src/lib/cairn/retrieval';
 import { confirmCandidates } from '../src/lib/cairn/confirm';
+import { alsoSeenWith } from '../src/lib/cairn/graph';
 
 const argv = process.argv.slice(2);
 const confirm = argv.includes('--confirm');
@@ -49,6 +50,35 @@ for (const h of hits) {
       `      same trap as ${h.siblings.join(', ')} — read both; the ranking ` +
         'between them is not meaningful',
     );
+  }
+}
+
+/*
+ * What else the same machine tends to hit.
+ *
+ * Shown only for the top hit, and only as a footnote, because it answers a
+ * question the agent did not ask. It is worth the two lines because these
+ * edges connect findings that share no vocabulary at all -- the sandbox with
+ * no `dig` is the sandbox that redirects UDP/53 -- so no ranking over the
+ * query could ever have surfaced them.
+ *
+ * The attester count is printed rather than hidden. An edge backed by one
+ * attester is one agent's afternoon, and presenting that as a pattern would be
+ * the corpus doing exactly what it exists to stop.
+ */
+const top = hits[0];
+const near = alsoSeenWith(top.finding.id, all, { limit: 3 }).filter(
+  (e) => !hits.some((h) => h.finding.id === e.id),
+);
+if (near.length) {
+  const parties = Math.max(...near.map((e) => e.attesters));
+  console.log(
+    `\nSeen on the same machines as ${top.finding.id}` +
+      (parties < 2 ? ' (one attester only — a single agent\'s session, not a pattern)' : ''),
+  );
+  for (const e of near) {
+    const f = all.find((x) => x.id === e.id)!;
+    console.log(`  ${e.id}  ${f.title.slice(0, 62)}`);
   }
 }
 

@@ -63,6 +63,21 @@ export interface ConfirmOptions {
   timeoutMs?: number;
   /** Hard cap on how many checks run, so a broad query cannot become a build. */
   max?: number;
+  /**
+   * How many checks may run at once. Default 4.
+   *
+   * Checks were run one at a time, which made the wall clock the SUM of the
+   * timeouts: three sibling checks at the 20s bound was a minute of waiting to
+   * answer one question, and the whole point of confirming siblings is that
+   * you need all of their answers before any of them means anything.
+   *
+   * Set to 1 where checks would interfere. The corpus asks for checks that are
+   * cheap and hermetic, but "hermetic" is a claim about side effects and two
+   * checks that both MEASURE the machine can still disturb each other — one
+   * that fills a disk while another reads free space will make both lie. That
+   * is rare enough to be the caller's exception rather than the default.
+   */
+  concurrency?: number;
 }
 
 /**
@@ -162,29 +177,43 @@ export async function confirmCandidates(
   const timeoutMs = opts.timeoutMs ?? 20_000;
   const max = opts.max ?? 3;
 
-  const out: Confirmation[] = [];
-  let ran = 0;
+  // Decide what runs before anything runs, so the plan is a pure function of
+  // the input and the skip reasons do not depend on scheduling order.
+  const plan: Array<{ f: Finding; skip?: string }> = [];
+  let admitted = 0;
   for (const f of candidates) {
-    if (f.check.manual) {
-      out.push({ id: f.id, fired: 'skipped', detail: 'check is marked manual', exitCode: null, ms: 0 });
-      continue;
+    if (f.check.manual) plan.push({ f, skip: 'check is marked manual' });
+    else if (f.precondition?.length && !matchEnvironment(f.precondition).matches)
+      plan.push({ f, skip: 'precondition does not hold here' });
+    else if (admitted >= max) plan.push({ f, skip: `beyond --max ${max}` });
+    else {
+      plan.push({ f });
+      admitted += 1;
     }
-    if (f.precondition?.length && !matchEnvironment(f.precondition).matches) {
-      out.push({
-        id: f.id,
-        fired: 'skipped',
-        detail: 'precondition does not hold here',
-        exitCode: null,
-        ms: 0,
-      });
-      continue;
-    }
-    if (ran >= max) {
-      out.push({ id: f.id, fired: 'skipped', detail: `beyond --max ${max}`, exitCode: null, ms: 0 });
-      continue;
-    }
-    ran += 1;
-    out.push(await runCheck(f, timeoutMs));
   }
-  return out;
+
+  const out = new Map<string, Confirmation>();
+  for (const { f, skip } of plan) {
+    if (skip) out.set(f.id, { id: f.id, fired: 'skipped', detail: skip, exitCode: null, ms: 0 });
+  }
+
+  const queue = plan.filter((p) => !p.skip).map((p) => p.f);
+  const concurrency = Math.max(1, opts.concurrency ?? 4);
+  let next = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, queue.length) }, async () => {
+      // Each worker pulls the next index rather than taking a fixed slice, so
+      // one slow check cannot leave other workers idle behind it.
+      for (;;) {
+        const i = next++;
+        if (i >= queue.length) return;
+        const r = await runCheck(queue[i], timeoutMs);
+        out.set(r.id, r);
+      }
+    }),
+  );
+
+  // Input order, not completion order: the caller ranked these and the ranking
+  // is information.
+  return plan.map((p) => out.get(p.f.id)!);
 }

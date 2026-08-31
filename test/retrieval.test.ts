@@ -11,6 +11,7 @@ import assert from 'node:assert/strict';
 import { loadCorpus } from '../src/lib/cairn/load';
 import { retrieve, tokenize, buildIndex } from '../src/lib/cairn/retrieval';
 import { assertLocalCorpus } from '../src/lib/cairn/confirm';
+import { coOccurrence, alsoSeenWith } from '../src/lib/cairn/graph';
 
 const corpus = loadCorpus();
 
@@ -139,5 +140,37 @@ test('unrelated findings are not linked just because they tie', () => {
         `${h.finding.id} linked to ${sib} with neither subject nor tags in common`,
       );
     }
+  }
+});
+
+test('co-occurrence links findings that share no vocabulary', () => {
+  const edges = alsoSeenWith('cairn-0001', corpus, { limit: 10 });
+  assert.ok(edges.length > 0, 'no co-occurrence edges at all');
+  for (const e of edges) {
+    assert.ok(e.weight > 0 && e.attesters > 0, 'edge with no supporting evidence');
+    assert.ok(e.id !== 'cairn-0001', 'a finding co-occurs with itself');
+  }
+});
+
+test('co-occurrence is symmetric', () => {
+  const g = coOccurrence(corpus);
+  for (const [from, edges] of g) {
+    for (const e of edges) {
+      const back = g.get(e.id)?.find((x) => x.id === from);
+      assert.ok(back, `${from} -> ${e.id} has no reverse edge`);
+      assert.equal(back.weight, e.weight, 'asymmetric weight');
+    }
+  }
+});
+
+test('only confirmations build edges', () => {
+  // A refutation says the finding did NOT reproduce there, which is the
+  // opposite of evidence that it travels with anything.
+  const refutedOnly = corpus.filter(
+    (f) => f.observations.length > 0 && f.observations.every((o) => o.verdict !== 'confirmed'),
+  );
+  const g = coOccurrence(corpus);
+  for (const f of refutedOnly) {
+    assert.equal(g.get(f.id), undefined, `${f.id} has edges from non-confirmations`);
   }
 });

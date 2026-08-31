@@ -568,7 +568,39 @@ export function retrieve(
   const cut = ranked.length ? ranked[0].score * 0.06 : 0;
   const relevant = opts.includeUnmatched ? ranked : ranked.filter((h) => h.score >= cut);
 
-  return linkSiblings(opts.limit ? relevant.slice(0, opts.limit) : relevant);
+  /*
+   * Link across the WHOLE result set, then truncate — and let siblings of a
+   * surviving hit come with it.
+   *
+   * Linking after truncation defeated the entire point. At limit 1 the top hit
+   * came back with no siblings at all, because the finding it was tied with
+   * had already been cut, so an agent taking the first answer never learned a
+   * second finding covered the same trap. That is precisely the silent coin
+   * flip this was built to stop, reintroduced one line lower down.
+   *
+   * So the limit is soft, deliberately: siblings arrive as a group or not at
+   * all. Returning two findings for a limit of one is a smaller lie than
+   * returning one and calling it the answer. The expansion is bounded — it
+   * only ever pulls in findings already above the relevance cut, and a hit
+   * links only to comparably-scored findings sharing its subject or tags, so
+   * a cluster is a handful at most.
+   */
+  const linked = linkSiblings(relevant);
+  if (!opts.limit) return linked;
+
+  const kept = linked.slice(0, opts.limit);
+  const ids = new Set(kept.map((h) => h.finding.id));
+  for (const h of kept) {
+    for (const sib of h.siblings) {
+      if (ids.has(sib)) continue;
+      const pulled = linked.find((x) => x.finding.id === sib);
+      if (!pulled) continue;
+      ids.add(sib);
+      kept.push(pulled);
+    }
+  }
+  // Re-sort, so a pulled-in sibling sits at its own rank rather than the end.
+  return kept.sort((a, b) => b.score - a.score);
 }
 
 /**
