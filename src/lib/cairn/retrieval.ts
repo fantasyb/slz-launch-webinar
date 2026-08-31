@@ -1085,7 +1085,22 @@ export function retrieve(
       const cmd = failingCommand(query);
       const concerned = cmd ? findingsNaming(cmd, index.docs) : null;
 
-      for (const h of relevant) {
+      /*
+       * Annotate the head, not the tail.
+       *
+       * Every hit was being given an explained fraction and a caveat list,
+       * which walks its matched terms -- so a broad query over a large corpus
+       * annotated thousands of results nobody reads. Same shape as the
+       * quadratic sibling bug directly below, found in the same profile, and
+       * invisible for the same reason: on 31 findings the tail is three rows.
+       *
+       * Hits past the window keep `strength: 'strong'` and no caveats, which
+       * is the pre-annotation default. They are still ranked, still returned,
+       * and still correct -- they simply carry no self-assessment, which is
+       * what they carried before any of this existed.
+       */
+      const ANNOTATE_WINDOW = 25;
+      for (const h of relevant.slice(0, ANNOTATE_WINDOW)) {
         h.explained = explains(h);
         const typed = h.matched.filter((m) => m.kind !== 'word');
         const caveats: string[] = [];
@@ -1260,6 +1275,24 @@ function finalScore(h: Hit): number {
 function linkSiblings(hits: Hit[]): Hit[] {
   if (hits.length < 2) return hits;
 
+  /*
+   * Bounded to the head of the list, because this is pairwise.
+   *
+   * It compared every hit against every other, which is fine on the 31-finding
+   * corpus it was written against and quadratic everywhere else: a broad query
+   * over 10,000 findings returned 4,517 hits and spent 4.1 SECONDS here. That
+   * cost then multiplied through confusion learning, which issues one query
+   * per finding, and produced a 60-second first query that I misattributed to
+   * the probing rather than to this.
+   *
+   * Nothing is lost. A sibling link tells a reader that the thing they are
+   * looking at has a near-twin; it is worthless on the four-thousandth result,
+   * which nobody will read. Linking the head is the whole of the value, and it
+   * turns n^2 into a constant.
+   */
+  const LINK_WINDOW = 20;
+  const window = hits.slice(0, LINK_WINDOW);
+
   const tagsOf = (h: Hit) => new Set(h.finding.tags.map((t) => t.toLowerCase()));
   const jaccard = (a: Set<string>, b: Set<string>) => {
     if (a.size === 0 || b.size === 0) return 0;
@@ -1268,10 +1301,10 @@ function linkSiblings(hits: Hit[]): Hit[] {
     return shared / (a.size + b.size - shared);
   };
 
-  for (let i = 0; i < hits.length; i++) {
-    for (let j = i + 1; j < hits.length; j++) {
-      const a = hits[i];
-      const b = hits[j];
+  for (let i = 0; i < window.length; i++) {
+    for (let j = i + 1; j < window.length; j++) {
+      const a = window[i];
+      const b = window[j];
       // Comparable: the weaker scores at least 60% of the stronger. Below
       // that the ranking has expressed a real preference and should be left
       // to express it.
