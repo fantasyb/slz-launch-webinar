@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { PREDICATE_PATTERN } from './precondition';
 
 /**
  * A Cairn finding is a claim about how some system actually behaves,
@@ -260,6 +261,24 @@ export const FindingSchema = z.object({
   derivation: z.string().max(4000).optional(),
   /** Required when scope is environment-specific: where the claim applies. */
   appliesTo: z.string().max(1000).optional(),
+  /**
+   * Machine-checkable form of `appliesTo`: the conditions under which this
+   * finding is about YOU. Every predicate must hold.
+   *
+   * `appliesTo` is prose and unqueryable, and os/arch/runtime — the field that
+   * is structured — is identical across this whole corpus and discriminates
+   * nothing. So the question an agent actually has at query time ("is this
+   * mine?") had no answer, while the question it rarely has ("is this true
+   * everywhere?") had an entire scoring apparatus.
+   *
+   * Not shell. A precondition must run automatically to be worth anything, and
+   * a stranger's shell string running unread is cairn-0014 exactly. The
+   * language is closed: env vars, PATH lookups, path existence, platform.
+   */
+  precondition: z
+    .array(z.string().regex(PREDICATE_PATTERN))
+    .max(8)
+    .optional(),
   tags: z.array(z.string().max(40)).max(12).default([]),
   /** What rediscovering this from scratch costs. Drives triage. */
   cost: CostSchema,

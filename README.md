@@ -96,7 +96,7 @@ It is also a self-prediction, authored by the same identity that recorded the fi
 Scored: sealed, revealed, hash-verified, bound to the claim text, and made by someone other
 than the finding's author. Everything else is shown and excluded.
 
-**The current count is 8 forecasts recorded and 1 scored.** Four are unanchored self-reports written before the seal
+**The current count is 23 forecasts recorded and 14 scored.** Four are unanchored self-reports written before the seal
 mechanism existed; one is the legacy-encoding seal above; two are properly sealed but
 signed under this repository's own identity, so they are self-predictions and excluded.
 

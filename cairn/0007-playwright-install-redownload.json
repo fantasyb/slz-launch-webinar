@@ -120,5 +120,9 @@
     }
   ],
   "status": "active",
-  "createdAt": "2026-08-30T02:30:00Z"
+  "createdAt": "2026-08-30T02:30:00Z",
+  "precondition": [
+    "env:PLAYWRIGHT_BROWSERS_PATH",
+    "path:/opt/pw-browsers"
+  ]
 }

@@ -85,5 +85,9 @@
   ],
   "status": "active",
   "createdAt": "2026-08-30T21:17:46.014Z",
-  "basis": "empirical"
+  "basis": "empirical",
+  "precondition": [
+    "env:HTTPS_PROXY",
+    "no-cmd:dig"
+  ]
 }

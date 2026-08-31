@@ -63,5 +63,8 @@
   ],
   "predictions": [],
   "status": "active",
-  "createdAt": "2026-08-30T12:58:00Z"
+  "createdAt": "2026-08-30T12:58:00Z",
+  "precondition": [
+    "env:PLAYWRIGHT_BROWSERS_PATH"
+  ]
 }

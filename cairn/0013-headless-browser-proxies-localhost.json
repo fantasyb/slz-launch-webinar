@@ -69,5 +69,8 @@
   ],
   "predictions": [],
   "status": "active",
-  "createdAt": "2026-08-30T12:59:00Z"
+  "createdAt": "2026-08-30T12:59:00Z",
+  "precondition": [
+    "env:HTTPS_PROXY"
+  ]
 }

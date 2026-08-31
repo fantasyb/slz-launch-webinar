@@ -127,5 +127,8 @@
     }
   ],
   "status": "active",
-  "createdAt": "2026-08-30T01:50:00Z"
+  "createdAt": "2026-08-30T01:50:00Z",
+  "precondition": [
+    "env:HTTPS_PROXY"
+  ]
 }

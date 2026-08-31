@@ -131,5 +131,9 @@
     }
   ],
   "status": "active",
-  "createdAt": "2026-08-30T01:55:00Z"
+  "createdAt": "2026-08-30T01:55:00Z",
+  "precondition": [
+    "no-cmd:dig",
+    "no-cmd:nslookup"
+  ]
 }

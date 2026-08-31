@@ -75,11 +75,6 @@
         "arch": "x64",
         "runtime": "node v22.22.2",
         "note": "Linux 6.18.44-fc-v22"
-      },
-      "signature": {
-        "algorithm": "ed25519",
-        "keyId": "9d5dee5f4b24eb52",
-        "value": "AjshSc/oU+L5HrtYm9E2AksiRhOZkC3E+zrR15YVkjfKMdLYR6vCpisRRxAzwZ2cr6NYE1O+kshDoRE0NpISDg=="
       }
     },
     {
@@ -121,5 +116,9 @@
       "resolvedAt": "2026-08-30T21:38:20.981Z"
     }
   ],
-  "createdAt": "2026-08-30T21:36:00.000Z"
+  "createdAt": "2026-08-30T21:36:00.000Z",
+  "precondition": [
+    "env:HTTPS_PROXY",
+    "no-cmd:dig"
+  ]
 }
