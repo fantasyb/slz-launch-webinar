@@ -1571,11 +1571,51 @@ function findingsNaming(cmd: string, docs: Indexed[]): Set<string> {
  * corpus of documents alone could not do it; there would be nothing to probe
  * with whose answer was already known.
  */
+/**
+ * Corpus size above which confusions are not computed at query time.
+ *
+ * 400 findings is roughly a second of probing on this hardware, which is
+ * acceptable once per corpus version and unacceptable per query. Beyond it the
+ * map must be precomputed and committed rather than derived on demand.
+ */
+const CONFUSION_MAX_CORPUS = 400;
+
 let confusionCache: WeakMap<object, Map<string, string[]>> = new WeakMap();
 
 export function confusionPairs(findings: Finding[]): Map<string, string[]> {
   const hit = confusionCache.get(findings);
   if (hit) return hit;
+
+  /*
+   * Cached on disk beside the index, on the same content fingerprint.
+   *
+   * Probing costs one full query per finding -- 28ms on 31 findings, measured,
+   * which was a third of the entire cold path and would grow linearly with the
+   * corpus. It is a pure function of the corpus, so it is exactly the work
+   * that should happen once. Same best-effort rules as the index cache: any
+   * filesystem failure degrades to recomputing, never to an error.
+   */
+  /*
+   * Only computed for corpora small enough that probing is cheap.
+   *
+   * Measured, not assumed: on ten thousand findings the first query took 60
+   * SECONDS. Capping the probe count to 400 was not enough, because each probe
+   * is itself O(N) -- vocabulary shared across documents puts most of the
+   * corpus in the postings, so 400 probes walk the whole thing 400 times.
+   *
+   * Above the threshold this returns empty and retrieval degrades to
+   * declarative siblings, which is where it was an hour ago and is correct if
+   * less informative. The right answer at that scale is to precompute the map
+   * offline and commit it as data, exactly as data/word-frequency.json is
+   * committed; that is not built, and pretending otherwise by shipping an O(N)
+   * cost on the cold path would be worse than the gap.
+   */
+  const fingerprint = corpusFingerprint(findings);
+  const cached = readConfusionCache(fingerprint);
+  if (cached) {
+    confusionCache.set(findings, cached);
+    return cached;
+  }
 
   // Seeded empty first: confusionPairs is reached from retrieve(), so an
   // unseeded recursive call would loop. The probes below run against the
@@ -1583,6 +1623,26 @@ export function confusionPairs(findings: Finding[]): Map<string, string[]> {
   // disclosure, which is the honest thing to measure anyway.
   const pairs = new Map<string, string[]>();
   confusionCache.set(findings, pairs);
+
+  // Size gate (see the comment above the fingerprint read): beyond this the
+  // empty map is cached and retrieval degrades to declarative siblings.
+  if (findings.length > CONFUSION_MAX_CORPUS) return pairs;
+
+  /*
+   * Bounded, because probing is one full query per finding.
+   *
+   * At 31 findings that is 28ms. At ten thousand it is twenty thousand
+   * queries, which hung a benchmark and would hang a first lookup -- an O(N)
+   * cost on a path whose whole design goal was to be independent of N.
+   *
+   * Above the cap the map is PARTIAL rather than absent: the findings probed
+   * still get accurate confusion links, and the rest simply have none, which
+   * is the same state every finding was in before this existed. A partial
+   * truthful map degrades better than either an unbounded cost or a silent
+   * switch-off.
+   */
+  const MAX_PROBES = 400;
+  let probes = 0;
 
   const add = (a: string, b: string) => {
     const list = pairs.get(a) ?? [];
@@ -1592,8 +1652,11 @@ export function confusionPairs(findings: Finding[]): Map<string, string[]> {
 
   for (const f of findings) {
     if (f.status === 'retired') continue;
+    if (probes >= MAX_PROBES) break;
     for (const probe of [f.mechanism, f.appliesTo]) {
       if (!probe || probe.length < 40) continue;
+      if (probes >= MAX_PROBES) break;
+      probes += 1;
       const top = retrieve(probe.slice(0, 240), findings, { limit: 1 })[0];
       if (!top || top.finding.id === f.id) continue;
       // Symmetric: if this finding's own description reaches that one, an
@@ -1602,7 +1665,40 @@ export function confusionPairs(findings: Finding[]): Map<string, string[]> {
       add(f.id, top.finding.id);
     }
   }
+  writeConfusionCache(fingerprint, pairs);
   return pairs;
+}
+
+function confusionFileFor(fingerprint: string): string {
+  return path.join(CACHE_DIR, `confusions-v1-${fingerprint.slice(0, 16)}.json`);
+}
+
+function readConfusionCache(fingerprint: string): Map<string, string[]> | null {
+  try {
+    const raw = JSON.parse(fs.readFileSync(confusionFileFor(fingerprint), 'utf8')) as {
+      fingerprint: string;
+      pairs: Array<[string, string[]]>;
+    };
+    if (raw.fingerprint !== fingerprint) return null;
+    // No TTL: unlike confidence, a confusion does not decay with wall-clock
+    // time. It changes only when the corpus or the ranker changes, and the
+    // fingerprint covers the first while the cache version covers the second.
+    return new Map(raw.pairs);
+  } catch {
+    return null;
+  }
+}
+
+function writeConfusionCache(fingerprint: string, pairs: Map<string, string[]>): void {
+  try {
+    fs.mkdirSync(CACHE_DIR, { recursive: true });
+    const file = confusionFileFor(fingerprint);
+    const tmp = `${file}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify({ fingerprint, pairs: [...pairs] }));
+    fs.renameSync(tmp, file);
+  } catch {
+    /* recomputed next time */
+  }
 }
 
 /** Reset the memo. Tests build corpora repeatedly; nothing else needs this. */
