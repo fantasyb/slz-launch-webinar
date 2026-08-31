@@ -33,7 +33,8 @@
     "cairn:eval": "tsx scripts/eval.ts",
     "cairn:doctor": "tsx scripts/doctor.ts",
     "cairn:bench": "tsx scripts/bench.ts",
-    "cairn:build-cli": "node scripts/build-cli.mjs"
+    "cairn:build-cli": "node scripts/build-cli.mjs",
+    "cairn:agent-eval": "tsx scripts/agent-eval.ts"
   },
   "dependencies": {
     "clsx": "^2.1.1",

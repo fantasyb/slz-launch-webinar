@@ -537,6 +537,59 @@ const NOISE_FLOOR = 0.15;
  */
 const SIGNAL_FLOOR = 0.6;
 
+/**
+ * Information credited to a query term the corpus has never seen.
+ *
+ * Not zero: a term absent from every finding tells you nothing about which
+ * finding to pick, but it is still part of what the asker asked, and letting
+ * it vanish from the denominator makes a query of entirely unknown words look
+ * perfectly explained by whatever incidental word did match.
+ */
+const MIN_TERM_INFORMATION = 0.5;
+
+/**
+ * Common English, damped regardless of how rare it looks in this corpus.
+ *
+ * IDF measures rarity HERE, and at thirty-one documents that is a poor
+ * estimate of rarity anywhere. "recent" appears in one finding and scores
+ * 3.47 — identical to "quantifier" and "/dev/vda" — so a Python traceback
+ * anchored on "most recent call last" and the corpus answered, confidently,
+ * with a finding about append-only reputation logs. A git error anchored on
+ * "match", "did" and "any" and got one about signing oracles.
+ *
+ * This is not the stoplist rejected earlier in this file. That one would have
+ * needed to know that `dig`, `rg` and `df` are not noise, which no English
+ * list can. This corrects a small-sample error in the opposite direction:
+ * these words are common in the language whatever a 31-document sample says,
+ * so their apparent rarity is an artefact of corpus size. Technical vocabulary
+ * is untouched, and as the corpus grows the IDF estimate improves and this
+ * correction quietly stops mattering.
+ */
+const COMMON_ENGLISH = new Set([
+  'the','be','to','of','and','in','that','have','it','for','not','on','with','as','do','at',
+  'this','but','his','by','from','they','we','say','her','she','or','an','will','my','one',
+  'all','would','there','their','what','so','up','out','if','about','who','get','which','go',
+  'me','when','make','can','like','time','no','just','him','know','take','people','into','year',
+  'your','good','some','could','them','see','other','than','then','now','look','only','come',
+  'its','over','think','also','back','after','use','two','how','our','work','first','well','way',
+  'even','new','want','because','any','these','give','day','most','us','is','are','was','were',
+  'been','has','had','did','does','more','very','such','may','should','must','through','before',
+  'while','where','why','both','each','few','many','much','own','same','too','last','next',
+  'recent','line','lines','file','files','error','errors','found','call','calls','string',
+  'name','names','value','values','set','run','running','start','end','used','using','made',
+  'match','matches','known','part','type','case','point','number','result','results','check',
+]);
+
+/**
+ * Fraction of a query's information the best hit must account for, or the
+ * corpus says nothing.
+ *
+ * Tuned against real uncovered failures rather than against the held-out
+ * accuracy set, so it trades on the axis it is meant to: silence when the
+ * corpus does not know, at some cost in recall on queries buried in noise.
+ */
+const MIN_QUERY_EXPLAINED = 0.28;
+
 function idf(df: number, n: number): number {
   if (df <= 0) return 0;
   return Math.max(0, Math.log((n + 1) / df));
@@ -609,7 +662,18 @@ export function retrieve(
   const acc = new Map<number, { score: number; matched: Hit['matched'] }>();
 
   for (const tok of tokens) {
-    const information = idf(index.df.get(tok.text) ?? 0, index.n);
+    let information = idf(index.df.get(tok.text) ?? 0, index.n);
+    // A word common in English cannot anchor a hit on the strength of being
+    // rare in thirty-one documents. Capped rather than dropped: it still
+    // contributes to a finding already anchored by something discriminating.
+    // Capped just BELOW the anchoring threshold, which is the stated intent
+    // stated exactly: a common word may contribute to a finding something
+    // discriminating already anchored, and may never anchor one alone. The
+    // first attempt capped at 0.25, an arbitrary number, and cost held-out
+    // P@5 1.000 -> 0.921 by gutting the contribution as well as the anchoring.
+    if (COMMON_ENGLISH.has(tok.text)) {
+      information = Math.min(information, SIGNAL_FLOOR - 0.01);
+    }
     // A term in almost every finding distinguishes nothing, and letting it
     // contribute a sliver still puts the finding in the RESULT SET even when
     // it cannot affect the order. Ranking correctly is not enough: an agent
@@ -707,7 +771,54 @@ export function retrieve(
    * believe is relevant.
    */
   const cut = ranked.length ? ranked[0].score * 0.06 : 0;
-  const relevant = opts.includeUnmatched ? ranked : ranked.filter((h) => h.score >= cut);
+  let relevant = opts.includeUnmatched ? ranked : ranked.filter((h) => h.score >= cut);
+
+  /*
+   * Absolute floor: how much of the QUERY did the best hit actually explain?
+   *
+   * The relative cutoff above is scale-free, which is exactly its flaw. When
+   * every hit is weak the best weak hit still defines the scale, so everything
+   * near it survives and the corpus answers confidently about a failure it has
+   * never heard of. Measured against real failures it does not cover -- a
+   * Python ImportError, a git pathspec error -- it returned findings about
+   * reputation logs and signing oracles, ranked, with no signal that they were
+   * noise.
+   *
+   * That is the dangerous direction. An agent asks precisely when it is stuck,
+   * which is when it is least equipped to reject a confident answer, and a
+   * wrong finding costs more than no finding: it sends the agent somewhere
+   * else entirely. Silence is the correct response far more often than any
+   * ranking function will admit on its own.
+   *
+   * So the gate is normalised per query: of all the information in what was
+   * asked, what fraction does this finding account for? A query whose
+   * informative terms appear nowhere in the corpus explains nothing, however
+   * its handful of incidental matches happen to rank against each other.
+   */
+  if (!opts.includeUnmatched && relevant.length > 0) {
+    const queryInformation = new Map<string, number>();
+    for (const tok of tokens) {
+      // Deliberately the UNDAMPED idf, floored.
+      //
+      // Damping is a scoring decision -- a common word must not anchor a hit.
+      // It is not a statement that the asker did not type the word. Using the
+      // damped value here shrank the denominator every time a query was mostly
+      // ordinary English, so one rare term looked like it explained the whole
+      // question: a thirteen-word git error matching only "git" scored 0.60
+      // explained and answered with a finding about CI gates.
+      const info = idf(index.df.get(tok.text) ?? 0, index.n);
+      queryInformation.set(tok.text, Math.max(info, MIN_TERM_INFORMATION));
+    }
+    const total = [...queryInformation.values()].reduce((a, b) => a + b, 0);
+    if (total > 0) {
+      const explains = (h: Hit) =>
+        [...new Set(h.matched.map((m) => m.term))].reduce(
+          (a, t) => a + (queryInformation.get(t) ?? 0),
+          0,
+        ) / total;
+      if (explains(relevant[0]) < MIN_QUERY_EXPLAINED) relevant = [];
+    }
+  }
 
   /*
    * Link across the WHOLE result set, then truncate — and let siblings of a
