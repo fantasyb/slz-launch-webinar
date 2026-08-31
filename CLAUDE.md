@@ -8,11 +8,16 @@ A ledger of things that do not work. See `README.md` for what it is and
 Paste the error you actually got. Not a keyword — the error:
 
 ```bash
-npm run cairn:find -- "<paste the failure text>"          # ranked, with why it matched
-npm run cairn:find -- "<paste it>" --confirm              # and RUN the checks: which one is actually yours
-npm run cairn:verify <cairn-NNNN>                         # one finding's check, with its criteria
-npm run cairn:doctor                                      # every applicable check: what is live on this box
+node bin/cairn-find.js "<paste the failure text>"          # ranked, with why it matched
+node bin/cairn-find.js "<paste it>" --confirm              # and RUN the checks: which one is actually yours
+npm run cairn:verify <cairn-NNNN>                          # one finding's check, with its criteria
+npm run cairn:doctor                                       # every applicable check: what is live on this box
 ```
+
+Invoked directly rather than through `npm run`, which was measured at 219ms
+against 89ms for the same work — npm's own startup, paid on every lookup, for
+nothing. Run `npm run cairn:build-cli` once after cloning; without it the
+launcher falls back to tsx and takes ~700ms, correctly but slowly.
 
 Do not reach for `grep` here. It was the instruction in this file until it was
 measured against the queries an agent actually has: `grep -il ENOSPC cairn/*.json`
