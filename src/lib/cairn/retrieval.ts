@@ -609,10 +609,44 @@ function entryFile(): string {
 /** The assembled index, laid out flat. See columnar.ts for why. */
 const COLUMNAR_FILE = path.join(CACHE_DIR, `index-v${CACHE_SCHEMA}.bin`);
 
+/**
+ * What identifies a record for caching purposes.
+ *
+ * Both caches store `confidence`, and for a federated finding confidence
+ * depends on the key map the finding carries. JSON.stringify renders a Map as
+ * `{}`, so two findings that are the same records under DIFFERENT key maps
+ * serialised identically and scored differently -- whichever process computed
+ * first decided for every later reader, over caches shared on disk.
+ *
+ * The identity is the sorted set of `keyId:label` pairs, not the ids alone.
+ * verifyObservation returns `signed` only when the key's label equals the
+ * observation's `by` (signing.ts:262), so two maps carrying the same ids under
+ * different labels score differently. The public key needs no hashing: keyId
+ * is derived from it, and both keys.ts and bundleKeys reject a record whose id
+ * does not derive from its material.
+ *
+ * One function used by both cache identities rather than two patches, because
+ * the failure mode here is precisely the two of them drifting apart -- the
+ * columnar index is consulted BEFORE the entry store, so fixing only the
+ * latter leaves the bug reachable on the path that runs first.
+ */
+function identityReplacer(_k: string, v: unknown): unknown {
+  if (v instanceof Map) {
+    return [...v.entries()]
+      .map(([id, rec]) => `${id}:${(rec as { label?: string })?.label ?? ''}`)
+      .sort();
+  }
+  return v;
+}
+
+export function recordIdentity(f: Finding): string {
+  return JSON.stringify(f, identityReplacer);
+}
+
 export function corpusFingerprint(findings: Finding[]): string {
   const h = crypto.createHash('sha256');
   h.update(String(CACHE_SCHEMA));
-  for (const f of findings) h.update(JSON.stringify(f));
+  for (const f of findings) h.update(recordIdentity(f));
   return h.digest('hex');
 }
 
@@ -718,24 +752,10 @@ export function indexIdentity(findings: Finding[]): string {
  * claim byte-identical", and the cache needs the former.
  */
 export function entryKey(f: Finding): string {
-  /*
-   * The key map is part of the identity, and JSON.stringify cannot see it.
-   *
-   * A federated finding carries the keys its observations verify against, and
-   * `confidence` -- which this cache stores -- depends on them. JSON.stringify
-   * renders a Map as `{}`, so the same finding with and without its upstream
-   * keys hashed IDENTICALLY while scoring differently: whichever process
-   * wrote the entry first decided what every later reader saw, and a suite
-   * running test files in parallel raced on it. Moving the keys onto the
-   * object fixed who supplies them and not what identifies them.
-   */
-  const keys = (f as { keys?: Map<string, unknown> }).keys;
-  const keyIds = keys ? [...keys.keys()].sort().join(',') : '';
   return crypto
     .createHash('sha256')
     .update(String(CACHE_SCHEMA))
-    .update(JSON.stringify(f))
-    .update(keyIds)
+    .update(recordIdentity(f))
     .digest('hex');
 }
 
