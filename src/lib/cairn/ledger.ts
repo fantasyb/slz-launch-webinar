@@ -83,7 +83,32 @@ export interface RetrievalRecord {
   reconstructed?: boolean;
 }
 
-const LEDGER = homePath('data', 'retrievals.jsonl');
+/*
+ * ONE FILE PER AUTHOR, and this is not tidiness.
+ *
+ * The ledger is append-only and shared by pushing and pulling the repository,
+ * which is the whole point of keeping it in git. A single file makes that
+ * impossible: two people, one query each, and the next pull is a merge
+ * conflict — measured, not predicted. It would have failed on the first day of
+ * any multi-person test, in the file whose entire job is to record what
+ * happened when several people used this.
+ *
+ * Sharded by author, two writers touch two files and git has nothing to
+ * reconcile. `merge=union` in .gitattributes covers the remaining case of one
+ * author on two machines, where concatenating both sides is exactly right for
+ * an append-only log.
+ *
+ * The reader takes the union of every shard plus the historical single file,
+ * so an older checkout keeps working and nothing has to be migrated to be read.
+ */
+const LEDGER_DIR = homePath('data', 'retrievals');
+const LEGACY_LEDGER = homePath('data', 'retrievals.jsonl');
+
+/** Filesystem-safe, and stable for the same author across runs. */
+function shardFor(by: string): string {
+  const safe = by.toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'unknown';
+  return path.join(LEDGER_DIR, `${safe}.jsonl`);
+}
 
 /**
  * Record one retrieval. Never throws: a corpus that fails to answer because it
@@ -91,14 +116,14 @@ const LEDGER = homePath('data', 'retrievals.jsonl');
  */
 export function record(r: RetrievalRecord): void {
   try {
-    fs.mkdirSync(path.dirname(LEDGER), { recursive: true });
-    fs.appendFileSync(LEDGER, `${JSON.stringify(r)}\n`);
+    fs.mkdirSync(LEDGER_DIR, { recursive: true });
+    fs.appendFileSync(shardFor(r.by), `${JSON.stringify(r)}\n`);
   } catch {
     /* deliberately silent */
   }
 }
 
-export function readLedger(file = LEDGER): RetrievalRecord[] {
+function readOne(file: string): RetrievalRecord[] {
   try {
     return fs
       .readFileSync(file, 'utf8')
@@ -110,4 +135,18 @@ export function readLedger(file = LEDGER): RetrievalRecord[] {
   }
 }
 
-export const LEDGER_PATH = LEDGER;
+/** Every author's shard, plus the pre-shard file if it is still there. */
+export function readLedger(file?: string): RetrievalRecord[] {
+  if (file) return readOne(file);
+  const out: RetrievalRecord[] = readOne(LEGACY_LEDGER);
+  try {
+    for (const f of fs.readdirSync(LEDGER_DIR)) {
+      if (f.endsWith('.jsonl')) out.push(...readOne(path.join(LEDGER_DIR, f)));
+    }
+  } catch {
+    /* no shards yet */
+  }
+  return out;
+}
+
+export const LEDGER_PATH = LEDGER_DIR;
