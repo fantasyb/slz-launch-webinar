@@ -9,6 +9,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { scanSensitive, scanExecutable, redact } from '../src/lib/cairn/safety';
 import { validateBlockShape, installBlock } from '../src/lib/cairn/block';
+import { normalise } from '../src/lib/cairn/submission';
 
 const changed = (s: string) => redact(s).text !== s;
 const flagged = (s: string) => scanSensitive(s).length > 0;
@@ -118,4 +119,44 @@ test('an ordinary word ending in a credential keyword is not one', () => {
   ]) {
     assert.equal(scanSensitive(s).length, 0, `should stay quiet: ${s}`);
   }
+});
+
+/**
+ * Two submissions must not mint the same finding id.
+ *
+ * nextFindingId() reads loadCorpus(), which is memoised for the life of the
+ * process and, on a deployed server, frozen at whatever was bundled. So two
+ * contributions minted the same cairn-NNNN under different slugs. The
+ * create-only guard is on the PATH, so GitHub accepted both, and every clone
+ * then failed to load at all with "duplicate id" -- one careless contributor
+ * breaking the corpus for everybody, the exact failure the create-only design
+ * was meant to rule out.
+ *
+ * The route now mints from the live repository. This pins the seam that made
+ * it possible: normalise must honour an id supplied by a caller that can see
+ * the real corpus, rather than always allocating its own.
+ */
+test('normalise honours an externally minted id', () => {
+  const submission = {
+    title: 'a finding used only by this test',
+    claim: 'a claim long enough to satisfy the forty character minimum imposed here',
+    expectation: 'one thing',
+    reality: 'another thing',
+    check: { command: 'c', confirmedIf: 'a', refutedIf: 'b', manual: false },
+    by: 'test',
+    evidence: [],
+    tags: [],
+    kind: 'trap' as const,
+    cost: 'hours' as const,
+  };
+
+  const a = normalise(submission, new Date());
+  const b = normalise({ ...submission, title: 'a different finding entirely' }, new Date());
+  assert.equal(a.finding.id, b.finding.id, 'the unminted path is process-local by design');
+  assert.notEqual(a.path, b.path, 'and its paths differ, which is why create-only did not catch it');
+
+  const minted = normalise(submission, new Date(), 'cairn-9999');
+  assert.equal(minted.finding.id, 'cairn-9999');
+  assert.equal(minted.path, 'cairn/9999-a-finding-used-only-by-this-test.json');
+  assert.ok(minted.branch.startsWith('cairn/9999-'), 'the branch must carry the minted number too');
 });

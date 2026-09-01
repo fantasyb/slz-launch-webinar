@@ -89,9 +89,20 @@ export function slugify(title: string): string {
   return title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 50);
 }
 
-/** Expand a minimal submission into a full, schema-valid finding. */
-export function normalise(s: Submission, now = new Date()) {
-  const { id, num } = nextFindingId();
+/**
+ * Expand a submission into a finding.
+ *
+ * `mintedId` exists because nextFindingId() reads loadCorpus(), which is the
+ * corpus this PROCESS has on disk -- memoised for the process lifetime, and
+ * on a deployed server frozen at build time. Two submissions therefore minted
+ * the same id under different slugs; the create-only guard is on the path, so
+ * GitHub accepted both, and every clone then failed to load with "duplicate
+ * id". A caller that can see the live corpus passes the id it read from there.
+ */
+export function normalise(s: Submission, now = new Date(), mintedId?: string) {
+  const { id, num } = mintedId
+    ? { id: mintedId, num: mintedId.slice(6) }
+    : nextFindingId();
   const at = now.toISOString();
   return {
     finding: {
