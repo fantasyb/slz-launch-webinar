@@ -1407,6 +1407,33 @@ export function retrieve(
         opts.includeUnmatched ||
         (h.score > 0 && h.matched.some((m) => m.anchorInformation >= SIGNAL_FLOOR)),
     )
+    /*
+     * SEGMENT before rank, above a corpus size where it earns the risk.
+     *
+     * A precondition that provably fails here is the strongest evidence a
+     * finding is not yours -- stronger than any text similarity, since
+     * similarity cannot tell "about proxies" from "about YOUR proxy". Until
+     * now that only DEMOTED, by design and for a stated reason: a precondition
+     * can be incomplete, and being buried is recoverable where being hidden is
+     * not. That reasoning holds at thirty-one findings, where a demoted
+     * finding costs a few microseconds to carry.
+     *
+     * It stops holding when the candidate set is the problem. Simulated across
+     * fifty contributors and five hundred records, a precondition filter cuts
+     * the candidates to 55-66%, and on the real corpus it cuts 0% -- every
+     * finding here was authored on this machine. So the exclusion is gated on
+     * corpus size: below the line, demote exactly as before; above it, a
+     * finding that cannot apply to this machine is not a candidate.
+     *
+     * `useLocalEnvironment` still governs whether any of this happens, so a
+     * caller that has not opted into environment matching is unaffected.
+     */
+    .filter(
+      (h) =>
+        opts.includeUnmatched ||
+        findings.length < SEGMENT_MIN_CORPUS ||
+        h.applicability !== 'fails',
+    )
     .map((h) => ({ ...h, confidence: h.confidence, surprise: h.surprise }));
 
   /*
@@ -2634,6 +2661,22 @@ const CONFUSION_MAX_CORPUS = 400;
  * either way" is enough for a file this size to have.
  */
 const CONFUSION_MARGIN = 0.6;
+
+/**
+ * Corpus size above which a failing precondition EXCLUDES rather than demotes.
+ *
+ * Below it the existing behaviour is preserved exactly -- demote by 0.15 and
+ * let the reader judge -- because a wrong precondition that merely buries a
+ * finding is recoverable and one that hides it is not, and at this size
+ * carrying the finding costs nothing. Above it the candidate set is the
+ * bottleneck: at five hundred records a segment filter removes a third of the
+ * corpus before any ranking happens.
+ *
+ * 200 rather than a rounder number for no better reason than that it is where
+ * the simulation first shows the filter doing meaningful work. It is a
+ * threshold on a curve, not a discovered constant.
+ */
+const SEGMENT_MIN_CORPUS = 200;
 
 let confusionCache: WeakMap<object, Map<string, string[]>> = new WeakMap();
 
