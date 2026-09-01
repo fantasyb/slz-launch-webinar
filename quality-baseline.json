@@ -220,7 +220,19 @@
       "RAISED 0.62 -> 0.75 after reaching 7/8. Seven of eight is the ceiling, not a",
       "waypoint: the remaining query asks about half-life scoring pitfalls and is",
       "answered by the finding about half-lives being author-supplied, which is one",
-      "of the two labels marked disputable and is arguably correct."
+      "of the two labels marked disputable and is arguably correct.",
+      "",
+      "n GREW FROM 11 TO 22 ON 2026-09-01 and P@1 stayed 1.000. The eleven added",
+      "queries came from four traps that were never a scenario and were never tuned",
+      "against — cairn-0004, 0009, 0022, 0028 — harvested by cairn:harvest, labelled",
+      "by hand, with a forecast of 8/11 sealed and committed before scoring. The",
+      "forecast was wrong by underestimating; all eleven ranked first.",
+      "",
+      "That is the first evidence here that today's tuning generalises rather than",
+      "fits. It is still ONE MODEL writing the queries, four tasks I chose, and every",
+      "new query is answerable — silence was not tested on new ground at all, and it",
+      "is the half that protects the reader. The next harvest should be built to",
+      "produce mid-task asides, which is where the unanswerable queries come from."
     ],
     "minP1": 0.9,
     "minQuiet": 0.75
