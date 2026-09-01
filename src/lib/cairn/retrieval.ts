@@ -1770,6 +1770,47 @@ function linkSiblings(hits: Hit[]): Hit[] {
 
 
 /*
+ * WHY THE SIBLING RESIDUAL IS CLOSED, MEASURED RATHER THAN CONCLUDED.
+ *
+ * Thirteen approaches were tried against the four remaining held-out failures
+ * and every one of them followed the same arc: a diagnostic showing the signal
+ * really does separate the pairs, then a measurement showing it costs more
+ * than it repairs. That pattern needed explaining rather than repeating, and
+ * the explanation is arithmetic.
+ *
+ * At 0.895 there are 34 correct answers to protect and 4 to repair. Any new
+ * signal therefore needs a GATE that fires on the 4 and not on the 34. The
+ * natural gate is degeneracy: fire only when the top two are closer than this
+ * query's own accidental gap, estimated per query from the median gap among
+ * ranks 3..9 so that nothing about the eval set enters it.
+ *
+ * Measured over the 31 cases where that gap is well defined:
+ *
+ *   normalised split (s1 - s2) / accidental gap
+ *     CORRECT    n=28   p25  7.58   median 18.27   p75 55.29
+ *     FAILURES   n=3    min  0.53   median  3.22   max  7.58
+ *
+ * The distributions overlap. A gate loose enough to catch every failure fires
+ * on 8 of the 28 correct answers as well. So the BEST case available to any
+ * near-tie adjudicator, using the strongest candidate signal measured here
+ * (conditional compression, 74% accurate standing alone), is
+ *
+ *   repair 4 x 0.74 = 2.96      damage 8 x 0.26 = 2.08      net +0.9 cases
+ *
+ * Under one case. The standard error on P@1 over 38 cases is +/-0.05, which is
+ * about two cases. The entire family is worth less than the noise of the
+ * instrument measuring it, and that is a fact about the corpus size rather
+ * than about any of the thirteen ideas.
+ *
+ * This is what closes the question honestly. Not "nothing worked" -- several
+ * things worked on the pairs and are recorded below -- but that no selector
+ * separating 4 from 34 exists to be found, and one built anyway would be
+ * fitted to the four cases it was built from. Revisit when the corpus is large
+ * enough that near-tie sibling pairs are numerous enough to gate on
+ * empirically; the diagnostic above is the test for when that is.
+ */
+
+/*
  * COMPRESSION was built here and removed, and it is the closest anything has
  * come to the sibling residual. Recorded in full because the next person will
  * think of it, and because what killed it is not what killed the others.
