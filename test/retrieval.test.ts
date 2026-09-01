@@ -576,6 +576,12 @@ test('preflight is silent on ordinary commands', () => {
     'ls -la', 'git status', 'npm test', 'npm run build', 'npm install',
     'cat README.md', 'echo hi', 'mkdir -p out', 'git diff HEAD',
     'node index.js', 'git checkout main', 'make', 'docker build .',
+    // Added after a read-through caught what this suite missed: `curl` was
+    // attached to four findings and only one was about curl, so an ordinary
+    // fetch raised three warnings. The suite passed because it contained no
+    // bare curl. A quietness test is only as good as its most ordinary case.
+    'curl -sS https://example.com/', 'curl -o out.json https://api.github.com/x',
+    'wget https://example.com/f.tar.gz', 'ssh user@host', 'python3 main.py',
   ];
   for (const cmd of ordinary) {
     const w = preflight(cmd, corpus, { useLocalEnvironment: true });

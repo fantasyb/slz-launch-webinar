@@ -94,6 +94,25 @@ for (const file of files) {
     'npm', 'git', 'yarn', 'pnpm', 'bun', 'cargo', 'go', 'pip', 'pip3',
     'docker', 'make', 'brew', 'apt', 'apt-get',
   ]);
+  /*
+   * Commands so common that warning on them warns on everything.
+   *
+   * Found by reading the generated triggers rather than by testing, which is
+   * the point of reading them: `curl` was attached to four findings and only
+   * one was about curl. An ordinary `curl -sS https://example.com/` raised
+   * three warnings -- an RCE pattern, a server-side signing-oracle design, and
+   * a DNS egress note -- none of which have anything to tell you before you
+   * fetch a URL. The quietness suite missed it because it contained no bare
+   * curl, which is exactly how a cry-wolf channel gets shipped.
+   *
+   * These may only be triggers when the finding is ABOUT the command itself.
+   * `df` on a finding whose subject is df, yes; `curl` on a finding about the
+   * HTTP Host header, no.
+   */
+  const UBIQUITOUS = new Set([
+    'curl', 'wget', 'ssh', 'node', 'python', 'python3', 'java', 'ruby',
+    'perl', 'tar', 'rsync', 'scp', 'kubectl', 'terraform',
+  ]);
   for (const t of f.triggers ?? []) {
     const words = t.trim().toLowerCase().split(/\s+/);
     // 1. ATTESTED: the finding may only warn about a command it discusses.
@@ -108,6 +127,15 @@ for (const file of files) {
     }
     // 2. SPECIFIC: a wrapper verb identifies a trap only when its argument
     //    names the subject. `playwright install` yes; `npm install` no.
+    if (UBIQUITOUS.has(words[0]) && words.length === 1) {
+      const subject = f.subject.name.toLowerCase();
+      if (!subject.split(/[^a-z0-9.:_-]+/).includes(words[0])) {
+        problems.push(
+          `${file}: trigger "${t}" is a ubiquitous command and this finding's subject ` +
+          `is "${f.subject.name}" — it would warn on ordinary use`,
+        );
+      }
+    }
     if (WRAPPER_VERBS.has(words[0])) {
       const subject = f.subject.name.toLowerCase();
       const names = words.slice(1).some((w) => subject.includes(w) || w.includes(subject));

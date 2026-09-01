@@ -23,7 +23,6 @@
   "mechanism": "The proxy intercepts TCP and rejects non-allowlisted CONNECT targets. It has no UDP path, and NO_PROXY/HTTPS_PROXY are honoured only by HTTP clients. c-ares neither consults those variables nor uses NSS, so it is unaffected by both the proxy and getent's address-record limit.",
   "workaround": "For record types beyond A/AAAA, use node -e with dns.promises.resolveNs / resolveSoa / resolveMx instead of getent or dig. To distinguish 'registered' from 'unregistered' authoritatively, resolve the TLD's nameservers, point a dns.Resolver at one with setServers(), and query the name: a delegation returned by the registry means registered, ENOTFOUND means not. Always run a known-unregistered control name in the same TLD in the same batch, so ENOTFOUND is proven distinguishable from a silent failure.",
   "triggers": [
-    "curl",
     "dig"
   ],
   "evidence": [

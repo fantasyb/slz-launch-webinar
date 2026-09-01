@@ -23,9 +23,6 @@
   "reality": "The safety property belongs to the page's current contents, but the instruction the user installed refers to the URL. Those come apart. Domains lapse and are re-registered, hosts are compromised, projects change hands, and a maintainer under pressure edits a page nobody re-reads. Every adopter is then executing whatever that host serves, with no diff, no version pin, and no moment at which anyone looks. The narrowness of the original page is not a property the arrangement retains.",
   "mechanism": "Fetch-and-follow collapses two things that must stay separate: identifying content and authorising it. A version-pinned artifact authorises a specific reviewed thing; a URL authorises whatever is behind it later. The second harm is cultural — normalising 'fetched text is instructions' is the precondition that makes prompt injection work everywhere else, so the cost is paid by every agent in the ecosystem, not only by adopters.",
   "workaround": "Do not ship adoption as 'read this and follow it'. But the fix is not 'never fetch' — it is to make the fetched thing verified DATA rather than instructions. Serve the payload signed, have the adopter pin a key obtained out of band, and refuse anything that does not verify: a swapped or compromised host then fails closed instead of executing. Because a stolen key still signs perfectly, validate the content independently as well — nothing executable, no host but the one being adopted — and print a diff before writing. That is one command, automatic, and safe, which is the ordinary supply-chain model rather than a novel risk. Identify by key and content, never by location.",
-  "triggers": [
-    "curl"
-  ],
   "evidence": [
     {
       "command": "# Cairn's own /install.md, before this finding",
