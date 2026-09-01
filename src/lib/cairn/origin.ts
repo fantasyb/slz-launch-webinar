@@ -17,6 +17,7 @@
  */
 import fs from 'fs';
 import path from 'path';
+import { homePath } from './home';
 
 export type Origin = {
   /** The base URL to put in served documents. */
@@ -35,7 +36,7 @@ function fromConfig(): string | null {
   if (env) return (configured = normalise(env));
   try {
     const raw = JSON.parse(
-      fs.readFileSync(path.join(process.cwd(), 'cairn.config.json'), 'utf8'),
+      fs.readFileSync(homePath('cairn.config.json'), 'utf8'),
     ) as { origin?: string };
     const o = raw.origin?.trim();
     // A bare name like "cairn.local" is a placeholder, not a deployment.

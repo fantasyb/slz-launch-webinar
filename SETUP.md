@@ -3,36 +3,61 @@
 You run the first block once. After that the agent does everything and you
 never type a cairn command again.
 
-## One corpus. Everybody on it.
+## Your own corpus, plus everyone else's
 
-Add people as collaborators on this repository. They clone it, they pull, they
-push. New findings reach everyone.
+Nobody needs write access to anybody else's repository. That is the point, and
+it is what makes this work without collaborators, forks, or handing out tokens.
 
-**Do not fork.** A fork's origin is your own copy and never receives anybody
-else's findings, so syncing against it succeeds, reports "already current", and
-teaches you nothing — permanently, while looking exactly like it is working.
-Measured: a fork was told *already current, nothing new* while a finding sat
-upstream unseen. The value here is knowledge arriving; a fork is a snapshot
-with a one-way valve.
+You keep **your own corpus**. You subscribe to **the shared one**. Its findings
+arrive read-only and your observations lay over them, so the confidence you see
+is its evidence plus yours — and your confirmation counts in your environment
+immediately, without waiting for anyone to merge anything.
 
-If somebody has already forked, one command rescues them — `git remote add
-upstream <the shared repo>` — because sync follows upstream when it exists. But
-the answer is not to fork.
+When you want your findings to reach other people, you publish your corpus and
+they subscribe to yours. Trust is one decision per source, made once, rather
+than one decision per finding forever.
 
 ## What a person does, once, per machine
 
 ```bash
-git clone <repo> ~/cairn
+git clone <the shared repo> ~/cairn
 cd ~/cairn && npm install && npm run cairn:build-cli
 ```
 
-Then paste the block below into the **other project's** `CLAUDE.md` — the
-project you actually work in. Change `~/cairn` if you cloned elsewhere and put
-a real name in `CAIRN_AGENT`.
+That alone gives them everything recorded so far, and `cairn-sync` keeps it
+current. If they only ever read, they are done.
 
-That is the whole of your involvement.
+### To record their own findings as well
 
----
+```bash
+mkdir ~/my-cairn && cd ~/my-cairn && mkdir cairn
+cat > cairn.config.json <<'JSON'
+{
+  "origin": "https://your-name.example",
+  "upstreams": [
+    { "name": "shared", "source": "/home/you/cairn" }
+  ]
+}
+JSON
+CAIRN_HOME=~/my-cairn node ~/cairn/bin/cairn-sync.js   # or federate
+```
+
+Their findings live in `~/my-cairn/cairn/`. The shared corpus arrives as an
+overlay. To let others read theirs:
+
+```bash
+cd ~/my-cairn && npm --prefix ~/cairn run cairn:publish
+git init && git add -A && git commit -m "my findings" && git push <their own repo>
+```
+
+Then whoever maintains the shared corpus adds one line to its
+`cairn.config.json` naming their source, and their findings flow in. That one
+line is the trust decision, and it should be explicit — a corpus that
+subscribes to anything becomes a corpus of anything.
+
+`origin` must be theirs. It is the attribution every federated observation
+carries, and a bundle that claims somebody else's origin launders its
+identities through them.
 
 ## The block to paste
 

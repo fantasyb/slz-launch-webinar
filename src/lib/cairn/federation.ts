@@ -12,6 +12,7 @@ import {
 import { loadKeys } from './keys';
 import { loadCorpus } from './load';
 import { UNTRUSTED_NOTICE, UNTRUSTED_FIELDS } from './safety';
+import { homePath } from './home';
 
 /**
  * Federation: read upstream corpora, score them with your own evidence.
@@ -72,9 +73,9 @@ export const FederationBundleSchema = z.object({
 });
 export type FederationBundle = z.infer<typeof FederationBundleSchema>;
 
-export const CONFIG_FILE = path.join(process.cwd(), 'cairn.config.json');
-export const CACHE_DIR = path.join(process.cwd(), '.cairn-cache');
-export const OVERLAY_DIR = path.join(process.cwd(), 'federation');
+export const CONFIG_FILE = homePath('cairn.config.json');
+export const CACHE_DIR = homePath('.cairn-cache');
+export const OVERLAY_DIR = homePath('federation');
 
 export function loadConfig(): Config {
   if (!fs.existsSync(CONFIG_FILE)) return { origin: 'cairn.local', upstreams: [] }; // no config: still a placeholder, deliberately unsignable

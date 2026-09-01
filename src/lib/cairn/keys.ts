@@ -1,12 +1,13 @@
 import fs from 'fs';
 import path from 'path';
 import { deriveKeyId, validateLabel, type KeyRecord } from './signing';
+import { homePath } from './home';
 
 /**
  * Published public keys live in `keys/`, in git. Verification therefore needs
  * nothing but a clone: no key server, no network, no trusted third party.
  */
-export const KEYS_DIR = path.join(process.cwd(), 'keys');
+export const KEYS_DIR = homePath('keys');
 
 let cache: Map<string, KeyRecord> | null = null;
 

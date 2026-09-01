@@ -55,12 +55,13 @@
 import fs from 'fs';
 import path from 'path';
 import type { Finding } from './schema';
+import { homePath } from './home';
 
 /** Generated queries, if any have been produced. See scripts/expand.ts. */
 function loadExpansions(): Record<string, string[]> {
   try {
     const raw = JSON.parse(
-      fs.readFileSync(path.join(process.cwd(), 'data', 'expansions.json'), 'utf8'),
+      fs.readFileSync(homePath('data', 'expansions.json'), 'utf8'),
     ) as { expansions?: Record<string, string[]> };
     return raw.expansions ?? {};
   } catch {

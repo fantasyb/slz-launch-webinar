@@ -1086,7 +1086,7 @@ const RESIDUAL_COMMON = new Set([
 
 function loadWordRates(): Record<string, number> {
   try {
-    const file = path.join(process.cwd(), 'data', 'word-frequency.json');
+    const file = homePath('data', 'word-frequency.json');
     return (JSON.parse(fs.readFileSync(file, 'utf8')) as { rates: Record<string, number> }).rates;
   } catch {
     // Absent table means a weaker prior, not a crash. Retrieval still works.
