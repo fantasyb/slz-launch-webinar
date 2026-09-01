@@ -201,7 +201,10 @@ async function main() {
   const before = repoState();
   const client = new Anthropic();
   const harvested: { task: string; about: string | null; trial: number; q: string }[] = [];
-  for (const t of TASKS) {
+  /* `npm run cairn:harvest -- dst-weeks csv-import` runs only those. */
+  const only = process.argv.slice(2).filter((a) => !a.startsWith('--'));
+  const tasks = only.length ? TASKS.filter((t) => only.includes(t.name)) : TASKS;
+  for (const t of tasks) {
     for (let trial = 1; trial <= TRIALS; trial++) {
       const dir = mkdtempSync(join(tmpdir(), 'harvest-'));
       cpSync(join(SCRATCH, t.dir), dir, { recursive: true });
@@ -247,7 +250,7 @@ async function main() {
 
   const out = join(tmpdir(), 'harvest.json');
   writeFileSync(out, JSON.stringify(harvested, null, 2));
-  console.log(`\n  ${harvested.length} queries from ${TASKS.length} tasks x ${TRIALS} trials -> ${out}`);
+  console.log(`\n  ${harvested.length} queries from ${tasks.length} tasks x ${TRIALS} trials -> ${out}`);
   console.log('  Label them by hand. Nothing in the retriever moves before they are in.\n');
 }
 void main();
