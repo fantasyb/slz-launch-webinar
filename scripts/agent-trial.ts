@@ -47,8 +47,14 @@ import { loadCorpus } from '../src/lib/cairn/load';
 import { retrieve } from '../src/lib/cairn/retrieval';
 import { brief } from '../src/lib/cairn/brief';
 
-const SCRATCH =
-  '/tmp/claude-0/-home-user-slz-launch-webinar/cd16b2bc-8949-542b-a8aa-9cadcf6e0c44/scratchpad';
+/*
+ * Fixtures live in the repository, not in a scratch directory belonging to one
+ * sandbox. The harvest harness was fixed for this weeks-equivalent ago and this
+ * one was left pointing at a path that exists on exactly one machine — so the
+ * trial suite, which produced most of the numbers in quality-baseline.json,
+ * could not be re-run by anybody else at all.
+ */
+const SCRATCH = join(process.cwd(), 'fixtures', 'trials');
 const TRIALS = 5;
 
 /*

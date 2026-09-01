@@ -25,8 +25,8 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { SCENARIOS } from './agent-trial';
 
-const FIXTURE =
-  '/tmp/claude-0/-home-user-slz-launch-webinar/cd16b2bc-8949-542b-a8aa-9cadcf6e0c44/scratchpad/ledger';
+/* In the repo. A fixture under a scratch path is a test only one machine can run. */
+const FIXTURE = join(process.cwd(), 'fixtures', 'ledger');
 
 const READ = `
 import { readdirSync, readFileSync } from 'fs';

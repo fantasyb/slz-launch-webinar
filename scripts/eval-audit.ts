@@ -32,6 +32,8 @@
 
 import Anthropic from '@anthropic-ai/sdk';
 import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import { loadCorpus } from '../src/lib/cairn/load';
 import { heldOutCases } from '../src/lib/cairn/evalset';
 
@@ -63,7 +65,8 @@ async function main() {
     if (v === 'PROCESS') { process_++; console.log(`  PROCESS  ${c.gold}: ${c.q.slice(0, 88).replace(/\s+/g, ' ')}`); }
     else subject++;
   }
-  fs.writeFileSync('/tmp/claude-0/-home-user-slz-launch-webinar/cd16b2bc-8949-542b-a8aa-9cadcf6e0c44/scratchpad/verdicts.json', JSON.stringify(verdicts, null, 1));
+  /* os.tmpdir(), not one sandbox's scratch directory. */
+  fs.writeFileSync(path.join(os.tmpdir(), 'cairn-eval-verdicts.json'), JSON.stringify(verdicts, null, 1));
   console.log(`\n  SUBJECT ${subject}   PROCESS ${process_}   of ${cases.length}`);
 }
 void main();
