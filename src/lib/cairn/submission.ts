@@ -37,6 +37,8 @@ export const MinimalCheckSchema = z.object({
    * contribution a new person made could not be committed.
    */
   manual: z.boolean().optional(),
+  /** The command that makes the trap stop happening — see CheckSchema. */
+  absentWhen: z.string().min(1).max(2000).optional(),
 });
 
 export const SubmissionSchema = z.object({

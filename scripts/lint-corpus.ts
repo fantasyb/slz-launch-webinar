@@ -14,6 +14,7 @@ import { scanExecutable, scanInjection } from '../src/lib/cairn/safety';
 import { longestVerbatimRun, VERBATIM_RUN_LIMIT, indexedText } from '../src/lib/cairn/evalset';
 import { homePath } from '../src/lib/cairn/home';
 import { readsAsProse } from '../src/lib/cairn/submission';
+import { checkFlaws } from '../src/lib/cairn/checkquality';
 
 const DIR = homePath('cairn');
 const problems: string[] = [];
@@ -174,6 +175,17 @@ for (const file of files) {
   // The same predicate the submission path uses to derive `manual`, imported
   // rather than restated: two copies of this rule drifting is how the record
   // path came to write findings this linter refuses.
+  /*
+   * A warning, not an error, and deliberately asymmetric with the write path.
+   * `record` refuses these outright; the existing corpus is graded rather
+   * than blocked, because retroactively erroring on fifteen checks written
+   * before the rule existed stops every commit and teaches nobody anything.
+   * The count is the number worth watching.
+   */
+  for (const flaw of checkFlaws(f.check)) {
+    warnings.push(`${file}: check ${flaw.rule} — ${flaw.detail}`);
+  }
+
   if (!f.check.manual && readsAsProse(f.check.command)) {
     problems.push(
       `${file}: check.command reads as prose but manual is false — cairn:verify would ` +

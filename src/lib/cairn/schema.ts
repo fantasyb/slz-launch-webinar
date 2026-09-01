@@ -128,6 +128,21 @@ export const CheckSchema = z.object({
   refutedIf: z.string().min(1).max(2000),
   /** Set when the check needs a human, a paid API, or a specific host. */
   manual: z.boolean().default(false),
+  /**
+   * What makes the trap stop happening, on THIS machine.
+   *
+   * The one field only the writer can supply, and the one that makes the
+   * check verifiable rather than merely runnable: run the check, apply this,
+   * run it again, and a check that answers the same both times was never
+   * deciding anything. Whoever records the finding has just made the failure
+   * go away and knows exactly what did it, so the cost is a line of shell at
+   * the moment it is cheapest.
+   *
+   * Optional, because some traps have no on-machine remedy -- those are the
+   * `manual` ones, and they stay outside the gate rather than being faked
+   * into it.
+   */
+  absentWhen: z.string().min(1).max(2000).optional(),
 });
 export type Check = z.infer<typeof CheckSchema>;
 
