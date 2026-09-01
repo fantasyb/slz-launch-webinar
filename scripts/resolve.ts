@@ -108,6 +108,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { loadCorpus } from '../src/lib/cairn/load';
 import { retrieve, buildIndex, docTerms, confusionPairs } from '../src/lib/cairn/retrieval';
 import { heldOutCases } from '../src/lib/cairn/evalset';
+import { sameSubject } from '../src/lib/cairn/subject';
 import type { Finding } from '../src/lib/cairn/schema';
 
 const all = loadCorpus().filter((f) => f.status !== 'retired');
@@ -149,7 +150,7 @@ for (let i = 0; i < all.length; i++) {
       reasons.push('measured confusion');
     }
     // 2. DECLARED: same subject, which is the corpus's own identity field.
-    if (A.subject.name.toLowerCase() === B.subject.name.toLowerCase()) reasons.push('same subject');
+    if (sameSubject(A.subject.name, B.subject.name)) reasons.push('same subject');
     // 3. LEXICAL: Jaccard over indexed terms.
     const ta = termsOf(A.id), tb = termsOf(B.id);
     let shared = 0;

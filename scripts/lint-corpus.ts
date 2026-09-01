@@ -5,6 +5,7 @@
 import fs from 'fs';
 import path from 'path';
 import { FindingSchema, environmentSignature } from '../src/lib/cairn/schema';
+import { canonicalSubject, subjectCollisions } from '../src/lib/cairn/subject';
 import { commitmentStatus } from '../src/lib/cairn/commitment';
 import { verifyObservation, findingBodyHash } from '../src/lib/cairn/signing';
 import { derivedVerdict } from '../src/lib/cairn/decay';
@@ -18,6 +19,8 @@ const warnings: string[] = [];
 const keys = loadKeys();
 const files = fs.readdirSync(DIR).filter((f) => f.endsWith('.json')).sort();
 const ids = new Set<string>();
+/** Every finding that parsed, for the corpus-wide checks after the loop. */
+const all: Array<ReturnType<typeof FindingSchema.parse>> = [];
 
 for (const file of files) {
   let data: unknown;
@@ -37,6 +40,7 @@ for (const file of files) {
   }
 
   const f = parsed.data;
+  all.push(f);
   // Scaffold placeholders are an error, not a warning.
   //
   // `cairn:new` writes a template whose every prose field reads "TODO — ...".
@@ -128,7 +132,7 @@ for (const file of files) {
     // 2. SPECIFIC: a wrapper verb identifies a trap only when its argument
     //    names the subject. `playwright install` yes; `npm install` no.
     if (UBIQUITOUS.has(words[0]) && words.length === 1) {
-      const subject = f.subject.name.toLowerCase();
+      const subject = canonicalSubject(f.subject.name);
       if (!subject.split(/[^a-z0-9.:_-]+/).includes(words[0])) {
         problems.push(
           `${file}: trigger "${t}" is a ubiquitous command and this finding's subject ` +
@@ -137,7 +141,7 @@ for (const file of files) {
       }
     }
     if (WRAPPER_VERBS.has(words[0])) {
-      const subject = f.subject.name.toLowerCase();
+      const subject = canonicalSubject(f.subject.name);
       const names = words.slice(1).some((w) => subject.includes(w) || w.includes(subject));
       if (!names) {
         problems.push(
@@ -315,6 +319,30 @@ for (const file of files) {
 
 for (const w of warnings) console.warn(`warn  ${w}`);
 for (const p of problems) console.error(`error ${p}`);
+
+/*
+ * Subject drift, checked corpus-wide rather than per finding.
+ *
+ * `subject.name` is free text doing identity work: the sibling link, the
+ * duplicate candidate generator and admission control all compare subjects to
+ * decide whether two findings are about the same thing. Comparing
+ * unnormalized attributes fails in the direction hardest to notice -- not
+ * wrong answers, but MISSED matches, which read as "no duplicates found".
+ *
+ * A warning rather than an error, because neither case is necessarily a
+ * mistake. Two spellings of one subject is drift worth fixing; one subject in
+ * two ecosystems is a genuine ambiguity only a person can settle -- either the
+ * findings are about one entity and the ecosystems disagree, or they are two
+ * entities that need distinguishable names.
+ */
+for (const c of subjectCollisions(all)) {
+  warnings.push(
+    `subject "${c.canonical}": ${c.detail} — ${c.ids.join(', ')}. ` +
+    (c.kind === 'spelling'
+      ? 'Pick one spelling; identity rules compare these.'
+      : 'One entity with disagreeing ecosystems, or two that need distinct names.'),
+  );
+}
 
 console.log(
   `\n${files.length} findings · ${problems.length} errors · ${warnings.length} warnings`,

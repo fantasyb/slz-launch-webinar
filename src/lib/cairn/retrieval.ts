@@ -41,6 +41,7 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import type { Finding } from './schema';
+import { sameSubject as isSameSubject } from './subject';
 import { surprise } from './calibration';
 import { confidence } from './decay';
 import { matchEnvironment } from './precondition';
@@ -1959,7 +1960,7 @@ function linkSiblings(hits: Hit[]): Hit[] {
       // to express it.
       if (a.score <= 0 || b.score / a.score < 0.6) continue;
       const sameSubject =
-        a.finding.subject.name.toLowerCase() === b.finding.subject.name.toLowerCase();
+        isSameSubject(a.finding.subject.name, b.finding.subject.name);
       const sameTags = jaccard(tags[i], tags[j]) >= 0.5;
       if (!sameSubject && !sameTags) continue;
       a.siblings.push(b.finding.id);
