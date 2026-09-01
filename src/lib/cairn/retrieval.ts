@@ -345,7 +345,14 @@ const attestedMemo = new WeakMap<Finding, Set<string>>();
 function attestedTokens(f: Finding): Set<string> {
   let set = attestedMemo.get(f);
   if (!set) {
-    set = new Set(plainTokens([strongText(f), coreText(f), f.mechanism ?? '', f.appliesTo ?? ''].join('\n')));
+    // Tokenised the same way the postings are. An earlier version used
+    // plainTokens, which is a different normalisation, so the membership test
+    // it fed was quietly comparing two vocabularies.
+    set = new Set(
+      tokenize([strongText(f), coreText(f), f.mechanism ?? '', f.appliesTo ?? ''].join('\n')).map(
+        (t) => t.text,
+      ),
+    );
     attestedMemo.set(f, set);
   }
   return set;
@@ -1390,6 +1397,18 @@ export function retrieve(
       // says ABOUT itself. A term attested only by the explanatory prose is
       // evidence, but weaker evidence than the finding's own account.
       const weakOnly = !strong && (index.weakByTerm.get(tok.text)?.has(doc) ?? false);
+      /*
+       * THREE tiers, and a fourth was tried and removed.
+       *
+       * The generated questions share the weak tier with `mechanism` and
+       * `appliesTo`, which somebody actually wrote, and that looks wrong: a
+       * model's guess at phrasing is not the same evidence as a person's
+       * account. Splitting them out and damping the guessed tier separately
+       * was measured across 0.1 to 1.0 and recovered nothing — held-out P@1
+       * sat at 0.808 at every value, the five cases it was built to win back
+       * stayed lost, and silence on unanswerable queries fell from 6/8 to 4/8.
+       * The distinction is real and it is not where those cases are decided.
+       */
       const tier = strong ? STRONG_FIELD_BOOST : weakOnly ? WEAK_FIELD_DAMP : 1;
       const contribution = information * tok.weight * saturation * tier;
       const slot = acc.get(doc);
@@ -2667,6 +2686,7 @@ const STRONG_FIELD_BOOST = 2.5;
  * just weaker than the finding's own account of itself.
  */
 const WEAK_FIELD_DAMP = 0.5;
+
 
 /**
  * How much the BM25 ordering counts against the typed ordering.

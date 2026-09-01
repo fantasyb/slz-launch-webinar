@@ -26,7 +26,7 @@ import fs from 'fs';
 const exec = promisify(execFile);
 
 interface Baseline {
-  heldOut: { minP1: number; minP5: number; minMRR: number; minDelivery: number };
+  heldOut: { minP1: number; minP5: number; minMRR: number; minDelivery: number; minAnswerable: number };
   field: { minP1: number; minQuiet: number };
   agent: { minCoveredHits: number; minSilentOnUnknown: number };
   corpus: { maxLintErrors: number; maxCheckSeconds: number };
@@ -84,6 +84,17 @@ async function main() {
 
   // Delivery is the number that corresponds to what the agent actually knows
   // after one query, so it is gated hardest.
+  /*
+   * The share of the suite that is a retrieval question at all. Some observation
+   * notes describe the bookkeeping around a finding rather than the trap, and
+   * the finding holds almost none of their vocabulary; those are unwinnable by
+   * construction and drag the headline down without saying anything about the
+   * ranker. Gated separately so a real regression cannot hide behind them.
+   */
+  const answerable = evalOut.match(/ANSWERABLE p1=([\d.]+)/);
+  if (!answerable) failures.push('could not parse ANSWERABLE — the guard is blind to the winnable half');
+  else check('heldOut answerable P@1', Number(answerable[1]), baseline.heldOut.minAnswerable);
+
   const del = evalOut.match(/DELIVERY\s+\d+\/\d+ \(([\d.]+)\)/);
   if (!del) failures.push('could not parse DELIVERY — the guard is blind to the headline metric');
   else check('heldOut delivery', Number(del[1]), baseline.heldOut.minDelivery);

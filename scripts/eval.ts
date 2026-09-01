@@ -183,6 +183,50 @@ if (misses.length) {
  * unconditional SUMMARY line for the same reason; a gate that parses a human
  * report is a gate that depends on the report's layout.
  */
+/*
+ * BANDED BY HOW MUCH OF ITS OWN QUERY THE GOLD ACTUALLY EXPLAINS.
+ *
+ * These queries are observation notes, and not every note is about the trap.
+ * Some describe the bookkeeping around it — that it was run under a sealed
+ * forecast, that it was reclassified from empirical to structural, that it was
+ * drafted in another project and handed over. Those are notes about process,
+ * and the finding they hang off holds almost none of their vocabulary. No
+ * retriever can win them, and counting them as failures makes the number wrong
+ * in both directions: it understates the retriever, and it makes every trade
+ * against this suite look worse than it is.
+ *
+ * The split is not a judgement call. The share is computed from the query
+ * itself, before knowing whether the case passed.
+ */
+{
+  const rows: { share: number; hit: boolean }[] = [];
+  for (const c of heldOutCases(all)) {
+    const hits = retrieve(c.q, all, { limit: 12 });
+    const gh = hits.find((h) => h.finding.id === c.gold);
+    const info = new Map<string, number>();
+    for (const h of hits) for (const m of h.matched) info.set(m.term, m.information);
+    const total = [...info.values()].reduce((a, b) => a + b, 0) || 1;
+    const gsum = (gh?.matched ?? []).reduce((sum, m) => sum + (info.get(m.term) ?? 0), 0);
+    rows.push({ share: gsum / total, hit: hits[0]?.finding.id === c.gold });
+  }
+  console.log('\nBY HOW MUCH OF ITS OWN QUERY THE GOLD EXPLAINS — is this a retrieval question at all?');
+  console.log('  gold share    cases   P@1');
+  for (const [lo, hi] of [[0, 0.1], [0.1, 0.3], [0.3, 0.5], [0.5, 0.7], [0.7, 1.01]] as [number, number][]) {
+    const b = rows.filter((r) => r.share >= lo && r.share < hi);
+    if (!b.length) continue;
+    const h = b.filter((r) => r.hit).length;
+    console.log(
+      `  ${`${(lo * 100).toFixed(0)}-${(hi * 100).toFixed(0)}%`.padEnd(12)} ${String(b.length).padStart(4)}   ${h}/${b.length} (${(h / b.length).toFixed(2)})`,
+    );
+  }
+  const answerable = rows.filter((r) => r.share >= 0.3);
+  const hit = answerable.filter((r) => r.hit).length;
+  console.log(
+    `\n  Where the note is actually about the finding (share >= 30%): ${hit}/${answerable.length} (${(hit / answerable.length).toFixed(3)})`,
+  );
+  console.log(`ANSWERABLE p1=${(hit / answerable.length).toFixed(4)} n=${answerable.length}`);
+}
+
 if (held) {
   console.log(
     `\nHELDOUT n=${held.N} p1=${(held.P1 / held.N).toFixed(4)} ` +
