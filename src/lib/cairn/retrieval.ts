@@ -2542,6 +2542,38 @@ export function confusionPairs(findings: Finding[]): Map<string, string[]> {
  * run time. Sweeping a weight now writes to its own key instead of poisoning
  * the one the next run reads.
  */
+/**
+ * A finding's indexed terms, from whichever path built the index.
+ *
+ * `index.docs[i].terms` is populated on a fresh build and EMPTY on a columnar
+ * reload, where it is build-time scratch the scorer never reads. That is
+ * correct for scoring and a trap for everything else: four separate
+ * diagnostics in one session read it, silently got nothing, and produced
+ * numbers that looked plausible and meant nothing -- a signature probe that
+ * scored 0% for every finding including the golds, and a confound check that
+ * reported 0.0% lexical overlap for both halves of a split. Each was caught
+ * only because the answer was too round to believe.
+ *
+ * Whether the map is populated depends on whether a cache file happened to
+ * exist, so the same script gives different answers on consecutive runs. Use
+ * this instead of reading `.terms`; it reconstructs from the postings, which
+ * are present on both paths, and costs one walk of the term table.
+ */
+export function docTerms(index: CorpusIndex, doc: number): Map<string, number> {
+  const direct = index.docs[doc]?.terms;
+  if (direct && direct.size > 0) return direct;
+  const out = new Map<string, number>();
+  for (const [term, tid] of index.termId) {
+    for (let k = index.termOffset[tid]; k < index.termOffset[tid + 1]; k++) {
+      if (index.postDoc[k] === doc) {
+        out.set(term, index.postTf[k]);
+        break;
+      }
+    }
+  }
+  return out;
+}
+
 export function rankerSignature(): string {
   const constants = [
     RRF_K,

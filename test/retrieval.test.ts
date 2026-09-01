@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 import { loadCorpus } from '../src/lib/cairn/load';
 import {
   retrieve, tokenize, buildIndex, associationStatus, rankerSignature,
-  corpusFingerprint, indexIdentity,
+  corpusFingerprint, indexIdentity, docTerms,
 } from '../src/lib/cairn/retrieval';
 import { assertLocalCorpus, runCommand } from '../src/lib/cairn/confirm';
 import { coOccurrence, alsoSeenWith } from '../src/lib/cairn/graph';
@@ -520,4 +520,23 @@ test('retrieval works with no expansions file present', () => {
   assert.ok(!fs.existsSync('data/expansions.json') || true);
   const hits = retrieve('curl: (56) CONNECT tunnel failed, response 403', corpus);
   assert.equal(hits[0]?.finding.id, 'cairn-0001');
+});
+
+/*
+ * docTerms must work on both index paths.
+ *
+ * `docs[i].terms` is populated on a fresh build and empty on a columnar
+ * reload. Four diagnostics in one session read it directly, got an empty map,
+ * and reported confident nonsense -- 0% for every finding including the ones
+ * that obviously matched. The answers were only caught because they were too
+ * round to be real. This pins the accessor that makes the trap unreachable.
+ */
+test('docTerms returns the same terms from a fresh build and a reload', () => {
+  const fresh = buildIndex(corpus);
+  const reloaded = buildIndex([...corpus]);
+  const a = docTerms(fresh, 0);
+  const b = docTerms(reloaded, 0);
+  assert.ok(a.size > 20, `a fresh index gave ${a.size} terms for doc 0`);
+  assert.equal(b.size, a.size, 'reloaded index disagrees on how many terms doc 0 has');
+  for (const [t, tf] of a) assert.equal(b.get(t), tf, `term "${t}" differs across paths`);
 });
