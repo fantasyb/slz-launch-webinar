@@ -2133,6 +2133,30 @@ function writeConfusionCache(fingerprint: string, pairs: Map<string, string[]>):
     const tmp = `${file}.${process.pid}.tmp`;
     fs.writeFileSync(tmp, JSON.stringify({ fingerprint, pairs: [...pairs] }));
     fs.renameSync(tmp, file);
+    /*
+     * Drop the entries for rankers that no longer exist.
+     *
+     * Keying the cache on the ranker fixed a correctness bug and introduced a
+     * housekeeping one: a sweep over two fusion weights wrote fifty-seven
+     * files in an afternoon, every one of them describing a ranker that is
+     * gone. There is exactly one live signature at a time, and a cached
+     * confusion for any other is unreachable by construction, so anything
+     * whose name does not match the file just written is garbage.
+     *
+     * Scoped to this corpus. A checkout that retrieves over more than one
+     * corpus keeps a live entry for each, and clearing another one to save
+     * kilobytes would cost it a rebuild.
+     */
+    const prefix = `confusions-v2-${fingerprint.slice(0, 16)}-`;
+    const keep = path.basename(file);
+    for (const name of fs.readdirSync(CACHE_DIR)) {
+      if (!name.startsWith(prefix) || name === keep) continue;
+      try {
+        fs.unlinkSync(path.join(CACHE_DIR, name));
+      } catch {
+        /* another process holds it, or already gone */
+      }
+    }
   } catch {
     /* recomputed next time */
   }
