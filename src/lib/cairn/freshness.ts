@@ -39,6 +39,36 @@ function git(args: string[]): string | null {
   }
 }
 
+/**
+ * Where new knowledge comes FROM, which on a fork is not where you push.
+ *
+ * A fork's origin is your own copy: it never receives anybody else's findings,
+ * so measuring "behind" against it always says zero and always will. The
+ * corpus you want is upstream. Prefer that remote when it exists, which is
+ * also the shape git itself expects for this.
+ */
+export function knowledgeRemote(): string | null {
+  const remotes = git(['remote']);
+  if (remotes && remotes.split('\n').includes('upstream')) return 'upstream';
+  const tracked = git(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}']);
+  return tracked ? tracked.split('/')[0] : null;
+}
+
+/** The ref new findings arrive on: upstream's branch when forked, else the tracked one. */
+function knowledgeRef(): string | null {
+  const remote = knowledgeRemote();
+  if (!remote) return null;
+  const branch = git(['rev-parse', '--abbrev-ref', 'HEAD']);
+  if (remote === 'upstream' && branch) {
+    const ref = `upstream/${branch}`;
+    if (git(['rev-parse', '--verify', '--quiet', ref]) !== null) return ref;
+    /* Forks often track a differently-named default branch. */
+    const head = git(['symbolic-ref', '--short', 'refs/remotes/upstream/HEAD']);
+    if (head) return head;
+  }
+  return git(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}']);
+}
+
 export interface Freshness {
   /** Commits on the tracked remote branch that this checkout does not have. */
   behind: number | null;
@@ -51,8 +81,8 @@ export interface Freshness {
 const DAY = 86_400_000;
 
 export function freshness(): Freshness {
-  const upstream = git(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}']);
-  const behindRaw = upstream ? git(['rev-list', '--count', `HEAD..${upstream}`]) : null;
+  const ref = knowledgeRef();
+  const behindRaw = ref ? git(['rev-list', '--count', `HEAD..${ref}`]) : null;
   const changed = git(['log', '-1', '--format=%ct', '--', 'cairn']);
 
   /*

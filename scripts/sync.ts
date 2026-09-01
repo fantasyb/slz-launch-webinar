@@ -14,6 +14,7 @@
  */
 import { execFileSync } from 'child_process';
 import { cairnHome } from '../src/lib/cairn/home';
+import { knowledgeRemote } from '../src/lib/cairn/freshness';
 import fs from 'fs';
 import path from 'path';
 import { loadCorpus } from '../src/lib/cairn/load';
@@ -41,9 +42,18 @@ function git(args: string[]): string {
 const before = new Set(loadCorpus().map((f) => f.id));
 const head = git(['rev-parse', 'HEAD']);
 
-console.log(`\n  fetching ${cairnHome()}`);
+/*
+ * Pull from where knowledge ARRIVES, not from where you push.
+ *
+ * On a fork those are different places, and the difference is the whole point:
+ * origin is your own copy and will never contain anybody else's findings, so
+ * syncing against it succeeds, reports nothing new, and is worthless forever.
+ */
+const remote = knowledgeRemote() ?? 'origin';
+const branch = git(['rev-parse', '--abbrev-ref', 'HEAD']);
+console.log(`\n  fetching ${cairnHome()} from ${remote}`);
 try {
-  git(['pull', '--rebase', '--autostash']);
+  git(['pull', '--rebase', '--autostash', remote, branch]);
 } catch (e) {
   console.error('\n  pull failed. Your own findings are safe; resolve and re-run.\n');
   console.error(String((e as Error).message).split('\n').slice(0, 6).join('\n'));
