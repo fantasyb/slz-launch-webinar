@@ -52,7 +52,22 @@
  * That is a real coverage gap and the number should be read knowing it: the
  * split measures retrieval over most of the corpus, not all of it.
  */
+import fs from 'fs';
+import path from 'path';
 import type { Finding } from './schema';
+
+/** Generated queries, if any have been produced. See scripts/expand.ts. */
+function loadExpansions(): Record<string, string[]> {
+  try {
+    const raw = JSON.parse(
+      fs.readFileSync(path.join(process.cwd(), 'data', 'expansions.json'), 'utf8'),
+    ) as { expansions?: Record<string, string[]> };
+    return raw.expansions ?? {};
+  } catch {
+    return {};
+  }
+}
+const EXPANSIONS: Record<string, string[]> = loadExpansions();
 
 export interface EvalCase {
   /** The query text, as a searcher would have it. */
@@ -67,13 +82,28 @@ export interface EvalCase {
 /** Word-runs this long shared with indexed text mean the text is quoting it. */
 export const VERBATIM_RUN_LIMIT = 7;
 
-/** Everything a query could match against — must mirror retrieval's view. */
+/**
+ * Everything a query could match against — must mirror retrieval's view.
+ *
+ * Generated expansions are included, and that is not optional. The filter's
+ * job is to drop a held-out candidate that quotes text the retriever can see;
+ * expansions ARE text the retriever can see, so leaving them out would let the
+ * split quietly rot as more were generated. Caught empirically on the first
+ * trial run: a generated query for cairn-0003 shared a seven-word run with a
+ * held-out note, because both quote the same error string.
+ *
+ * The consequence is worth stating plainly. Generating expansions SHRINKS the
+ * held-out set, because some candidates stop being held out. That is the same
+ * trade indexing `evidence` made, and it is the correct direction: a smaller
+ * honest split beats a larger one measuring memorisation.
+ */
 function indexedText(f: Finding): string {
   return [
     f.title, f.claim, f.subject.name, f.subject.ecosystem, f.expectation, f.reality,
     f.workaround ?? '', f.check.command, f.check.confirmedIf, f.check.refutedIf,
     f.mechanism ?? '', f.appliesTo ?? '', ...f.tags,
     ...(f.evidence ?? []).flatMap((e) => [e.command ?? '', e.output ?? '']),
+    ...(EXPANSIONS[f.id] ?? []),
   ].join('\n').toLowerCase();
 }
 
