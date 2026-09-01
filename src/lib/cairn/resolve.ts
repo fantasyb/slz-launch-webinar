@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { homePath } from './home';
 
 const FINDING_ID = /^cairn-\d{4}$/;
 
@@ -17,7 +18,7 @@ const FINDING_ID = /^cairn-\d{4}$/;
  * Resolution is by the id inside the file, not by its name, so renaming a
  * finding file cannot silently retarget a write.
  */
-export function resolveFindingFile(id: string, dir = path.join(process.cwd(), 'cairn')): string {
+export function resolveFindingFile(id: string, dir = homePath('cairn')): string {
   if (!FINDING_ID.test(id)) {
     throw new Error(`"${id}" is not a finding id (expected cairn-NNNN)`);
   }

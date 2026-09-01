@@ -11,6 +11,7 @@ import {
   type Standing,
 } from './decay';
 import { retrieve } from './retrieval';
+import { homePath } from './home';
 
 /**
  * The corpus is a directory of JSON files in git. That is the whole store.
@@ -21,7 +22,7 @@ import { retrieve } from './retrieval';
  * drive. A finding nobody will merge is a finding nobody vouched for.
  */
 
-export const CORPUS_DIR = path.join(process.cwd(), 'cairn');
+export const CORPUS_DIR = homePath('cairn');
 
 export class CorpusError extends Error {
   constructor(

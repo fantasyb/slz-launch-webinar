@@ -1,0 +1,28 @@
+name: guard
+
+# The quality floors were enforced by my memory until now, and once today a
+# commit landed with the guard red. The pre-commit hook covers tests, types and
+# lint; the guard runs several suites and is far too slow to sit in front of
+# every commit, which is how a hook gets disabled. So it runs here instead.
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm install --no-audit --no-fund
+      - run: npm test
+      - run: npx tsc --noEmit -p tsconfig.json
+      # Every floor in quality-baseline.json, plus the per-case regression
+      # check. Non-zero exit fails the job, which is the entire point.
+      - run: npm run cairn:guard
+      # The graders are measuring instruments and two of them have been wrong.
+      - run: npm run cairn:grader-selftest

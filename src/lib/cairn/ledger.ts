@@ -33,6 +33,7 @@
  */
 import fs from 'fs';
 import path from 'path';
+import { homePath } from './home';
 
 export type Outcome = 'served' | 'surfaced' | 'helped' | 'missed' | 'misled';
 
@@ -82,7 +83,7 @@ export interface RetrievalRecord {
   reconstructed?: boolean;
 }
 
-const LEDGER = path.join(process.cwd(), 'data', 'retrievals.jsonl');
+const LEDGER = homePath('data', 'retrievals.jsonl');
 
 /**
  * Record one retrieval. Never throws: a corpus that fails to answer because it

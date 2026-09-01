@@ -47,6 +47,7 @@ import { confidence } from './decay';
 import { matchEnvironment } from './precondition';
 import { coOccurrence } from './graph';
 import { readColumnar, writeColumnar, type ColumnarIndex } from './columnar';
+import { homePath } from './home';
 
 /**
  * POSIX errno symbols and their plain-English meanings.
@@ -386,7 +387,7 @@ const EXPANSION_CAP = Number(process.env.CAIRN_EXPANSION_CAP ?? 0) || Infinity;
 
 function loadExpansions(): Record<string, string[]> {
   try {
-    const file = path.join(process.cwd(), 'data', 'expansions.json');
+    const file = homePath('data', 'expansions.json');
     const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as {
       expansions?: Record<string, string[]>;
     };
@@ -554,7 +555,7 @@ export function clearIndexMemo(): void { /* WeakMap is per-array; nothing to cle
  * hundred thousand small files is a different scaling problem, and read back
  * as a map on a single parse.
  */
-const CACHE_DIR = path.join(process.cwd(), '.cairn-cache');
+const CACHE_DIR = homePath('.cairn-cache');
 
 /*
  * One file per corpus, named by fingerprint.
@@ -658,7 +659,7 @@ function dataFingerprint(): string {
   const h = crypto.createHash('sha256');
   for (const name of ['expansions.json', 'word-frequency.json']) {
     try {
-      h.update(fs.readFileSync(path.join(process.cwd(), 'data', name)));
+      h.update(fs.readFileSync(homePath('data', name)));
     } catch {
       h.update(`absent:${name}`);
     }

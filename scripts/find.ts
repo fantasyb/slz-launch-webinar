@@ -13,6 +13,8 @@ import { retrieve } from '../src/lib/cairn/retrieval';
 import { confirmCandidates } from '../src/lib/cairn/confirm';
 import { alsoSeenWith } from '../src/lib/cairn/graph';
 import { preflight } from '../src/lib/cairn/retrieval';
+import { observe } from '../src/lib/cairn/observe';
+import { corpusPresent, homePath } from '../src/lib/cairn/home';
 
 const argv = process.argv.slice(2);
 const confirm = argv.includes('--confirm');
@@ -60,8 +62,29 @@ if (before) {
 
 const all = loadCorpus();
 const hits = retrieve(query, all, { useLocalEnvironment: true, limit: 5 });
+/*
+ * Written down before it is printed. Until now every query this corpus ever
+ * answered was discarded the moment it was served, which is why the only
+ * measurements of delivery in this project were harvested by hand.
+ */
+observe(query, hits, 'cli:find');
 
 if (hits.length === 0) {
+  /*
+   * An empty corpus and an empty ANSWER are different facts, and until this
+   * check existed they printed the same sentence. Run from another project the
+   * corpus failed to LOAD, and the CLI reported that as knowledge: "nothing in
+   * the corpus matches". A reader would conclude the ledger is empty; it was
+   * simply somewhere else.
+   */
+  if (!corpusPresent()) {
+    console.error(
+      `\n  No corpus found. Looked in ${homePath('cairn')}.\n` +
+        '  Set CAIRN_HOME to the checkout, or run the CLI by its full path so it\n' +
+        '  can find its own install. This is not an empty ledger — it is no ledger.\n',
+    );
+    process.exit(2);
+  }
   console.log(`\nnothing in the corpus matches "${query}".`);
   console.log('If you solve it, that is exactly what belongs here: npm run cairn:new\n');
   process.exit(0);

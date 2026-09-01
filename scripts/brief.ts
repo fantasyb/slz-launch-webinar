@@ -19,6 +19,8 @@
  */
 import { loadCorpus } from '../src/lib/cairn/load';
 import { brief } from '../src/lib/cairn/brief';
+import { retrieve } from '../src/lib/cairn/retrieval';
+import { observe } from '../src/lib/cairn/observe';
 
 const args = process.argv.slice(2);
 const quiet = args.includes('--quiet');
@@ -29,7 +31,14 @@ if (!task.trim()) {
   process.exit(2);
 }
 
-const text = brief(task, loadCorpus(), { useLocalEnvironment: true });
+const corpus = loadCorpus();
+const text = brief(task, corpus, { useLocalEnvironment: true });
+/*
+ * Recorded whether or not anything was shown. A brief that stays silent is the
+ * common case and is a fact about delivery worth keeping: it is the difference
+ * between "we had nothing" and "we had something and withheld it".
+ */
+observe(task, retrieve(task, corpus, { useLocalEnvironment: true, limit: 5 }), 'cli:brief');
 if (text) {
   process.stdout.write(`${text}\n`);
 } else if (!quiet) {

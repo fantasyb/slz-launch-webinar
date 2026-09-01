@@ -1,0 +1,39 @@
+/**
+ * observe — record a retrieval from wherever one actually happens.
+ *
+ * Deliberately NOT inside `retrieve`. That function is pure and synchronous,
+ * it is called tens of thousands of times by the evaluation suites, and
+ * recording there would both slow them down and fill the ledger with the very
+ * queries the suites score — the contamination that emptied the first backfill.
+ *
+ * Recording belongs at the EDGES: the command line, and any tool an agent
+ * holds. Those are the places where a real person or a real agent asked a real
+ * question, which is the only traffic worth learning from.
+ */
+import { record, type RetrievalRecord } from './ledger';
+import type { Hit } from './retrieval';
+
+/**
+ * Who is asking and in what run. Both come from the environment so a host can
+ * set them once; both are optional, because a ledger that refuses to write
+ * without perfect provenance writes nothing.
+ */
+export function who(): { by: string; session: string } {
+  return {
+    by: process.env.CAIRN_AGENT ?? 'cli',
+    session: process.env.CAIRN_SESSION ?? 'adhoc',
+  };
+}
+
+export function observe(query: string, hits: Hit[], source: string): void {
+  if (!query.trim()) return;
+  const { by, session } = who();
+  const returned = hits.slice(0, 5).map((h, i) => ({
+    id: h.finding.id,
+    rank: i + 1,
+    strength: h.strength,
+  }));
+  const outcomes: RetrievalRecord['outcomes'] = {};
+  for (const r of returned) outcomes[r.id] = r.rank === 1 ? 'surfaced' : 'served';
+  record({ at: new Date().toISOString(), by, session, query, returned, source, outcomes });
+}
