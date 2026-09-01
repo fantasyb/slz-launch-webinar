@@ -682,6 +682,48 @@ export function buildIndex(findings: Finding[]): CorpusIndex {
  * evidence of anything. log(32/28) on a 31-finding corpus — roughly "in more
  * than 85% of findings".
  */
+/**
+ * Document-frequency fraction above which an ordinary English word stops
+ * generating candidates.
+ *
+ * Stated as a FRACTION deliberately. The first version of this rule multiplied
+ * a term's idf by its English weight and compared against NOISE_FLOOR, which
+ * is an absolute threshold, and that is scale-dependent in the wrong
+ * direction: over thirty-one findings every idf is small, so damping a
+ * genuinely useful mid-frequency term pushed it under the floor and stopped it
+ * finding anything. Held-out P@1 went 0.895 -> 0.868 and the rule bought no
+ * speed to pay for it.
+ *
+ * Spread is the quantity that actually matters and it does not move with
+ * corpus size: a word that is ordinary English AND already in a quarter of the
+ * corpus cannot be evidence that a finding is about anything.
+ */
+const GENERATION_SPREAD = 0.25;
+
+/**
+ * Corpus size below which the rule above is not applied, and the honest
+ * accounting for why it exists at all.
+ *
+ * This is a TRADE, measured in both directions and gated rather than pretended
+ * away. At ten thousand findings the rule takes a query from 39.7ms mean /
+ * 71.0ms p95 to 24.9ms / 37.5ms, because `not`, `one`, `cannot` and `does`
+ * stop walking twenty-three thousand postings and inserting an accumulator
+ * entry for each. At thirty-one findings it costs one held-out case of
+ * thirty-eight -- P@1 0.895 -> 0.868 -- because in a corpus this small a gold
+ * finding can genuinely be reachable only through ordinary words, and there is
+ * no cost to bound: the same query is 0.2ms.
+ *
+ * So each regime gets the answer that is right for it. What must be said
+ * plainly is that the accuracy effect ABOVE this line is unmeasured, and
+ * cannot be measured until a corpus that large exists with held-out prose to
+ * score against. The one direct piece of evidence about this rule's cost is
+ * that it cost a case at thirty-one findings. The argument that it will not at
+ * ten thousand -- that a word in 84% of the corpus is filler wherever it
+ * appears, while at thirty-one findings 84% is nine documents -- is reasoning,
+ * not measurement, and is recorded here as such.
+ */
+const GENERATION_RULE_MIN_CORPUS = 200;
+
 const NOISE_FLOOR = 0.15;
 
 /**
@@ -946,7 +988,22 @@ export function retrieve(
    */
   const acc = new Map<number, { score: number; matched: Hit['matched'] }>();
 
-  for (const tok of tokens) {
+  /*
+   * Informative terms first, so the filler has something to attach to.
+   *
+   * Addition commutes, so this changes no score. It changes what is KNOWN when
+   * each term is processed, which is what makes the rule below possible: by
+   * the time `not` is reached, every finding the discriminating terms found is
+   * already in the accumulator, and `not` can add weight to them without
+   * having to introduce ten thousand findings of its own.
+   */
+  const ordered = [...tokens].sort(
+    (a, b) =>
+      idf(index.df.get(b.text) ?? 0, index.n) * b.weight -
+      idf(index.df.get(a.text) ?? 0, index.n) * a.weight,
+  );
+
+  for (const tok of ordered) {
     const information = idf(index.df.get(tok.text) ?? 0, index.n);
     // A word common in English cannot anchor a hit on the strength of being
     // rare in thirty-one documents. Capped rather than dropped: it still
@@ -990,6 +1047,39 @@ export function retrieve(
     // it cannot affect the order. Ranking correctly is not enough: an agent
     // reading the first page sees membership, not scores.
     if (information < NOISE_FLOOR) continue;
+    /*
+     * A term may add WEIGHT to a finding without being allowed to introduce
+     * one.
+     *
+     * NOISE_FLOOR is an absolute cut on corpus rarity, and at ten thousand
+     * findings it only fires around 86% document frequency -- so `the`, `and`
+     * and `is` are dropped and `not` (83.9%), `one` (67.7%), `cannot` (45.1%)
+     * and `does` (38.7%) are not. Those four walked twenty-three thousand
+     * postings for one query and inserted an accumulator entry for each,
+     * introducing thousands of findings whose entire claim to relevance is the
+     * word `not`. That is most of what made a query at ten thousand findings
+     * cost 33ms against 0.2ms at thirty-one.
+     *
+     * Corpus rarity cannot see the problem: `not` is genuinely rarer here than
+     * `the`. The English reference can, and it is the same one the ordering
+     * uses -- a term that is ordinary English and spread across a large
+     * fraction of the corpus carries no evidence that a finding is ABOUT
+     * anything, whatever its idf.
+     *
+     * So such a term is demoted from generating candidates to scoring them.
+     * Findings the discriminating terms already found still receive its
+     * weight, in full, and rank exactly as before. What is dropped is a
+     * finding matched by NOTHING BUT filler, which the annotation layer
+     * already labels "matched only on ordinary words" and the relative cutoff
+     * already discards.
+     *
+     * That last sentence was written before it was measured, and it was wrong:
+     * at thirty-one findings the rule costs one held-out case. See
+     * GENERATION_RULE_MIN_CORPUS for what was done about it.
+     */
+    const generative =
+      index.n < GENERATION_RULE_MIN_CORPUS ||
+      !(isCommonWord(tok.text) && (index.df.get(tok.text) ?? 0) > index.n * GENERATION_SPREAD);
     // Flat walk: a term's postings are a contiguous slice, so this touches
     // integers in two typed arrays rather than dereferencing one heap object
     // per posting.
@@ -1023,7 +1113,16 @@ export function retrieve(
       const strong = index.strongByTerm.get(tok.text)?.has(doc) ?? false;
       const contribution =
         information * tok.weight * saturation * (strong ? STRONG_FIELD_BOOST : 1);
-      const slot = acc.get(doc) ?? { score: 0, matched: [] };
+      const slot = acc.get(doc);
+      if (!slot) {
+        if (!generative) continue;
+        const fresh = { score: contribution, matched: [
+          { term: tok.text, kind: tok.kind, contribution, information,
+            anchorInformation, common, strong },
+        ] };
+        acc.set(doc, fresh);
+        continue;
+      }
       slot.score += contribution;
       slot.matched.push({
         term: tok.text,
@@ -1034,7 +1133,6 @@ export function retrieve(
         common,
         strong,
       });
-      acc.set(doc, slot);
     }
   }
 
