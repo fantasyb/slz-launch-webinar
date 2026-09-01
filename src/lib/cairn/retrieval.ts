@@ -306,7 +306,31 @@ export interface CorpusIndex {
   /** token text -> how many findings contain it. */
   df: Map<string, number>;
   /**
-   * token text -> the documents containing it, with term frequency.
+   * Flat postings: term id -> [termOffset[id], termOffset[id+1]) into postDoc
+   * and postTf.
+   *
+   * The Map-of-arrays-of-objects below cost one heap object per posting --
+   * 1.6 million of them at ten thousand findings, allocated on every load to
+   * hold two integers each. These hold the same numbers in three typed arrays,
+   * so loading is a view over bytes and scoring is an index walk.
+   */
+  termId: Map<string, number>;
+  termOffset: Int32Array;
+  postDoc: Int32Array;
+  postTf: Int32Array;
+  bmTermId: Map<string, number>;
+  bmTermOffset: Int32Array;
+  bmPostDoc: Int32Array;
+  bmPostTf: Int32Array;
+  /**
+   * REMOVED from the index: token text -> array of {doc, tf} objects.
+   *
+   * Nothing in the scoring path read it once the flat arrays existed, and
+   * building it cost one heap object per posting -- 1.6 million at ten
+   * thousand findings -- on every load, to hold two integers each. The
+   * offset table above carries the same information as three typed arrays.
+   *
+   * Historical note kept because the shape is the obvious one to reach for:
    *
    * This is what makes the corpus size stop mattering. Scoring used to walk
    * every document on every query and ask whether it contained each term,
@@ -317,7 +341,6 @@ export interface CorpusIndex {
    * the library. A corpus of a million findings costs the same as one of a
    * hundred for a query that matches ten.
    */
-  postings: Map<string, Array<{ doc: number; tf: number }>>;
   n: number;
   builtAt: number;
   /** Plain-token document frequencies, for the BM25 arm. */
@@ -327,11 +350,19 @@ export interface CorpusIndex {
   /** Mean typed-token document length, for the typed ranker's normalisation. */
   avgTypedLen: number;
   /**
+   * Term -> the documents where it appears in a strong field.
+   *
+   * Inverted deliberately. Held per document it is one Set per finding, which
+   * is thousands of Sets to allocate on every load; held per term it is one
+   * Set per distinct term, and the scorer's question -- "is this query term
+   * strong in this document" -- is answered the same way either round.
+   */
+  strongByTerm: Map<string, Set<number>>;
+  /**
    * Plain token -> the documents containing it, with frequency. The BM25 arm's
    * postings, for the same reason the typed arm has them: scoring every
    * document per query is linear in the corpus however fast the inner loop.
    */
-  bm25Postings: Map<string, Array<{ doc: number; tf: number }>>;
   /**
    * Program name -> findings that concern it, precomputed.
    *
@@ -588,6 +619,15 @@ export function buildIndex(findings: Finding[]): CorpusIndex {
     }
   });
 
+  const strongByTerm = new Map<string, Set<number>>();
+  docs.forEach((d, i) => {
+    for (const t of d.strong) {
+      const set = strongByTerm.get(t);
+      if (set) set.add(i);
+      else strongByTerm.set(t, new Set([i]));
+    }
+  });
+
   const bm25Df = new Map<string, number>();
   for (const d of docs) {
     for (const t of d.bm25.tf.keys()) bm25Df.set(t, (bm25Df.get(t) ?? 0) + 1);
@@ -617,8 +657,9 @@ export function buildIndex(findings: Finding[]): CorpusIndex {
   }
 
   const index: CorpusIndex = {
-    docs, df, postings, n: docs.length, builtAt: Date.now(), bm25Df, avgdl, avgTypedLen,
-    bm25Postings, byCommand,
+    docs, df, n: docs.length, builtAt: Date.now(), bm25Df, avgdl, avgTypedLen,
+    byCommand, strongByTerm,
+    ...flatten(postings, bm25Postings),
   };
   writeColumnar(COLUMNAR_FILE, toColumnar(index, fingerprint));
   indexCache.set(findings, index);
@@ -913,7 +954,16 @@ export function retrieve(
     // it cannot affect the order. Ranking correctly is not enough: an agent
     // reading the first page sees membership, not scores.
     if (information < NOISE_FLOOR) continue;
-    for (const { doc, tf } of index.postings.get(tok.text) ?? []) {
+    // Flat walk: a term's postings are a contiguous slice, so this touches
+    // integers in two typed arrays rather than dereferencing one heap object
+    // per posting.
+    const tid = index.termId.get(tok.text);
+    if (tid === undefined) continue;
+    const from = index.termOffset[tid];
+    const to = index.termOffset[tid + 1];
+    for (let k = from; k < to; k++) {
+      const doc = index.postDoc[k];
+      const tf = index.postTf[k];
       // Saturating term frequency: a finding that says "proxy" nine times is
       // not nine times more about proxies. Without this, long findings win
       // every query by repetition alone.
@@ -934,7 +984,7 @@ export function retrieve(
       const doclen = index.docs[doc].length;
       const norm = 1 - LENGTH_B + (LENGTH_B * doclen) / index.avgTypedLen;
       const saturation = ((tf * (LENGTH_K1 + 1)) / (tf + LENGTH_K1 * norm)) || 0;
-      const boost = index.docs[doc].strong.has(tok.text) ? 2.5 : 1;
+      const boost = index.strongByTerm.get(tok.text)?.has(doc) ? 2.5 : 1;
       const contribution = information * tok.weight * saturation * boost;
       const slot = acc.get(doc) ?? { score: 0, matched: [] };
       slot.score += contribution;
@@ -1567,7 +1617,13 @@ function bm25Rank(query: string, index: CorpusIndex): string[] {
     const n = index.bm25Df.get(t) ?? 0;
     if (n === 0) continue;
     const idfw = Math.log(1 + (index.n - n + 0.5) / (n + 0.5));
-    for (const { doc, tf } of index.bm25Postings.get(t) ?? []) {
+    const tid = index.bmTermId.get(t);
+    if (tid === undefined) continue;
+    const from = index.bmTermOffset[tid];
+    const to = index.bmTermOffset[tid + 1];
+    for (let k = from; k < to; k++) {
+      const doc = index.bmPostDoc[k];
+      const tf = index.bmPostTf[k];
       const dl = index.docs[doc].bm25.length;
       const add = idfw * ((tf * (K1 + 1)) / (tf + K1 * (1 - B + (B * dl) / index.avgdl)));
       acc.set(doc, (acc.get(doc) ?? 0) + add);
@@ -1847,8 +1903,8 @@ function toColumnar(index: CorpusIndex, fingerprint: string) {
     return id;
   };
 
-  const postDoc: number[] = [], postTerm: number[] = [], postTf: number[] = [];
-  const bmDoc: number[] = [], bmTerm: number[] = [], bmTf: number[] = [];
+  const pDoc: number[] = [], pTerm: number[] = [], pTf: number[] = [];
+  const bDoc: number[] = [], bTerm: number[] = [], bTf: number[] = [];
   const strongDoc: number[] = [], strongTerm: number[] = [];
   const confidence = new Float64Array(index.docs.length);
   const surprise = new Float64Array(index.docs.length);
@@ -1857,21 +1913,50 @@ function toColumnar(index: CorpusIndex, fingerprint: string) {
 
   index.docs.forEach((d, i) => {
     confidence[i] = d.confidence;
-    // NaN encodes null: surprise is absent for findings nobody forecast, and
-    // a sentinel number would be indistinguishable from a real score.
+    // NaN encodes null: surprise is absent for findings nobody forecast, and a
+    // sentinel number would be indistinguishable from a real score.
     surprise[i] = d.surprise === null ? Number.NaN : d.surprise;
     docLength[i] = d.length;
     bm25Length[i] = d.bm25.length;
-    for (const [t, tf] of d.terms) {
-      postDoc.push(i); postTerm.push(idOf(t)); postTf.push(tf);
-    }
-    for (const [t, tf] of d.bm25.tf) {
-      bmDoc.push(i); bmTerm.push(idOf(t)); bmTf.push(tf);
-    }
-    for (const t of d.strong) {
-      strongDoc.push(i); strongTerm.push(idOf(t));
-    }
   });
+
+  // Postings come from the flat arrays the index already holds, walked through
+  // the offset table so term ids survive into the file unchanged.
+  for (const [term, tid] of index.termId) {
+    const id = idOf(term);
+    for (let k = index.termOffset[tid]; k < index.termOffset[tid + 1]; k++) {
+      pDoc.push(index.postDoc[k]); pTerm.push(id); pTf.push(index.postTf[k]);
+    }
+  }
+  for (const [term, tid] of index.bmTermId) {
+    const id = idOf(term);
+    for (let k = index.bmTermOffset[tid]; k < index.bmTermOffset[tid + 1]; k++) {
+      bDoc.push(index.bmPostDoc[k]); bTerm.push(id); bTf.push(index.bmPostTf[k]);
+    }
+  }
+  for (const [term, docs] of index.strongByTerm) {
+    const id = idOf(term);
+    for (const d of docs) { strongDoc.push(d); strongTerm.push(id); }
+  }
+
+  const nTerms = termIds.size;
+  const packed = packPostings(pDoc, pTerm, pTf, nTerms);
+  const bmPacked = packPostings(bDoc, bTerm, bTf, nTerms);
+
+  // Command index, flattened the same way, so it is stored rather than
+  // recomputed by tokenising every finding on every load.
+  const byId = new Map(index.docs.map((d, i) => [d.finding.id, i]));
+  const cmdIds = new Map<string, number>();
+  const cDoc: number[] = [], cTerm: number[] = [];
+  for (const [cmd, ids] of index.byCommand) {
+    let cid = cmdIds.get(cmd);
+    if (cid === undefined) { cid = cmdIds.size; cmdIds.set(cmd, cid); }
+    for (const id of ids) {
+      const d = byId.get(id);
+      if (d !== undefined) { cDoc.push(d); cTerm.push(cid); }
+    }
+  }
+  const cmdPacked = packPostings(cDoc, cTerm, cDoc.map(() => 0), cmdIds.size);
 
   return {
     fingerprint,
@@ -1881,22 +1966,39 @@ function toColumnar(index: CorpusIndex, fingerprint: string) {
     surprise,
     docLength,
     bm25Length,
-    postDoc: Int32Array.from(postDoc),
-    postTerm: Int32Array.from(postTerm),
-    postTf: Int32Array.from(postTf),
-    bmDoc: Int32Array.from(bmDoc),
-    bmTerm: Int32Array.from(bmTerm),
-    bmTf: Int32Array.from(bmTf),
+    postOffset: packed.offset,
+    postDoc: packed.postDoc,
+    postTf: packed.postTf,
+    bmOffset: bmPacked.offset,
+    bmDoc: bmPacked.postDoc,
+    bmTf: bmPacked.postTf,
     strongDoc: Int32Array.from(strongDoc),
     strongTerm: Int32Array.from(strongTerm),
+    cmdOffset: cmdPacked.offset,
+    cmdDoc: cmdPacked.postDoc,
+    commands: [...cmdIds.keys()],
   };
 }
 
-/** Rebuild the in-memory index from columns. Findings are matched by position. */
+/**
+ * Rebuild the in-memory index from columns.
+ *
+ * The point is what is NOT rebuilt. Per-document term maps and plain-token
+ * frequency maps existed only so the cold build could construct the postings
+ * from them; nothing in the scoring path ever reads them. Repopulating them on
+ * load meant allocating 3.2 million Map entries at ten thousand findings to
+ * satisfy no reader, which is most of what made loading a flat file take
+ * 1.8 seconds instead of the 11ms the file itself costs.
+ *
+ * What the scorer actually needs is the postings, the per-document scalars,
+ * and a strong-term membership test -- all of which come straight off the
+ * columns, one allocation per distinct term rather than per document.
+ */
 function fromColumnar(c: ColumnarIndex, findings: Finding[]): CorpusIndex {
   const docs: Indexed[] = findings.map((f, i) => ({
     id: f.id,
     finding: f,
+    // Empty by design: build-time scratch, never read during scoring.
     bm25: { tf: new Map<string, number>(), length: c.bm25Length[i] ?? 0 },
     length: c.docLength[i] ?? 0,
     confidence: c.confidence[i] ?? 0,
@@ -1905,51 +2007,152 @@ function fromColumnar(c: ColumnarIndex, findings: Finding[]): CorpusIndex {
     strong: new Set<string>(),
   }));
 
-  const postings = new Map<string, Array<{ doc: number; tf: number }>>();
+  /*
+   * Flat postings straight from the columns.
+   *
+   * No Map of arrays of objects is built at any point. `packPostings` groups
+   * the triples by term with a counting sort into typed arrays, and document
+   * frequency falls out of the offset table -- a term's df is the length of
+   * its run -- so the only per-term allocation is the dictionary entry.
+   */
+  const termId = new Map<string, number>();
+  c.terms.forEach((t, i) => termId.set(t, i));
+
+  // Nothing is grouped or tokenised here. The postings arrive already grouped
+  // by term and the offset tables arrive with them, so document frequency is
+  // the length of a run and the only work is the dictionary.
   const df = new Map<string, number>();
-  for (let k = 0; k < c.postDoc.length; k++) {
-    const term = c.terms[c.postTerm[k]];
-    const doc = c.postDoc[k];
-    const tf = c.postTf[k];
-    docs[doc].terms.set(term, tf);
-    df.set(term, (df.get(term) ?? 0) + 1);
-    const list = postings.get(term);
-    if (list) list.push({ doc, tf });
-    else postings.set(term, [{ doc, tf }]);
-  }
-
-  const bm25Postings = new Map<string, Array<{ doc: number; tf: number }>>();
   const bm25Df = new Map<string, number>();
-  for (let k = 0; k < c.bmDoc.length; k++) {
-    const term = c.terms[c.bmTerm[k]];
-    const doc = c.bmDoc[k];
-    const tf = c.bmTf[k];
-    docs[doc].bm25.tf.set(term, tf);
-    bm25Df.set(term, (bm25Df.get(term) ?? 0) + 1);
-    const list = bm25Postings.get(term);
-    if (list) list.push({ doc, tf });
-    else bm25Postings.set(term, [{ doc, tf }]);
+  for (let t = 0; t < c.terms.length; t++) {
+    const n1 = c.postOffset[t + 1] - c.postOffset[t];
+    if (n1 > 0) df.set(c.terms[t], n1);
+    const n2 = c.bmOffset[t + 1] - c.bmOffset[t];
+    if (n2 > 0) bm25Df.set(c.terms[t], n2);
   }
 
+  const strongByTerm = new Map<string, Set<number>>();
   for (let k = 0; k < c.strongDoc.length; k++) {
-    docs[c.strongDoc[k]].strong.add(c.terms[c.strongTerm[k]]);
+    const term = c.terms[c.strongTerm[k]];
+    const set = strongByTerm.get(term);
+    if (set) set.add(c.strongDoc[k]);
+    else strongByTerm.set(term, new Set([c.strongDoc[k]]));
   }
 
   const byCommand = new Map<string, Set<string>>();
-  for (const d of docs) {
-    const surface = `${d.finding.check.command} ${d.finding.title} ${d.finding.subject.name}`;
-    for (const t of plainTokens(surface)) {
-      const set = byCommand.get(t);
-      if (set) set.add(d.finding.id);
-      else byCommand.set(t, new Set([d.finding.id]));
+  c.commands.forEach((cmd, ci) => {
+    const set = new Set<string>();
+    for (let k = c.cmdOffset[ci]; k < c.cmdOffset[ci + 1]; k++) {
+      const d = docs[c.cmdDoc[k]];
+      if (d) set.add(d.finding.id);
     }
+    byCommand.set(cmd, set);
+  });
+
+  let sumBm = 0;
+  let sumLen = 0;
+  for (let i = 0; i < docs.length; i++) {
+    sumBm += c.bm25Length[i] ?? 0;
+    sumLen += c.docLength[i] ?? 0;
   }
 
-  const avgdl = docs.reduce((a, d) => a + d.bm25.length, 0) / Math.max(1, docs.length);
-  const avgTypedLen = docs.reduce((a, d) => a + d.length, 0) / Math.max(1, docs.length);
-
   return {
-    docs, df, postings, n: docs.length, builtAt: c.builtAt,
-    bm25Df, avgdl, avgTypedLen, bm25Postings, byCommand,
+    docs,
+    df,
+    n: docs.length,
+    builtAt: c.builtAt,
+    bm25Df,
+    avgdl: sumBm / Math.max(1, docs.length),
+    avgTypedLen: sumLen / Math.max(1, docs.length),
+    byCommand,
+    strongByTerm,
+    termId,
+    termOffset: c.postOffset,
+    postDoc: c.postDoc,
+    postTf: c.postTf,
+    bmTermId: termId,
+    bmTermOffset: c.bmOffset,
+    bmPostDoc: c.bmDoc,
+    bmPostTf: c.bmTf,
+  };
+}
+
+/**
+ * Group (doc, term, tf) triples into flat postings with an offset table.
+ *
+ * Sorts by term id, then records where each term's run begins. After this a
+ * term's postings are a contiguous slice of two Int32Arrays, which is what
+ * lets both the on-disk format and the in-memory index be the same shape --
+ * the file stops needing to be unpacked into objects to be usable.
+ */
+function packPostings(
+  doc: ArrayLike<number>,
+  term: ArrayLike<number>,
+  tf: ArrayLike<number>,
+  nTerms: number,
+): { offset: Int32Array; postDoc: Int32Array; postTf: Int32Array } {
+  const n = doc.length;
+  const counts = new Int32Array(nTerms + 1);
+  for (let k = 0; k < n; k++) counts[term[k] + 1] += 1;
+  for (let t = 0; t < nTerms; t++) counts[t + 1] += counts[t];
+  const offset = counts;
+
+  const cursor = Int32Array.from(offset.subarray(0, nTerms));
+  const postDoc = new Int32Array(n);
+  const postTf = new Int32Array(n);
+  for (let k = 0; k < n; k++) {
+    const at = cursor[term[k]]++;
+    postDoc[at] = doc[k];
+    postTf[at] = tf[k];
+  }
+  return { offset, postDoc, postTf };
+}
+
+/**
+ * Build the flat postings from the Map form.
+ *
+ * Both construction paths -- cold build and columnar load -- go through here,
+ * so the two cannot drift into representing the same postings differently.
+ * That matters more than the few milliseconds a specialised path would save:
+ * a scorer that silently reads a stale shape is the kind of defect this
+ * session has already produced twice.
+ */
+function flatten(
+  postings: Map<string, Array<{ doc: number; tf: number }>>,
+  bm25Postings: Map<string, Array<{ doc: number; tf: number }>>,
+) {
+  const pack = (m: Map<string, Array<{ doc: number; tf: number }>>) => {
+    const id = new Map<string, number>();
+    let n = 0;
+    for (const [term, list] of m) {
+      id.set(term, id.size);
+      n += list.length;
+    }
+    const doc = new Int32Array(n);
+    const term = new Int32Array(n);
+    const tf = new Int32Array(n);
+    let k = 0;
+    for (const [t, list] of m) {
+      const tid = id.get(t)!;
+      for (const p of list) {
+        doc[k] = p.doc;
+        term[k] = tid;
+        tf[k] = p.tf;
+        k++;
+      }
+    }
+    return { id, ...packPostings(doc, term, tf, id.size) };
+  };
+
+  const a = pack(postings);
+  const b = pack(bm25Postings);
+  return {
+    termId: a.id,
+    termOffset: a.offset,
+    postDoc: a.postDoc,
+    postTf: a.postTf,
+    bmTermId: b.id,
+    bmTermOffset: b.offset,
+    bmPostDoc: b.postDoc,
+    bmPostTf: b.postTf,
   };
 }

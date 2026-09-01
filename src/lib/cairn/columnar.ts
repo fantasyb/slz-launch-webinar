@@ -48,14 +48,33 @@ export interface ColumnarIndex {
   surprise: Float64Array;
   docLength: Int32Array;
   bm25Length: Int32Array;
+  /**
+   * Postings ALREADY GROUPED BY TERM, with an offset table.
+   *
+   * Stored sorted rather than sorted on load. Grouping 1.6 million triples with
+   * a counting sort costs ~380ms every time a process starts; doing it once at
+   * write time costs the same and is then never repeated. `postOffset[t]` to
+   * `postOffset[t+1]` is term t's run.
+   */
+  postOffset: Int32Array;
   postDoc: Int32Array;
-  postTerm: Int32Array;
   postTf: Int32Array;
+  bmOffset: Int32Array;
   bmDoc: Int32Array;
-  bmTerm: Int32Array;
   bmTf: Int32Array;
   strongDoc: Int32Array;
   strongTerm: Int32Array;
+  /**
+   * Program name -> finding indices, flattened the same way.
+   *
+   * Derived by tokenising each finding's check command, title and subject,
+   * which costs 122ms over ten thousand findings and produces the same answer
+   * every time. Stored rather than recomputed.
+   */
+  cmdOffset: Int32Array;
+  cmdDoc: Int32Array;
+  /** Program names, indexed to align with cmdOffset. */
+  commands: string[];
 }
 
 interface Header {
@@ -66,7 +85,11 @@ interface Header {
   nPost: number;
   nBm: number;
   nStrong: number;
+  nCmd: number;
+  nTerms: number;
+  nCommands: number;
   dictBytes: number;
+  cmdDictBytes: number;
 }
 
 /** Bump when the layout changes; a stale layout must not be reinterpreted. */
@@ -83,7 +106,11 @@ export function serialize(ix: Omit<ColumnarIndex, 'builtAt'> & { builtAt?: numbe
     nPost: ix.postDoc.length,
     nBm: ix.bmDoc.length,
     nStrong: ix.strongDoc.length,
+    nCmd: ix.cmdDoc.length,
+    nTerms: ix.terms.length,
+    nCommands: ix.commands.length,
     dictBytes: Buffer.byteLength(ix.terms.join('\n'), 'utf8'),
+    cmdDictBytes: Buffer.byteLength(ix.commands.join('\n'), 'utf8'),
   };
   const head = Buffer.from(`${JSON.stringify(header)}\n`, 'utf8');
   // Pad to 8 so the Float64 blocks that follow are aligned.
@@ -99,15 +126,18 @@ export function serialize(ix: Omit<ColumnarIndex, 'builtAt'> & { builtAt?: numbe
     view(ix.surprise),
     view(ix.docLength),
     view(ix.bm25Length),
+    view(ix.postOffset),
     view(ix.postDoc),
-    view(ix.postTerm),
     view(ix.postTf),
+    view(ix.bmOffset),
     view(ix.bmDoc),
-    view(ix.bmTerm),
     view(ix.bmTf),
     view(ix.strongDoc),
     view(ix.strongTerm),
+    view(ix.cmdOffset),
+    view(ix.cmdDoc),
     Buffer.from(ix.terms.join('\n'), 'utf8'),
+    Buffer.from(ix.commands.join('\n'), 'utf8'),
   ]);
 }
 
@@ -145,17 +175,22 @@ export function deserialize(buf: Buffer, expectFingerprint?: string): ColumnarIn
     const surprise = f64(header.nDocs);
     const docLength = i32(header.nDocs);
     const bm25Length = i32(header.nDocs);
+    const postOffset = i32(header.nTerms + 1);
     const postDoc = i32(header.nPost);
-    const postTerm = i32(header.nPost);
     const postTf = i32(header.nPost);
+    const bmOffset = i32(header.nTerms + 1);
     const bmDoc = i32(header.nBm);
-    const bmTerm = i32(header.nBm);
     const bmTf = i32(header.nBm);
     const strongDoc = i32(header.nStrong);
     const strongTerm = i32(header.nStrong);
+    const cmdOffset = i32(header.nCommands + 1);
+    const cmdDoc = i32(header.nCmd);
 
     const dict = buf.subarray(off, off + header.dictBytes).toString('utf8');
     const terms = header.dictBytes === 0 ? [] : dict.split('\n');
+    off += header.dictBytes;
+    const cmdDict = buf.subarray(off, off + header.cmdDictBytes).toString('utf8');
+    const commands = header.cmdDictBytes === 0 ? [] : cmdDict.split('\n');
 
     return {
       fingerprint: header.fingerprint,
@@ -165,14 +200,17 @@ export function deserialize(buf: Buffer, expectFingerprint?: string): ColumnarIn
       surprise,
       docLength,
       bm25Length,
+      postOffset,
       postDoc,
-      postTerm,
       postTf,
+      bmOffset,
       bmDoc,
-      bmTerm,
       bmTf,
       strongDoc,
       strongTerm,
+      cmdOffset,
+      cmdDoc,
+      commands,
     };
   } catch {
     return null;
