@@ -225,3 +225,39 @@ test('exit 77 means the check could not decide, not that the claim failed', asyn
   assert.equal(r.fired, 'inconclusive');
   assert.equal(r.exitCode, 77);
 });
+
+/**
+ * The columnar load path must produce exactly what the cold build produces.
+ *
+ * The index is written to disk as flat typed arrays and read back into a
+ * different construction path. That is two implementations of one thing, and
+ * two implementations drift. Worse, the drift would be invisible: both return
+ * plausible rankings, and the accuracy suite would keep passing while half the
+ * users -- everyone whose process found a warm cache -- got different answers.
+ *
+ * Verified at scale separately, where a 26x timing difference proves the paths
+ * really do diverge (20.9s cold against 0.8s warm) and the outputs are still
+ * byte-identical. This asserts the same property cheaply on the real corpus.
+ */
+test('a reloaded index ranks identically to a freshly built one', () => {
+  const queries = [
+    'ENOSPC: no space left on device, write',
+    'curl: (56) CONNECT tunnel failed, response 403',
+    '/bin/sh: 1: dig: not found',
+    'proxies blocked',
+    "error: pathspec 'x' did not match any file(s) known to git",
+  ];
+  const shape = (findings: typeof corpus) =>
+    queries.map((q) =>
+      retrieve(q, findings).map(
+        (h) =>
+          `${h.finding.id}:${h.score.toFixed(6)}:${h.strength}:${h.siblings.join('|')}:${h.confusedWith.join('|')}`,
+      ),
+    );
+
+  const first = shape(corpus);
+  // A distinct array with identical contents: the in-memory memo is keyed on
+  // array identity, so this misses it and takes the on-disk path instead.
+  const second = shape([...corpus]);
+  assert.deepEqual(second, first, 'the reloaded index ranks differently from a fresh build');
+});
