@@ -21,6 +21,7 @@ import { loadCorpus } from '../src/lib/cairn/load';
 import { brief } from '../src/lib/cairn/brief';
 import { retrieve } from '../src/lib/cairn/retrieval';
 import { observe } from '../src/lib/cairn/observe';
+import { stalenessNote } from '../src/lib/cairn/freshness';
 
 const args = process.argv.slice(2);
 const quiet = args.includes('--quiet');
@@ -43,4 +44,13 @@ if (text) {
   process.stdout.write(`${text}\n`);
 } else if (!quiet) {
   console.log('\nNothing recorded bears on that. Proceed.\n');
+}
+
+/*
+ * Said last, so it never buries the answer, and said at all because a corpus
+ * that is behind answers in exactly the tone of one that is current.
+ */
+{
+  const note = stalenessNote();
+  if (note) console.error(`  (${note})`);
 }

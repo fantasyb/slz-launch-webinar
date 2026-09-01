@@ -15,6 +15,7 @@ import { alsoSeenWith } from '../src/lib/cairn/graph';
 import { preflight } from '../src/lib/cairn/retrieval';
 import { observe } from '../src/lib/cairn/observe';
 import { corpusPresent, homePath } from '../src/lib/cairn/home';
+import { stalenessNote } from '../src/lib/cairn/freshness';
 
 const argv = process.argv.slice(2);
 const confirm = argv.includes('--confirm');
@@ -181,3 +182,12 @@ async function main() {
 }
 
 void main();
+
+/*
+ * Said last, so it never buries the answer, and said at all because a corpus
+ * that is behind answers in exactly the tone of one that is current.
+ */
+{
+  const note = stalenessNote();
+  if (note) console.error(`  (${note})`);
+}

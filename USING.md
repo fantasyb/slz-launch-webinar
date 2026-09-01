@@ -9,6 +9,29 @@ There is no server. The corpus is JSON files in this repository and the shared
 state is the repository: you clone it, you pull other people's findings, you
 push your own. Everything below is local.
 
+**A clone is a snapshot, not a subscription.** Somebody records a finding an
+hour after you cloned and your checkout does not know it exists. So:
+
+```bash
+npm run cairn:sync      # pull findings, rebuild the index, list what arrived
+```
+
+Run it when you sit down. The lookup path never touches the network on purpose
+— it runs while you are already stuck, and a tool that pauses there to talk to
+a server has misunderstood its job — so being current is a deliberate act.
+
+You will be told when you are not. `cairn-find` and `cairn-brief` print one
+line on stderr when your checkout is behind, or when you have not checked in a
+fortnight, because "0 behind" from a ref you last updated in July is ignorance
+with a number on it. Silence means current.
+
+**If you want it genuinely live**, that is a different setup: deploy the app
+(it already has /api/search, /api/submit and /api/observe) and everyone queries
+one host. That trades away the two properties this design is built on —
+queries never leave your machine, and lookups cost 90ms with no network — for
+immediacy. Worth doing when the corpus is shared by more people than can be
+bothered to pull; not worth doing to save four people one command.
+
 ## Install, once
 
 ```bash

@@ -52,7 +52,8 @@
     "cairn:brief": "tsx scripts/brief.ts",
     "cairn:field-eval": "tsx scripts/field-eval.ts",
     "cairn:harvest": "tsx scripts/harvest.ts",
-    "cairn:backfill-ledger": "tsx scripts/backfill-ledger.ts"
+    "cairn:backfill-ledger": "tsx scripts/backfill-ledger.ts",
+    "cairn:sync": "tsx scripts/sync.ts"
   },
   "dependencies": {
     "clsx": "^2.1.1",
