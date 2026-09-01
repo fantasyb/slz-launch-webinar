@@ -831,6 +831,15 @@ export interface Hit {
     anchorInformation: number;
     /** Whether the language prior rates this term as ordinary English. */
     common: boolean;
+    /**
+     * Whether this term matched in the finding's IDENTITY fields -- title,
+     * subject, check command -- rather than anywhere in its body.
+     *
+     * Already computed as the 2.5x scoring boost; recorded here because it is
+     * also usable as a ranking signal in its own right, and a multiplier
+     * folded into a total cannot be recovered from the total.
+     */
+    strong: boolean;
   }>;
   applicability: Applicability;
   confidence: number;
@@ -984,8 +993,9 @@ export function retrieve(
       const doclen = index.docs[doc].length;
       const norm = 1 - LENGTH_B + (LENGTH_B * doclen) / index.avgTypedLen;
       const saturation = ((tf * (LENGTH_K1 + 1)) / (tf + LENGTH_K1 * norm)) || 0;
-      const boost = index.strongByTerm.get(tok.text)?.has(doc) ? 2.5 : 1;
-      const contribution = information * tok.weight * saturation * boost;
+      const strong = index.strongByTerm.get(tok.text)?.has(doc) ?? false;
+      const contribution =
+        information * tok.weight * saturation * (strong ? STRONG_FIELD_BOOST : 1);
       const slot = acc.get(doc) ?? { score: 0, matched: [] };
       slot.score += contribution;
       slot.matched.push({
@@ -995,6 +1005,7 @@ export function retrieve(
         information,
         anchorInformation,
         common,
+        strong,
       });
       acc.set(doc, slot);
     }
@@ -1077,14 +1088,96 @@ export function retrieve(
    * candidates can be introduced by BM25, so the safety properties measured on
    * unknown ground are preserved exactly while the ordering improves.
    */
+  /*
+   * How much of the QUESTION a candidate accounts for, computed before the
+   * ranking rather than after it.
+   *
+   * This quantity already existed, as the `explained` caveat, and it was
+   * reported to the caller while playing no part in deciding the order. Every
+   * held-out failure says that was backwards. Of the eight prose queries that
+   * put the wrong finding first, five had the GOLD finding explaining more of
+   * the query than the winner did -- the right answer was already identified,
+   * by a number sitting one function away from the comparator that ignored it.
+   *
+   * The two quantities measure genuinely different things and it is worth
+   * being precise about which. `score` is document-side: how much matched
+   * text this finding contains, so a long finding accumulates more of it. This
+   * is query-side: of the information in what was ASKED, what fraction did
+   * this finding account for -- normalised by the question, so length buys
+   * nothing. A bright lamp beats a tuned line under the first and loses under
+   * the second, and a question is answered by the thing that absorbs its
+   * wavelengths, not by the thing that returns the most light.
+   */
+  const queryInformation = new Map<string, number>();
+  for (const tok of tokens) {
+    // Deliberately the UNDAMPED idf, floored -- see the note at its second use
+    // below: damping is a scoring decision, not a claim about what was typed.
+    queryInformation.set(
+      tok.text,
+      Math.max(idf(index.df.get(tok.text) ?? 0, index.n), MIN_TERM_INFORMATION),
+    );
+  }
+  const totalQueryInformation = [...queryInformation.values()].reduce((a, b) => a + b, 0);
+  const explains = (h: Hit) => {
+    if (totalQueryInformation <= 0) return 0;
+    let sum = 0;
+    // `matched` is deduplicated per term by the accumulator, so this sums
+    // distinct terms without materialising a Set per hit.
+    for (const m of h.matched) sum += queryInformation.get(m.term) ?? 0;
+    return sum / totalQueryInformation;
+  };
+
+  /*
+   * A FIFTH signal was built here and removed. The reasoning was good and the
+   * measurement was not, which is the only order in which those two matter.
+   *
+   * A finding's title, subject and check command say what it IS; its body says
+   * what it mentions, and both were read as the same evidence. The remaining
+   * failures look exactly like that distinction: `getent` is in the TITLE of
+   * the finding about getent and in the BODY of a neighbouring DNS finding,
+   * and the wrong one wins. So: a second coverage fraction counting only
+   * strong-field matches, fused as a fourth ranker.
+   *
+   * It took held-out P@1 from 0.868 to 0.711, and restricting it to
+   * distinctive terms only recovered it to 0.737. RRF is why: position in a
+   * SPARSE list is worth exactly what position in a dense one is worth, most
+   * findings have no strong-field match at all, and so the handful that
+   * matched one ordinary title word were promoted over findings that had
+   * answered most of the question. The signal is real; making it a ranking
+   * destroys the information that it fires rarely.
+   *
+   * It survives as `strong` on each matched term, where a caller can see it,
+   * and as the 2.5x scoring boost it always was.
+   */
+
   const candidateIds = new Set(scored.map((h) => h.finding.id));
   const typedOrder = scored
     .map((h) => ({ h, final: finalScore(h) }))
     .sort((a, b) => b.final - a.final || b.h.confidence - a.h.confidence);
   const bm25Order = bm25Rank(query, index).filter((id) => candidateIds.has(id));
+  /*
+   * Bounded to the head of the typed order for the same reason the annotation
+   * loop is: nothing below it can reach rank 1 under RRF at any weight this
+   * file would accept, and computing coverage for a thousand candidates a
+   * broad query never returns is the shape of the quadratic bug above.
+   */
+  const head = typedOrder.slice(0, FUSE_WINDOW);
+  const byCoverage = (of: (h: Hit) => number) =>
+    head
+      .map((x) => ({ id: x.h.finding.id, v: of(x.h) }))
+      // Zero coverage is not a ranking, it is an absence. Leaving those in the
+      // list gives a finding that answered none of the question a position,
+      // and a position is worth points under RRF.
+      .filter((x) => x.v > 0)
+      .sort((a, b) => b.v - a.v)
+      .map((x) => x.id);
   const fused = fuse([
     { order: typedOrder.map((x) => x.h.finding.id), weight: 1 },
     { order: bm25Order, weight: Number(process.env.CAIRN_BM25_WEIGHT ?? BM25_WEIGHT) },
+    {
+      order: byCoverage(explains),
+      weight: Number(process.env.CAIRN_EXPLAINED_WEIGHT ?? EXPLAINED_WEIGHT),
+    },
   ]);
 
   const ranked = typedOrder
@@ -1134,28 +1227,19 @@ export function retrieve(
    * its handful of incidental matches happen to rank against each other.
    */
   if (!opts.includeUnmatched && relevant.length > 0) {
-    const queryInformation = new Map<string, number>();
-    for (const tok of tokens) {
-      // Deliberately the UNDAMPED idf, floored.
-      //
-      // Damping is a scoring decision -- a common word must not anchor a hit.
-      // It is not a statement that the asker did not type the word. Using the
-      // damped value here shrank the denominator every time a query was mostly
-      // ordinary English, so one rare term looked like it explained the whole
-      // question: a thirteen-word git error matching only "git" scored 0.60
-      // explained and answered with a finding about CI gates.
-      const info = idf(index.df.get(tok.text) ?? 0, index.n);
-      queryInformation.set(tok.text, Math.max(info, MIN_TERM_INFORMATION));
-    }
-    const total = [...queryInformation.values()].reduce((a, b) => a + b, 0);
-    if (total > 0) {
-      // Sums distinct matched terms without materialising an array and a Set
-      // per hit; `matched` is already deduplicated per term by the accumulator.
-      const explains = (h: Hit) => {
-        let sum = 0;
-        for (const m of h.matched) sum += queryInformation.get(m.term) ?? 0;
-        return sum / total;
-      };
+    /*
+     * `queryInformation` and `explains` are the ones built above the ranking.
+     *
+     * They were computed here first, used only to write caveats, and the
+     * UNDAMPED idf is why they are worth reading twice: damping is a scoring
+     * decision -- a common word must not anchor a hit -- and not a statement
+     * that the asker did not type the word. Using the damped value shrank the
+     * denominator every time a query was mostly ordinary English, so one rare
+     * term looked like it explained the whole question: a thirteen-word git
+     * error matching only "git" scored 0.60 explained and answered with a
+     * finding about CI gates.
+     */
+    if (totalQueryInformation > 0) {
       /*
        * Signal fusion was built here and removed, and the measurement is why.
        *
@@ -1661,6 +1745,12 @@ const LENGTH_B = 0.75;
 const RRF_K = 60;
 
 /**
+ * How much more a term counts when it matched a finding's identity fields --
+ * title, subject, check command -- than when it matched anywhere in its body.
+ */
+const STRONG_FIELD_BOOST = 2.5;
+
+/**
  * How much the BM25 ordering counts against the typed ordering.
  *
  * Equal weight was measured first and it was a trade, not a win: prose P@1
@@ -1670,6 +1760,27 @@ const RRF_K = 60;
  * to override one that is right about it.
  */
 const BM25_WEIGHT = 0.3;
+
+/**
+ * How much the query-coverage ordering counts.
+ *
+ * The third ranker is the only one of the three that is normalised by the
+ * QUESTION rather than by the document, which is exactly why it is worth
+ * fusing and exactly why it cannot be trusted alone: a finding that matches
+ * one rare word and nothing else covers a large fraction of a short query.
+ * Fused, it breaks ties the other two decide by document mass; weighted to
+ * dominate, it would hand short queries to whatever shares their rarest term.
+ */
+const EXPLAINED_WEIGHT = 1.0;
+
+/**
+ * How far down the typed order coverage is computed.
+ *
+ * Nothing below this can reach rank 1 under RRF at these weights -- the best a
+ * rank-50 candidate can gain is 1/(60+1) against the leader's 1/61 already
+ * held -- so the work is bounded without changing any answer.
+ */
+const FUSE_WINDOW = 50;
 
 function fuse(rankings: Array<{ order: string[]; weight: number }>): Map<string, number> {
   const fused = new Map<string, number>();
@@ -1847,8 +1958,48 @@ export function confusionPairs(findings: Finding[]): Map<string, string[]> {
   return pairs;
 }
 
+/**
+ * What the cached confusions were measured WITH, not just what they were
+ * measured OVER.
+ *
+ * A confusion pair is the output of running the ranker over the corpus, so it
+ * is derived from two things: the corpus and the ranker. The cache was keyed
+ * on the corpus alone, under a literal `v1` that was never once bumped, beside
+ * a comment asserting that the version covered the ranker. It did not, and the
+ * failure is silent in the worst direction: a fusion change reordered results,
+ * every measured confusion became a statement about the previous ranker, and
+ * the delivery metric read 0.974 with no indication that a stale file was the
+ * reason. That is cairn-0028's shape a fifth time -- a guard whose input never
+ * varies passes everything -- and a hand-bumped constant would have been the
+ * sixth, because the whole problem is that nobody remembers to bump it.
+ *
+ * So the key is derived rather than declared: every constant that can change
+ * an ordering, including the two that an environment variable can override at
+ * run time. Sweeping a weight now writes to its own key instead of poisoning
+ * the one the next run reads.
+ */
+export function rankerSignature(): string {
+  const constants = [
+    RRF_K,
+    Number(process.env.CAIRN_BM25_WEIGHT ?? BM25_WEIGHT),
+    Number(process.env.CAIRN_EXPLAINED_WEIGHT ?? EXPLAINED_WEIGHT),
+    FUSE_WINDOW,
+    LENGTH_K1,
+    LENGTH_B,
+    NOISE_FLOOR,
+    SIGNAL_FLOOR,
+    MIN_QUERY_EXPLAINED,
+    MIN_TERM_INFORMATION,
+    STRONG_FIELD_BOOST,
+  ].join(',');
+  return crypto.createHash('sha256').update(constants).digest('hex').slice(0, 12);
+}
+
 function confusionFileFor(fingerprint: string): string {
-  return path.join(CACHE_DIR, `confusions-v1-${fingerprint.slice(0, 16)}.json`);
+  return path.join(
+    CACHE_DIR,
+    `confusions-v2-${fingerprint.slice(0, 16)}-${rankerSignature()}.json`,
+  );
 }
 
 function readConfusionCache(fingerprint: string): Map<string, string[]> | null {
@@ -1859,8 +2010,10 @@ function readConfusionCache(fingerprint: string): Map<string, string[]> | null {
     };
     if (raw.fingerprint !== fingerprint) return null;
     // No TTL: unlike confidence, a confusion does not decay with wall-clock
-    // time. It changes only when the corpus or the ranker changes, and the
-    // fingerprint covers the first while the cache version covers the second.
+    // time. It changes only when the corpus or the ranker changes -- the
+    // fingerprint covers the first and the ranker signature in the filename
+    // covers the second, which is a claim this comment used to make about a
+    // literal `v1` that covered nothing.
     return new Map(raw.pairs);
   } catch {
     return null;

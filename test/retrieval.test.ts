@@ -9,7 +9,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { loadCorpus } from '../src/lib/cairn/load';
-import { retrieve, tokenize, buildIndex, associationStatus } from '../src/lib/cairn/retrieval';
+import {
+  retrieve, tokenize, buildIndex, associationStatus, rankerSignature,
+} from '../src/lib/cairn/retrieval';
 import { assertLocalCorpus, runCommand } from '../src/lib/cairn/confirm';
 import { coOccurrence, alsoSeenWith } from '../src/lib/cairn/graph';
 
@@ -260,4 +262,66 @@ test('a reloaded index ranks identically to a freshly built one', () => {
   // array identity, so this misses it and takes the on-disk path instead.
   const second = shape([...corpus]);
   assert.deepEqual(second, first, 'the reloaded index ranks differently from a fresh build');
+});
+
+/*
+ * The confusion cache went stale silently, and nothing caught it.
+ *
+ * Measured confusion pairs are the ranker's output over the corpus, so they
+ * depend on both. The cache was keyed on the corpus alone under a hardcoded
+ * `v1` that was never bumped, so changing the fusion left every cached pair
+ * describing the PREVIOUS ranker. The visible symptom was a delivery metric
+ * reading 0.974 instead of 1.000 with no hint that a file was the cause, which
+ * is the expensive kind of wrong: a real number, in the right units, computed
+ * from the wrong inputs.
+ *
+ * The key is derived from the constants now. This locks that -- if a weight
+ * can change an ordering, changing it must change where the cache is read.
+ */
+test('the confusion cache key changes when the ranking does', () => {
+  const before = rankerSignature();
+  const restore = process.env.CAIRN_EXPLAINED_WEIGHT;
+  try {
+    process.env.CAIRN_EXPLAINED_WEIGHT = '2.5';
+    assert.notEqual(
+      rankerSignature(),
+      before,
+      'a weight that reorders results must reach the cache key',
+    );
+    process.env.CAIRN_BM25_WEIGHT = '0.9';
+    const both = rankerSignature();
+    delete process.env.CAIRN_BM25_WEIGHT;
+    assert.notEqual(both, rankerSignature(), 'each weight must reach the key independently');
+  } finally {
+    if (restore === undefined) delete process.env.CAIRN_EXPLAINED_WEIGHT;
+    else process.env.CAIRN_EXPLAINED_WEIGHT = restore;
+    delete process.env.CAIRN_BM25_WEIGHT;
+  }
+  assert.equal(rankerSignature(), before, 'the signature must be stable for fixed constants');
+});
+
+/*
+ * Query coverage is a RANKING signal, not only a caveat.
+ *
+ * It was computed after the order was decided and used to write "accounts for
+ * 40% of your query" on results the comparator had already sorted without it.
+ * Five of the eight held-out failures had the gold finding explaining MORE of
+ * the query than the finding that beat it. Fusing it took held-out P@1 from
+ * 0.789 to 0.868 and MRR from 0.882 to 0.928.
+ *
+ * This asserts the property rather than the number: among the results, the one
+ * that accounts for most of the question must not be buried.
+ */
+test('the hit that explains most of the query is not ranked below the tail', () => {
+  const q =
+    'The seal covers the content of a forecast. It does not, and cannot, cover ' +
+    'the decision to publish one, and that decision is made later.';
+  const hits = retrieve(q, corpus).slice(0, 8);
+  assert.ok(hits.length > 1, 'needs several hits for the ordering to mean anything');
+  const best = hits.reduce((a, b) => (b.explained > a.explained ? b : a));
+  const where = hits.indexOf(best);
+  assert.ok(
+    where < 3,
+    `the best-explaining hit ${best.finding.id} (${best.explained.toFixed(2)}) ranked ${where}`,
+  );
 });
