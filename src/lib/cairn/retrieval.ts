@@ -451,7 +451,7 @@ const ENTRY_FILE = path.join(CACHE_DIR, `${ENTRY_FILE_NAME}-v${CACHE_SCHEMA}.jso
 /** The assembled index, laid out flat. See columnar.ts for why. */
 const COLUMNAR_FILE = path.join(CACHE_DIR, `index-v${CACHE_SCHEMA}.bin`);
 
-function corpusFingerprint(findings: Finding[]): string {
+export function corpusFingerprint(findings: Finding[]): string {
   const h = crypto.createHash('sha256');
   h.update(String(CACHE_SCHEMA));
   for (const f of findings) h.update(JSON.stringify(f));
@@ -1892,6 +1892,14 @@ export function clearConfusionCache(): void {
  * load rather than serialised -- storing them would trade file size for work
  * that costs microseconds.
  */
+/**
+ * Public wrapper, so the serving route can flatten an index without reaching
+ * into the private builder. Same function; the name marks the boundary.
+ */
+export function toColumnarPublic(index: CorpusIndex, fingerprint: string) {
+  return toColumnar(index, fingerprint);
+}
+
 function toColumnar(index: CorpusIndex, fingerprint: string) {
   const termIds = new Map<string, number>();
   const idOf = (t: string) => {
