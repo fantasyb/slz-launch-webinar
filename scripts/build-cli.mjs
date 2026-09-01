@@ -26,6 +26,11 @@ import { mkdirSync } from 'fs';
 const ENTRIES = [
   ['scripts/find.ts', 'dist/cli/find.js'],
   ['scripts/doctor.ts', 'dist/cli/doctor.js'],
+  // The brief is the delivery path with the largest measured effect — a weaker
+  // model went from 0/5 to 4/5 when findings were handed over instead of
+  // offered — and it was reachable only through npm, which resolves nothing
+  // from another project's directory.
+  ['scripts/brief.ts', 'dist/cli/brief.js'],
 ];
 
 mkdirSync('dist/cli', { recursive: true });
