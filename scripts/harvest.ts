@@ -34,11 +34,27 @@ const corpus = loadCorpus();
 const ACTIONS: string[] = [];
 
 /*
- * Each task is ordinary work that happens to sit on top of a recorded trap.
- * `about` is what the task was BUILT around -- a note for the labeller, never
- * used here, and not a promise that any given query is about it.
+ * Two kinds of task, and the second kind is the point of the second harvest.
+ *
+ * BUILT ON A TRAP (`about` set): ordinary work sitting on top of something the
+ * corpus knows. These produced eleven queries, all answerable, and every one
+ * ranked first. They also produced about ONE query per trial, asked at the
+ * start, about the task in front of the agent.
+ *
+ * BUILT ON NOTHING (`about` null): a debugging task in a domain the corpus is
+ * silent on -- money rounding, retry and backoff, a daylight-saving boundary,
+ * CSV encoding. Each has several sub-problems and a planted bug, because an
+ * agent that has to form a theory asks mid-task asides, and asides are where
+ * unanswerable queries come from. The original suite's negatives were exactly
+ * that: a timezone parse, a NaN comparator, wondered about halfway through
+ * something else.
+ *
+ * Silence is the half that protects the reader and it has never been measured
+ * on ground the corpus has not seen. These tasks exist to measure it, so they
+ * are deliberately NOT built around anything in the ledger. Probed first: all
+ * four domains return only unrelated findings.
  */
-const TASKS = [
+const TASKS: { name: string; dir: string; about: string | null; task: string }[] = [
   {
     name: 'zod-defaults',
     dir: 'zod',
@@ -72,6 +88,42 @@ const TASKS = [
     task:
       'Our review gate is reporting success on every pull request and the team has stopped ' +
       'trusting it. Work out whether it is actually reviewing anything, and fix it if not.',
+  },
+  {
+    name: 'invoice-rounding',
+    dir: 'billing',
+    about: null,
+    task:
+      'Finance says our invoice totals disagree with the payment processor by a cent or two ' +
+      'on some invoices. The processor rounds each line to cents before summing; read the ' +
+      'README. Work out where ours diverges, fix it, and show me the total for lines.json ' +
+      'before and after.',
+  },
+  {
+    name: 'retry-waves',
+    dir: 'retry',
+    about: null,
+    task:
+      'The vendor says our traffic arrives in waves and they are rate-limiting us harder for ' +
+      'it. We run forty workers against this client. Work out why, fix it, and honour what ' +
+      'the vendor tells us on a 429.',
+  },
+  {
+    name: 'dst-weeks',
+    dir: 'report',
+    about: null,
+    task:
+      'Support says the Monday numbers in the weekly report disagree with the admin console, ' +
+      'but only twice a year. events.json has samples from both of those weekends. Find out ' +
+      'why and fix it.',
+  },
+  {
+    name: 'csv-import',
+    dir: 'importer',
+    about: null,
+    task:
+      'Ops say the first column of the member import comes through with a strange name, and ' +
+      'that some people appear twice. Both are in members.csv. Diagnose each and fix them.',
   },
 ];
 
