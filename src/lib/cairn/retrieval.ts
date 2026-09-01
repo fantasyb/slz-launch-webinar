@@ -1770,6 +1770,53 @@ function linkSiblings(hits: Hit[]): Hit[] {
 
 
 /*
+ * COMPRESSION was built here and removed, and it is the closest anything has
+ * come to the sibling residual. Recorded in full because the next person will
+ * think of it, and because what killed it is not what killed the others.
+ *
+ * Every ranking in this file is a bag of words. They differ in how a matched
+ * term is weighted and agree completely in discarding the order the words came
+ * in -- five detectors, one physics, which is why the four residual failures
+ * fail identically in all of them. Two findings that use the same vocabulary
+ * to assert different things are, to all five, the same finding.
+ *
+ * A compressor does not discard order. Feed it the finding, let it build a
+ * dictionary, then feed it the query: what is left to encode is whatever the
+ * finding did not already say.
+ *
+ *   cost(q | d) = C(d ++ q) - C(d)          (deflate, finding capped at 3000)
+ *
+ * Direction matters and the symmetric form is much worse -- normalised
+ * compression distance is P@1 0.289 alone, dominated by finding length.
+ * Conditioned this way it is 0.737 alone, and asked directly about each of the
+ * four pairs the fusion cannot separate it picks the gold on ALL FOUR:
+ *
+ *   cairn-0016 vs -0017    96 bytes vs 100
+ *   cairn-0018 vs -0026    61 vs 63
+ *   cairn-0019 vs -0027   107 vs 112
+ *   cairn-0030 vs -0001    52 vs 57
+ *
+ * Three ways of using it were measured and all three lose:
+ *
+ *   fused as a sixth ranking       0.895 -> 0.816 at every weight
+ *   adjudicate a near-tie top two  0.895 -> 0.868 (fixes three, breaks four)
+ *   ...gated to declared siblings  0.895 -> 0.868 (fires on one wrong pair)
+ *
+ * The first fails because RRF fuses POSITIONS and the margins are the entire
+ * signal: four bytes. The second and third fail on the same arithmetic, which
+ * is the real lesson. A signal that is right 74% of the time, let loose on 34
+ * correct answers to repair 4 wrong ones, must fire almost exclusively on the
+ * 4 to break even -- and no gate built from 38 cases can do that without being
+ * fitted to those 4, which is not a retrieval improvement, it is memorising
+ * the eval set with extra steps.
+ *
+ * So the honest reading is that the signal is real and the SELECTOR is not
+ * learnable at this corpus size. It becomes viable when the corpus is large
+ * enough that near-tie sibling pairs are numerous enough to gate on
+ * empirically. Worth trying again then; not worth fitting now.
+ */
+
+/*
  * Spreading activation was built here and removed. The reasoning was the best
  * idea in this file and the measurement killed it, so the reasoning is kept.
  *
