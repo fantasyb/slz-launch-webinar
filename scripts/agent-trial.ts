@@ -49,6 +49,16 @@ import { retrieve } from '../src/lib/cairn/retrieval';
 const SCRATCH =
   '/tmp/claude-0/-home-user-slz-launch-webinar/cd16b2bc-8949-542b-a8aa-9cadcf6e0c44/scratchpad';
 const TRIALS = 5;
+
+/*
+ * The subject model. 5/5 on one model is a strong signal and a narrow one:
+ * a corpus could help a capable model that barely needs it while being
+ * unusable by a weaker one that does, and the aggregate would look the same.
+ * The judge, where a scenario uses one, deliberately stays on the strong model
+ * -- it is the instrument, not the subject.
+ */
+const MODEL = (process.argv.find((a) => a.startsWith('--model='))?.slice(8) ?? 'claude-opus-5');
+const JUDGE_MODEL = 'claude-opus-5';
 const corpus = loadCorpus();
 
 interface Scenario {
@@ -244,7 +254,7 @@ async function run(scenario: Scenario, withCairn: boolean) {
   let answer = '';
   for (let turn = 0; turn < 14; turn++) {
     const res = await client.messages.create({
-      model: 'claude-opus-5',
+      model: MODEL,
       max_tokens: 6000,
       thinking: { type: 'adaptive' },
       tools,
@@ -303,7 +313,7 @@ async function run(scenario: Scenario, withCairn: boolean) {
 async function judge(client: Anthropic, rubric: string, answer: string): Promise<string> {
   if (!answer.trim()) return 'NEITHER';
   const res = await client.messages.create({
-    model: 'claude-opus-5',
+    model: JUDGE_MODEL,
     max_tokens: 64,
     messages: [{ role: 'user', content: `${rubric}\n\n--- reply ---\n${answer.slice(0, 8000)}` }],
   });
@@ -313,7 +323,7 @@ async function judge(client: Anthropic, rubric: string, answer: string): Promise
 }
 
 async function main() {
-  const name = process.argv[2] ?? 'reachability';
+  const name = process.argv.slice(2).find((a) => !a.startsWith('--')) ?? 'reachability';
   const scenario = SCENARIOS[name];
   if (!scenario) {
     console.error(`unknown scenario "${name}" — one of: ${Object.keys(SCENARIOS).join(', ')}`);
@@ -337,11 +347,11 @@ async function main() {
     }
   }
   const pct = (a: number[]) => (a.length ? `${a.reduce((x, y) => x + y, 0)}/${a.length}` : 'no data');
-  console.log(`\n\n  ${name} — control ${pct(tally.control)}   with cairn ${pct(tally.cairn)}`);
+  console.log(`\n\n  ${name} [${MODEL}] — control ${pct(tally.control)}   with cairn ${pct(tally.cairn)}`);
   if (refusals.control || refusals.cairn)
     console.log(`  REFUSED (not counted) — control ${refusals.control}, cairn ${refusals.cairn}`);
   console.log();
-  const out = join(tmpdir(), `agent-trial-${name}.json`);
+  const out = join(tmpdir(), `agent-trial-${name}-${MODEL}.json`);
   writeFileSync(out, JSON.stringify(transcript, null, 2));
   console.log(`  full answers: ${out}\n`);
 }
