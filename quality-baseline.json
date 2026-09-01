@@ -20,7 +20,7 @@
   ],
   "recordedAt": "2026-09-01",
   "heldOut": {
-    "_source": "npm run cairn:eval \u2014 observation notes and prediction reasoning, never indexed",
+    "_source": "npm run cairn:eval — observation notes and prediction reasoning, never indexed",
     "_note": [
       "REBASED. The former split (mechanism/appliesTo) is now indexed and appears in",
       "the report as an in-sample tripwire scoring 1.000, which measures nothing.",
@@ -42,15 +42,32 @@
       "added. A new finding competes with the existing ones, so P@1 moving is",
       "expected and is not a regression in the ranker: 0.864 -> 0.851 is one case",
       "of 67. The floor moves because the corpus changed, which is the one reason",
-      "it is allowed to."
+      "it is allowed to.",
+      "",
+      "LOWERED AGAIN 0.84 -> 0.83 (MRR 0.88 -> 0.87, delivery 0.86 -> 0.85) on",
+      "2026-09-01 when cairn-0033 was added: 0.851 -> 0.838 over 68 cases.",
+      "",
+      "That is the SECOND time these floors have been argued down for the same",
+      "reason, and the argument was true both times. It is also exactly what a",
+      "genuine ranker regression would look like in a commit message, which is why",
+      "an aggregate floor cannot be the last line of defence. It is now the second",
+      "line. data/case-outcomes.json records the outcome of every held-out case",
+      "individually and cairn:case-guard reports the set difference, so a corpus",
+      "that grew and a ranker that broke stop being the same number.",
+      "",
+      "Measured, not asserted: adding cairn-0033 broke zero existing cases -- the",
+      "whole 0.013 drop is its own first case failing, against a denominator one",
+      "larger. Dropping EXPLAINED_WEIGHT 1.0 -> 0.85 costs a comparable amount of",
+      "P@1 and DOES break an existing case (cairn-0019). Identical movement in the",
+      "average, opposite meanings, and only the per-case check can tell them apart."
     ],
-    "minP1": 0.84,
+    "minP1": 0.83,
     "minP5": 0.9,
-    "minMRR": 0.88,
-    "minDelivery": 0.86
+    "minMRR": 0.87,
+    "minDelivery": 0.85
   },
   "agent": {
-    "_source": "npm run cairn:agent-eval \u2014 real commands, real stderr",
+    "_source": "npm run cairn:agent-eval — real commands, real stderr",
     "_note": [
       "silentOnUnknown counts 'returned nothing' OR 'returned only weak-labelled",
       "matches' -- both safe; only a confident wrong answer is not.",

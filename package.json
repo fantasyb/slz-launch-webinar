@@ -46,7 +46,8 @@
     "cairn:history": "tsx scripts/history.ts",
     "cairn:resolve": "tsx scripts/resolve.ts",
     "cairn:simulate": "tsx scripts/simulate.ts",
-    "cairn:admit": "tsx scripts/admit.ts"
+    "cairn:admit": "tsx scripts/admit.ts",
+    "cairn:case-guard": "tsx scripts/case-guard.ts"
   },
   "dependencies": {
     "clsx": "^2.1.1",

@@ -57,14 +57,15 @@ async function run(cmd: string, args: string[]) {
 }
 
 async function main() {
-  console.log('\nCAIRN QUALITY GUARD — three suites, concurrently, one working tree');
+  console.log('\nCAIRN QUALITY GUARD — four suites, concurrently, one working tree');
   console.log('='.repeat(66));
 
-  const [evalOut, agentOut, lintOut, doctorOut] = await Promise.all([
+  const [evalOut, agentOut, lintOut, doctorOut, caseOut] = await Promise.all([
     run('npx', ['tsx', 'scripts/eval.ts']),
     run('npx', ['tsx', 'scripts/agent-eval.ts']),
     run('npx', ['tsx', 'scripts/lint-corpus.ts']),
     run('npx', ['tsx', 'scripts/doctor.ts']),
+    run('npx', ['tsx', 'scripts/case-guard.ts']),
   ]);
 
   // --- held-out retrieval accuracy ---
@@ -109,6 +110,27 @@ async function main() {
     failures.push('could not parse doctor SUMMARY — the guard is blind to check cost');
   } else {
     check('slowest check (seconds)', Number(summary[1]) / 1000, baseline.corpus.maxCheckSeconds, false);
+  }
+
+  /*
+   * --- per-case regression ---
+   * The floors above are averages, and an average cannot tell a corpus that
+   * grew from a ranker that broke. This can: it names the individual cases
+   * that used to pass and no longer do. It is the check the floors were being
+   * asked to do and could not.
+   */
+  const regressed = caseOut.match(/FAIL — (\d+) case\(s\) that used to pass now fail/);
+  if (caseOut.includes('no data/case-outcomes.json')) {
+    failures.push('no per-case baseline — run: npm run cairn:case-guard -- --bless');
+  } else if (regressed) {
+    check('cases regressed', Number(regressed[1]), 0, false);
+    for (const line of caseOut.split('\n').filter((l) => /^\s{4}cairn-\d+ ->/.test(l))) {
+      notes.push(`  note  ${'  regressed'.padEnd(28)} ${line.trim()}`);
+    }
+  } else if (caseOut.includes('PASS — no case that passed at bless time fails now')) {
+    check('cases regressed', 0, 0, false);
+  } else {
+    failures.push('could not parse cairn:case-guard output — the guard is blind to per-case regression');
   }
 
   console.log(notes.join('\n'));
