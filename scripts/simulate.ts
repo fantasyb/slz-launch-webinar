@@ -202,6 +202,107 @@ for (const c of [1, 5, 20, CONTRIBUTORS]) {
   );
 }
 
+/*
+ * THE NUMBER THAT GOES UP.
+ *
+ * P@1 falls as the corpus grows and that is not a defect being tolerated, it
+ * is the wrong question being asked. P@1 measures PRECISION ON COVERED
+ * GROUND: given a query about something already in the corpus, is the right
+ * record first. It cannot rise with growth, because every finding added is
+ * another competitor for every query.
+ *
+ * It also says nothing about the value of the corpus. Queried today with four
+ * failures actually hit in this session, cairn answered none of them -- not
+ * because ranking failed but because none of the four is written down.
+ * Coverage was zero and P@1 was 0.86, and the two numbers do not know about
+ * each other.
+ *
+ * COVERAGE is the number that rises monotonically: what fraction of the traps
+ * a person hits does the corpus know about at all. Nothing can make it fall,
+ * and every finding added raises it.
+ *
+ * And the pipeline decides which of the two grows. Without admission control
+ * every write-up is a new record, so records grow with contributors and
+ * precision falls. With it, a duplicate becomes an OBSERVATION on the trap it
+ * duplicates -- so the record count tracks the number of distinct traps rather
+ * than the number of people, and the fiftieth person to hit the proxy makes
+ * that finding stronger instead of making the corpus noisier.
+ */
+{
+  const encounters = 400;
+  console.log('\n  HOW THE CORPUS GROWS, WITH AND WITHOUT ADMISSION CONTROL');
+  console.log('  encounters  records(raw)  records(admitted)  traps covered  coverage');
+  for (const seen of [40, 120, 250, encounters]) {
+    const { trapOf, findings } = build(Math.ceil(seen / PER_CONTRIBUTOR));
+    const traps = new Set(trapOf.values());
+    // With admission control a duplicate never becomes a record.
+    const admitted = traps.size;
+    console.log(
+      `  ${String(findings.length).padStart(10)}${String(findings.length).padStart(14)}` +
+      `${String(admitted).padStart(19)}${String(traps.size).padStart(15)}` +
+      `${`${Math.round((traps.size / TRAPS) * 100)}%`.padStart(10)}`,
+    );
+  }
+  /*
+   * And the direct consequence: ranking thirty-seven records is a different
+   * problem from ranking four hundred that describe the same thirty-seven
+   * things. Same queries, same coverage, two corpus shapes -- the raw one as
+   * it accumulates, and the admitted one where every duplicate became an
+   * observation instead of a record.
+   */
+  const { findings: raw, trapOf: rawTrap, queries: qs } = build(Math.ceil(400 / PER_CONTRIBUTOR));
+  const firstPerTrap = new Map<number, Finding>();
+  for (const f of raw) {
+    const t = rawTrap.get(f.id)!;
+    if (!firstPerTrap.has(t)) firstPerTrap.set(t, f);
+  }
+  const admittedCorpus = [...firstPerTrap.values()];
+  const admittedTrap = new Map([...firstPerTrap].map(([t, f]) => [f.id, t] as const));
+  const sample = qs.slice(0, 80);
+  const measure = (corpus: Finding[], map: Map<string, number>) => {
+    clearConfusionCache();
+    let hit = 0;
+    const t0 = process.hrtime.bigint();
+    for (const { q, trap } of sample) {
+      const top = retrieve(q, corpus)[0];
+      if (top && map.get(top.finding.id) === trap) hit++;
+    }
+    return { p: hit / sample.length, ms: Number(process.hrtime.bigint() - t0) / 1e6 / sample.length };
+  };
+  /*
+   * A third shape: absorbed, not merely discarded.
+   *
+   * Collapsing to one record per trap loses something real -- eleven write-ups
+   * are eleven phrasings, and a query has eleven chances to match one of them.
+   * That recall is worth keeping and does not require eleven records to keep.
+   *
+   * So the survivor carries the duplicates' VOCABULARY. Each absorbed write-up
+   * contributes its title and reality as searchable text on the record it
+   * duplicates, which is what the expansions field already does for generated
+   * queries. One record, every way anyone has ever described the trap.
+   */
+  const absorbed = admittedCorpus.map((f) => {
+    const t = admittedTrap.get(f.id)!;
+    const others = raw.filter((o) => rawTrap.get(o.id) === t && o.id !== f.id);
+    return {
+      ...f,
+      mechanism: [f.mechanism ?? '', ...others.map((o) => `${o.title} ${o.reality}`)].join('\n'),
+    } as Finding;
+  });
+  const absorbedTrap = new Map([...admittedTrap]);
+
+  const A = measure(raw, rawTrap);
+  const B = measure(admittedCorpus, admittedTrap);
+  const C = measure(absorbed, absorbedTrap);
+  console.log(`\n  same ${sample.length} queries, same coverage, two corpus shapes:`);
+  console.log(`    raw       ${raw.length} records   right trap ${A.p.toFixed(3)}   ${A.ms.toFixed(2)} ms/query`);
+  console.log(`    admitted  ${admittedCorpus.length} records    right trap ${B.p.toFixed(3)}   ${B.ms.toFixed(2)} ms/query`);
+  console.log(`    absorbed  ${absorbed.length} records    right trap ${C.p.toFixed(3)}   ${C.ms.toFixed(2)} ms/query   <- keeps their vocabulary`);
+
+  console.log('\n  raw records grow with PEOPLE; admitted records grow with TRAPS.');
+  console.log('  coverage is the only column that cannot fall.');
+}
+
 // Duplicate detectability, calibrated against the measured 32%.
 const { findings, trapOf } = build(CONTRIBUTORS);
 const ix = buildIndex(findings.slice(0, 300));

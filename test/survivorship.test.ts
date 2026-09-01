@@ -68,3 +68,52 @@ test('identical records propose nothing beyond the observation union', () => {
   const ds = proposeSurvivor(base, { ...base, observations: [] } as Finding);
   assert.ok(!ds.some((d) => d.rule === 'judged'), `identical prose produced: ${ds.map((d) => d.field)}`);
 });
+
+/*
+ * Vocabulary survives even when the record does not.
+ *
+ * This is the measured difference between the pipeline helping and hurting.
+ * Four hundred write-ups of thirty-seven traps rank at 0.863; collapsing them
+ * to thirty-seven records drops it to 0.800, because eleven write-ups are
+ * eleven phrasings and a query has eleven chances to match one. Carrying the
+ * wording onto the survivor restores 0.863 at a fifth of the query cost.
+ */
+test('an absorbed duplicate leaves its wording behind', () => {
+  const incoming = {
+    ...base,
+    title: 'curl exit 56 means blocked, not down',
+    reality: 'the proxy answered, so remote_ip reads 127.0.0.1',
+  } as Finding;
+  const d = find(proposeSurvivor(base, incoming), 'aliases');
+  assert.equal(d?.rule, 'union');
+  assert.match(String(d?.value), /curl exit 56/);
+  assert.match(String(d?.value), /127\.0\.0\.1/);
+});
+
+/*
+ * Recency breaks a tie only against a claim the corpus has stopped believing.
+ *
+ * Age alone is not staleness: an old finding that keeps being reconfirmed is
+ * established, not out of date. Decayed confidence is the corpus's own
+ * statement that it is no longer sure, so that is the condition.
+ */
+test('a fresh account supersedes a decayed one, and only a decayed one', () => {
+  const fresh = {
+    ...base,
+    observations: [{ ...base.observations[0], at: new Date().toISOString() }],
+  } as Finding;
+  assert.equal(
+    find(proposeSurvivor(base, fresh), '__supersede'),
+    undefined,
+    'a confident existing record must not be superseded on age alone',
+  );
+
+  const stale = {
+    ...base,
+    halfLifeDays: 1,
+    observations: [{ ...base.observations[0], at: '2024-01-01T00:00:00Z' }],
+  } as Finding;
+  const d = find(proposeSurvivor(stale, fresh), '__supersede');
+  assert.equal(d?.value, fresh.id, 'a decayed record should defer to a fresh account');
+  assert.match(String(d?.why), /decayed/);
+});

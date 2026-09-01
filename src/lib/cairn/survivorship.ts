@@ -32,6 +32,7 @@
  * Nothing here mutates. It produces a proposal.
  */
 import type { Finding } from './schema';
+import { confidence } from './decay';
 
 export type Rule = 'union' | 'safer' | 'judged' | 'keep';
 
@@ -47,6 +48,15 @@ export interface Decision {
 }
 
 const len = (s?: string) => (s ?? '').trim().length;
+
+/**
+ * Confidence below which a finding counts as stale for survivorship.
+ *
+ * Not a fresh/stale boundary invented here -- it is the point at which this
+ * corpus already stops treating a claim as reliable, and reusing it means one
+ * notion of "no longer sure" rather than two that can drift apart.
+ */
+const DECAYED = 0.5;
 
 /**
  * What would survive if `incoming` were absorbed into `existing`.
@@ -112,6 +122,58 @@ export function proposeSurvivor(existing: Finding, incoming: Finding): Decision[
       why:
         `${existing.halfLifeDays} vs ${incoming.halfLifeDays}; the shorter half-life is re-checked ` +
         'sooner, so disagreement fails toward verifying rather than toward asserting.',
+    });
+  }
+
+  /*
+   * VOCABULARY: keep how they said it, even when the record does not survive.
+   *
+   * Measured, and it is the difference between the pipeline helping and
+   * hurting. Four hundred write-ups of thirty-seven traps rank at 0.863;
+   * collapsing them to thirty-seven records drops that to 0.800, because
+   * eleven write-ups are eleven phrasings and a query has eleven chances to
+   * match one. Carrying the absorbed titles and symptoms onto the survivor
+   * restores 0.863 from thirty-seven records at a fifth of the query cost.
+   *
+   * One record, every way anyone has described the trap. That is what makes
+   * the corpus get STRONGER as it grows rather than merely larger.
+   */
+  const phrasing = [incoming.title, incoming.reality].filter(Boolean).join(' ').trim();
+  if (phrasing && !(existing.mechanism ?? '').includes(incoming.title)) {
+    out.push({
+      field: 'aliases',
+      rule: 'union',
+      value: phrasing.slice(0, 200),
+      why:
+        'how this person described the same trap, kept as searchable text. ' +
+        'Discarding it costs real recall: measured 0.863 -> 0.800 when absorbed ' +
+        'write-ups lost their wording.',
+    });
+  }
+
+  /*
+   * RECENCY breaks a tie, but only against a claim that has gone stale.
+   *
+   * Models change, environments change, and a finding recorded eighteen months
+   * ago about a tool that has since been rewritten should not outrank a fresh
+   * account of the same trap. Decayed confidence is the corpus's own statement
+   * that it is no longer sure, so that is the condition -- not age alone,
+   * because an old finding that keeps being reconfirmed is not stale, it is
+   * established.
+   */
+  const now = new Date();
+  const existingConfidence = confidence(existing, now);
+  const incomingSeen = incoming.observations?.[0]?.at;
+  const staleExisting = existingConfidence < DECAYED;
+  if (staleExisting && incomingSeen) {
+    out.push({
+      field: '__supersede',
+      rule: 'safer',
+      value: incoming.id,
+      why:
+        `${existing.id} has decayed to ${(existingConfidence * 100).toFixed(0)}% confidence and ` +
+        `the submission was seen ${incomingSeen.slice(0, 10)}. Prefer the newer account for the ` +
+        'judged fields below: the corpus itself says it is no longer sure of the old one.',
     });
   }
 
