@@ -60,6 +60,18 @@ function packageRoot(): string | null {
   }
 }
 
+/**
+ * Where the code lives, which is not where the corpus lives.
+ *
+ * A personal corpus is a bare directory with no package.json, so anything
+ * that shells out to npm has to run from the install and let CAIRN_HOME
+ * point the work at the user's own corpus. Running npm from the corpus
+ * silently did nothing.
+ */
+export function installRoot(): string | null {
+  return packageRoot();
+}
+
 let memo: string | null = null;
 export function cairnHome(): string {
   if (memo) return memo;

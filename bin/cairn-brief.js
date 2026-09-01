@@ -18,7 +18,7 @@ if (fs.existsSync(bundle)) {
   require(bundle);
 } else {
   const { spawn } = require('child_process');
-  spawn('npx', ['tsx', path.join(__dirname, '..', 'scripts', 'find.ts'), ...process.argv.slice(2)], {
+  spawn('npx', ['tsx', path.join(__dirname, '..', 'scripts', 'brief.ts'), ...process.argv.slice(2)], {
     stdio: 'inherit',
   }).on('exit', (c) => process.exit(c ?? 0));
 }

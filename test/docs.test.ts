@@ -138,3 +138,24 @@ test('every corpus file is covered by the corpus license', () => {
     assert.ok(corpus.includes(d), `LICENSE-CORPUS does not cover ${d}`);
   }
 });
+
+/**
+ * Every launcher's tsx fallback must name its own script.
+ *
+ * cairn-brief.js and cairn-sync.js were both copied from cairn-find.js and
+ * kept its entrypoint, so on a fresh clone -- before `cairn:build-cli` has
+ * run, which is exactly a first-time user's state -- `cairn-brief` printed a
+ * find listing and `cairn-sync` exited 2 with a usage message. The bundled
+ * path was correct in both, so no test and no manual run caught it: the bug
+ * was reachable only by someone who had never built anything, which is
+ * everyone the tool is being handed to.
+ */
+test('each launcher falls back to its own script, not to find', () => {
+  for (const name of ['find', 'brief', 'sync']) {
+    const src = fs.readFileSync(path.join(process.cwd(), 'bin', `cairn-${name}.js`), 'utf8');
+    const bundle = src.match(/'dist', 'cli', '([a-z]+)\.js'/)?.[1];
+    const fallback = src.match(/'scripts', '([a-z-]+)\.ts'/)?.[1];
+    assert.equal(bundle, name, `cairn-${name}.js requires the wrong bundle`);
+    assert.equal(fallback, name, `cairn-${name}.js falls back to ${fallback}.ts, not ${name}.ts`);
+  }
+});
