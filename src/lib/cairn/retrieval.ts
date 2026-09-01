@@ -1888,6 +1888,58 @@ function linkSiblings(hits: Hit[]): Hit[] {
 
 
 /*
+ * FOUR WALLS, AND WHY SEVENTEEN ATTEMPTS HIT THEM RATHER THAN SEVENTEEN
+ * SEPARATE PROBLEMS.
+ *
+ * The residual failures have now survived approaches from five different
+ * families, and they stopped being independent results some time ago. What is
+ * below is the structure they all ran into, because that is more useful than
+ * the list.
+ *
+ * 1. THE tf=1 WALL. 63% of postings in this corpus have term frequency 1, and
+ *    80% have 2 or less; findings are ~200-340 tokens and mention each word
+ *    once. Every method that needs WITHIN-DOCUMENT term weighting therefore
+ *    has nothing to weight. Query-likelihood with Dirichlet smoothing failed
+ *    on this (no proportions to estimate). So did per-document "signature"
+ *    terms: tf x idf degenerates to idf, so a finding's fifteen most
+ *    characteristic terms come out tied at 3.5 and are an arbitrary slice of
+ *    hundreds. Only presence/absence and cross-document rarity survive here.
+ *
+ * 2. LENGTH IS ALREADY NORMALISED. Seven of eleven misses are a shorter gold
+ *    losing to a longer winner, median length ratio 1.09 and up to 1.85, which
+ *    looks like a length-bias problem with a standard knob. It is not: BM25's
+ *    b swept from 0.75 to 1.0 moves held-out P@1 not at all. The normalisation
+ *    in place is already doing what it can.
+ *
+ * 3. EVERY RAW QUANTITY FAVOURS THE WINNER, because winners are bigger
+ *    documents: more filler information, more same-clause coincidences, more
+ *    background heat. Correcting for that empirically is the right idea and
+ *    was built (flat-field, below) -- the diagnostic holds, 3 of 4 winners are
+ *    hotter than the gold, and the effect is too small to act on before it
+ *    starts costing machine-stderr accuracy.
+ *
+ * 4. NO GATE SEPARATES THE FAILURES FROM THE SUCCESSES. Measured, not assumed;
+ *    the numbers are in the block below. Any signal needs to fire on the
+ *    failures and not on the successes, and the margin distributions overlap
+ *    so thoroughly that the best possible near-tie gate nets under one case
+ *    against a standard error of two.
+ *
+ * WHAT WOULD ACTUALLY CLOSE IT, stated plainly because dancing around it wastes
+ * the next person's evening: the remaining failures turn on what a sentence
+ * ASSERTS, using vocabulary both findings share. `decision` and `publish` are
+ * the crux of one because of what the clause claims, not because of any
+ * statistic over the words -- and this file already recorded that conclusion
+ * once, about "most recent call last" matching "the most recent record".
+ *
+ * That is semantic similarity, which means embeddings and a model. It is not
+ * an unsolved problem in the field; it is unsolved HERE, because this project
+ * deliberately does not take that dependency. The constraint is the wall. It
+ * is a defensible constraint -- offline, deterministic, auditable, no model to
+ * drift or version -- and it is a CHOICE rather than a limit of ingenuity, so
+ * the next person should re-examine the choice rather than re-run the search.
+ */
+
+/*
  * WHY THE SIBLING RESIDUAL IS CLOSED, MEASURED RATHER THAN CONCLUDED.
  *
  * Thirteen approaches were tried against the four remaining held-out failures
