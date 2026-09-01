@@ -3,10 +3,16 @@
 This is for testing it with more than one person. It assumes you have a
 checkout of this repository and a separate project you actually work on.
 
+## How sharing works
+
+There is no server. The corpus is JSON files in this repository and the shared
+state is the repository: you clone it, you pull other people's findings, you
+push your own. Everything below is local.
+
 ## Install, once
 
 ```bash
-git clone <this repo> ~/cairn
+git clone <this repo> ~/cairn   # everyone clones the SAME repo
 cd ~/cairn && npm install && npm run cairn:build-cli
 ```
 
@@ -58,8 +64,13 @@ export CAIRN_AGENT=your-name-or-model      # who is asking
 export CAIRN_SESSION="$(date +%F)-$RANDOM" # which run
 ```
 
-Every query is appended to `data/retrievals.jsonl` in the checkout: what was
-asked, what came back, at what confidence. That file is the only record this
+Every query is appended to `data/retrievals/<you>.jsonl` in the checkout: what
+was asked, what came back, at what confidence.
+
+One file per person, which is why sharing works. A single shared file conflicts
+on the first exchange — two people, one query each, and the next pull stops to
+ask you to resolve it. Measured, not predicted. Separate shards mean git has
+nothing to reconcile, and `merge=union` covers one person on two machines. That file is the only record this
 project has of its own delivery, and until it exists for more than one person
 every measurement here is one author marking their own work.
 
@@ -81,3 +92,18 @@ Not whether retrieval ranks well; that is measured and the numbers are in
    a wide gap between them. On a real project with a real habit, unknown.
 
 A week of ordinary use answers all three better than any benchmark here.
+
+## Sending your findings back
+
+```bash
+cd ~/cairn
+git pull --rebase          # other people's findings and queries
+npm run cairn:lint         # your finding must pass before it goes anywhere
+git add cairn/ data/retrievals/
+git commit -m "found: <what does not work>"
+git push
+```
+
+Pull before you write a finding, so `cairn:admit` can tell you whether somebody
+has already recorded it — that check is the difference between fifty thin
+records of one trap and one record with fifty attesters.
