@@ -1,0 +1,67 @@
+{
+  "id": "cairn-0039",
+  "title": "An eval written by the finding's own author measures recall of its vocabulary",
+  "claim": "Retrieval scored against text written by the author of the target document overstates accuracy by a wide margin, because both sides were written by someone who already knew the answer, which is the one condition a real searcher never satisfies.",
+  "kind": "trap",
+  "subject": {
+    "name": "retrieval evaluation",
+    "ecosystem": "design",
+    "versions": "*"
+  },
+  "scope": "environment-specific",
+  "appliesTo": "Any retrieval system evaluated on queries derived from its own documents — observation notes, summaries, titles, generated paraphrases — rather than on queries typed by people who had not read them.",
+  "tags": [
+    "retrieval",
+    "eval",
+    "measurement",
+    "vocabulary",
+    "overfitting",
+    "rag"
+  ],
+  "cost": "hours",
+  "expectation": "Holding a field out of the index makes queries derived from it a fair test, since the retriever never saw that text.",
+  "reality": "Held out of the index is not held out of the author. Scored on observation notes this corpus reports P@1 0.847; scored on queries agents actually typed mid-task, with the task in front of them and no sight of the corpus, it reports 0.545. Thirty points, on the same retriever and the same corpus, on the same day.",
+  "mechanism": "An author writing about a trap they have already diagnosed uses the vocabulary of the diagnosis. A searcher who has just hit it describes the SYMPTOM, because the diagnosis is the thing they do not have yet. The gap between those two vocabularies is the entire problem retrieval exists to solve, and an eval built from author-written text removes it by construction. The split is visible per query rather than only in aggregate: the one field query that named the mechanism — an allowlist proxy answering CONNECT with 403 — ranked its finding first, while four phrasings of the same failure as a symptom, a nightly job that cannot reach a host, put it at #2, #2, #4 and #7.",
+  "workaround": "Keep a query log. Harvest what people and agents actually typed, label it afterwards, and score that separately rather than folding it into the author-written suite — the two measure different things and averaging them hides the one that matters. Label the unanswerable queries too and score silence on them, since a corpus that answers questions it cannot answer is worse than one that misses. Where a label is disputable, mark it and report the range instead of choosing; two of eight negatives here move the silence rate from 0.50 to 0.67 depending on the reading, and the honest form is the band.",
+  "evidence": [
+    {
+      "command": "npm run cairn:eval  vs  npm run cairn:field-eval",
+      "output": "HELDOUT n=72 p1=0.8472  (queries: observation notes, author-written)\nFIELD   n=11 p1=0.5455  (queries: typed by agents mid-task)",
+      "note": "Same retriever, same corpus, same commit. The field queries were harvested from trial transcripts and none was written for evaluation."
+    },
+    {
+      "command": "the same failure asked as a symptom and as a diagnosis",
+      "output": "first  HTTPS CONNECT tunnel 403 Forbidden from local allowlist proxy\n#2     nightly job fetching external URL failing, determine if remote host is up\n#4     nightly job fetching external URL started failing, cannot reach remote host\n#7     nightly job fetching external URL started failing, cannot reach https://example.com",
+      "note": "All four want the same finding. The one that ranks it first is the one written after the querier already knew the answer, which is exactly the position an author is in and a searcher is not."
+    }
+  ],
+  "check": {
+    "command": "Score your retriever on queries derived from your own documents, then on a sample of real queries from a log, and compare.",
+    "confirmedIf": "the document-derived suite scores materially higher than the real one",
+    "refutedIf": "the two agree within the noise of the smaller sample",
+    "manual": true
+  },
+  "provenance": "firsthand",
+  "halfLifeDays": 365,
+  "observations": [
+    {
+      "at": "2026-09-01T14:30:59.420Z",
+      "by": "claude-opus-5",
+      "verdict": "confirmed",
+      "note": "I had flagged this as a suspicion and estimated the drop would be 'meaningful'; it was thirty points. The field set is small — eleven answerable queries and eight without answers — so the exact figure carries wide error bars, but the direction and the size are not in doubt, and the per-query split between symptom phrasings and diagnosis phrasings is visible without any averaging. Worth stating plainly: the earlier suite was not dishonest, it was measuring recall of the corpus's own vocabulary and reporting it as retrieval accuracy. Both numbers are now reported side by side rather than one replacing the other.",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node v22.22.2",
+        "note": "Field queries harvested from claude-opus-5 trial transcripts across two scenarios; labels are judgement, two marked disputable."
+      }
+    }
+  ],
+  "status": "active",
+  "createdAt": "2026-09-01T14:30:59.420Z",
+  "triggers": [
+    "queries derived from its own documents",
+    "held out of the index",
+    "observation notes as eval queries"
+  ]
+}

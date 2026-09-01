@@ -1,0 +1,138 @@
+{
+  "_comment": [
+    "Queries an agent actually typed, with the task in front of it and no sight",
+    "of this corpus. Harvested verbatim from the trial transcripts in",
+    "scripts/agent-trial.ts — none were written for evaluation.",
+    "",
+    "WHY THIS EXISTS. Every other eval query in this project is an observation",
+    "note, written by the same person who wrote the finding it is scored",
+    "against. That is honestly held out of the INDEX and not at all held out of",
+    "the AUTHOR, so it cannot measure the thing retrieval exists to solve:",
+    "two people describing one trap in different words. These can.",
+    "",
+    "LABELS ARE JUDGEMENT AND ARE RECORDED AS SUCH. `gold` is the finding the",
+    "querier would have been glad to receive. `null` means nothing in the corpus",
+    "answers it — those are the valuable half, because a retriever is judged as",
+    "much on staying quiet as on hitting.",
+    "",
+    "`repeats` records how many trials produced that query verbatim. Five agents",
+    "independently opening with the same sentence is evidence about the natural",
+    "phrasing of a task, so it is kept rather than averaged away.",
+    "",
+    "One query named a finding by id, which means that agent had already been",
+    "shown it. It is kept, marked contaminated, and excluded from scoring.",
+    "",
+    "Two negatives are marked `arguable` with the reasoning attached. The scorer",
+    "reports the sensitivity band both ways rather than picking the flattering one."
+  ],
+  "harvestedAt": "2026-09-01",
+  "queries": [
+    {
+      "q": "ranking findings by staleness / re-verification urgency using halfLifeDays",
+      "gold": "cairn-0019",
+      "repeats": 5,
+      "task": "staleness"
+    },
+    {
+      "q": "exponential decay half-life score sorting, clamping author-declared parameter",
+      "gold": "cairn-0019",
+      "task": "staleness"
+    },
+    {
+      "q": "finding author supplies the field that decides whether their own work gets audited",
+      "gold": "cairn-0019",
+      "task": "staleness"
+    },
+    {
+      "q": "author-supplied field used to decide whether the author's own work gets audited",
+      "gold": "cairn-0019",
+      "task": "staleness"
+    },
+    {
+      "q": "self-reported field determines whether an item is audited; author sets it",
+      "gold": "cairn-0019",
+      "task": "staleness"
+    },
+    {
+      "q": "self-declared halfLifeDays authored by the finding's author controls whether it is re-checked",
+      "gold": "cairn-0019",
+      "task": "staleness"
+    },
+    {
+      "q": "nightly job fetching external URL started failing, cannot reach remote host",
+      "gold": "cairn-0001",
+      "repeats": 2,
+      "task": "reachability"
+    },
+    {
+      "q": "nightly job fetching external URL started failing, determine if remote host is up or down",
+      "gold": "cairn-0001",
+      "task": "reachability"
+    },
+    {
+      "q": "nightly job fetching external URL started failing, cannot reach https://example.com",
+      "gold": "cairn-0001",
+      "task": "reachability"
+    },
+    {
+      "q": "nightly job fetching external URL started failing, curl to https://example.com",
+      "gold": "cairn-0001",
+      "task": "reachability"
+    },
+    {
+      "q": "HTTPS CONNECT tunnel 403 Forbidden from local allowlist proxy for non-allowlisted domain",
+      "gold": "cairn-0001",
+      "task": "reachability"
+    },
+    {
+      "q": "date-only string parsing timezone offset day count off by one",
+      "gold": null,
+      "task": "staleness"
+    },
+    {
+      "q": "parsing YYYY-MM-DD date string day difference off by one UTC local midnight",
+      "gold": null,
+      "task": "staleness"
+    },
+    {
+      "q": "parsing YYYY-MM-DD date strings in node, local timezone vs UTC off-by-one",
+      "gold": null,
+      "task": "staleness"
+    },
+    {
+      "q": "silently skipping malformed records so an item disappears from a queue",
+      "gold": null,
+      "task": "staleness"
+    },
+    {
+      "q": "timestamp supplied in file used to compute elapsed time, future date, clock skew",
+      "gold": null,
+      "task": "staleness",
+      "arguable": true,
+      "why": "Arguable. cairn-0019 is about a value supplied by the party a rule constrains, and a timestamp read from a file is one — but the querier is asking about clock skew and defensive parsing, not about who benefits from lying. Labelled unanswerable; the retriever returned cairn-0005, which is wrong under either reading."
+    },
+    {
+      "q": "exponential decay scoring half-life confidence 0.5^(t/h) ranking pitfalls",
+      "gold": null,
+      "task": "staleness",
+      "arguable": true,
+      "why": "Arguable, and the weaker of my two null labels. The querier asks about pitfalls in half-life scoring and cairn-0019 is precisely a pitfall in half-life scoring. Kept null because the question is about the arithmetic rather than about the field's provenance, but a reader who called this answerable would not be wrong."
+    },
+    {
+      "q": "sort comparator NaN or undefined score silently reorders or drops items",
+      "gold": null,
+      "task": "staleness"
+    },
+    {
+      "q": "exponential decay staleness score sorting, divide by zero, NaN in comparator",
+      "gold": null,
+      "task": "staleness"
+    },
+    {
+      "q": "cairn-0019 rule reads value from the party it constrains, bound externally, derive from something they do not author",
+      "gold": "cairn-0019",
+      "contaminated": true,
+      "task": "staleness"
+    }
+  ]
+}

@@ -27,6 +27,7 @@ const exec = promisify(execFile);
 
 interface Baseline {
   heldOut: { minP1: number; minP5: number; minMRR: number; minDelivery: number };
+  field: { minP1: number; minQuiet: number };
   agent: { minCoveredHits: number; minSilentOnUnknown: number };
   corpus: { maxLintErrors: number; maxCheckSeconds: number };
 }
@@ -60,12 +61,13 @@ async function main() {
   console.log('\nCAIRN QUALITY GUARD — four suites, concurrently, one working tree');
   console.log('='.repeat(66));
 
-  const [evalOut, agentOut, lintOut, doctorOut, caseOut] = await Promise.all([
+  const [evalOut, agentOut, lintOut, doctorOut, caseOut, fieldOut] = await Promise.all([
     run('npx', ['tsx', 'scripts/eval.ts']),
     run('npx', ['tsx', 'scripts/agent-eval.ts']),
     run('npx', ['tsx', 'scripts/lint-corpus.ts']),
     run('npx', ['tsx', 'scripts/doctor.ts']),
     run('npx', ['tsx', 'scripts/case-guard.ts']),
+    run('npx', ['tsx', 'scripts/field-eval.ts']),
   ]);
 
   // --- held-out retrieval accuracy ---
@@ -110,6 +112,21 @@ async function main() {
     failures.push('could not parse doctor SUMMARY — the guard is blind to check cost');
   } else {
     check('slowest check (seconds)', Number(summary[1]) / 1000, baseline.corpus.maxCheckSeconds, false);
+  }
+
+  /*
+   * --- field queries ---
+   * The only suite whose queries nobody wrote for an eval. It scores thirty
+   * points below the held-out one on the same retriever, which is the gap
+   * between describing a symptom and describing a diagnosis. Gated separately
+   * and never averaged in: a large author-written sample and a small real one
+   * measure different things.
+   */
+  const field = fieldOut.match(/FIELD p1=([\d.]+) quiet=([\d.]+)/);
+  if (!field) failures.push('could not parse cairn:field-eval — the guard is blind to the honest number');
+  else {
+    check('field P@1', Number(field[1]), baseline.field.minP1);
+    check('field quiet-on-unknown', Number(field[2]), baseline.field.minQuiet);
   }
 
   /*

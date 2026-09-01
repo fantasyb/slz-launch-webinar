@@ -110,5 +110,30 @@
     "_source": "fraction of CORRECT answers labelled weak",
     "_note": "If this climbs the label becomes noise and agents will ignore it.",
     "max": 0.2
+  },
+  "field": {
+    "_source": "npm run cairn:field-eval — queries agents typed mid-task, harvested from trial transcripts",
+    "_note": [
+      "THE HONEST NUMBER, and it is thirty points below the held-out suite.",
+      "",
+      "  held-out (observation notes, author-written)   P@1 0.847",
+      "  field    (typed by agents with no sight of it) P@1 0.545",
+      "",
+      "Both are kept because they measure different things. The held-out suite is a",
+      "regression tripwire on a large sample; this is a small sample of what the",
+      "system is actually for. Averaging them would hide the one that matters.",
+      "",
+      "minQuiet gates silence on the eight queries the corpus cannot answer. A",
+      "retriever that answers those confidently is worse than one that misses, and",
+      "nothing else in this file measures that. Two of the eight labels are",
+      "disputable and the scorer prints the band; the floor is set against the",
+      "conservative reading.",
+      "",
+      "Floors are set AT the measured value, not below it. This suite is small",
+      "enough that one case is nine points, so it is a tripwire and not a target —",
+      "but it should never quietly get worse."
+    ],
+    "minP1": 0.54,
+    "minQuiet": 0.5
   }
 }
