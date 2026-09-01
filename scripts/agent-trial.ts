@@ -59,6 +59,23 @@ const TRIALS = 5;
  */
 const MODEL = (process.argv.find((a) => a.startsWith('--model='))?.slice(8) ?? 'claude-opus-5');
 const JUDGE_MODEL = 'claude-opus-5';
+
+/*
+ * Thinking is configured differently either side of the 4.6 line. Adaptive
+ * thinking is rejected outright by anything older -- 400, "adaptive thinking is
+ * not supported on this model" -- which is where the first attempt at this run
+ * died. Older models take a fixed budget instead, at least 1024 tokens and
+ * strictly below max_tokens.
+ *
+ * The two are not equivalent and the asymmetry is worth stating rather than
+ * hiding: the strong model decides how much to think, the weak one is handed
+ * an allowance. There is no configuration that removes that difference, since
+ * neither model supports the other's mode, so the comparison is between two
+ * models as each is actually run.
+ */
+const THINKING: Anthropic.ThinkingConfigParam = /^claude-(opus-(5|4-[678])|sonnet-5|fable-5)/.test(MODEL)
+  ? { type: 'adaptive' }
+  : { type: 'enabled', budget_tokens: 4000 };
 const corpus = loadCorpus();
 
 interface Scenario {
@@ -256,7 +273,7 @@ async function run(scenario: Scenario, withCairn: boolean) {
     const res = await client.messages.create({
       model: MODEL,
       max_tokens: 6000,
-      thinking: { type: 'adaptive' },
+      thinking: THINKING,
       tools,
       messages,
     });

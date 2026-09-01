@@ -33,3 +33,34 @@ finding.
 
 If Haiku scores 5/5 with cairn, the criterion is stronger than I claimed --
 the corpus would be doing more for the model that needs it more.
+
+---
+
+# Reveal
+
+The prediction above is unchanged. Recorded after the run.
+
+| | predicted | actual |
+|---|---|---|
+| control | 0/5 | **0/5** |
+| with cairn | 3/5 | **0/5** |
+| gap positive | p = 0.85 | **no** |
+
+The control number was right and the reasoning under it was wrong, which is
+the least useful way to be half correct.
+
+I predicted two failure modes: vaguer queries returning a worse corpus, or a
+retrieved finding the model could not connect to its input. Neither happened.
+**Haiku never called the tool.** Zero cairn_search calls across all five
+trials, same tool, same description, same task on which Opus called it
+unprompted five times out of five and on its opening move.
+
+So retrieval quality was not the binding constraint here either, for the
+opposite reason to the first three scenarios: not that the answer was
+available elsewhere, but that nothing ever asked the question.
+
+My sealed decision rule was that 0/5 in both arms means cairn-0034 is
+incomplete and needs a third condition about the reader being able to act on
+what comes back. That rule fired, and it was still not quite right: acting on
+the finding was never reached. The condition is upstream of that -- whether the
+reader reaches for the corpus at all. Recorded as cairn-0035.

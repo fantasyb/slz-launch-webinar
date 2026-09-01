@@ -93,14 +93,103 @@ Reply exactly:
 VERDICT: DUPLICATE|FACETS|DISTINCT
 WHY: one sentence.`;
 
+/*
+ * THE PAYOFF STAGE
+ *
+ * Resolution above asks whether we already have this finding. This asks
+ * whether having it will change anything, which is a different question and
+ * was measured before it was added here. Across three traps and twenty-two
+ * trials, agents queried the corpus unprompted, got the intended finding
+ * ranked first, cited it by id -- and the arm without the corpus was equally
+ * correct every time. A fourth trap, chosen because it shut both routes,
+ * separated 0/5 against 5/5. That is cairn-0034.
+ *
+ * The two routes a reader can take around a recorded trap:
+ *
+ *   1. It is documented somewhere they have already read.
+ *   2. They can derive it from evidence on the affected machine.
+ *
+ * A finding pays only when both are shut. This does not gate admission --
+ * cairn-0034 says a locally-recoverable finding may still be worth keeping,
+ * with its payoff measured as saved turns rather than as correctness. What it
+ * does is tell the submitter which kind they have written, while the record is
+ * still cheap to reshape.
+ *
+ * QUESTION 1 IS ABOUT REACH, NOT EXISTENCE, and it was rewritten after being
+ * checked against the two findings whose trial outcomes are known. On the
+ * first phrasing -- "where would someone already read this?" -- cairn-0005 came
+ * back with both routes open and "expect it to change nothing", which matches
+ * its measured 3/3 against 3/3. cairn-0019 came back citing CWE-807, "Reliance
+ * on Untrusted Inputs in a Security Decision", and was downgraded to a cost
+ * saving. It had measured 0/5 against 5/5.
+ *
+ * The citation was real and correct, and it did not matter. Every control trial
+ * knew that principle in the abstract -- one of them called halfLifeDays "the
+ * author's estimate" in the same answer that trusted it -- and none connected
+ * it to the input in front of them. Documentation that exists but that the task
+ * never prompts anyone to reach for leaves route one open in name only. So the
+ * question asks whether the task raises the question, and abstract sources are
+ * named in WHY rather than counted.
+ *
+ * IT ASKS FOR ARTEFACTS, NOT A VERDICT, and that is the rest of the design. "Do you
+ * already know this?" is a self-report, and a model's answer to it is
+ * confident in one direction regardless of the truth. A CITATION can be
+ * checked. A COMMAND can be run. So the model is asked where the trap is
+ * documented and what would expose it locally, and the submitter checks the
+ * two answers rather than trusting the label attached to them.
+ */
+const PAYOFF = `You are shown a recorded engineering trap. Do not judge whether it is true or well written. Answer two questions about whether writing it down will change what a competent engineer or coding agent does.
+
+1. DOCUMENTED — is there a source that someone DOING THE TASK IN WHICH THIS TRAP IS LIVE would be prompted to reach for? Name the specific manual, changelog, error message, or well-known write-up. A general principle that is documented in the abstract but that nobody looks up while doing this particular task does not count: answer NONE and name it in WHY instead. The test is whether the task itself raises the question, not whether an answer exists somewhere.
+
+2. LOCAL — on a machine where this trap is live, what single command or observation would reveal it, without knowing it in advance? Give the command. If the failure is silent, or the evidence only appears long after the mistake, or reading it requires already suspecting the trap, say NONE.
+
+Reply exactly:
+DOCUMENTED: <source, or NONE>
+LOCAL: <command, or NONE>
+WHY: one sentence on the harder of the two, and name any abstract source you excluded under question 1.`;
+
+async function payoff(client: Anthropic) {
+  const res = await client.messages.create({
+    model: 'claude-opus-5', max_tokens: 700, thinking: { type: 'adaptive' },
+    system: PAYOFF,
+    messages: [{ role: 'user', content: brief(draft) }],
+  });
+  const t = res.content.filter((b): b is Anthropic.TextBlock => b.type === 'text').map((b) => b.text).join('');
+  const doc = /DOCUMENTED:\s*(.+)/i.exec(t)?.[1]?.trim() ?? 'NONE';
+  const loc = /LOCAL:\s*(.+)/i.exec(t)?.[1]?.trim() ?? 'NONE';
+  const why = /WHY:\s*(.+)/i.exec(t)?.[1]?.trim() ?? '';
+  const shut = (x: string) => /^none\b/i.test(x);
+
+  console.log('\n  PAYOFF — would recording this change what anyone does?\n');
+  console.log(`  ${shut(doc) ? 'shut ' : 'OPEN '} documented   ${doc.slice(0, 84)}`);
+  console.log(`  ${shut(loc) ? 'shut ' : 'OPEN '} recoverable  ${loc.slice(0, 84)}`);
+  if (why) console.log(`         ${why.slice(0, 88)}`);
+
+  if (shut(doc) && shut(loc)) {
+    console.log('\n  Both routes shut. This is the kind that changed outcomes 5/5 in trials.');
+  } else if (!shut(doc) && !shut(loc)) {
+    console.log('\n  Neither route shut. Keep it if you like, but expect it to change nothing:');
+    console.log('  a reader can look it up AND derive it. Measure saved turns, not correctness.');
+  } else {
+    console.log(`\n  One route open. Its payoff is a cost saving, not a correction -- measure it`);
+    console.log('  in turns or wall clock, because a correctness comparison will show nothing.');
+  }
+  console.log('\n  Both answers are checkable and neither is authoritative: open the manual it');
+  console.log('  named, or run the command it gave. A model asked what it already knows');
+  console.log('  answers confidently either way, which is why it was asked for artefacts.');
+}
+
 async function main() {
   console.log(`\nADMITTING  ${draft.id}  ${draft.title.slice(0, 60)}`);
   console.log('='.repeat(72));
+  const client = new Anthropic();
   if (nearest.length === 0) {
-    console.log('\n  Nothing in the corpus is close. ACCEPT as a new finding.\n');
+    console.log('\n  Nothing in the corpus is close. ACCEPT as a new finding.');
+    await payoff(client);
+    console.log('');
     return;
   }
-  const client = new Anthropic();
   const verdicts: Array<{ id: string; v: string; why: string; jac: number }> = [];
   for (const { f, jac } of nearest) {
     const res = await client.messages.create({
@@ -173,6 +262,7 @@ async function main() {
   } else {
     console.log('  RECOMMEND: accept as a new finding. Nothing here is the same trap.');
   }
+  await payoff(client);
   console.log('\n  Nothing was written. Disagree and submit anyway if you were there.\n');
 }
 void main();
