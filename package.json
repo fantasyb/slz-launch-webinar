@@ -48,7 +48,8 @@
     "cairn:simulate": "tsx scripts/simulate.ts",
     "cairn:admit": "tsx scripts/admit.ts",
     "cairn:case-guard": "tsx scripts/case-guard.ts",
-    "cairn:grader-selftest": "tsx scripts/grader-selftest.ts"
+    "cairn:grader-selftest": "tsx scripts/grader-selftest.ts",
+    "cairn:brief": "tsx scripts/brief.ts"
   },
   "dependencies": {
     "clsx": "^2.1.1",

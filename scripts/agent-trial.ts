@@ -45,6 +45,7 @@ import { join } from 'path';
 import Anthropic from '@anthropic-ai/sdk';
 import { loadCorpus } from '../src/lib/cairn/load';
 import { retrieve } from '../src/lib/cairn/retrieval';
+import { brief } from '../src/lib/cairn/brief';
 
 const SCRATCH =
   '/tmp/claude-0/-home-user-slz-launch-webinar/cd16b2bc-8949-542b-a8aa-9cadcf6e0c44/scratchpad';
@@ -260,11 +261,21 @@ function runCairn(q: string): string {
     .join('\n\n');
 }
 
-async function run(scenario: Scenario, withCairn: boolean) {
+/*
+ * PULL is the corpus as a tool the agent may call. BRIEF is the corpus handed
+ * over before the agent starts, unasked. The distinction is the whole point of
+ * the third arm: claude-haiku-4-5 scored identically with and without the tool
+ * because it never called it, so no improvement to what a query returns could
+ * have reached it.
+ */
+type Arm = 'control' | 'pull' | 'brief';
+
+async function run(scenario: Scenario, arm: Arm) {
   const dir = mkdtempSync(join(tmpdir(), 'trial-'));
   if (scenario.fixture) cpSync(scenario.fixture, dir, { recursive: true });
   const client = new Anthropic();
-  const tools = withCairn ? [bashTool, cairnTool] : [bashTool];
+  const tools = arm === 'pull' ? [bashTool, cairnTool] : [bashTool];
+  const injected = arm === 'brief' ? brief(scenario.task, corpus, { useLocalEnvironment: true }) : '';
   const messages: Anthropic.MessageParam[] = [{ role: 'user', content: scenario.task }];
   const calls: string[] = [];
   let askedCairn = false;
@@ -276,6 +287,7 @@ async function run(scenario: Scenario, withCairn: boolean) {
       thinking: THINKING,
       tools,
       messages,
+      ...(injected ? { system: injected } : {}),
     });
     /*
      * stop_reason 'refusal' comes back with zero content blocks and zero
@@ -285,7 +297,7 @@ async function run(scenario: Scenario, withCairn: boolean) {
      */
     if (res.stop_reason === 'refusal') {
       rmSync(dir, { recursive: true, force: true });
-      return { calls, askedCairn, answer: '', refused: true, ok: false, detail: 'refused' };
+      return { calls, askedCairn, injected: injected.length, answer: '', refused: true, ok: false, detail: 'refused' };
     }
     messages.push({ role: 'assistant', content: res.content });
     const uses = res.content.filter((b): b is Anthropic.ToolUseBlock => b.type === 'tool_use');
@@ -313,7 +325,7 @@ async function run(scenario: Scenario, withCairn: boolean) {
   if (scenario.judge) {
     const verdict = await judge(client, scenario.judge, answer);
     rmSync(dir, { recursive: true, force: true });
-    return { calls, askedCairn, answer, refused: false, ok: verdict.startsWith('BLOCKED'), detail: verdict };
+    return { calls, askedCairn, injected: injected.length, answer, refused: false, ok: verdict.startsWith('BLOCKED'), detail: verdict };
   }
   /*
    * Each trial gets a fresh copy and nothing ever deleted it. Three runs of the
@@ -321,7 +333,7 @@ async function run(scenario: Scenario, withCairn: boolean) {
    * creating far more trials than it reported and cost two investigations
    * before the arithmetic explained it. Grade first, then remove.
    */
-  const graded = { calls, askedCairn, answer, refused: false, ...scenario.verdict(dir, answer) };
+  const graded = { calls, askedCairn, injected: injected.length, answer, refused: false, ...scenario.verdict(dir, answer) };
   rmSync(dir, { recursive: true, force: true });
   return graded;
 }
@@ -346,27 +358,34 @@ async function main() {
     console.error(`unknown scenario "${name}" — one of: ${Object.keys(SCENARIOS).join(', ')}`);
     process.exit(1);
   }
-  const tally: Record<string, number[]> = { control: [], cairn: [] };
-  const refusals: Record<string, number> = { control: 0, cairn: 0 };
+  const ARMS: Arm[] = ['control', 'pull', 'brief'];
+  const tally: Record<string, number[]> = { control: [], pull: [], brief: [] };
+  const refusals: Record<string, number> = { control: 0, pull: 0, brief: 0 };
   const transcript: unknown[] = [];
-  for (const withCairn of [false, true]) {
+  for (const arm of ARMS) {
     for (let t = 0; t < TRIALS; t++) {
-      const r = await run(scenario, withCairn);
-      if (r.refused) refusals[withCairn ? 'cairn' : 'control']++;
-      else tally[withCairn ? 'cairn' : 'control'].push(r.ok ? 1 : 0);
+      const r = await run(scenario, arm);
+      if (r.refused) refusals[arm]++;
+      else tally[arm].push(r.ok ? 1 : 0);
       console.log(`\n${'='.repeat(72)}`);
-      console.log(`${name}  ·  ${withCairn ? 'WITH CAIRN' : 'CONTROL (bash only)'}  ·  trial ${t + 1}`);
+      const label = { control: 'CONTROL (bash only)', pull: 'PULL (cairn as a tool)', brief: 'BRIEF (injected unasked)' }[arm];
+      console.log(`${name}  ·  ${label}  ·  trial ${t + 1}`);
       console.log('='.repeat(72));
       for (const c of r.calls) console.log(`  ${c.replace(/\s+/g, ' ').slice(0, 118)}`);
-      console.log(`\n  asked cairn: ${r.askedCairn}   avoided the trap: ${r.ok ? 'YES' : 'NO'}   [${r.detail}]`);
+      console.log(
+        `\n  asked cairn: ${r.askedCairn}   brief: ${r.injected ? `${r.injected} chars` : 'none'}` +
+          `   avoided the trap: ${r.ok ? 'YES' : 'NO'}   [${r.detail}]`,
+      );
       if (r.answer) console.log(`  answer: ${r.answer.replace(/\s+/g, ' ').slice(0, 700)}`);
-      transcript.push({ arm: withCairn ? 'cairn' : 'control', trial: t + 1, ...r });
+      transcript.push({ arm, trial: t + 1, ...r });
     }
   }
   const pct = (a: number[]) => (a.length ? `${a.reduce((x, y) => x + y, 0)}/${a.length}` : 'no data');
-  console.log(`\n\n  ${name} [${MODEL}] — control ${pct(tally.control)}   with cairn ${pct(tally.cairn)}`);
-  if (refusals.control || refusals.cairn)
-    console.log(`  REFUSED (not counted) — control ${refusals.control}, cairn ${refusals.cairn}`);
+  console.log(
+    `\n\n  ${name} [${MODEL}] — control ${pct(tally.control)}   pull ${pct(tally.pull)}   brief ${pct(tally.brief)}`,
+  );
+  if (refusals.control || refusals.pull || refusals.brief)
+    console.log(`  REFUSED (not counted) — ${ARMS.map((a) => `${a} ${refusals[a]}`).join(', ')}`);
   console.log();
   const out = join(tmpdir(), `agent-trial-${name}-${MODEL}.json`);
   writeFileSync(out, JSON.stringify(transcript, null, 2));
