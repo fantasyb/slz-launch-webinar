@@ -39,7 +39,7 @@
  * made once and recorded.
  */
 import { execFileSync } from 'child_process';
-import { cpSync, mkdtempSync, readFileSync, writeFileSync, existsSync } from 'fs';
+import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import Anthropic from '@anthropic-ai/sdk';
@@ -256,7 +256,10 @@ async function run(scenario: Scenario, withCairn: boolean) {
      * treats that as a completed turn and records an empty answer as data.
      * It zeroed a whole control arm here before anyone noticed.
      */
-    if (res.stop_reason === 'refusal') return { calls, askedCairn, answer: '', refused: true, ok: false, detail: 'refused' };
+    if (res.stop_reason === 'refusal') {
+      rmSync(dir, { recursive: true, force: true });
+      return { calls, askedCairn, answer: '', refused: true, ok: false, detail: 'refused' };
+    }
     messages.push({ role: 'assistant', content: res.content });
     const uses = res.content.filter((b): b is Anthropic.ToolUseBlock => b.type === 'tool_use');
     if (!uses.length) {
@@ -282,9 +285,18 @@ async function run(scenario: Scenario, withCairn: boolean) {
   }
   if (scenario.judge) {
     const verdict = await judge(client, scenario.judge, answer);
+    rmSync(dir, { recursive: true, force: true });
     return { calls, askedCairn, answer, refused: false, ok: verdict.startsWith('BLOCKED'), detail: verdict };
   }
-  return { calls, askedCairn, answer, refused: false, ...scenario.verdict(dir, answer) };
+  /*
+   * Each trial gets a fresh copy and nothing ever deleted it. Three runs of the
+   * same scenario left twenty-two directories in /tmp, which read as a harness
+   * creating far more trials than it reported and cost two investigations
+   * before the arithmetic explained it. Grade first, then remove.
+   */
+  const graded = { calls, askedCairn, answer, refused: false, ...scenario.verdict(dir, answer) };
+  rmSync(dir, { recursive: true, force: true });
+  return graded;
 }
 
 /* Sees the reply only. It is not told which arm produced it, or that arms exist. */
