@@ -44,7 +44,8 @@
     "cairn:eval-audit": "tsx scripts/eval-audit.ts",
     "cairn:spectrum": "tsx scripts/spectrum.ts",
     "cairn:history": "tsx scripts/history.ts",
-    "cairn:resolve": "tsx scripts/resolve.ts"
+    "cairn:resolve": "tsx scripts/resolve.ts",
+    "cairn:simulate": "tsx scripts/simulate.ts"
   },
   "dependencies": {
     "clsx": "^2.1.1",
