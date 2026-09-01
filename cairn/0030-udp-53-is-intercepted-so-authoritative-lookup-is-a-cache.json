@@ -22,6 +22,10 @@
   "reality": "The packet never reaches the address it was sent to. 203.0.113.99 — TEST-NET-3, which by definition hosts nothing — returns a NOERROR answer for example.com, four times out of four. Responses come back with AA=0 and RA=1 and carry an answer section rather than the referral a gTLD server would send, which is the only visible tell. On top of that the redirected path is lossy: the same query that is NOERROR 20/20 against 8.8.8.8 was SERVFAIL 13/20 when addressed to a gTLD server, so a single run reads as a definitive negative from the registry.",
   "mechanism": "Egress DNS is intercepted and serviced by the sandbox's own recursive resolver rather than routed. The destination address is discarded, so the query is answered but not by whom it was addressed to. Because the answer is well-formed the substitution is invisible unless the AA bit or the answer/authority shape is inspected.",
   "workaround": "Treat every DNS answer in this sandbox as coming from a recursive cache, whatever address you sent it to, and say so when reporting. Before trusting any direct-to-authoritative query, send the identical query to 203.0.113.99: an answer proves interception and means the check you thought you ran did not run. Repeat positive controls — one control run can itself SERVFAIL and mislead in the opposite direction. For registration status specifically, recursive NS/SOA plus an NXDOMAIN control is the strongest available signal here, and it cannot see a registered-but-undelegated domain; RDAP would settle that but rdap.org, the registry RDAP hosts and the DoH endpoints are all refused by the egress proxy per cairn-0001.",
+  "triggers": [
+    "dig",
+    "host"
+  ],
   "evidence": [
     {
       "command": "python3: send an A query for example.com to 203.0.113.99 (TEST-NET-3), four times",

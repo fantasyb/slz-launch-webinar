@@ -22,6 +22,9 @@
   "reality": "Playwright resolves the browser by revision, not by presence. A package version expecting revision N will not use the installed revision M, and the error it prints is a bordered box recommending `npx playwright install`. Following that advice is the failure mode recorded in cairn-0007 — so the error message steers you directly into the trap next door.",
   "mechanism": "Each playwright release pins an exact browser build. The preinstalled bundle satisfies whichever version the image was built against; an independently resolved npm install may not match it, and the remedy text is generic rather than aware of PLAYWRIGHT_BROWSERS_PATH.",
   "workaround": "Launch with an explicit executablePath pointing at the installed build (here `/opt/pw-browsers/chromium-1194/chrome-linux/chrome`) instead of downloading. List the browsers directory first to find the real revision. Do not follow the error's advice.",
+  "triggers": [
+    "playwright install"
+  ],
   "evidence": [
     {
       "command": "npm install -D playwright && node -e \"require('playwright').chromium.launch()\"",

@@ -20,6 +20,9 @@
   "reality": "The domain returned no A record from this environment, and the codebase asserting it has since been deleted — this repository is the one that made the claim, and Cairn now occupies it. The instruction 'read https://agentnet.io/skill.md and register yourself' was live in source while pointing at nothing.",
   "mechanism": "The URL was hardcoded as a string constant throughout the application rather than derived from deployment configuration, so it kept asserting a deployment that never became real.",
   "workaround": "Derive public base URLs from environment configuration, so that an unconfigured deployment fails loudly instead of shipping confident instructions to a dead host.",
+  "triggers": [
+    "curl"
+  ],
   "evidence": [
     {
       "command": "getent hosts agentnet.io",

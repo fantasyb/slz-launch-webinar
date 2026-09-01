@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 import { loadCorpus } from '../src/lib/cairn/load';
 import {
   retrieve, tokenize, buildIndex, associationStatus, rankerSignature,
-  corpusFingerprint, indexIdentity, docTerms,
+  corpusFingerprint, indexIdentity, docTerms, preflight, programsIn,
 } from '../src/lib/cairn/retrieval';
 import { assertLocalCorpus, runCommand } from '../src/lib/cairn/confirm';
 import { coOccurrence, alsoSeenWith } from '../src/lib/cairn/graph';
@@ -539,4 +539,55 @@ test('docTerms returns the same terms from a fresh build and a reload', () => {
   assert.ok(a.size > 20, `a fresh index gave ${a.size} terms for doc 0`);
   assert.equal(b.size, a.size, 'reloaded index disagrees on how many terms doc 0 has');
   for (const [t, tf] of a) assert.equal(b.get(t), tf, `term "${t}" differs across paths`);
+});
+
+/*
+ * The interrupt must fire on the command that causes the trap.
+ *
+ * This is the only path in the retriever that can save the cost rather than
+ * explain it afterwards, and it exists because `check.command` could not power
+ * it: a check DETECTS a trap (cairn-0007's looks for a preinstalled browser
+ * directory), while the command that walks you in is `playwright install`.
+ * The `triggers` field is that missing half.
+ */
+test('preflight warns before the command that causes the trap', () => {
+  const cases: Array<[string, string]> = [
+    ['npx playwright install', 'cairn-0007'],
+    ['dig +short example.com', 'cairn-0002'],
+    ['df -h /', 'cairn-0008'],
+  ];
+  for (const [cmd, expected] of cases) {
+    const ids = preflight(cmd, corpus, { useLocalEnvironment: true }).map((w) => w.finding.id);
+    assert.ok(ids.includes(expected), `"${cmd}" did not warn about ${expected} (got ${ids.join(' ') || 'nothing'})`);
+  }
+});
+
+/*
+ * And it must be silent otherwise, which is the harder half.
+ *
+ * An interrupt that cries wolf trains its reader to dismiss the channel, so a
+ * false fire costs more than a missed one. Two generations of trigger were
+ * rejected for failing this: indexing every program in a check's pipeline made
+ * `echo hello` warn ten times, and a model's first draft attached `npm
+ * install` to a Playwright finding and `git diff` to one about CI gates.
+ */
+test('preflight is silent on ordinary commands', () => {
+  const ordinary = [
+    'ls -la', 'git status', 'npm test', 'npm run build', 'npm install',
+    'cat README.md', 'echo hi', 'mkdir -p out', 'git diff HEAD',
+    'node index.js', 'git checkout main', 'make', 'docker build .',
+  ];
+  for (const cmd of ordinary) {
+    const w = preflight(cmd, corpus, { useLocalEnvironment: true });
+    assert.equal(w.length, 0, `"${cmd}" produced a warning: ${w.map((x) => `${x.finding.id}(${x.trigger})`).join(' ')}`);
+  }
+});
+
+/* A wrapper delegates: the interesting program is its argument. */
+test('programsIn sees through wrappers and pipelines', () => {
+  const p = programsIn('sudo npx playwright install --with-deps');
+  assert.ok(p.includes('playwright install'), `missed the delegated command: ${p.join(' ')}`);
+  const q = programsIn('cat x | rg "interface{}" | wc -l');
+  assert.ok(q.includes('rg'), `missed a program mid-pipeline: ${q.join(' ')}`);
+  assert.deepEqual(programsIn(''), []);
 });

@@ -21,6 +21,9 @@
   "reality": "`{` opens a repetition quantifier. `rg 'interface{}'` fails with 'repetition quantifier expects a valid decimal' and exit 2. Because exit 1 means 'no matches' and tooling often collapses both to 'nothing found', an agent concludes the symbol is absent from the codebase and proceeds on that false premise.",
   "mechanism": "ripgrep's default engine parses the pattern as a regex. Empty braces are not a valid quantifier, so the parse fails before any file is read.",
   "workaround": "Escape the braces (`rg 'interface\\{\\}'`) or use fixed-string mode (`rg -F 'interface{}'`). More generally: distinguish exit 1 from exit 2 before reporting an absence. This bites hardest on Go codebases, where `interface{}`, `struct{}` and `map[string]struct{}` are everywhere.",
+  "triggers": [
+    "rg"
+  ],
   "evidence": [
     {
       "command": "printf 'type A interface{}\\n' > /tmp/rg.txt; rg 'interface{}' /tmp/rg.txt; echo \"exit=$?\"",

@@ -12,14 +12,50 @@ import { loadCorpus } from '../src/lib/cairn/load';
 import { retrieve } from '../src/lib/cairn/retrieval';
 import { confirmCandidates } from '../src/lib/cairn/confirm';
 import { alsoSeenWith } from '../src/lib/cairn/graph';
+import { preflight } from '../src/lib/cairn/retrieval';
 
 const argv = process.argv.slice(2);
 const confirm = argv.includes('--confirm');
+/*
+ * `--preflight`, not `--before`: npm has its own `--before` option and eats it
+ * before the script ever sees it, so the flag silently did nothing when run
+ * through `npm run`. It worked when invoked directly, which is the worst
+ * version of that bug.
+ */
+const before = argv.includes('--preflight');
 const query = argv.filter((a) => !a.startsWith('--')).join(' ').trim();
 
 if (!query) {
   console.error('usage: npm run cairn:find -- "<error text>" [--confirm]');
+  console.error('       npm run cairn:find -- --preflight "<command you are about to run>"');
   process.exit(2);
+}
+
+/*
+ * --before: the corpus speaks first.
+ *
+ * Every other path here is a pull, which means the cost has already been paid
+ * -- you search after the failure. This fires on the command itself, before
+ * it runs, and is the only mode that can prevent the afternoon rather than
+ * explain it. Exit 0 always: this is advice, not a gate, and a tool that can
+ * block a command is a tool people stop invoking.
+ */
+if (before) {
+  const warnings = preflight(query, loadCorpus(), { useLocalEnvironment: true });
+  if (warnings.length === 0) {
+    console.log(`\nnothing known about \`${query}\`.\n`);
+    process.exit(0);
+  }
+  console.log(`\nbefore you run \`${query}\`:\n`);
+  for (const w of warnings) {
+    console.log(`  ! ${w.finding.id}  ${w.finding.title}`);
+    console.log(`      triggered by "${w.trigger}"${w.applicability === 'holds' ? '  [precondition holds here]' : ''}`);
+    if (w.finding.workaround) {
+      console.log(`      ${w.finding.workaround.split('\n')[0].slice(0, 96)}`);
+    }
+    console.log();
+  }
+  process.exit(0);
 }
 
 const all = loadCorpus();

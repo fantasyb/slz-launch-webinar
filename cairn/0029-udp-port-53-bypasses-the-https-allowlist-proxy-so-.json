@@ -22,6 +22,10 @@
   "reality": "The allowlist is enforced at the HTTPS CONNECT proxy, which never sees UDP. /etc/resolv.conf points at 8.8.8.8 and reaching it on port 53 works fine. Node's dns.resolveNs/resolveSoa/resolveMx use c-ares, which speaks UDP/53 directly rather than going through NSS, so the full record set is available. What it does NOT buy is authoritative lookup: outbound UDP/53 is transparently redirected to the sandbox resolver regardless of destination, so a query aimed at a TLD's authoritative server is answered by a recursive cache. That half of this finding was wrong when first written and is corrected here; see cairn-0030.",
   "mechanism": "The proxy intercepts TCP and rejects non-allowlisted CONNECT targets. It has no UDP path, and NO_PROXY/HTTPS_PROXY are honoured only by HTTP clients. c-ares neither consults those variables nor uses NSS, so it is unaffected by both the proxy and getent's address-record limit.",
   "workaround": "For record types beyond A/AAAA, use node -e with dns.promises.resolveNs / resolveSoa / resolveMx instead of getent or dig. To distinguish 'registered' from 'unregistered' authoritatively, resolve the TLD's nameservers, point a dns.Resolver at one with setServers(), and query the name: a delegation returned by the registry means registered, ENOTFOUND means not. Always run a known-unregistered control name in the same TLD in the same batch, so ENOTFOUND is proven distinguishable from a silent failure.",
+  "triggers": [
+    "curl",
+    "dig"
+  ],
   "evidence": [
     {
       "command": "curl -sS -o /dev/null --max-time 15 https://rdap.org/domain/cairn.dev; echo \"exit=$?\"",

@@ -21,6 +21,9 @@
   "reality": "The columns come from different accounting layers, and the divergence is visible long before the disk fills. Observed here: Size 252G, Used 8.1G, Avail 29G. Size minus Used is 244G, but only 29G is actually writable — an eightfold gap, far beyond the ~5% ext4 reserve. Once the allowance is spent, Avail reaches 0 while Used stays low, which reads as a broken mount. Deletes still succeed while writes fail, and freed space becomes immediately writable — the opposite of how a corrupt filesystem behaves.",
   "mechanism": "The allowance is enforced above the filesystem. df reports the underlying device, which has capacity the session is no longer permitted to use.",
   "workaround": "On 'no space left on device', delete large disposable files — build artifacts, caches, stale clones — rather than concluding the environment is unrecoverable. Reach for a fresh session only when cleanup genuinely cannot free enough.",
+  "triggers": [
+    "df"
+  ],
   "evidence": [
     {
       "command": "df -h . | tail -1",

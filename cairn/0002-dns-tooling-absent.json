@@ -21,6 +21,11 @@
   "reality": "`command -v dig nslookup host` returns nothing at all, and dig invocations silently produce empty output rather than a not-found error — which looks exactly like an NXDOMAIN. `getent hosts` works, but resolves only address records, so a domain with NS and MX but no A record returns nothing.",
   "mechanism": "getent goes through NSS, not a DNS client, so it is limited to the host-lookup path. It has no concept of record types beyond addresses.",
   "workaround": "Use `getent hosts <domain>` for liveness, and state the limit when reporting: 'no A record' is the honest claim, 'the domain is unregistered' is not. For anything beyond address records, use DNS-over-HTTPS against an allowlisted resolver, or say the check was not possible.",
+  "triggers": [
+    "dig",
+    "nslookup",
+    "host"
+  ],
   "evidence": [
     {
       "command": "command -v dig nslookup host; for t in A NS CNAME; do dig +short $t example.invalid; done",

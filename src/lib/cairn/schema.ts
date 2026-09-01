@@ -292,6 +292,33 @@ export const FindingSchema = z.object({
   /** What to do instead. The part that saves the next agent's afternoon. */
   workaround: z.string().max(4000).optional(),
 
+  /**
+   * Commands that walk you INTO this trap, as opposed to `check`, which
+   * detects it.
+   *
+   * The distinction is the whole point and was found by measuring. cairn-0007
+   * is about `playwright install` wasting a preinstalled browser bundle, and
+   * its check is `test -d /opt/pw-browsers` -- a detection command that an
+   * agent would never type. Retrieval that fires on what an agent is ABOUT to
+   * run therefore cannot be built from `check.command`: the dangerous command
+   * appears nowhere structured, only in prose.
+   *
+   * Each entry is a command PREFIX matched against the programs a command line
+   * invokes: `playwright install`, `dig`, `npm install`. Absent or empty for
+   * the many findings that are not about running anything -- a claim about
+   * floating-point comparison has no trigger, and inventing one would make the
+   * warning fire on nothing a person would recognise.
+   *
+   * NOT part of `findingBodyHash`, deliberately. That hash is an explicit
+   * allow-list of the fields an observation attests, and adding to it would
+   * invalidate every existing signature. The bounded consequence is that
+   * triggers can be edited without breaking a signature: a wrong one makes a
+   * warning fire on the wrong command or not at all, which is noise or a
+   * missed warning rather than a false claim -- the warning's CONTENT is still
+   * the signed finding. A future signature version should cover them.
+   */
+  triggers: z.array(z.string().min(2).max(120)).max(12).optional(),
+
   evidence: z.array(EvidenceSchema).default([]),
   check: CheckSchema,
   provenance: ProvenanceSchema,

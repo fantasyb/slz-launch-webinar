@@ -79,6 +79,46 @@ for (const file of files) {
   if (f.claim.length < 40) {
     warnings.push(`${file}: claim is very short — is it falsifiable as written?`);
   }
+
+  /*
+   * Triggers: a warning that fires wrongly is worse than one that never fires.
+   *
+   * `triggers` drives the only retrieval path that interrupts an agent before
+   * it acts, so a bad entry does not merely fail to help -- it teaches its
+   * reader to dismiss the channel. Both rules below were derived from a real
+   * generated batch, where a model attached `ssh-keygen` to a finding about
+   * security-test design (an invention) and `npm install` to one about
+   * Playwright (real, and useless, because everybody runs it all day).
+   */
+  const WRAPPER_VERBS = new Set([
+    'npm', 'git', 'yarn', 'pnpm', 'bun', 'cargo', 'go', 'pip', 'pip3',
+    'docker', 'make', 'brew', 'apt', 'apt-get',
+  ]);
+  for (const t of f.triggers ?? []) {
+    const words = t.trim().toLowerCase().split(/\s+/);
+    // 1. ATTESTED: the finding may only warn about a command it discusses.
+    const body = [
+      f.title, f.claim, f.expectation, f.reality, f.workaround ?? '',
+      f.mechanism ?? '', f.appliesTo ?? '', f.subject.name,
+      f.check.command, f.tags.join(' '),
+      ...(f.evidence ?? []).flatMap((e) => [e.command ?? '', e.output ?? '']),
+    ].join('\n').toLowerCase();
+    if (!words.every((w) => body.includes(w))) {
+      problems.push(`${file}: trigger "${t}" appears nowhere in the finding — invented?`);
+    }
+    // 2. SPECIFIC: a wrapper verb identifies a trap only when its argument
+    //    names the subject. `playwright install` yes; `npm install` no.
+    if (WRAPPER_VERBS.has(words[0])) {
+      const subject = f.subject.name.toLowerCase();
+      const names = words.slice(1).some((w) => subject.includes(w) || w.includes(subject));
+      if (!names) {
+        problems.push(
+          `${file}: trigger "${t}" is a ${words[0]} verb that does not name the subject ` +
+          `"${f.subject.name}" — it would fire on ordinary use`,
+        );
+      }
+    }
+  }
   if (f.basis === 'structural') {
     if (!f.derivation) {
       problems.push(

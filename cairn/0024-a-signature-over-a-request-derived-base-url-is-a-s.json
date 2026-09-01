@@ -21,6 +21,9 @@
   "reality": "The block's URLs were built from the request's Host header and then signed. `curl -H 'Host: evil.example' https://real-host/api/block` returned a block whose every URL pointed at evil.example, signed by the genuine key, hashing to the genuine fingerprint. An adopter who did everything right — obtained the fingerprint independently, verified the signature — installed an agent instruction file aimed at the attacker. The pinning ceremony was performed correctly and protected nothing.",
   "mechanism": "The route computed `base = proto://request.headers.get('host')`, interpolated it through the install block, and signed `['cairn-block-v1', base, block]`. Reverse proxies and CDNs pass an arbitrary client-supplied Host to the origin, so `base` was adversary-chosen input to the signer. Every downstream check was a check on the key, not on the payload.",
   "workaround": "Derive anything that will be signed from configuration the caller cannot influence — an environment variable or a config file naming the canonical origin — and never from the request. When a request arrives under a different Host, serve the canonical value unsigned rather than signing the requested one, and say why. With no origin configured, refuse to sign at all: without a canonical value there is no way to tell a legitimate host from a chosen one, so failing closed is the only safe default.\n\nThe general rule: before signing, ask which bytes of the payload the caller chose. Those bytes are what you are certifying on their behalf.",
+  "triggers": [
+    "curl"
+  ],
   "evidence": [
     {
       "command": "curl -sS -H 'Host: evil.example' http://127.0.0.1:3111/api/block",

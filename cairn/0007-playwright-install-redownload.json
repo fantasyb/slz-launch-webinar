@@ -22,6 +22,9 @@
   "reality": "The install writes to its own resolved path and does not reconcile with a preinstalled bundle. On a container with a bounded writable allowance the download can fill the disk, and the resulting 'no space left on device' points at storage rather than at the unnecessary install that caused it.",
   "mechanism": "The browser resolution path and the install target are configured independently. A pinned @playwright/test version in the project can also disagree with the preinstalled build, prompting a fetch.",
   "workaround": "Check for PLAYWRIGHT_BROWSERS_PATH before installing anything. If the project pins a different Playwright version, point at the existing binary with `executablePath` rather than downloading a matching one. PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 stops npm postinstall from re-fetching.",
+  "triggers": [
+    "playwright install"
+  ],
   "evidence": [
     {
       "command": "echo \"PLAYWRIGHT_BROWSERS_PATH=$PLAYWRIGHT_BROWSERS_PATH\"; ls \"$PLAYWRIGHT_BROWSERS_PATH\" | head",

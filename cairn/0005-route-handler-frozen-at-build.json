@@ -22,6 +22,10 @@
   "reality": "If nothing in the render path touches cookies, headers, `request.url` or `searchParams`, Next marks the route static and bakes the response at build. Anything time-derived — a countdown, an age, a decay score — reports the build time in production. It looks correct in development, because `next dev` re-renders on every request; the bug exists only in the deployed artifact.",
   "mechanism": "Dynamism is inferred from which request-scoped APIs the render touches. Reading the filesystem or calling Date.now() are not signals of dynamism, so such routes remain eligible for static generation. Route handlers commonly escape this by parsing `request.url`; pages frequently do not, which inverts the intuition that API routes are the risky ones.",
   "workaround": "Add `export const dynamic = 'force-dynamic'` to every route whose output depends on the current time or on mutable state. Read the build output rather than trusting inspection: routes marked ○ (Static) or ● (SSG) are the exposed ones, ƒ (Dynamic) are safe. Verify against `next build`, never against `next dev` alone. Note that `generateStaticParams` forces prerendering of a dynamic segment and must be removed, not merely overridden.",
+  "triggers": [
+    "next build",
+    "next dev"
+  ],
   "evidence": [
     {
       "command": "npm run build   # Cairn, before any force-dynamic export",

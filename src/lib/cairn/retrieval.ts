@@ -2356,6 +2356,104 @@ function fuse(rankings: Array<{ order: string[]; weight: number }>): Map<string,
 
 
 /**
+ * Programs a command line will actually invoke.
+ *
+ * Splits on pipes and separators, strips paths and `VAR=x` prefixes, and for
+ * each segment yields the program plus `program subcommand` so that
+ * `npm install` can be distinguished from `npm test`. Wrappers that delegate
+ * -- sudo, env, npx, time -- yield the word after them too, since
+ * `npx playwright install` is a playwright command wearing a hat.
+ */
+export function programsIn(line: string): string[] {
+  const out: string[] = [];
+  for (const seg of line.split(/\|\||&&|[|;&\n]/)) {
+    const words = seg.trim().split(/\s+/).filter(Boolean);
+    for (let i = 0; i < words.length; i++) {
+      if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(words[i])) continue; // VAR=x prefix
+      const w = words[i].replace(/^.*\//, '').toLowerCase();
+      if (!/^[a-z][a-z0-9._-]*$/.test(w)) continue;
+      out.push(w);
+      if (i + 1 < words.length && /^[a-z][a-z0-9-]+$/i.test(words[i + 1])) {
+        out.push(`${w} ${words[i + 1].toLowerCase()}`);
+      }
+      // Keep walking only through wrappers; otherwise the first program wins.
+      if (!DELEGATING_WRAPPERS.has(w)) break;
+    }
+  }
+  return [...new Set(out)];
+}
+
+/** Programs whose interesting argument is another program. */
+const DELEGATING_WRAPPERS = new Set([
+  'sudo', 'env', 'time', 'nohup', 'xargs', 'npx', 'bunx', 'pnpm', 'yarn',
+  'npm', 'node', 'bun', 'deno', 'python', 'python3', 'sh', 'bash', 'zsh',
+  'command', 'exec', 'nice', 'timeout', 'watch',
+]);
+
+export interface Warning {
+  finding: Finding;
+  /** The trigger that matched, so a caller can say why it fired. */
+  trigger: string;
+  applicability: Applicability;
+}
+
+/**
+ * RETRIEVAL AS INTERRUPT: what does the corpus know about what you are ABOUT
+ * to run?
+ *
+ * Every other entry point here is a pull -- you must already have a question,
+ * which means you must already know you have a problem. `failingCommand()`
+ * reads the program name out of stderr AFTER something broke. This is the same
+ * evidence pointed forwards, and it is the only path in this file that can
+ * save the cost rather than explain it afterwards.
+ *
+ * Matched against `triggers`, not `check.command`, and that distinction was
+ * the reason this could not be built until the schema had the field. A check
+ * is a DETECTION command: cairn-0007's is `test -d /opt/pw-browsers`, which
+ * nobody types. The command that walks you into it is `playwright install`.
+ *
+ * QUIET BY CONSTRUCTION. An interrupt that cries wolf is worse than none,
+ * because it trains its reader to dismiss it. Two rules keep it silent: only
+ * declared triggers fire, never a program merely mentioned somewhere; and a
+ * finding whose precondition provably fails on this machine is dropped rather
+ * than demoted, since a warning about a trap that cannot occur here is pure
+ * noise. Findings with no trigger -- most of them, and correctly so -- can
+ * never fire at all.
+ */
+export function preflight(
+  commandLine: string,
+  findings: Finding[],
+  opts: { useLocalEnvironment?: boolean } = {},
+): Warning[] {
+  const programs = new Set(programsIn(commandLine));
+  if (programs.size === 0) return [];
+  const out: Warning[] = [];
+  for (const f of findings) {
+    if (f.status === 'retired') continue;
+    let matched: string | undefined;
+    for (const t of f.triggers ?? []) {
+      const trig = t.trim().toLowerCase();
+      if (programs.has(trig)) { matched = trig; break; }
+    }
+    if (!matched) continue;
+    const applicability: Applicability =
+      opts.useLocalEnvironment === false || !f.precondition?.length
+        ? 'unknown'
+        : matchEnvironment(f.precondition).matches
+          ? 'holds'
+          : 'fails';
+    // A warning about a trap that cannot happen here is noise, not caution.
+    if (applicability === 'fails') continue;
+    out.push({ finding: f, trigger: matched, applicability });
+  }
+  /*
+   * Longer trigger first: `playwright install` is more specific than
+   * `playwright`, and the more specific warning is the one to read first.
+   */
+  return out.sort((a, b) => b.trigger.length - a.trigger.length);
+}
+
+/**
  * The command that failed, recovered from what it printed.
  *
  * Everything else in this file matches text against text. This is a different

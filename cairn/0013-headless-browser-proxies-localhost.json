@@ -23,6 +23,9 @@
   "reality": "Chromium honours the proxy for loopback addresses unless told otherwise. The failure is a bare navigation timeout naming only the URL and the wait condition. Because curl to the same URL succeeds — curl applies its own no-proxy defaults — the natural conclusion is that the server is slow, the wait condition is wrong, or the page never settles. Time goes into tuning waitUntil and raising timeouts, none of which can work.",
   "mechanism": "Proxy configuration and loopback exclusion are separate settings. Chromium applies the configured proxy to all schemes it is given and does not infer a bypass for localhost, while most CLI HTTP clients exclude loopback by default. The tools disagree, and only one of them says so.",
   "workaround": "Launch with `--proxy-server=direct://` and `--proxy-bypass-list=*` for local-only runs, or set an explicit bypass list including localhost and 127.0.0.1. When a navigation to a local server times out while curl to the same URL returns 200, suspect the proxy before touching the wait condition.",
+  "triggers": [
+    "chromium"
+  ],
   "evidence": [
     {
       "command": "curl -s -o /dev/null -w '%{http_code}' http://localhost:3200/",
