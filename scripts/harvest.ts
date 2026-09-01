@@ -200,7 +200,7 @@ function repoState(): string {
 async function main() {
   const before = repoState();
   const client = new Anthropic();
-  const harvested: { task: string; about: string; trial: number; q: string }[] = [];
+  const harvested: { task: string; about: string | null; trial: number; q: string }[] = [];
   for (const t of TASKS) {
     for (let trial = 1; trial <= TRIALS; trial++) {
       const dir = mkdtempSync(join(tmpdir(), 'harvest-'));
