@@ -5,7 +5,7 @@ import fs from 'fs';
 import path from 'path';
 import { gzipSync } from 'zlib';
 import { loadCorpus } from '@/lib/cairn/load';
-import { buildIndex, corpusFingerprint } from '@/lib/cairn/retrieval';
+import { buildIndex, corpusFingerprint, indexIdentity } from '@/lib/cairn/retrieval';
 import { toColumnarPublic } from '@/lib/cairn/retrieval';
 import { serialize } from '@/lib/cairn/columnar';
 import { loadKeys } from '@/lib/cairn/keys';
@@ -46,7 +46,19 @@ export async function GET() {
   const findings = loadCorpus();
   const index = buildIndex(findings);
   const fingerprint = corpusFingerprint(findings);
-  const raw = serialize(toColumnarPublic(index, fingerprint));
+  /*
+   * Stamped with the INDEXER identity, not just the corpus fingerprint.
+   *
+   * A consumer running a different version of this code computes a different
+   * index from the same findings. Checking only the corpus fingerprint would
+   * accept a correctly signed index for the right corpus built by the wrong
+   * indexer, which is a silent wrong answer -- the third gate this file needed
+   * and did not have. The corpus fingerprint stays in its own header for
+   * humans and for telling "different corpus" from "different version" apart
+   * when a warm fails.
+   */
+  const identity = indexIdentity(findings);
+  const raw = serialize(toColumnarPublic(index, identity));
   const body = gzipSync(raw, { level: 6 });
 
   // Signed over the COMPRESSED bytes actually transmitted, so a consumer
@@ -72,6 +84,7 @@ export async function GET() {
       'content-encoding': 'identity',
       'cache-control': 'no-store',
       'x-cairn-fingerprint': fingerprint,
+      'x-cairn-index-identity': identity,
       'x-cairn-findings': String(findings.length),
       // Absent rather than empty when the host cannot sign: a consumer must be
       // able to tell "not signed" from "signed with nothing", and an empty

@@ -459,6 +459,41 @@ export function corpusFingerprint(findings: Finding[]): string {
 }
 
 /**
+ * What the index was built FROM and what it was built BY.
+ *
+ * corpusFingerprint answers the first and the cache was keyed on it alone,
+ * under a `CACHE_SCHEMA` constant that has to be bumped by hand. That is the
+ * confusion-cache bug in the more important cache: changing `findingText`,
+ * `strongText` or the tokeniser changes the index completely and changes the
+ * corpus fingerprint not at all, so a stale index is silently reused with
+ * every ranking wrong and every number still plausible. It nearly happened
+ * during the session that found it -- an experiment that altered which fields
+ * are indexed was only saved by clearing the cache out of habit.
+ *
+ * A hand-bumped version cannot fix this, because forgetting to bump it IS the
+ * failure. So the identity is derived from the indexing code itself. If the
+ * code that decides what goes into the index changes at all, the key changes
+ * and the index is rebuilt.
+ *
+ * Bundling or minifying changes this text without changing behaviour, and the
+ * cost of that is one rebuild. That is the correct direction to be wrong in:
+ * a spurious rebuild is slow and right, a missed one is fast and wrong.
+ */
+export function indexIdentity(findings: Finding[]): string {
+  return crypto
+    .createHash('sha256')
+    .update(corpusFingerprint(findings))
+    .update(String(CACHE_SCHEMA))
+    // The functions that decide what text is indexed and how it is split.
+    .update(findingText.toString())
+    .update(strongText.toString())
+    .update(tokenize.toString())
+    .update(String(NOISE_FLOOR))
+    .update(String(GENERATION_SPREAD))
+    .digest('hex');
+}
+
+/**
  * Cache key for ONE finding.
  *
  * The full record, not `findingBodyHash`, because the index caches confidence
@@ -543,7 +578,7 @@ export function buildIndex(findings: Finding[]): CorpusIndex {
    * findings; doing it as typed arrays over one buffer costs 11ms, because
    * the bytes are already in the shape the index needs.
    */
-  const fingerprint = corpusFingerprint(findings);
+  const fingerprint = indexIdentity(findings);
   const flat = readColumnar(COLUMNAR_FILE, fingerprint);
   if (flat && Date.now() - flat.builtAt < INDEX_TTL_MS) {
     const rebuilt = fromColumnar(flat, findings);
@@ -2100,7 +2135,9 @@ export function confusionPairs(findings: Finding[]): Map<string, string[]> {
    * committed; that is not built, and pretending otherwise by shipping an O(N)
    * cost on the cold path would be worse than the gap.
    */
-  const fingerprint = corpusFingerprint(findings);
+  // Identity, not just the corpus: a confusion pair is what retrieve() did,
+  // which depends on the index as much as on the ranking that reads it.
+  const fingerprint = indexIdentity(findings);
   const cached = readConfusionCache(fingerprint);
   if (cached) {
     confusionCache.set(findings, cached);

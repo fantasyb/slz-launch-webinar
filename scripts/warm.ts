@@ -31,7 +31,7 @@ import path from 'path';
 import crypto from 'crypto';
 import { gunzipSync } from 'zlib';
 import { loadCorpus } from '../src/lib/cairn/load';
-import { corpusFingerprint } from '../src/lib/cairn/retrieval';
+import { corpusFingerprint, indexIdentity } from '../src/lib/cairn/retrieval';
 import { deserialize } from '../src/lib/cairn/columnar';
 import { loadKeys } from '../src/lib/cairn/keys';
 
@@ -57,7 +57,8 @@ function bail(reason: string): never {
 
 async function main() {
   const local = loadCorpus();
-  const want = corpusFingerprint(local);
+  const want = indexIdentity(local);
+  const wantCorpus = corpusFingerprint(local);
 
   console.log(`\nfetching ${from}/api/index.bin`);
   const res = await fetch(`${from}/api/index.bin`);
@@ -96,13 +97,18 @@ async function main() {
   const raw = gunzipSync(body);
   const parsed = deserialize(raw, want);
   if (!parsed) {
+    // Three distinguishable outcomes, because the fix differs for each: pull
+    // the corpus, upgrade cairn, or retry the download.
     bail(
-      claimed === want
-        ? 'the index did not parse — truncated download or a newer format'
-        : `it is for a different corpus (host ${claimed?.slice(0, 12)}, local ${want.slice(0, 12)})`,
+      claimed !== wantCorpus
+        ? `it is for a different corpus (host ${claimed?.slice(0, 12)}, local ${wantCorpus.slice(0, 12)})`
+        : res.headers.get('x-cairn-index-identity') !== want
+          ? 'it is for this corpus but was built by a different version of cairn'
+          : 'the index did not parse — truncated download or a newer format',
     );
   }
-  console.log(`  fingerprint: matches this corpus (${want.slice(0, 12)})`);
+  console.log(`  fingerprint: matches this corpus (${wantCorpus.slice(0, 12)})`);
+  console.log(`  indexer:     matches this version (${want.slice(0, 12)})`);
 
   const dir = path.join(process.cwd(), '.cairn-cache');
   fs.mkdirSync(dir, { recursive: true });

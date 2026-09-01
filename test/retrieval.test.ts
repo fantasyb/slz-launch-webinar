@@ -11,6 +11,7 @@ import assert from 'node:assert/strict';
 import { loadCorpus } from '../src/lib/cairn/load';
 import {
   retrieve, tokenize, buildIndex, associationStatus, rankerSignature,
+  corpusFingerprint, indexIdentity,
 } from '../src/lib/cairn/retrieval';
 import { assertLocalCorpus, runCommand } from '../src/lib/cairn/confirm';
 import { coOccurrence, alsoSeenWith } from '../src/lib/cairn/graph';
@@ -368,5 +369,36 @@ test('the external word-frequency table is loaded and rates ordinary English', (
   assert.ok(
     hits.length === 0 || hits.every((h) => h.strength === 'weak'),
     'a query of pure filler must not produce a confident answer',
+  );
+});
+
+/*
+ * An index is identified by what it was built FROM and what it was built BY.
+ *
+ * The cached index was keyed on the corpus fingerprint plus a schema constant
+ * bumped by hand. Changing which fields are indexed, or how text is split into
+ * terms, changes the index completely and the corpus fingerprint not at all --
+ * so a stale index is reused with every ranking wrong and every number still
+ * plausible. Forgetting to bump the constant IS the failure mode, so a
+ * constant cannot be the fix.
+ *
+ * This pins the two properties that make the derived key work: it must depend
+ * on the corpus, and it must NOT be the corpus fingerprint.
+ */
+test('the index identity covers the indexer, not only the corpus', () => {
+  const a = indexIdentity(corpus);
+  assert.equal(a, indexIdentity(corpus), 'must be stable for fixed code and corpus');
+  assert.notEqual(
+    a,
+    corpusFingerprint(corpus),
+    'keying on the corpus alone is the bug this exists to prevent',
+  );
+
+  const changed = [{ ...corpus[0], title: `${corpus[0].title} (edited)` }, ...corpus.slice(1)];
+  assert.notEqual(a, indexIdentity(changed), 'a corpus edit must change the identity');
+  assert.notEqual(
+    corpusFingerprint(corpus),
+    corpusFingerprint(changed),
+    'and the corpus fingerprint must still track the corpus on its own',
   );
 });
