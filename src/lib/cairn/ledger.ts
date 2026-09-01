@@ -1,0 +1,112 @@
+/**
+ * The retrieval ledger — what was served, to whom, and what happened next.
+ *
+ * WHY THIS EXISTS
+ *
+ * This corpus records the outcome of CHECKS: somebody ran the command, it
+ * confirmed or refuted. It has never recorded the outcome of RETRIEVALS. Every
+ * query, every finding surfaced, every brief assembled and handed over —
+ * discarded the instant it was served. A corpus that cannot see its own
+ * delivery cannot learn from it, and every measurement of delivery in this
+ * project so far has been a one-off harvested by hand.
+ *
+ * So: an append-only record of each retrieval, and where it is known, what
+ * became of it.
+ *
+ * WHAT AN OUTCOME MEANS HERE, AND WHAT IT DOES NOT
+ *
+ *   served    the finding was returned. Nothing more is claimed.
+ *   surfaced  it was returned FIRST, so the reader almost certainly saw it.
+ *   helped    the reader went on to avoid the trap it describes.
+ *   missed    the right finding existed and was not returned first.
+ *   misled    it was surfaced confidently and the reader still failed.
+ *
+ * `helped` and `misled` are the only two that require knowing what happened
+ * afterwards, and they are only available where something grades the work — a
+ * trial harness, a test, a human saying so. Most real retrievals will carry
+ * `served` and nothing else, and a design that only works when outcomes are
+ * dense would be a design that never works.
+ *
+ * APPEND ONLY, ONE JSON OBJECT PER LINE. Rewriting history here would let a
+ * later belief edit an earlier observation, which is the thing this whole
+ * project exists to refuse.
+ */
+import fs from 'fs';
+import path from 'path';
+
+export type Outcome = 'served' | 'surfaced' | 'helped' | 'missed' | 'misled';
+
+export interface RetrievalRecord {
+  /** RFC3339. */
+  at: string;
+  /** Who asked. A model id, an agent name, or 'cli' — never a person. */
+  by: string;
+  /** What they typed, verbatim. */
+  query: string;
+  /** What came back, best first. */
+  returned: { id: string; rank: number; strength: 'strong' | 'weak' }[];
+  /** Where the query came from: a trial name, a harvest task, 'interactive'. */
+  source?: string;
+  /**
+   * Which run this retrieval belongs to.
+   *
+   * The edge this corpus most lacks is SEQUENCE — that hitting the allowlist
+   * proxy leads to meeting the DNS bypass, that a Playwright path failure is
+   * followed by the disk one. Nothing in the corpus expresses "what tends to
+   * follow what", and no amount of ranking recovers it, because it is a fact
+   * about how traps arrive rather than about how they are worded. Two queries
+   * in one session are evidence of that edge; the same two queries from
+   * different sessions are not, and without this field they are
+   * indistinguishable.
+   *
+   * Recorded now because it costs one string and cannot be reconstructed later.
+   */
+  session?: string;
+  /**
+   * What became of it, when anything is known. Keyed by finding id so a single
+   * retrieval can record that one finding helped and another misled.
+   */
+  outcomes?: Record<string, Outcome>;
+  /** Free text from whatever graded it, so a verdict can be argued with. */
+  note?: string;
+  /**
+   * True when `returned` was REPLAYED rather than captured.
+   *
+   * The trial transcripts kept the queries and not the tool results, so what
+   * those agents were actually shown is gone. Replaying against today's index
+   * recovers something useful and something different: the ranking as it is
+   * now, attributed to a decision made under a ranking as it was. The outcomes
+   * are real; the served list is a reconstruction, and anything reasoning from
+   * it should know which half is which.
+   */
+  reconstructed?: boolean;
+}
+
+const LEDGER = path.join(process.cwd(), 'data', 'retrievals.jsonl');
+
+/**
+ * Record one retrieval. Never throws: a corpus that fails to answer because it
+ * could not write its diary is worse than one with an incomplete diary.
+ */
+export function record(r: RetrievalRecord): void {
+  try {
+    fs.mkdirSync(path.dirname(LEDGER), { recursive: true });
+    fs.appendFileSync(LEDGER, `${JSON.stringify(r)}\n`);
+  } catch {
+    /* deliberately silent */
+  }
+}
+
+export function readLedger(file = LEDGER): RetrievalRecord[] {
+  try {
+    return fs
+      .readFileSync(file, 'utf8')
+      .split('\n')
+      .filter(Boolean)
+      .map((l) => JSON.parse(l) as RetrievalRecord);
+  } catch {
+    return [];
+  }
+}
+
+export const LEDGER_PATH = LEDGER;

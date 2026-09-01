@@ -51,7 +51,8 @@
     "cairn:grader-selftest": "tsx scripts/grader-selftest.ts",
     "cairn:brief": "tsx scripts/brief.ts",
     "cairn:field-eval": "tsx scripts/field-eval.ts",
-    "cairn:harvest": "tsx scripts/harvest.ts"
+    "cairn:harvest": "tsx scripts/harvest.ts",
+    "cairn:backfill-ledger": "tsx scripts/backfill-ledger.ts"
   },
   "dependencies": {
     "clsx": "^2.1.1",
