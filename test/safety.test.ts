@@ -90,3 +90,32 @@ test('the block this project actually serves validates clean', () => {
   const base = 'https://cairn.example.org';
   assert.deepEqual(validateBlockShape(base, installBlock(base)), []);
 });
+
+/*
+ * Underscore is a word character, so \bSECRET could not match
+ * AWS_SECRET_ACCESS_KEY and \bPASSWORD could not match DATABASE_PASSWORD. The
+ * scanner missed the most common shape a real credential takes, while catching
+ * the bare API_KEY= form — so the gap was invisible to anyone testing the
+ * obvious case, and it was found only by posting a credential at the endpoint
+ * that commits on a stranger's behalf.
+ */
+test('a credential behind an underscore is still a credential', () => {
+  for (const s of [
+    'AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEY',
+    'DATABASE_PASSWORD=hunter2hunter2',
+    'my-service-secret: correcthorsebattery1',
+    'export API_KEY=sk_live_51H8xX2eZvKYlo2C',
+  ]) {
+    assert.ok(scanSensitive(s).length > 0, `should flag: ${s}`);
+  }
+});
+
+/* The lookbehind must not cost the precision the word boundary was there for. */
+test('an ordinary word ending in a credential keyword is not one', () => {
+  for (const s of [
+    'the MYSECRETPLAN=12345678 variable is unrelated',
+    'we set a password policy of 12 characters',
+  ]) {
+    assert.equal(scanSensitive(s).length, 0, `should stay quiet: ${s}`);
+  }
+});

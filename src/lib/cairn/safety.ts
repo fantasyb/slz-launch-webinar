@@ -145,7 +145,19 @@ const SENSITIVE: Array<{ re: RegExp; pattern: string; reason: string }> = [
   // Matching on the keyword alone flags every type annotation in a typed
   // language — `apiKey: string`, `token: z.string()` — and a scanner that
   // fires on ordinary source is one contributors learn to bypass.
-  { re: new RegExp(`\\b(?:${CREDENTIAL_KEYWORDS})\\s*[:=]\\s*(?:([\"'])[^\"'\\n]{${QUOTED_MIN},}\\1|(?=[A-Za-z0-9+/=_-]*\\d)[A-Za-z0-9+/=_-]{8,})`, 'i'), pattern: 'credential-assignment', reason: 'a credential assignment' },
+  /*
+   * NOT \b before the keyword. Underscore is a word character, so \bSECRET
+   * cannot match AWS_SECRET_ACCESS_KEY, \bPASSWORD cannot match
+   * DATABASE_PASSWORD, and the scanner missed the single most common shape a
+   * real credential takes. Measured: DATABASE_PASSWORD=hunter2hunter2 passed
+   * cleanly, as did an AWS secret key, while the bare KEY= and API_KEY= forms
+   * were caught — so the gap was invisible to anyone testing the obvious case.
+   *
+   * A negative lookbehind for an alphanumeric allows a leading underscore or
+   * hyphen while still refusing MYSECRET, which keeps the precision that \b
+   * was there for.
+   */
+  { re: new RegExp(`(?<![A-Za-z0-9])(?:${CREDENTIAL_KEYWORDS})\\s*[:=]\\s*(?:([\"'])[^\"'\\n]{${QUOTED_MIN},}\\1|(?=[A-Za-z0-9+/=_-]*\\d)[A-Za-z0-9+/=_-]{8,})`, 'i'), pattern: 'credential-assignment', reason: 'a credential assignment' },
   { re: /\/(?:home|Users)\/(?!user\b|runner\b|root\b|linuxbrew\b|Shared\b)[A-Za-z0-9._-]+/i, pattern: 'home-path', reason: 'a home directory naming a real user' },
   { re: /\bhttps?:\/\/(?![^\s]*(?:example\.com|localhost))(?:[a-z0-9-]+\.)*[a-z0-9-]+\.(?:internal|corp|local|intranet|lan)\b/i, pattern: 'internal-host', reason: 'an internal hostname' },
   { re: /\b(?:10|192\.168|172\.(?:1[6-9]|2\d|3[01]))\.\d{1,3}\.\d{1,3}\b/, pattern: 'private-ip', reason: 'a private network address' },
