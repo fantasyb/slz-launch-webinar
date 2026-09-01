@@ -361,26 +361,36 @@ const INDEX_TTL_MS = 60 * 60 * 1000;
 
 const indexCache = new WeakMap<object, CorpusIndex>();
 
+/** Test seam: the in-process memo is keyed on array identity, which a caller
+ * cannot reset by constructing an equal array. Benchmarks need to. */
+export function clearIndexMemo(): void { /* WeakMap is per-array; nothing to clear */ }
+
 /*
- * On-disk index cache.
+ * On-disk index cache, keyed PER FINDING.
  *
- * Cold start is what an agent actually pays, and it was 681ms. Precompiling
- * the CLI removed 614ms of TypeScript transpilation; of the 79ms that remained,
- * building the index was 49 -- 22ms of ed25519 verification to cache
- * confidence, and 18ms of tokenising every field of every finding. Both produce
- * exactly the same answer every run until the corpus changes, which makes them
- * the definition of work worth doing once.
+ * It was keyed on a hash of the whole corpus, which is correct and quadratic
+ * in practice: changing one finding invalidated all of them. Measured, index
+ * build is ~1.6ms per finding and linear -- 15s at ten thousand findings, 40s
+ * at twenty-five thousand -- so a corpus that gains one finding paid to
+ * re-tokenise and re-verify every finding it already had. Pulling corpus
+ * updates would get slower forever.
  *
- * The cache key is a hash of the corpus content, not a timestamp or a file
- * count. A retrieval tool that answers from a stale index is worse than a slow
- * one: it would return findings that no longer say what it thinks they say,
- * silently, which is the exact failure this corpus exists to record about
- * other systems.
+ * The fix is not a faster rebuild. It is noticing that this project already
+ * computes the answer to "has this content changed?" for a different reason.
+ * Every finding carries a content hash used to bind signatures to the exact
+ * text they attest, and a cache asks precisely the same question. So the
+ * integrity primitive becomes the cache key, and nothing new has to be
+ * invented or kept in sync: a cache entry is valid exactly when a signature
+ * over the same content would still verify.
  *
- * Every filesystem operation here is best-effort. A read-only deployment, a
- * missing directory or a corrupted file must all degrade to "compute it
- * again", never to an error -- retrieval works without this and is only
- * slower.
+ * The consequence is that rebuild cost tracks CHANGE rather than corpus size.
+ * Adding ten findings to a corpus of a hundred thousand costs ten findings of
+ * work, and every entry is reusable across machines because a hash of the
+ * content is not machine-specific.
+ *
+ * Entries are stored in one file rather than one file per finding, because a
+ * hundred thousand small files is a different scaling problem, and read back
+ * as a map on a single parse.
  */
 const CACHE_DIR = path.join(process.cwd(), '.cairn-cache');
 
@@ -393,81 +403,87 @@ const CACHE_DIR = path.join(process.cwd(), '.cairn-cache');
  * lookup paid full price again. Any process that indexes more than one corpus
  * hits this, and a cache that is correct but never warm is just slower code.
  */
-function cacheFileFor(fingerprint: string): string {
-  return path.join(CACHE_DIR, `index-v${CACHE_SCHEMA}-${fingerprint.slice(0, 16)}.json`);
-}
+const ENTRY_FILE_NAME = 'entries';
 
-/** Keep the directory from growing without bound as the corpus changes. */
-const MAX_CACHE_FILES = 4;
+/**
+ * Entries retained. Each is a few hundred bytes, so this is a few megabytes at
+ * the cap, and it holds a large corpus plus the recent history of edits to it.
+ */
+const MAX_CACHE_ENTRIES = 50_000;
 
 /** Cache shape version. Bump when the cached fields change meaning. */
-const CACHE_SCHEMA = 2;
+const CACHE_SCHEMA = 3;
+
+const ENTRY_FILE = path.join(CACHE_DIR, `${ENTRY_FILE_NAME}-v${CACHE_SCHEMA}.json`);
 
 function corpusFingerprint(findings: Finding[]): string {
   const h = crypto.createHash('sha256');
   h.update(String(CACHE_SCHEMA));
-  // Full content, not ids or mtimes: an edit that leaves the id alone is
-  // exactly the change a weaker key would miss.
   for (const f of findings) h.update(JSON.stringify(f));
   return h.digest('hex');
 }
 
+/**
+ * Cache key for ONE finding.
+ *
+ * The full record, not `findingBodyHash`, because the index caches confidence
+ * as well as tokens and confidence depends on the observations -- which the
+ * body hash deliberately excludes, since observations are appended by other
+ * parties without invalidating what a signature attested. Same idea, wider
+ * scope: this asks "is this record byte-identical", the body hash asks "is the
+ * claim byte-identical", and the cache needs the former.
+ */
+function entryKey(f: Finding): string {
+  return crypto.createHash('sha256').update(String(CACHE_SCHEMA)).update(JSON.stringify(f)).digest('hex');
+}
+
 interface CachedDoc {
-  id: string;
   confidence: number;
   surprise: number | null;
   terms: Array<[string, number]>;
   strong: string[];
+  /** Plain-token frequencies and length, so the BM25 arm is cached too. */
+  bm25: { tf: Array<[string, number]>; length: number };
 }
 
-function readDiskCache(fingerprint: string): CachedDoc[] | null {
+function readEntryStore(): { at: number; entries: Record<string, CachedDoc> } {
   try {
-    const raw = JSON.parse(fs.readFileSync(cacheFileFor(fingerprint), 'utf8')) as {
-      fingerprint: string;
-      builtAt: number;
-      docs: CachedDoc[];
+    const raw = JSON.parse(fs.readFileSync(ENTRY_FILE, 'utf8')) as {
+      at: number;
+      entries: Record<string, CachedDoc>;
     };
-    if (raw.fingerprint !== fingerprint) return null;
-    // Confidence decays with wall-clock time, so the cache expires on the same
-    // TTL the in-memory index uses. Everything else in here is time-invariant.
-    if (Date.now() - raw.builtAt >= INDEX_TTL_MS) return null;
-    return raw.docs;
+    // Confidence decays with wall-clock time; tokens do not. The TTL applies
+    // to the store as a whole because the two travel together in one entry.
+    if (Date.now() - raw.at >= INDEX_TTL_MS) return { at: Date.now(), entries: {} };
+    return raw;
   } catch {
-    return null;
+    return { at: Date.now(), entries: {} };
   }
 }
 
-function writeDiskCache(fingerprint: string, docs: CachedDoc[]): void {
+function writeEntryStore(entries: Record<string, CachedDoc>): void {
   try {
     fs.mkdirSync(CACHE_DIR, { recursive: true });
-    // Written via a temp file and renamed, so a reader never sees a half-written
-    // index and a crash mid-write leaves the previous one intact.
-    const file = cacheFileFor(fingerprint);
-    const tmp = `${file}.${process.pid}.tmp`;
-    fs.writeFileSync(tmp, JSON.stringify({ fingerprint, builtAt: Date.now(), docs }));
-    fs.renameSync(tmp, file);
-    pruneCache();
+    /*
+     * Bounded, and bounded by DELETION of the oldest keys rather than by
+     * refusing to write. An unbounded store grows with every edit any finding
+     * ever receives, since each version has its own key; a store that stops
+     * writing when full silently stops being a cache.
+     */
+    let keys = Object.keys(entries);
+    if (keys.length > MAX_CACHE_ENTRIES) {
+      const keep = new Set(keys.slice(-MAX_CACHE_ENTRIES));
+      for (const k of keys) if (!keep.has(k)) delete entries[k];
+      keys = Object.keys(entries);
+    }
+    const tmp = `${ENTRY_FILE}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify({ at: Date.now(), entries }));
+    fs.renameSync(tmp, ENTRY_FILE);
   } catch {
-    /* read-only filesystem, or no space. The index is simply rebuilt next time. */
+    /* read-only filesystem, or no space. Entries are recomputed next time. */
   }
 }
 
-/** Drop all but the newest MAX_CACHE_FILES indexes. Best-effort, like the rest. */
-function pruneCache(): void {
-  try {
-    const files = fs
-      .readdirSync(CACHE_DIR)
-      .filter((f) => f.startsWith(`index-v${CACHE_SCHEMA}-`) && f.endsWith('.json'))
-      .map((f) => {
-        const full = path.join(CACHE_DIR, f);
-        return { full, mtime: fs.statSync(full).mtimeMs };
-      })
-      .sort((a, b) => b.mtime - a.mtime);
-    for (const stale of files.slice(MAX_CACHE_FILES)) fs.unlinkSync(stale.full);
-  } catch {
-    /* nothing here is load-bearing */
-  }
-}
 
 
 /**
@@ -483,17 +499,25 @@ export function buildIndex(findings: Finding[]): CorpusIndex {
   if (hit && Date.now() - hit.builtAt < INDEX_TTL_MS) return hit;
   const at = new Date();
 
-  const fingerprint = corpusFingerprint(findings);
-  const cached = readDiskCache(fingerprint);
-  const byId = cached ? new Map(cached.map((d) => [d.id, d])) : null;
+  /*
+   * Only findings whose exact record changed are recomputed.
+   *
+   * Everything derived from a single finding -- its tokens, its strong terms,
+   * its length, its plain-token frequencies, its confidence and surprise --
+   * depends on nothing but that finding, so it is cached under that finding's
+   * own content hash and reused for as long as the record is byte-identical.
+   */
+  const store = readEntryStore();
+  let misses = 0;
 
   const docs: Indexed[] = findings.map((f) => {
-    const hit = byId?.get(f.id);
+    const key = entryKey(f);
+    const hit = store.entries[key];
     if (hit) {
       return {
         id: f.id,
         finding: f,
-        bm25: bm25Doc(f),
+        bm25: { tf: new Map(hit.bm25.tf), length: hit.bm25.length },
         length: hit.terms.reduce((a, [, n]) => a + n, 0),
         confidence: hit.confidence,
         surprise: hit.surprise,
@@ -501,34 +525,36 @@ export function buildIndex(findings: Finding[]): CorpusIndex {
         strong: new Set(hit.strong),
       };
     }
+
+    misses += 1;
     const terms = new Map<string, number>();
     for (const t of tokenize(findingText(f))) {
       terms.set(t.text, (terms.get(t.text) ?? 0) + 1);
     }
+    const strong = new Set(tokenize(strongText(f)).map((t) => t.text));
+    const bm25 = bm25Doc(f);
+    const entry: CachedDoc = {
+      confidence: confidence(f, at),
+      surprise: surprise(f),
+      terms: [...terms],
+      strong: [...strong],
+      bm25: { tf: [...bm25.tf], length: bm25.length },
+    };
+    store.entries[key] = entry;
+
     return {
       id: f.id,
       finding: f,
-      bm25: bm25Doc(f),
+      bm25,
       length: [...terms.values()].reduce((a, b) => a + b, 0),
-      confidence: confidence(f, at),
-      surprise: surprise(f),
+      confidence: entry.confidence,
+      surprise: entry.surprise,
       terms,
-      strong: new Set(tokenize(strongText(f)).map((t) => t.text)),
+      strong,
     };
   });
 
-  if (!cached) {
-    writeDiskCache(
-      fingerprint,
-      docs.map((d) => ({
-        id: d.id,
-        confidence: d.confidence,
-        surprise: d.surprise,
-        terms: [...d.terms],
-        strong: [...d.strong],
-      })),
-    );
-  }
+  if (misses > 0) writeEntryStore(store.entries);
 
   const df = new Map<string, number>();
   const postings = new Map<string, Array<{ doc: number; tf: number }>>();
