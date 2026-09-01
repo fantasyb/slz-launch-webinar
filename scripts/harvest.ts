@@ -30,6 +30,9 @@ const SCRATCH = join(process.cwd(), 'fixtures', 'harvest');
 const TRIALS = 3;
 const corpus = loadCorpus();
 
+/** Every command any trial ran, so an escape can be diagnosed afterwards. */
+const ACTIONS: string[] = [];
+
 /*
  * Each task is ordinary work that happens to sit on top of a recorded trap.
  * `about` is what the task was BUILT around -- a note for the labeller, never
@@ -87,7 +90,27 @@ const cairnTool = {
   input_schema: { type: 'object' as const, properties: { query: { type: 'string' } }, required: ['query'] },
 };
 
+/*
+ * CWD IS NOT CONTAINMENT.
+ *
+ * A harvest agent working on a copied fixture wrote its finished answer into
+ * this repository's own src/ instead of the copy — two files, nothing tracked
+ * overwritten, which was luck rather than design. execFileSync's `cwd` sets
+ * where relative paths resolve and stops nothing absolute.
+ *
+ * This is a guard against accident, not an adversary: these agents are doing
+ * ordinary work, and the failure was ordinary too. It refuses any command that
+ * names a path outside the trial directory, and it LOGS EVERY COMMAND — the
+ * escape could not be diagnosed after the fact because this harness recorded
+ * what agents asked and never what they did.
+ */
+const TRIAL_ESCAPE = new RegExp(`(^|[\\s"'=(])(${process.cwd().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}|/home/user|/root)(/|[\\s"']|$)`);
+
 function runBash(cmd: string, cwd: string): string {
+  ACTIONS.push(cmd);
+  if (TRIAL_ESCAPE.test(cmd)) {
+    return 'exit 1\nrefused: this command names a path outside the working directory';
+  }
   try {
     const out = execFileSync('bash', ['-c', cmd], { cwd, encoding: 'utf8', timeout: 30000, maxBuffer: 1 << 20 });
     return `exit 0\n${out.slice(0, 3000)}`;
@@ -109,7 +132,21 @@ function runCairn(q: string): string {
     .join('\n\n');
 }
 
+/*
+ * The direct assertion, because the pattern guard above is a guess at a
+ * mechanism I never observed. This one does not care how an escape happens: it
+ * asks the repository whether it changed.
+ */
+function repoState(): string {
+  try {
+    return execFileSync('git', ['status', '--porcelain'], { encoding: 'utf8' });
+  } catch {
+    return '';
+  }
+}
+
 async function main() {
+  const before = repoState();
   const client = new Anthropic();
   const harvested: { task: string; about: string; trial: number; q: string }[] = [];
   for (const t of TASKS) {
@@ -148,6 +185,14 @@ async function main() {
       for (const q of queries) console.log(`      ${q.slice(0, 104)}`);
     }
   }
+  const after = repoState();
+  if (after !== before) {
+    console.log('\n  !! THE REPOSITORY CHANGED DURING THIS RUN. A trial wrote outside its directory.');
+    for (const line of after.split('\n').filter((l) => l && !before.includes(l))) console.log(`     ${line}`);
+    console.log('     Commands are logged below; find the one that did it.\n');
+    for (const a of ACTIONS) console.log(`     $ ${a.replace(/\s+/g, ' ').slice(0, 120)}`);
+  }
+
   const out = join(tmpdir(), 'harvest.json');
   writeFileSync(out, JSON.stringify(harvested, null, 2));
   console.log(`\n  ${harvested.length} queries from ${TASKS.length} tasks x ${TRIALS} trials -> ${out}`);

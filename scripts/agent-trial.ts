@@ -79,6 +79,9 @@ const THINKING: Anthropic.ThinkingConfigParam = /^claude-(opus-(5|4-[678])|sonne
   : { type: 'enabled', budget_tokens: 4000 };
 const corpus = loadCorpus();
 
+/** Every command any trial ran, so an escape can be diagnosed afterwards. */
+const ACTIONS: string[] = [];
+
 interface Scenario {
   fixture?: string;
   task: string;
@@ -239,7 +242,27 @@ const cairnTool = {
   input_schema: { type: 'object' as const, properties: { query: { type: 'string' } }, required: ['query'] },
 };
 
+/*
+ * CWD IS NOT CONTAINMENT.
+ *
+ * A harvest agent working on a copied fixture wrote its finished answer into
+ * this repository's own src/ instead of the copy — two files, nothing tracked
+ * overwritten, which was luck rather than design. execFileSync's `cwd` sets
+ * where relative paths resolve and stops nothing absolute.
+ *
+ * This is a guard against accident, not an adversary: these agents are doing
+ * ordinary work, and the failure was ordinary too. It refuses any command that
+ * names a path outside the trial directory, and it LOGS EVERY COMMAND — the
+ * escape could not be diagnosed after the fact because this harness recorded
+ * what agents asked and never what they did.
+ */
+const TRIAL_ESCAPE = new RegExp(`(^|[\\s"'=(])(${process.cwd().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}|/home/user|/root)(/|[\\s"']|$)`);
+
 function runBash(cmd: string, cwd: string): string {
+  ACTIONS.push(cmd);
+  if (TRIAL_ESCAPE.test(cmd)) {
+    return 'exit 1\nrefused: this command names a path outside the working directory';
+  }
   try {
     const out = execFileSync('bash', ['-c', cmd], { cwd, encoding: 'utf8', timeout: 30000, maxBuffer: 1 << 20 });
     return `exit 0\n${out.slice(0, 3000)}`;
