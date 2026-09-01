@@ -1397,7 +1397,24 @@ export function retrieve(
       siblings: [],
       confusedWith: [],
       explained: 0,
-      strength: 'strong',
+      /*
+       * WEAK until examined. Absence of evidence that a hit is good is not
+       * evidence that it is good.
+       *
+       * This defaulted to 'strong', and the annotation loop below only reaches
+       * the first ANNOTATE_WINDOW hits -- so any hit past the window was
+       * returned confidently having never been assessed. Unreachable at
+       * thirty-one findings, because no query returned more than the window;
+       * reachable the moment a thirty-second was added, and it broke the
+       * agent-eval's silence property immediately: a git error the corpus knows
+       * nothing about returned three CONFIDENT hits at ranks 26, 27 and 28,
+       * each with zero caveats because nothing had looked at them.
+       *
+       * The tail is now weak, which is what an unexamined result deserves and
+       * what the caller should be told. Annotated hits are unaffected: the
+       * loop promotes to 'strong' when it finds fewer than two caveats.
+       */
+      strength: 'weak',
       caveats: [],
     };
   });
@@ -1736,10 +1753,12 @@ export function retrieve(
        * quadratic sibling bug directly below, found in the same profile, and
        * invisible for the same reason: on 31 findings the tail is three rows.
        *
-       * Hits past the window keep `strength: 'strong'` and no caveats, which
-       * is the pre-annotation default. They are still ranked, still returned,
-       * and still correct -- they simply carry no self-assessment, which is
-       * what they carried before any of this existed.
+       * Hits past the window keep `strength: 'weak'` and no caveats. They are
+       * still ranked and still returned; they simply carry no self-assessment,
+       * and a result nothing has examined is reported as weak rather than as
+       * confident. That default was the other way round until a thirty-second
+       * finding made the tail reachable and three unexamined hits came back
+       * confident on a query the corpus knows nothing about.
        */
       const ANNOTATE_WINDOW = 25;
       for (const h of relevant.slice(0, ANNOTATE_WINDOW)) {
