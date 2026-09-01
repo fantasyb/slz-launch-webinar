@@ -3,26 +3,21 @@
 You run the first block once. After that the agent does everything and you
 never type a cairn command again.
 
-## First, decide how people get knowledge OUT of it
+## One corpus. Everybody on it.
 
-Contributing is the easy direction. Receiving is the one that goes wrong.
+Add people as collaborators on this repository. They clone it, they pull, they
+push. New findings reach everyone.
 
-**Collaborators on one repo — use this.** Everyone clones the same repository
-and pulls. New findings reach everybody. Right for people you know.
+**Do not fork.** A fork's origin is your own copy and never receives anybody
+else's findings, so syncing against it succeeds, reports "already current", and
+teaches you nothing — permanently, while looking exactly like it is working.
+Measured: a fork was told *already current, nothing new* while a finding sat
+upstream unseen. The value here is knowledge arriving; a fork is a snapshot
+with a one-way valve.
 
-**Forks — only with an upstream remote.** A fork's origin is your own copy and
-never receives anyone else's findings, so syncing against it succeeds, reports
-"already current", and teaches you nothing, permanently. Measured: a fork was
-told "already current — nothing new" while a finding sat upstream unseen. If
-somebody forks, they must run this once, or the corpus is frozen for them:
-
-```bash
-cd ~/cairn && git remote add upstream <the shared repo>
-```
-
-`cairn:sync` prefers `upstream` when it exists and falls back to `origin`, so
-after that one command everything works the same way for them as for everyone
-else. Same fork, after adding it: *41 findings (1 new)*.
+If somebody has already forked, one command rescues them — `git remote add
+upstream <the shared repo>` — because sync follows upstream when it exists. But
+the answer is not to fork.
 
 ## What a person does, once, per machine
 

@@ -124,6 +124,11 @@ A week of ordinary use answers all three better than any benchmark here.
 
 ## Sending your findings back
 
+You are a collaborator on the one shared repository. There is no fork in this
+model, deliberately: a fork stops receiving other people's findings and never
+says so.
+
+
 ```bash
 cd ~/cairn
 git pull --rebase          # other people's findings and queries
