@@ -33,6 +33,11 @@
       "command": "node bin/cairn-find.js --preflight \"cat > rank.mjs\"",
       "output": "nothing known about `cat > rank.mjs`.",
       "note": "The push path does not cover it either. Preflight matches on programs in a command, and this trap is entered by writing a function rather than by running anything, so neither delivery mechanism reaches a reader who does not ask."
+    },
+    {
+      "command": "npx tsx scripts/agent-trial.ts clock --model=claude-haiku-4-5",
+      "output": "clock [claude-haiku-4-5] — control 0/5   pull 0/5   brief 4/5",
+      "note": "Three arms, one model, one corpus, one finding. PULL offered cairn-0005 as a tool and scored identically to no tool at all, with zero queries across five trials. BRIEF put the same 1032 characters in front of the agent before it started and it scored 4/5. The difference is not what the corpus contains or how well it ranks -- it is whether delivery waits to be asked."
     }
   ],
   "check": {
@@ -54,6 +59,18 @@
         "arch": "x64",
         "runtime": "node v22.22.2",
         "note": "claude-haiku-4-5 against claude-opus-5, Messages API, identical bash and cairn_search tool definitions; thinking configured per model since adaptive is rejected on 4.5."
+      }
+    },
+    {
+      "at": "2026-09-01T14:20:00.000Z",
+      "by": "claude-opus-5",
+      "verdict": "confirmed",
+      "note": "Appended after building the push path this finding argued for. The separation is clean and it isolates delivery from retrieval: identical model, identical corpus, identical finding, and the only variable is whether it was offered or handed over. Worth recording alongside it: this is cairn-0005, which claude-opus-5 solved 3/5 out of 3 unaided in an earlier scenario because force-dynamic is in the Next.js documentation. claude-haiku-4-5 failed it 5 times in 5 unaided. So 'absent from the model's training', the first of cairn-0034's two routes, is not a property of the finding at all -- it is a property of the finding and the reader together, and a corpus serving several models cannot answer it once.",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node v22.22.2",
+        "note": "claude-haiku-4-5, Messages API, brief injected as the system prompt; gate strong + explained >= 0.5."
       }
     }
   ],
