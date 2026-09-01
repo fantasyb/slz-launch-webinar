@@ -23,7 +23,18 @@
     "shown it. It is kept, marked contaminated, and excluded from scoring.",
     "",
     "Two negatives are marked `arguable` with the reasoning attached. The scorer",
-    "reports the sensitivity band both ways rather than picking the flattering one."
+    "reports the sensitivity band both ways rather than picking the flattering one.",
+    "",
+    "`selfReferential` lists records about this project's own retrieval and",
+    "measurement. They compete in this evaluation and cannot be written out of it:",
+    "cairn-0039 stopped quoting these queries verbatim and still intercepts three,",
+    "because it is ABOUT eval queries and its vocabulary is theirs.",
+    "",
+    "The list is explicit rather than derived. A predicate on subject.name missed",
+    "cairn-0039 entirely — its subject is 'retrieval evaluation', not 'cairn' —",
+    "and reported no effect at all, which is worse than not decomposing.",
+    "Excluding them is never applied; it is printed alongside so the miss can be",
+    "split between the retriever and the ledger discussing itself."
   ],
   "harvestedAt": "2026-09-01",
   "queries": [
@@ -134,5 +145,11 @@
       "contaminated": true,
       "task": "staleness"
     }
+  ],
+  "selfReferential": [
+    "cairn-0034",
+    "cairn-0035",
+    "cairn-0037",
+    "cairn-0039"
   ]
 }

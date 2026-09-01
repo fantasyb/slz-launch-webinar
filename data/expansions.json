@@ -11,7 +11,7 @@
     "The generator never sees observations[].note or predictions[].reasoning.",
     "Those are the held-out evaluation set. See scripts/expand.ts."
   ],
-  "generatedAt": "2026-09-01T03:14:42.114Z",
+  "generatedAt": "2026-09-01T14:42:12.164Z",
   "model": "claude-opus-5",
   "expansions": {
     "cairn-0001": [
@@ -341,6 +341,96 @@
       "live system disagrees with my recollection of the version, who is stale",
       "positive control for detecting a hijacked or captive resolver",
       "did the delegation change or is something lying to me"
+    ],
+    "cairn-0032": [
+      "search returned a completely unrelated result at 75% confidence",
+      "why does my retriever match on words like 'silently' and 'never'",
+      "top hit is irrelevant but third result is correctly flagged as weak",
+      "idf treating common english words as rare",
+      "how do I stop stopwords from driving my search score",
+      "word frequency json missing common words undefined lookup",
+      "BM25 scoring boosting filler words in plain english queries",
+      "matched terms are all generic verbs but confidence is high",
+      "should absence from a frequency table mean rare or unknown",
+      "corpus-derived term weights break for out-of-domain queries",
+      "low-confidence warning never fires when it should",
+      "query written in ordinary prose returns wrong document with no caveat"
+    ],
+    "cairn-0033": [
+      "stop_reason: refusal content: []",
+      "agent returned empty string but no error, 200 response",
+      "why does my model response have output_tokens 0",
+      "one eval arm scores zero for every task, other arm fine",
+      "is my prompt hitting a content filter without telling me",
+      "api call succeeded but content array is empty",
+      "agent loop exits immediately, no tool calls, empty answer recorded",
+      "how do I tell a declined request from a completed one",
+      "loop treats absence of output as success instead of failure",
+      "identical task refused with tools attached but works without them",
+      "eval results silently counting empty outputs as wrong answers"
+    ],
+    "cairn-0034": [
+      "both arms scored the same in my a/b eval, what am I doing wrong",
+      "agent retrieves the right doc, cites it, and the answer is identical without it",
+      "control 3/3 with-context 3/3 no difference",
+      "how do I prove my RAG knowledge base actually helps the model",
+      "retrieval accuracy is near perfect but downstream task quality unchanged",
+      "maybe my retriever is ranking the wrong chunk first",
+      "what should I even record in an internal notes corpus if the model already knows it",
+      "treatment and control indistinguishable because the baseline already succeeds"
+    ],
+    "cairn-0035": [
+      "haiku never calls the tool I gave it",
+      "agent with rag tool scores same as without",
+      "how to make a model actually use a search tool",
+      "small model ignores mcp tool description",
+      "askedCairn: false, false, false, false, false — zero tool calls across all trials",
+      "0/5 with tool 0/5 without, did my retrieval even run",
+      "should I inject docs into the prompt instead of exposing a lookup tool",
+      "is my index broken or is nothing querying it"
+    ],
+    "cairn-0036": [
+      "until ! pgrep -f script.ts; do sleep 10; done never exits",
+      "my bash wait loop never finishes even though the job is done",
+      "pgrep -f finds a process that already exited",
+      "why does pkill -f kill my own shell script",
+      "how do I wait for a background process to finish in bash without polling by name",
+      "script hangs forever in sleep loop no error output",
+      "is my job still running or is the check broken",
+      "a poll condition that is always true because the poller is part of what it measures"
+    ],
+    "cairn-0037": [
+      "adding one document to my index made unrelated queries rank worse",
+      "top hit is a note about the note-taking system instead of the actual answer",
+      "P@1 dropped after adding a record to the eval corpus",
+      "why does the same doc keep coming up first for every query",
+      "is my embedding model getting worse as the corpus grows",
+      "document full of generic vocabulary matches everything in BM25",
+      "how do I tell if one entry is hurting retrieval or the test set got harder",
+      "retrieval regression after new entry, remove it and score again"
+    ],
+    "cairn-0038": [
+      "hybrid search returns the wrong document first even though it ranks top in most rankers",
+      "rrf fused scores differ only in the fourth decimal place",
+      "why does changing ranker weights not change my final ordering",
+      "reciprocal rank fusion ignores rank position small index",
+      "best match ranked second by tiny margin",
+      "should k=60 be changed for a small document set",
+      "tuning weights has no effect on fused ranking, what else controls it",
+      "default constant from a paper behaves differently on much smaller inputs"
+    ],
+    "cairn-0039": [
+      "retrieval eval p@1 0.85 but users say search doesn't find anything",
+      "why does my rag benchmark score drop when real users query it",
+      "search works great on my test set fails in production",
+      "precision at 1 high offline low online, what am i measuring wrong",
+      "held out field from index, is that enough for a fair retrieval test",
+      "generated queries from documents to test embeddings — is this leaking",
+      "benchmark built from the same data it tests inflates accuracy",
+      "should i score my retriever on questions nobody actually asked",
+      "users search with different words than my docs use, ranking suffers",
+      "how to tell if an evaluation set is too easy",
+      "should the retriever return nothing for unanswerable questions"
     ]
   }
 }

@@ -90,4 +90,31 @@ if (arguable.length) {
   console.log(`  unanswerable quiet ${firmQuiet}/${firm.length} (${(firmQuiet / firm.length).toFixed(3)}) — the rest counted as answerable and missed.`);
   for (const c of arguable) console.log(`    · ${c.q.slice(0, 66)}`);
 }
+/*
+ * A record whose subject is this corpus competes in this corpus's own
+ * evaluation, and cannot be prevented from doing so by writing it more
+ * carefully — cairn-0039 stopped quoting these queries verbatim and still
+ * intercepts three of them, because it is ABOUT eval queries and its
+ * vocabulary is theirs. Excluding such records would be rigging the number.
+ * Showing both is the same discipline as printing the band on the disputable
+ * labels: the headline is the full corpus, and the decomposition says how much
+ * of the miss is the retriever and how much is the ledger discussing itself.
+ *
+ * The list is declared in the data file, not derived. A predicate on
+ * subject.name missed cairn-0039 — the very record doing the intercepting,
+ * whose subject is 'retrieval evaluation' — and printed a decomposition
+ * showing no effect, which is worse than printing none at all.
+ */
+const SELF_REFERENTIAL: string[] = (
+  JSON.parse(fs.readFileSync('data/field-queries.json', 'utf8')) as { selfReferential?: string[] }
+).selfReferential ?? [];
+if (SELF_REFERENTIAL.length) {
+  const narrowed = corpus.filter((f) => !SELF_REFERENTIAL.includes(f.id));
+  const p = positives.filter((c) => retrieve(c.q, narrowed)[0]?.finding.id === c.gold).length;
+  console.log(
+    `\n  ${SELF_REFERENTIAL.length} records have this corpus as their subject. Without them: ` +
+      `P@1 ${p}/${positives.length} (${(p / positives.length).toFixed(3)}).`,
+  );
+  console.log('  Reported, not applied — the headline is the corpus as it actually stands.');
+}
 console.log(`\nFIELD p1=${(p1 / positives.length).toFixed(4)} quiet=${(quiet / negatives.length).toFixed(4)} n=${positives.length}/${negatives.length}\n`);

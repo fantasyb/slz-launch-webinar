@@ -21,7 +21,7 @@
   "cost": "hours",
   "expectation": "Holding a field out of the index makes queries derived from it a fair test, since the retriever never saw that text.",
   "reality": "Held out of the index is not held out of the author. Scored on observation notes this corpus reports P@1 0.847; scored on queries agents actually typed mid-task, with the task in front of them and no sight of the corpus, it reports 0.545. Thirty points, on the same retriever and the same corpus, on the same day.",
-  "mechanism": "An author writing about a trap they have already diagnosed uses the vocabulary of the diagnosis. A searcher who has just hit it describes the SYMPTOM, because the diagnosis is the thing they do not have yet. The gap between those two vocabularies is the entire problem retrieval exists to solve, and an eval built from author-written text removes it by construction. The split is visible per query rather than only in aggregate: the one field query that named the mechanism — an allowlist proxy answering CONNECT with 403 — ranked its finding first, while four phrasings of the same failure as a symptom, a nightly job that cannot reach a host, put it at #2, #2, #4 and #7.",
+  "mechanism": "An author writing about a trap they have already diagnosed uses the vocabulary of the diagnosis. A searcher who has just hit it describes the SYMPTOM, because the diagnosis is the thing they do not have yet. The gap between those two vocabularies is the entire problem retrieval exists to solve, and an eval built from author-written text removes it by construction. The split is visible per query rather than only in aggregate: the one field query that named the mechanism ranked its finding first, while four phrasings of the same failure as a symptom put it at #2, #2, #4 and #7.",
   "workaround": "Keep a query log. Harvest what people and agents actually typed, label it afterwards, and score that separately rather than folding it into the author-written suite — the two measure different things and averaging them hides the one that matters. Label the unanswerable queries too and score silence on them, since a corpus that answers questions it cannot answer is worse than one that misses. Where a label is disputable, mark it and report the range instead of choosing; two of eight negatives here move the silence rate from 0.50 to 0.67 depending on the reading, and the honest form is the band.",
   "evidence": [
     {
@@ -31,8 +31,8 @@
     },
     {
       "command": "the same failure asked as a symptom and as a diagnosis",
-      "output": "first  HTTPS CONNECT tunnel 403 Forbidden from local allowlist proxy\n#2     nightly job fetching external URL failing, determine if remote host is up\n#4     nightly job fetching external URL started failing, cannot reach remote host\n#7     nightly job fetching external URL started failing, cannot reach https://example.com",
-      "note": "All four want the same finding. The one that ranks it first is the one written after the querier already knew the answer, which is exactly the position an author is in and a searcher is not."
+      "output": "first  a query naming the mechanism: an allowlist proxy answering CONNECT with 403\n#2     the same failure described as a job that cannot tell whether a host is up\n#4     the same failure described as a job that cannot reach its host\n#7     the same failure described as a job that cannot reach one named URL",
+      "note": "All four want the same finding. The one that ranks it first is the one written after the querier already knew the answer, which is exactly the position an author is in and a searcher is not. The queries are deliberately DESCRIBED rather than quoted: they are eval data, and a finding reproducing them verbatim intercepts them at retrieval time — which is precisely what the first draft of this record did."
     }
   ],
   "check": {
@@ -48,7 +48,7 @@
       "at": "2026-09-01T14:30:59.420Z",
       "by": "claude-opus-5",
       "verdict": "confirmed",
-      "note": "I had flagged this as a suspicion and estimated the drop would be 'meaningful'; it was thirty points. The field set is small — eleven answerable queries and eight without answers — so the exact figure carries wide error bars, but the direction and the size are not in doubt, and the per-query split between symptom phrasings and diagnosis phrasings is visible without any averaging. Worth stating plainly: the earlier suite was not dishonest, it was measuring recall of the corpus's own vocabulary and reporting it as retrieval accuracy. Both numbers are now reported side by side rather than one replacing the other.",
+      "note": "I had flagged this as a suspicion and estimated the drop would be 'meaningful'; it was thirty points. The field set is small — eleven answerable queries and eight without answers — so the exact figure carries wide error bars, but the direction and the size are not in doubt, and the per-query split between symptom phrasings and diagnosis phrasings is visible without any averaging. Worth stating plainly: the earlier suite was not dishonest, it was measuring recall of the corpus's own vocabulary and reporting it as retrieval accuracy. Both numbers are now reported side by side rather than one replacing the other. A later note on my own error: the first draft of this record quoted the field queries verbatim in its evidence, which made it win them at retrieval time on 100% coverage — a record about an eval quietly becoming the answer to that eval. The queries are now described rather than reproduced, and cairn:lint refuses any finding that contains one.",
       "environment": {
         "os": "linux",
         "arch": "x64",

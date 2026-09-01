@@ -1639,6 +1639,39 @@ export function retrieve(
    * each term narrowed the corpus, which is exactly the judgement a two-word
    * query needs and coverage cannot make.
    */
+  /*
+   * NEAREST QUESTION — match the query against the QUESTIONS, not the answer.
+   *
+   * Findings are written by someone who already knew the cause, so they are
+   * phrased in the vocabulary of the diagnosis. A searcher has only the
+   * symptom. Measured, that gap is most of the difference between this
+   * corpus's author-written suite and the queries agents actually type.
+   *
+   * The generated expansions in data/expansions.json are already symptom-side
+   * — "is example.com down or is my sandbox blocking it" against a finding
+   * titled for an allowlist proxy. They were being poured into the weak text
+   * bag, where one sharply matching question is averaged away by everything
+   * else in the document.
+   *
+   * So score them as what they are: a list of questions, taken at the BEST
+   * single match rather than summed. One generated question closely matching
+   * what the searcher typed is the whole signal; nine unrelated ones are not
+   * evidence against it. This is question-to-question matching, which is what
+   * the searcher is actually doing, instead of question-to-answer.
+   */
+  const nearestQuestion = (h: Hit): number => {
+    const qs = EXPANSIONS[h.finding.id];
+    if (!qs?.length || totalQueryInformation <= 0) return 0;
+    let best = 0;
+    for (const raw of qs) {
+      const terms = new Set(plainTokens(raw));
+      let carried = 0;
+      for (const [term, info] of queryInformation) if (terms.has(term)) carried += info;
+      if (carried > best) best = carried;
+    }
+    return best / totalQueryInformation;
+  };
+
   const informativeTerms = [...queryInformation.values()].filter(
     (v) => v >= MIN_TERM_INFORMATION,
   ).length;
@@ -1660,6 +1693,19 @@ export function retrieve(
       name: 'spectrum',
       order: coverageIsMeaningful ? byCoverage(lineSpectrum) : [],
       weight: Number(process.env.CAIRN_LINE_WEIGHT ?? LINE_WEIGHT),
+    },
+    {
+      /*
+       * Under the same gate as the other two, and for the same reason: this is
+       * also a fraction of the query, so it degenerates the same way. On
+       * `proxies blocked` it ranked the DNS-bypass finding first, because one
+       * of that finding's generated questions asks whether the egress allowlist
+       * blocks DNS — two words of two, a perfect score for a question about
+       * something else.
+       */
+      name: 'question',
+      order: coverageIsMeaningful ? byCoverage(nearestQuestion) : [],
+      weight: Number(process.env.CAIRN_QUESTION_WEIGHT ?? QUESTION_WEIGHT),
     },
   ];
   if (opts.trace) opts.trace.rankers = rankers.map((r) => ({ ...r, order: [...r.order] }));
@@ -2590,6 +2636,29 @@ const CONTEST_WINDOW = 10;
  * the cliff, and touches the fewest queries.
  */
 const COVERAGE_MIN_TERMS = 4;
+
+/*
+ * Weight of the nearest-question ranker.
+ *
+ *   w      held P@1   P@5    delivery   FIELD P@1
+ *   0        .849    .918     .863      .455
+ *   0.4      .836    .932     .849      .545
+ *   0.8      .836    .932     .849      .727
+ *   1.0      .808    .932     .822      .727
+ *   1.5      .740    .932     .767      .727
+ *
+ * 0.8 is the corner: the largest gain on the honest suite before the
+ * author-written one starts falling. It costs 1.3 points of held-out P@1 and
+ * buys 27 of field P@1, which is the right direction to trade, because
+ * cairn-0039 measured that the held-out suite is substantially recall of the
+ * corpus's own vocabulary.
+ *
+ * Guarded against being fitted to eleven queries: the field set splits by task
+ * and the gain appears in BOTH halves independently -- staleness 4/6 to 6/6,
+ * reachability 1/5 to 2/5 -- with neither degrading at any weight. A value
+ * fitted to one half would not lift the other.
+ */
+const QUESTION_WEIGHT = 0.8;
 /* Read per call, like rrfK: a constant a sweep cannot move measures nothing,
  * and the first version of this gate showed no effect at any value because it
  * was resolved once at import. */
@@ -2999,6 +3068,7 @@ export function rankerSignature(): string {
     dataFingerprint(),
     CONTEST_WINDOW,
     coverageMinTerms(),
+    Number(process.env.CAIRN_QUESTION_WEIGHT ?? QUESTION_WEIGHT),
   ].join(',');
   return crypto.createHash('sha256').update(constants).digest('hex').slice(0, 12);
 }

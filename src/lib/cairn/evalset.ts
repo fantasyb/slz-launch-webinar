@@ -97,7 +97,7 @@ export const VERBATIM_RUN_LIMIT = 7;
  * trade indexing `evidence` made, and it is the correct direction: a smaller
  * honest split beats a larger one measuring memorisation.
  */
-function indexedText(f: Finding): string {
+export function indexedText(f: Finding): string {
   return [
     f.title, f.claim, f.subject.name, f.subject.ecosystem, f.expectation, f.reality,
     f.workaround ?? '', f.check.command, f.check.confirmedIf, f.check.refutedIf,

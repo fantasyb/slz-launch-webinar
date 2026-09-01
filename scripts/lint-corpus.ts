@@ -11,6 +11,7 @@ import { verifyObservation, findingBodyHash } from '../src/lib/cairn/signing';
 import { derivedVerdict } from '../src/lib/cairn/decay';
 import { loadKeys } from '../src/lib/cairn/keys';
 import { scanExecutable, scanInjection } from '../src/lib/cairn/safety';
+import { longestVerbatimRun, VERBATIM_RUN_LIMIT, indexedText } from '../src/lib/cairn/evalset';
 
 const DIR = path.join(process.cwd(), 'cairn');
 const problems: string[] = [];
@@ -339,6 +340,62 @@ for (const c of subjectCollisions(all)) {
       ? 'Pick one spelling; identity rules compare these.'
       : 'One entity with disagreeing ecosystems, or two that need distinct names.'),
   );
+}
+
+/*
+ * NO FINDING MAY CONTAIN AN EVALUATION QUERY VERBATIM.
+ *
+ * The field queries in data/field-queries.json are what an agent actually
+ * typed, harvested afterwards, and they are the only honest measurement this
+ * project has. A finding that reproduces one wins it on perfect coverage and
+ * becomes the answer to a question it is not about.
+ *
+ * That is not hypothetical. The record describing this very failure quoted the
+ * queries in its evidence and immediately started intercepting them — a
+ * measurement quietly replaced by a record about the measurement. Findings must
+ * describe eval queries, never reproduce them.
+ *
+ * The same invariant already protects the generated expansions, for the same
+ * reason and with the same run length.
+ */
+try {
+  const field = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'data/field-queries.json'), 'utf8')) as {
+    queries: { q: string }[];
+  };
+  for (const f of all) {
+    const doc = indexedText(f);
+    for (const { q } of field.queries) {
+      if (longestVerbatimRun(q, doc) >= VERBATIM_RUN_LIMIT) {
+        problems.push(
+          `${f.id}: contains an evaluation query verbatim — "${q.slice(0, 56)}…". ` +
+            'Describe it instead; a finding that reproduces a query wins it on coverage.',
+        );
+      }
+    }
+  }
+
+  /*
+   * The generated expansions are indexed too, and a model asked to write the
+   * queries a searcher would arrive with is exactly the thing most likely to
+   * land on one of them by coincidence. Same rule, same run length.
+   */
+  const gen = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'data/expansions.json'), 'utf8')) as {
+    expansions: Record<string, string[]>;
+  };
+  for (const [id, queries] of Object.entries(gen.expansions ?? {})) {
+    for (const g of queries) {
+      for (const { q } of field.queries) {
+        if (longestVerbatimRun(q, g) >= VERBATIM_RUN_LIMIT) {
+          problems.push(
+            `${id}: a generated expansion reproduces an evaluation query — "${g.slice(0, 56)}…". ` +
+              'Delete that line from data/expansions.json; it makes the field suite score itself.',
+          );
+        }
+      }
+    }
+  }
+} catch {
+  /* No field queries yet: nothing to protect. */
 }
 
 for (const w of warnings) console.warn(`warn  ${w}`);
