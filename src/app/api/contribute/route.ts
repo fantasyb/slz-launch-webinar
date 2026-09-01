@@ -146,9 +146,13 @@ export async function POST(request: Request) {
   if (!DRY) {
     try {
       const used = await liveNumbersInUse();
-      let n = 1;
-      while (used.has(n)) n++;
-      mintedId = `cairn-${String(n).padStart(4, '0')}`;
+      /*
+       * max + 1, never the lowest free number. A gap in the sequence means a
+       * finding was moved or promoted, not that its id is available, and
+       * reusing it points every existing reference at a different claim.
+       */
+      const next = Math.max(0, ...used) + 1;
+      mintedId = `cairn-${String(next).padStart(4, '0')}`;
     } catch {
       return NextResponse.json(
         { ok: false, error: 'could not read the live corpus to allocate an id' },

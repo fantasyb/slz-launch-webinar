@@ -27,12 +27,19 @@ import {
 } from '../src/lib/cairn/signing';
 import { loadKeys } from '../src/lib/cairn/keys';
 import { fetchJson } from '../src/lib/cairn/fetchJson';
+import { cairnHome } from '../src/lib/cairn/home';
 
 async function fetchBundle(up: Upstream): Promise<unknown> {
   if (up.source.startsWith('http://') || up.source.startsWith('https://')) {
     return fetchJson(up.source);
   }
-  const dir = path.resolve(process.cwd(), up.source);
+  /*
+   * Relative to the CORPUS, not to wherever this was invoked from. sync now
+   * runs federate from the install directory, so a personal config saying
+   * "../cairn" resolved against the install root and fetched the wrong thing
+   * -- or nothing.
+   */
+  const dir = path.resolve(cairnHome(), up.source);
   const file = fs.statSync(dir).isDirectory() ? path.join(dir, 'federation.json') : dir;
   return JSON.parse(fs.readFileSync(file, 'utf8'));
 }

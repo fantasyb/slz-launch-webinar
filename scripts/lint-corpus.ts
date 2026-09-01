@@ -13,6 +13,7 @@ import { loadKeys } from '../src/lib/cairn/keys';
 import { scanExecutable, scanInjection } from '../src/lib/cairn/safety';
 import { longestVerbatimRun, VERBATIM_RUN_LIMIT, indexedText } from '../src/lib/cairn/evalset';
 import { homePath } from '../src/lib/cairn/home';
+import { readsAsProse } from '../src/lib/cairn/submission';
 
 const DIR = homePath('cairn');
 const problems: string[] = [];
@@ -170,11 +171,10 @@ for (const file of files) {
 
   // A check that is prose but flagged automatable will be executed as a shell
   // command by cairn:verify. That is how cairn-0014 shipped broken.
-  const cmd = f.check.command.trim().replace(/^#[^\n]*\n/, '');
-  // Shells do not start sentences. A leading capital is prose unless it is an
-  // ALL_CAPS environment assignment.
-  const readsAsProse = /^[A-Z]/.test(cmd) && !/^[A-Z][A-Z0-9_]*=/.test(cmd);
-  if (!f.check.manual && readsAsProse) {
+  // The same predicate the submission path uses to derive `manual`, imported
+  // rather than restated: two copies of this rule drifting is how the record
+  // path came to write findings this linter refuses.
+  if (!f.check.manual && readsAsProse(f.check.command)) {
     problems.push(
       `${file}: check.command reads as prose but manual is false — cairn:verify would ` +
         `try to execute it. Make it a command, or set manual: true.`,

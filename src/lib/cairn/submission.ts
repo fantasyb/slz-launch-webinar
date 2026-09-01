@@ -31,7 +31,12 @@ export const MinimalCheckSchema = z.object({
   command: z.string().min(1).max(4000),
   confirmedIf: z.string().min(1).max(2000),
   refutedIf: z.string().min(1).max(2000),
-  manual: z.boolean().default(false),
+  /*
+   * Optional, and DERIVED when omitted rather than defaulted to false.
+   * Defaulting to false wrote findings that lint refuses, so the first
+   * contribution a new person made could not be committed.
+   */
+  manual: z.boolean().optional(),
 });
 
 export const SubmissionSchema = z.object({
@@ -49,6 +54,13 @@ export const SubmissionSchema = z.object({
       versions: z.string().max(200).default('*'),
     })
     .optional(),
+  /*
+   * Required, not defaulted to empty. `provenance` is 'firsthand' for
+   * anything recorded this way, and lint refuses a firsthand finding with no
+   * evidence -- rightly, since a claim with nothing behind it is the wiki
+   * entry this format exists to replace. Defaulting it produced findings the
+   * writer could not commit and the contribute PR could not merge.
+   */
   evidence: z
     .array(
       z.object({
@@ -56,9 +68,10 @@ export const SubmissionSchema = z.object({
         output: z.string().max(20000),
         note: z.string().max(2000).optional(),
       }),
+      { required_error: 'include at least one: the command you ran and what it printed' },
     )
-    .max(20)
-    .default([]),
+    .min(1, 'include at least one: the command you ran and what it printed')
+    .max(20),
   environment: EnvironmentSchema.optional(),
   mechanism: z.string().max(4000).optional(),
   workaround: z.string().max(4000).optional(),
@@ -78,6 +91,21 @@ export const ObservationSubmissionSchema = z.object({
   note: z.string().min(1).max(4000),
   environment: EnvironmentSchema.optional(),
 });
+
+/**
+ * A check that reads as prose cannot be executed, and saying otherwise is how
+ * cairn-0014 shipped broken.
+ *
+ * Shells do not start sentences, so a leading capital is prose unless it is
+ * an ALL_CAPS environment assignment. lint-corpus applies exactly this test
+ * and rejects a finding that fails it, so the two must not drift: a
+ * submission path that defaults `manual` to false writes findings its own
+ * linter refuses, which is what the record path did.
+ */
+export function readsAsProse(command: string): boolean {
+  const cmd = command.trim().replace(/^#[^\n]*\n/, '');
+  return /^[A-Z]/.test(cmd) && !/^[A-Z][A-Z0-9_]*=/.test(cmd);
+}
 
 export function nextFindingId(): { id: string; num: string } {
   const max = loadCorpus().reduce((m, f) => Math.max(m, parseInt(f.id.slice(6), 10)), 0);
@@ -126,7 +154,7 @@ export function normalise(s: Submission, now = new Date(), mintedId?: string) {
       ...(s.mechanism ? { mechanism: s.mechanism } : {}),
       ...(s.workaround ? { workaround: s.workaround } : {}),
       evidence: s.evidence,
-      check: s.check,
+      check: { ...s.check, manual: s.check.manual ?? readsAsProse(s.check.command) },
       provenance: 'firsthand' as const,
       halfLifeDays: 180,
       observations: [

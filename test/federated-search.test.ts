@@ -63,7 +63,19 @@ function personalCorpus(): string {
   return home;
 }
 
-test('one search spans the local corpus and its upstreams', async () => {
+/*
+ * CAIRN_HOME is process-wide and cairnHome() memoises it, so a test that
+ * sets it and walks away decides where every later test in this file looks.
+ * Restored explicitly rather than relying on the runner isolating files.
+ */
+const PRIOR_HOME = process.env.CAIRN_HOME;
+function restoreHome() {
+  if (PRIOR_HOME === undefined) delete process.env.CAIRN_HOME;
+  else process.env.CAIRN_HOME = PRIOR_HOME;
+}
+
+test('one search spans the local corpus and its upstreams', async (t) => {
+  t.after(restoreHome);
   const home = personalCorpus();
   process.env.CAIRN_HOME = home;
   const { loadSearchable } = await import(`../src/lib/cairn/federation?fed=${Date.now()}`);
@@ -83,7 +95,8 @@ test('one search spans the local corpus and its upstreams', async () => {
   }
 });
 
-test('a federated finding is verified against its own upstream keys', async () => {
+test('a federated finding is verified against its own upstream keys', async (t) => {
+  t.after(restoreHome);
   const home = personalCorpus();
   process.env.CAIRN_HOME = home;
   const stamp = Date.now();
@@ -106,5 +119,23 @@ test('a federated finding is verified against its own upstream keys', async () =
     withUpstreamKeys > withLocalOnly,
     `resolving upstream keys must raise confidence (${withUpstreamKeys} vs ${withLocalOnly}); ` +
       'equal means the resolver is not reaching the verifier',
+  );
+
+  /*
+   * Through retrieve(), not just confidence().
+   *
+   * Calling confidence() directly with two maps proves the maps differ. It
+   * passes unchanged if buildIndex drops the resolver on the floor, which is
+   * the seam that actually has to hold -- and the one a future caller can
+   * silently stop threading.
+   */
+  const { retrieve } = await import(`../src/lib/cairn/retrieval?seam=${stamp}`);
+  const query = `${signed.title} ${signed.reality}`.slice(0, 200);
+  const ranked = retrieve(query, s.findings, { keysFor: s.keysFor, limit: 5 });
+  const hit = ranked.find((h: { finding: { id: string } }) => h.finding.id === signed.id);
+  assert.ok(hit, 'the signed upstream finding must be retrievable by its own text');
+  assert.ok(
+    Math.abs(hit.confidence - withUpstreamKeys) < 1e-9,
+    `retrieve must carry the resolver to the index (${hit.confidence} vs ${withUpstreamKeys})`,
   );
 });

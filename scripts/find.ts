@@ -182,11 +182,28 @@ if (!confirm) {
 // tsx emits CJS for this script, where top-level await is unavailable, so the
 // executing half runs inside main(). Nothing above here is async.
 async function main() {
+  /*
+   * Local findings only, and the rest reported rather than dropped.
+   *
+   * confirm refuses to execute an upstream check on purpose (cairn-0014:
+   * running a command a stranger's repository supplies is the whole RCE
+   * primitive). Once find started searching upstreams, every hit was passed
+   * in regardless and the guard threw a raw stack trace at anyone who typed
+   * --confirm on a personal corpus. The refusal is right; announcing it as a
+   * crash was not.
+   */
+  const local = hits.filter((h) => !(h.finding as SearchableFinding).upstreamName);
+  const skipped = hits.length - local.length;
   console.log('\nrunning checks (local corpus only)...\n');
   const results = await confirmCandidates(
-  hits.map((h) => h.finding),
-  { max: 3 },
+    local.map((h) => h.finding),
+    { max: 3 },
   );
+  if (skipped > 0) {
+    console.log(
+      `  ${skipped} upstream finding(s) not run — a check from another corpus is not executed here.`,
+    );
+  }
 
   for (const r of results) {
   const mark =

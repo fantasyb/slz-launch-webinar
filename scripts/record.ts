@@ -27,7 +27,9 @@ import { SubmissionSchema, normalise, likelyDuplicates, slugify } from '../src/l
 import { FindingSchema } from '../src/lib/cairn/schema';
 import { scanExecutable, scanInjection, scanSensitive, draftSurface } from '../src/lib/cairn/safety';
 import { loadCorpus } from '../src/lib/cairn/load';
-import { homePath, cairnHome } from '../src/lib/cairn/home';
+import { loadSearchable } from '../src/lib/cairn/federation';
+import { homePath, cairnHome, installRoot } from '../src/lib/cairn/home';
+import { spawnSync } from 'child_process';
 
 const args = process.argv.slice(2);
 const fileArg = args.indexOf('--file');
@@ -86,7 +88,13 @@ if (flags.length) {
   process.exit(1);
 }
 
-const dupes = likelyDuplicates(submission.data.title);
+/*
+ * Against the corpus the reader actually searches, upstream included.
+ * loadCorpus() is local only, so a near-copy of a shared finding was accepted
+ * silently -- on the path that will produce the most records, and the exact
+ * fifty-thin-records failure the duplicate gate exists to prevent.
+ */
+const dupes = likelyDuplicates(submission.data.title, loadSearchable().findings);
 if (dupes.length && !force) {
   console.error('\n  already recorded — add an observation to the existing finding instead:\n');
   for (const d of dupes) console.error(`    ${d.id}  ${d.title}`);
@@ -110,6 +118,7 @@ if (!checked.success) {
   process.exit(2);
 }
 
+const root = installRoot();
 const dir = homePath('cairn');
 if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 const file = path.join(dir, `${num}-${slugify(submission.data.title)}.json`);
@@ -119,9 +128,45 @@ if (fs.existsSync(file)) {
 }
 fs.writeFileSync(file, `${JSON.stringify(checked.data, null, 2)}\n`);
 
+/*
+ * Linted after writing, and REMOVED again if it does not pass.
+ *
+ * Schema validity is not the bar the corpus actually enforces: the
+ * pre-commit hook and cairn-review.yml both run the linter, so a finding
+ * that validates and fails lint is one a person cannot commit. Recording
+ * used to stop at the schema and hand back exactly that -- a new
+ * contributor's first finding, unrejectable at the point of writing and
+ * unmergeable everywhere after. Better to refuse it here, while they still
+ * have the context to fix it.
+ */
+const lint = spawnSync('npx', ['tsx', path.join(root ?? '.', 'scripts', 'lint-corpus.ts')], {
+  cwd: root ?? process.cwd(),
+  env: { ...process.env, CAIRN_HOME: cairnHome() },
+  encoding: 'utf8',
+});
+const lintOut = `${lint.stdout ?? ''}${lint.stderr ?? ''}`;
+const mine = (l: string) => l.includes(path.basename(file));
+/*
+ * Exit 1 is errors, exit 2 is warnings only. Refuse on errors alone: the
+ * first warning a new contributor earns is "unsigned", which they cannot
+ * clear without generating a key -- the exact step this path deliberately
+ * does not demand. Refusing on warnings would make a first contribution
+ * impossible for the reason we chose not to require.
+ */
+if (lint.status === 1) {
+  fs.unlinkSync(file);
+  console.error('\n  refused — it does not pass corpus lint, so it could not be committed:\n');
+  for (const line of lintOut.split('\n').filter(mine)) console.error(`    ${line.trim()}`);
+  console.error('\n  Nothing was written. Fix those and record it again.\n');
+  process.exit(1);
+}
+
+const warned = lintOut.split('\n').filter((l) => mine(l) && l.trim().startsWith('warn'));
+
 console.log(`\n  recorded ${checked.data.id} in ${cairnHome()}`);
 console.log(`    ${file}`);
 console.log(`    ${checked.data.title}`);
+for (const w of warned) console.log(`    ${w.trim()}`);
 console.log(
   '\n  Unsigned, so it counts as one environment and cannot raise scope on its own.',
 );
