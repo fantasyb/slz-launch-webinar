@@ -317,9 +317,6 @@ for (const file of files) {
   }
 }
 
-for (const w of warnings) console.warn(`warn  ${w}`);
-for (const p of problems) console.error(`error ${p}`);
-
 /*
  * Subject drift, checked corpus-wide rather than per finding.
  *
@@ -343,6 +340,9 @@ for (const c of subjectCollisions(all)) {
       : 'One entity with disagreeing ecosystems, or two that need distinct names.'),
   );
 }
+
+for (const w of warnings) console.warn(`warn  ${w}`);
+for (const p of problems) console.error(`error ${p}`);
 
 console.log(
   `\n${files.length} findings · ${problems.length} errors · ${warnings.length} warnings`,
