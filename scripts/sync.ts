@@ -14,7 +14,25 @@
  */
 import { execFileSync } from 'child_process';
 import { cairnHome } from '../src/lib/cairn/home';
+import fs from 'fs';
+import path from 'path';
 import { loadCorpus } from '../src/lib/cairn/load';
+
+/*
+ * The id from the FILE, not from the filename. The first version sliced the
+ * first ten characters of the name — "0036-a-pgr" — and compared it against
+ * ids like "cairn-0036", so nothing ever matched and every sync announced the
+ * entire corpus as new. A comparison between two things that are never equal
+ * reports the same way as a genuine change.
+ */
+function readFinding(file: string): { id: string; title: string } {
+  try {
+    const j = JSON.parse(fs.readFileSync(file, 'utf8')) as { id?: string; title?: string };
+    return { id: j.id ?? file, title: j.title ?? '' };
+  } catch {
+    return { id: file, title: '' };
+  }
+}
 
 function git(args: string[]): string {
   return execFileSync('git', args, { cwd: cairnHome(), encoding: 'utf8' }).trim();
@@ -40,18 +58,21 @@ try {
 }
 
 /*
- * Deliberately re-read from disk rather than trusting the count: the point of
- * this command is to tell you what ARRIVED, and a number without names is not
- * something anyone reads.
+ * Read the directory rather than re-importing the loader. The first version
+ * cleared require.cache and re-imported, which dies as ERR_REQUIRE_ASYNC_MODULE
+ * once the file is transpiled — a command nobody had run, shipped broken. The
+ * ids are in the filenames; there is no reason to involve a module system.
  */
-delete require.cache[require.resolve('../src/lib/cairn/load')];
-const after = (await import('../src/lib/cairn/load')).loadCorpus();
+const after = fs
+  .readdirSync(path.join(cairnHome(), 'cairn'))
+  .filter((f) => f.endsWith('.json'))
+  .map((f) => readFinding(path.join(cairnHome(), 'cairn', f)));
 const fresh = after.filter((f) => !before.has(f.id));
 
 if (git(['rev-parse', 'HEAD']) === head && fresh.length === 0) {
   console.log('  already current — nothing new.\n');
 } else {
   console.log(`  ${after.length} findings (${fresh.length} new)\n`);
-  for (const f of fresh) console.log(`    ${f.id}  ${f.title}`);
+  for (const f of fresh) console.log(`    ${f.id}  ${f.title.slice(0, 68)}`);
   if (fresh.length) console.log('');
 }

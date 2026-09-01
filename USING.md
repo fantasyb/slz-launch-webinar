@@ -1,5 +1,11 @@
 # Using cairn on another project
 
+**If you just want to set it up, read SETUP.md.** That page is two commands
+and a block to paste, and then the agent does the rest without you.
+
+This page is the longer version: how sharing works, what is being tested, and
+how to send findings back.
+
 This is for testing it with more than one person. It assumes you have a
 checkout of this repository and a separate project you actually work on.
 

@@ -31,6 +31,9 @@ const ENTRIES = [
   // offered — and it was reachable only through npm, which resolves nothing
   // from another project's directory.
   ['scripts/brief.ts', 'dist/cli/brief.js'],
+  // An agent has to be able to refresh its own corpus without npm and without
+  // knowing where it lives.
+  ['scripts/sync.ts', 'dist/cli/sync.js'],
 ];
 
 mkdirSync('dist/cli', { recursive: true });
