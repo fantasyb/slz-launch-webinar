@@ -62,3 +62,6 @@ src/generated/
 panel-runs/*.tmp
 promote/
 dist/
+
+# Execution policy is per machine, never per corpus — see src/lib/cairn/policy.ts
+cairn.policy.json

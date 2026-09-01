@@ -19,28 +19,35 @@ right now". Three commands reach it:
 | `cairn:doctor` | every applicable check in the local corpus | policy |
 | `cairn:find --confirm` | up to 3 checks for the findings just matched | policy + the `--confirm` flag |
 | `cairn:gate` | one check twice, to test whether it discriminates | policy |
-| `cairn:record` | the check in the submission being recorded | `strict` policy |
+| `cairn:record` | the check in the submission being recorded, and its `absentWhen` | `strict` policy |
+| `cairn:verify --run` | one named finding's check | policy + the `--run` flag |
 
 Search, brief, sync, federate, lint, publish and the web API never execute
 anything.
 
 ## The gate
 
-`cairn.policy.json`, at the root of the corpus, in git:
+`~/.cairn/policy.json`, on the machine, keyed by which corpus it applies to:
 
 ```json
-{ "enabled": true, "note": "who decided this, and when" }
+{ "/home/you/cairn": { "enabled": true, "note": "who decided, and when" } }
 ```
 
-Absent, malformed, or `"enabled": false` — execution refuses, with a message
-naming this file. A malformed policy is OFF rather than on, because the
-failure mode of guessing the other way is running shell because somebody's
-JSON had a trailing comma (`src/lib/cairn/policy.ts`).
+Absent, malformed, or `"enabled": false` — execution refuses. A malformed
+policy is OFF rather than on, because the failure mode of guessing the other
+way is running shell because somebody's JSON had a trailing comma
+(`src/lib/cairn/policy.ts`).
 
-It is a committed file rather than a flag or an environment variable on
-purpose. Enabling execution is then a reviewed commit with an author and a
-date, disabling it is a revert, and a reviewer has one artefact to point at
-instead of trusting that nobody typed a flag.
+**Outside the corpus, and that is the whole point.** The first version read
+this file from the corpus root, and the corpus is a repository people clone —
+so a policy committed upstream travelled to every adopter and enabled
+execution on their machine by upstream's decision, and `cairn-sync` runs
+`git pull`, so upstream could flip it later. This repository shipped
+`{"enabled": true}` in the clone while this page claimed nothing runs unless
+you enable it. It was exactly backwards.
+
+Per machine also matches how an organisation wants to set it: one file device
+management can write, that a user cannot silently override by pulling.
 
 ## Whose code runs
 
@@ -69,6 +76,12 @@ anything.
 
 ## Bounds on anything that does run
 
+- **A scrubbed environment.** Checks receive an allowlist — `PATH`, `HOME`,
+  the proxy and CA variables, and little else — never the environment that
+  launched them. It was the full environment until this was written, so every
+  check saw every API key and cloud credential in the shell, and a check's
+  stdout is captured and printed. The allowlist keeps the proxy variables on
+  purpose: findings about an allowlist proxy cannot be evaluated without them.
 - Written to a temp file and executed with `/bin/sh`, never string-interpolated
   from a query.
 - Bounded wall clock, killed with SIGKILL on timeout; output capped at 1 MiB.
@@ -83,5 +96,16 @@ With execution enabled, this is exactly as safe as running the test suite of a
 repository you cloned, and no safer. The corpus is the thing to review, and it
 is plain JSON in git with an author and a signature on every observation.
 
-With execution disabled — the default — there is no code path that runs a
-command from a finding.
+With execution disabled — the default — no code path runs a command from a
+finding. `record` is the one exception and it is listed above: it runs the
+check in the submission it is recording, which is the caller's own code, and
+`"strict": true` closes it.
+
+## What this page does not claim
+
+- Checks are not sandboxed. They run as you, with your filesystem. Several in
+  this corpus write temp files and make outbound requests; `cairn:gate` and
+  `cairn:doctor` will show you which.
+- `.claude/hooks/` is committed shell that your agent harness may run at
+  session start. It is code arriving over `git pull` like any other, and it is
+  reviewed the same way.

@@ -23,15 +23,24 @@ import { execFileSync } from 'child_process';
 
 const REPO = process.cwd();
 
-/** Evaluate an expression against a corpus whose policy file is `body`. */
-function inCorpus(body: string | null, expr: string): string {
+/**
+ * Evaluate an expression against a corpus whose MACHINE policy is `body`.
+ *
+ * The policy is keyed by corpus path in a file outside the corpus, so the
+ * test writes it outside too. A version of this that wrote it into the corpus
+ * would pass while testing the design that shipped execution enabled to
+ * everyone who cloned this repository.
+ */
+function inCorpus(body: string | null, expr: string, opts: { alsoInCorpus?: string } = {}): string {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'cairn-policy-'));
   fs.mkdirSync(path.join(home, 'cairn'));
-  if (body !== null) fs.writeFileSync(path.join(home, 'cairn.policy.json'), body);
+  const policyFile = path.join(home, 'machine-policy.json');
+  if (body !== null) fs.writeFileSync(policyFile, body.replace('__CORPUS__', home));
+  if (opts.alsoInCorpus) fs.writeFileSync(path.join(home, 'cairn.policy.json'), opts.alsoInCorpus);
   return execFileSync(
     'npx',
     ['tsx', '-e', `import {executionPolicy, assertExecutionAllowed, ExecutionRefused} from './src/lib/cairn/policy';${expr}`],
-    { cwd: REPO, env: { ...process.env, CAIRN_HOME: home }, encoding: 'utf8' },
+    { cwd: REPO, env: { ...process.env, CAIRN_HOME: home, CAIRN_POLICY: policyFile }, encoding: 'utf8' },
   ).trim();
 }
 
@@ -45,24 +54,49 @@ test('no policy file means execution is refused', () => {
 
 test('the refusal names the file and the key, because it is an instruction', () => {
   const msg = inCorpus(null, 'try{assertExecutionAllowed("checks from the corpus")}catch(e){console.log(e.message)}');
-  assert.match(msg, /cairn\.policy\.json/);
+  // The file actually consulted, which under CAIRN_POLICY is not the default path.
+    assert.match(msg, /policy\.json/);
   assert.match(msg, /"enabled": true/);
   // Someone who cannot enable it still needs to know what does work without it.
   assert.match(msg, /search, brief, sync, record/);
 });
 
-test('a committed policy enables it', () => {
-  assert.equal(inCorpus('{"enabled":true}', 'console.log(executionPolicy().enabled)'), 'true');
+test('a machine policy naming this corpus enables it', () => {
+  const p = '{"__CORPUS__":{"enabled":true}}';
+  assert.equal(inCorpus(p, 'console.log(executionPolicy().enabled)'), 'true');
   assert.equal(
-    inCorpus('{"enabled":true}', 'try{assertExecutionAllowed("checks");console.log("ALLOWED")}catch{console.log("REFUSED")}'),
+    inCorpus(p, 'try{assertExecutionAllowed("checks");console.log("ALLOWED")}catch{console.log("REFUSED")}'),
     'ALLOWED',
+  );
+});
+
+test('a policy naming a DIFFERENT corpus does not enable this one', () => {
+  assert.equal(
+    inCorpus('{"/some/other/corpus":{"enabled":true}}', 'console.log(executionPolicy().enabled)'),
+    'false',
+  );
+});
+
+test('a policy inside the corpus cannot enable execution', () => {
+  /*
+   * The defect this whole design exists to prevent, asserted directly. The
+   * first version read cairn.policy.json from the corpus root, and the corpus
+   * is a repository people clone — so this repository shipped
+   * {"enabled": true} and turned execution on for every adopter by upstream's
+   * decision, while EXECUTION.md claimed the opposite. `cairn-sync` runs
+   * `git pull`, so upstream could also flip it later.
+   */
+  assert.equal(
+    inCorpus(null, 'console.log(executionPolicy().enabled)', { alsoInCorpus: '{"enabled":true}' }),
+    'false',
+    'a file inside the corpus must never enable execution — it travels with the clone',
   );
 });
 
 test('a malformed policy is OFF, never on', () => {
   // The failure mode of guessing the other way is executing shell because
   // somebody's JSON had a trailing comma.
-  for (const body of ['{"enabled":true,}', 'not json at all', '{"enabled":"yes"}', '']) {
+  for (const body of ['{"__CORPUS__":{"enabled":true},}', 'not json at all', '{"__CORPUS__":{"enabled":"yes"}}', '']) {
     assert.equal(
       inCorpus(body, 'console.log(executionPolicy().enabled)'),
       'false',
@@ -76,6 +110,6 @@ test('strict additionally covers the check the caller just wrote', () => {
   // which the caller wrote seconds earlier. That is running your own code, and
   // gating it forfeits the one thing that makes a check verifiable rather than
   // merely runnable. `strict` exists for environments that draw no distinction.
-  assert.equal(inCorpus('{"enabled":true}', 'console.log(executionPolicy().strict)'), 'false');
-  assert.equal(inCorpus('{"enabled":true,"strict":true}', 'console.log(executionPolicy().strict)'), 'true');
+  assert.equal(inCorpus('{"__CORPUS__":{"enabled":true}}', 'console.log(executionPolicy().strict)'), 'false');
+  assert.equal(inCorpus('{"__CORPUS__":{"enabled":true,"strict":true}}', 'console.log(executionPolicy().strict)'), 'true');
 });

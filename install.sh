@@ -53,7 +53,10 @@ fi
 # discover otherwise. A fresh install that cannot answer a question it
 # certainly knows about is broken, and saying so here costs one second.
 OUT="$(node "$ROOT/bin/cairn-find.js" "/bin/sh: 1: nslookup: not found" 2>&1 || true)"
-if printf '%s' "$OUT" | grep -q 'cairn-'; then
+# A finding id at the start of a line, not the substring "cairn-" anywhere:
+# the "No corpus found. Looked in .../cairn-main/cairn" message contains it,
+# so an empty corpus in a directory named cairn-something passed.
+if printf '%s' "$OUT" | grep -qE '^[[:space:]]*cairn-[0-9]{4}'; then
   say "self-test passed — the corpus answers"
 else
   say "SELF-TEST FAILED: a known query returned nothing."
@@ -63,7 +66,8 @@ fi
 
 cat <<EOF
 
-  Installed. Nothing executes unless you enable it (see EXECUTION.md).
+  Installed. Checks do not run until you enable them for this corpus on this
+  machine — see EXECUTION.md. Nothing upstream can turn that on for you.
 
   Give an agent access by pasting this into its instruction file
   (CLAUDE.md, AGENTS.md, .cursorrules — whatever it reads):

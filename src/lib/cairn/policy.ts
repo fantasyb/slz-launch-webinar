@@ -1,6 +1,8 @@
 import fs from 'fs';
 import { z } from 'zod';
-import { homePath } from './home';
+import os from 'os';
+import path from 'path';
+import { homePath, cairnHome } from './home';
 
 /**
  * Whether this installation may execute checks at all.
@@ -41,34 +43,78 @@ export const ExecutionPolicySchema = z.object({
 });
 export type ExecutionPolicy = z.infer<typeof ExecutionPolicySchema>;
 
-export const POLICY_FILE = 'cairn.policy.json';
+/**
+ * The policy lives OUTSIDE the corpus, and that is the whole point.
+ *
+ * The first version read `cairn.policy.json` from the corpus root. The corpus
+ * is a git repository people CLONE — SETUP.md and install.sh both say so — so
+ * a policy committed upstream travelled to every adopter and enabled
+ * execution on their machine by upstream's decision. `cairn-sync` runs
+ * `git pull`, so upstream could also flip it later. EXECUTION.md claimed
+ * "nothing runs unless you commit a file saying it may", and for the
+ * documented install that was exactly backwards: this repository shipped
+ * `{"enabled": true}` in the clone.
+ *
+ * So the decision is recorded per machine, keyed by which corpus it applies
+ * to, in a file no `git pull` can reach. That is also the shape device
+ * management expects: one file an administrator can write and a user cannot
+ * silently override by pulling.
+ */
+export const POLICY_HOME = path.join(os.homedir(), '.cairn', 'policy.json');
+export const LEGACY_FILE = 'cairn.policy.json';
 
 const OFF: ExecutionPolicy = { enabled: false, strict: false };
 
-export function executionPolicy(): ExecutionPolicy {
-  const file = homePath(POLICY_FILE);
-  if (!fs.existsSync(file)) return OFF;
+/** `{ "<absolute corpus path>": { "enabled": true } }` */
+const StoreSchema = z.record(z.string(), ExecutionPolicySchema);
+
+function readStore(file: string): Record<string, ExecutionPolicy> {
+  if (!fs.existsSync(file)) return {};
   try {
-    const parsed = ExecutionPolicySchema.safeParse(JSON.parse(fs.readFileSync(file, 'utf8')));
+    const parsed = StoreSchema.safeParse(JSON.parse(fs.readFileSync(file, 'utf8')));
     /*
      * A malformed policy is OFF, never on. The failure mode of guessing the
      * other way is executing shell because somebody's JSON had a trailing
      * comma.
      */
-    return parsed.success ? parsed.data : OFF;
+    return parsed.success ? parsed.data : {};
   } catch {
-    return OFF;
+    return {};
   }
+}
+
+/** The policy file actually consulted, so a refusal can name it. */
+export function policyPath(): string {
+  return process.env.CAIRN_POLICY || POLICY_HOME;
+}
+
+export function executionPolicy(): ExecutionPolicy {
+  return readStore(policyPath())[path.resolve(cairnHome())] ?? OFF;
+}
+
+/**
+ * True when the corpus carries a policy file that no longer does anything.
+ *
+ * Worth saying out loud rather than ignoring: someone following older
+ * instructions, or pulling a repository that still ships one, would otherwise
+ * believe execution is enabled and never find out why nothing runs — or
+ * worse, believe it is disabled because the file says false.
+ */
+export function strandedPolicyFile(): string | null {
+  const f = homePath(LEGACY_FILE);
+  return fs.existsSync(f) ? f : null;
 }
 
 export class ExecutionRefused extends Error {
   constructor(what: string) {
     super(
       `refusing to run ${what}: execution is not enabled for this corpus.\n\n` +
-        `  Checks are shell commands written by whoever recorded the finding. Running\n` +
-        `  them is opt-in per corpus, not per command, so the decision is reviewable.\n\n` +
-        `  To enable, commit ${POLICY_FILE} at the root of the corpus:\n\n` +
-        `    { "enabled": true, "note": "who decided this, and when" }\n\n` +
+        `  Checks are shell commands written by whoever recorded the finding, so\n` +
+        `  running them is a decision this machine makes about this corpus — never\n` +
+        `  one the corpus can make for it. A policy inside the corpus would travel\n` +
+        `  to everyone who cloned it.\n\n` +
+        `  To enable, on THIS machine, add the corpus path to ${policyPath()}:\n\n` +
+        `    { "${cairnHome()}": { "enabled": true, "note": "who decided, and when" } }\n\n` +
         `  Everything else — search, brief, sync, record — works without it.`,
     );
     this.name = 'ExecutionRefused';

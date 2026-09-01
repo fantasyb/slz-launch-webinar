@@ -16,6 +16,7 @@ import path from 'path';
 import { FindingSchema } from '../src/lib/cairn/schema';
 import { scanExecutable } from '../src/lib/cairn/safety';
 import { homePath } from '../src/lib/cairn/home';
+import { assertExecutionAllowed, ExecutionRefused } from '../src/lib/cairn/policy';
 
 const id = process.argv[2];
 if (!id) {
@@ -73,6 +74,22 @@ if (!process.argv.includes('--run')) {
   console.log(`confirmed if: ${finding.check.confirmedIf}`);
   console.log(`refuted if:   ${finding.check.refutedIf}`);
   process.exit(0);
+}
+
+/*
+ * The same gate as doctor, find --confirm and cairn:gate. This path executed
+ * a corpus check behind a flag and consulted no policy at all, so a machine
+ * that had deliberately not enabled execution ran one anyway if anybody typed
+ * --run. A policy with an exception nobody documented is not a policy.
+ */
+try {
+  assertExecutionAllowed(`the check for ${finding.id}`);
+} catch (e) {
+  if (e instanceof ExecutionRefused) {
+    console.error(`\n${e.message}\n`);
+    process.exit(3);
+  }
+  throw e;
 }
 
 if (flags.some((f) => f.severity === 'block')) {

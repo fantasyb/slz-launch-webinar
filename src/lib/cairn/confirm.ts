@@ -88,6 +88,27 @@ export interface ConfirmOptions {
  * hostile payload can claim any id and reproduce any structure, but it cannot
  * be the same object the local loader produced from the local directory.
  */
+/**
+ * The only variables a check may see.
+ *
+ * An allowlist, not a denylist: enumerating the secrets to remove means every
+ * new kind of credential is a hole until somebody adds it.
+ */
+const CHECK_ENV_ALLOWLIST = [
+  'PATH', 'HOME', 'USER', 'SHELL', 'LANG', 'LC_ALL', 'TMPDIR', 'TERM',
+  'HTTPS_PROXY', 'HTTP_PROXY', 'NO_PROXY', 'https_proxy', 'http_proxy', 'no_proxy',
+  'NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE', 'PLAYWRIGHT_BROWSERS_PATH',
+];
+
+export function scrubbedEnv(): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const k of CHECK_ENV_ALLOWLIST) {
+    const v = process.env[k];
+    if (v !== undefined) out[k] = v;
+  }
+  return out;
+}
+
 export function assertLocalCorpus(findings: Finding[]): void {
   /*
    * Policy first, provenance second. Both refuse, but they refuse different
@@ -154,7 +175,29 @@ async function runCheckCommand(
     execFile(
       '/bin/sh',
       [script],
-      { timeout: timeoutMs, maxBuffer: 1 << 20, killSignal: 'SIGKILL' },
+      {
+        timeout: timeoutMs,
+        maxBuffer: 1 << 20,
+        killSignal: 'SIGKILL',
+        /*
+         * A scrubbed environment, because a check's stdout is captured and
+         * printed. No env was passed at all, so every check saw every secret
+         * in the shell that launched it -- API keys, tokens, cloud
+         * credentials -- and a check is a shell command written by whoever
+         * recorded the finding. "Do checks run with a scrubbed environment"
+         * is the question that decides an enterprise review, and the answer
+         * was no.
+         *
+         * PATH, HOME and the proxy variables stay: findings about an
+         * allowlist proxy or a missing binary are exactly what this corpus is
+         * for, and they cannot be evaluated without them. Everything else is
+         * dropped rather than filtered by name, so a secret in a variable
+         * nobody thought of is not a new hole.
+         */
+        /* Cast: this project augments ProcessEnv with a required NODE_ENV,
+         * which a scrubbed environment deliberately does not carry. */
+        env: scrubbedEnv() as unknown as NodeJS.ProcessEnv,
+      },
       (err, stdout) => {
         const ms = Date.now() - started;
         try {
