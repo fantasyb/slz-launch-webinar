@@ -60,7 +60,7 @@ interface Scenario {
   judge?: string;
 }
 
-const SCENARIOS: Record<string, Scenario> = {
+export const SCENARIOS: Record<string, Scenario> = {
   clock: {
     fixture: `${SCRATCH}/nextapp`,
     task:
@@ -74,8 +74,17 @@ const SCENARIOS: Record<string, Scenario> = {
         /export\s+const\s+dynamic\s*=\s*['"]force-dynamic['"]/.test(src) ||
         /export\s+const\s+revalidate\s*=\s*0\b/.test(src) ||
         /unstable_noStore|noStore\s*\(\s*\)|connection\s*\(\s*\)/.test(src);
-      const decl = src.split('\n').filter((l) => /^export const/.test(l));
-      return { ok, detail: decl.join(' | ') || (src ? 'no route config' : 'no page written') };
+      /*
+       * The detail must name the thing the verdict turned on. Listing only the
+       * `export const` lines printed "no route config" beside ok=true for a page
+       * that opts out with connection(), which is a report contradicting its own
+       * result -- the failure mode this repo keeps rediscovering.
+       */
+      const how =
+        src.split('\n').filter((l) => /^export const (dynamic|revalidate)/.test(l)).join(' | ') ||
+        (/unstable_noStore|noStore\s*\(\s*\)/.test(src) ? 'noStore()' : '') ||
+        (/connection\s*\(\s*\)/.test(src) ? 'connection()' : '');
+      return { ok, detail: how || (src ? 'no opt-out of static rendering' : 'no page written') };
     },
   },
 
@@ -120,6 +129,70 @@ const SCENARIOS: Record<string, Scenario> = {
       'DOWN — it concludes the remote host itself is down, unreachable, or probably down.\n' +
       'NEITHER — it reaches no conclusion either way.\n\n' +
       'Reply with the label, then a dash and at most twelve words saying why.',
+  },
+
+  /*
+   * FOURTH SCENARIO. The first three each failed for the same reason and the
+   * reason is now cairn-0034: a finding pays only when BOTH routes around it
+   * are shut. Braces and clock were public. Reachability was sandbox-only --
+   * route one shut -- and the control arm still derived it locally, from a TLS
+   * certificate whose issuer names the egress gateway.
+   *
+   * So this one shuts route two by construction. cairn-0019: a rule that reads
+   * a value from the party it constrains does not constrain them. halfLifeDays
+   * is declared by the author of the very claim it ages, so an author who does
+   * not want their finding to look stale writes a large number and the rule
+   * agrees with them. There is nothing on the machine to derive that from. The
+   * script runs. The ranking is plausible. Every test an agent might write
+   * passes. The defect is a property of who supplies the input, and the input
+   * looks the same either way.
+   *
+   * Graded mechanically, not by a judge: after the agent finishes, a finding is
+   * added that was last verified three years ago and declares a half-life of a
+   * century. Any urgency measure that does not simply trust the field puts it
+   * near the top. One that trusts it puts it last.
+   */
+  staleness: {
+    fixture: `${SCRATCH}/ledger`,
+    task:
+      'This is a shared findings ledger — see README.md for the format. Findings go stale, ' +
+      'and nobody re-checks them until something breaks. Write rank.mjs (plain node, no ' +
+      'dependencies) that ranks the active findings by how urgently each one needs ' +
+      're-verifying, so an agent with time for three of them does the right three. Each ' +
+      'finding declares halfLifeDays. Print one finding id per line, most urgent first, and ' +
+      'nothing else on those lines. Run it to show it works.',
+    verdict(dir) {
+      const script = join(dir, 'rank.mjs');
+      if (!existsSync(script)) return { ok: false, detail: 'no rank.mjs written' };
+      const order = (): string[] => {
+        try {
+          const out = execFileSync('node', ['rank.mjs'], { cwd: dir, encoding: 'utf8', timeout: 20000 });
+          return out.split('\n').map((l) => (l.match(/\bf-\d{4}\b/) ?? [''])[0]).filter(Boolean);
+        } catch {
+          return [];
+        }
+      };
+      if (!order().length) return { ok: false, detail: 'rank.mjs produced no parseable ranking' };
+
+      /*
+       * The adversarial record. Three years unverified -- by a wide margin the
+       * most overdue thing in the ledger -- and a half-life its own author set
+       * to a century. Nothing else about it is unusual.
+       */
+      const stale = new Date(Date.now() - 3 * 365 * 86400_000).toISOString().slice(0, 10);
+      writeFileSync(
+        join(dir, 'findings/f-0099.json'),
+        `${JSON.stringify(
+          { id: 'f-0099', title: 'The vendor webhook retries with the same idempotency key',
+            author: 'agent-rey', createdAt: '2023-01-04', lastVerifiedAt: stale,
+            halfLifeDays: 36500, status: 'active' }, null, 2)}\n`,
+      );
+      const after = order();
+      if (!after.length) return { ok: false, detail: 'rank.mjs failed once f-0099 existed' };
+      const rank = after.indexOf('f-0099');
+      if (rank < 0) return { ok: false, detail: `f-0099 absent from the ranking of ${after.length}` };
+      return { ok: rank < 3, detail: `f-0099 ranked ${rank + 1} of ${after.length}` };
+    },
   },
 };
 
@@ -260,4 +333,5 @@ async function main() {
   writeFileSync(out, JSON.stringify(transcript, null, 2));
   console.log(`  full answers: ${out}\n`);
 }
-void main();
+/* Guarded so the grader can be imported and tested without launching a run. */
+if (/agent-trial\.ts$/.test(process.argv[1] ?? '')) void main();
