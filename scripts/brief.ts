@@ -32,15 +32,14 @@ if (!task.trim()) {
   process.exit(2);
 }
 
-const searchable = loadSearchable();
-const corpus = searchable.findings;
-const text = brief(task, corpus, { useLocalEnvironment: true, keysFor: searchable.keysFor });
+const corpus = loadSearchable().findings;
+const text = brief(task, corpus, { useLocalEnvironment: true });
 /*
  * Recorded whether or not anything was shown. A brief that stays silent is the
  * common case and is a fact about delivery worth keeping: it is the difference
  * between "we had nothing" and "we had something and withheld it".
  */
-observe(task, retrieve(task, corpus, { useLocalEnvironment: true, limit: 5, keysFor: searchable.keysFor }), 'cli:brief');
+observe(task, retrieve(task, corpus, { useLocalEnvironment: true, limit: 5 }), 'cli:brief');
 if (text) {
   process.stdout.write(`${text}\n`);
 } else if (!quiet) {

@@ -67,13 +67,8 @@ if (before) {
  * personal corpus with forty findings cached from its upstream answered
  * "No corpus found."
  */
-const searchable = loadSearchable();
-const all = searchable.findings;
-const hits = retrieve(query, all, {
-  useLocalEnvironment: true,
-  limit: 5,
-  keysFor: searchable.keysFor,
-});
+const all = loadSearchable().findings;
+const hits = retrieve(query, all, { useLocalEnvironment: true, limit: 5 });
 /*
  * Written down before it is printed. Until now every query this corpus ever
  * answered was discarded the moment it was served, which is why the only

@@ -127,6 +127,28 @@ export function environmentCount(f: Finding, now: Date = new Date()): number {
  * nobody, so it buys half the breadth of a signed one — enough that honest
  * unsigned reports still count, not enough to make forgery worthwhile.
  */
+
+/**
+ * A finding that carries the key map its own observations verify against.
+ *
+ * An upstream finding's observations are signed by UPSTREAM keys, which
+ * loadKeys() excludes on purpose -- merging the maps would let an upstream
+ * publish a key under a local agent's label and verify a LOCAL observation.
+ * The first fix threaded a resolver callback from retrieve() down to one call
+ * site, which left `standing`, `corroboration`, `serialize`, `doctor` and
+ * `graph` still verifying upstream findings against local keys: /api/search
+ * ranked a hit with one confidence and serialised it with another.
+ *
+ * Carrying the map on the finding fixes that everywhere at once, and removes
+ * the class of bug rather than an instance: correctness no longer depends on
+ * every present and future caller remembering to thread an argument.
+ */
+type Keyed = Finding & { keys?: Map<string, KeyRecord> };
+
+function attestKeys(f: Finding, fallback: Map<string, KeyRecord>): Map<string, KeyRecord> {
+  return (f as Keyed).keys ?? fallback;
+}
+
 export function signedEnvironmentCount(
   f: Finding,
   keys: Map<string, KeyRecord> = loadKeys(),
@@ -146,7 +168,7 @@ function signedEnvironments(
       o.verdict === 'confirmed' &&
       o.environment &&
       notInFuture(o, now) &&
-      verifyObservation(f.id, o, keys, findingBodyHash(f)) === 'signed',
+      verifyObservation(f.id, o, attestKeys(f, keys), findingBodyHash(f)) === 'signed',
   );
 
   const environments = new Set(attested.map((o) => environmentSignature(o.environment!)));
@@ -193,7 +215,7 @@ export function effectiveEnvironments(
       o.verdict === 'confirmed' &&
       o.environment &&
       notInFuture(o, now) &&
-      verifyObservation(f.id, o, keys, findingBodyHash(f)) !== 'signed',
+      verifyObservation(f.id, o, attestKeys(f, keys), findingBodyHash(f)) !== 'signed',
   );
   // Environments already earned by a signature are not counted twice.
   const unsignedEnvs = new Set(
@@ -327,7 +349,7 @@ function partyOf(
   // one -- the identity function behind corroboration, the refutation gate and
   // derivedVerdict -- did not.
   if (!o.signature) return null;
-  if (verifyObservation(f.id, o, keys, findingBodyHash(f)) !== 'signed') return null;
+  if (verifyObservation(f.id, o, attestKeys(f, keys), findingBodyHash(f)) !== 'signed') return null;
   return `key:${o.signature.keyId}`;
 }
 

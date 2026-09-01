@@ -262,22 +262,17 @@ export interface SearchableFinding extends Finding {
   upstreamName?: string;
   upstreamOrigin?: string;
   displayId?: string;
+  /**
+   * The key map this finding's observations verify against, carried with it.
+   * decay.ts reads it instead of defaulting to the local map, so every
+   * consumer -- confidence, standing, corroboration, serialize, doctor,
+   * graph -- agrees without anyone threading an argument.
+   */
+  keys?: Map<string, KeyRecord>;
 }
 
 export interface Searchable {
   findings: SearchableFinding[];
-  /**
-   * The key map a given finding must be verified against.
-   *
-   * Not one merged map, and that is a security property rather than
-   * tidiness: keys.ts excludes federated keys from loadKeys() precisely so an
-   * upstream cannot publish a key under a local agent's label and have it
-   * verify a LOCAL observation. Merging the maps to make this convenient
-   * would reintroduce exactly that. So a local finding is verified against
-   * local keys, and an upstream finding against that upstream's keys plus
-   * local keys, which sign the overlay.
-   */
-  keysFor(f: Finding): Map<string, KeyRecord>;
 }
 
 /**
@@ -294,7 +289,6 @@ export interface Searchable {
 export function loadSearchable(): Searchable {
   const local: SearchableFinding[] = loadCorpus();
   const localKeys = loadKeys();
-  const perFinding = new WeakMap<object, Map<string, KeyRecord>>();
   const findings: SearchableFinding[] = [...local];
 
   const config = loadConfig();
@@ -303,9 +297,14 @@ export function loadSearchable(): Searchable {
     if (!bundle) continue;
     const { keys: upstreamKeys } = bundleKeys(bundle);
 
-    // The overlay is signed by local keys and the upstream body by upstream
-    // keys, so verification needs both -- scoped to this finding, never
-    // folded into the map that verifies local findings.
+    /*
+     * The overlay is signed by local keys and the upstream body by upstream
+     * keys, so verification needs both -- scoped to this finding, never
+     * folded into the map that verifies local findings. A local finding
+     * carries no map at all and falls back to loadKeys(), so an upstream can
+     * never publish a key under a local agent's label and have it verify a
+     * local observation.
+     */
     const merged = new Map<string, KeyRecord>(upstreamKeys);
     for (const [id, rec] of localKeys) merged.set(id, rec);
 
@@ -316,14 +315,11 @@ export function loadSearchable(): Searchable {
         upstreamName: up.name,
         upstreamOrigin: bundle.origin,
         displayId: federatedId(up.name, finding.id),
+        keys: merged,
       };
-      perFinding.set(entry, merged);
       findings.push(entry);
     }
   }
 
-  return {
-    findings,
-    keysFor: (f: Finding) => perFinding.get(f) ?? localKeys,
-  };
+  return { findings };
 }

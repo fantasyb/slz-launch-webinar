@@ -112,30 +112,42 @@ test('a federated finding is verified against its own upstream keys', async (t) 
       f.upstreamName && f.observations.some((o) => o.signature),
   );
   assert.ok(signed, 'the fixture upstream must carry at least one signed observation');
+  assert.ok(signed.keys && signed.keys.size > 0, 'an upstream finding must carry its own key map');
 
-  const withUpstreamKeys = confidence(signed, new Date(), s.keysFor(signed));
-  const withLocalOnly = confidence(signed, new Date(), loadKeys());
+  /*
+   * No resolver is passed anywhere below. The finding carries its keys, so
+   * every consumer agrees by construction rather than by remembering -- which
+   * is the whole point of moving the data onto the object.
+   */
+  const withOwnKeys = confidence(signed, new Date());
+  const withLocalOnly = confidence({ ...signed, keys: undefined }, new Date(), loadKeys());
   assert.ok(
-    withUpstreamKeys > withLocalOnly,
-    `resolving upstream keys must raise confidence (${withUpstreamKeys} vs ${withLocalOnly}); ` +
-      'equal means the resolver is not reaching the verifier',
+    withOwnKeys > withLocalOnly,
+    `a finding's own keys must verify its observations (${withOwnKeys} vs ${withLocalOnly})`,
+  );
+
+  const { retrieve } = await import(`../src/lib/cairn/retrieval?seam=${stamp}`);
+  const query = `${signed.title} ${signed.reality}`.slice(0, 200);
+  const hit = retrieve(query, s.findings, { limit: 5 }).find(
+    (h: { finding: { id: string } }) => h.finding.id === signed.id,
+  );
+  assert.ok(hit, 'the signed upstream finding must be retrievable by its own text');
+  assert.ok(
+    Math.abs(hit.confidence - withOwnKeys) < 1e-9,
+    `retrieve must reach the same verdict as confidence (${hit.confidence} vs ${withOwnKeys})`,
   );
 
   /*
-   * Through retrieve(), not just confidence().
-   *
-   * Calling confidence() directly with two maps proves the maps differ. It
-   * passes unchanged if buildIndex drops the resolver on the floor, which is
-   * the seam that actually has to hold -- and the one a future caller can
-   * silently stop threading.
+   * And the serialising path must agree with the ranking path. /api/search
+   * ranked an upstream hit through the index and serialised it through
+   * summarise, which defaulted to local keys -- one response, two
+   * confidences for the same finding.
    */
-  const { retrieve } = await import(`../src/lib/cairn/retrieval?seam=${stamp}`);
-  const query = `${signed.title} ${signed.reality}`.slice(0, 200);
-  const ranked = retrieve(query, s.findings, { keysFor: s.keysFor, limit: 5 });
-  const hit = ranked.find((h: { finding: { id: string } }) => h.finding.id === signed.id);
-  assert.ok(hit, 'the signed upstream finding must be retrievable by its own text');
+  const { summarise } = await import(`../src/lib/cairn/load?seam=${stamp}`);
+  const summary = summarise(signed);
+  assert.match(summary.detail, /^\/api\/findings\/shared:/, 'an upstream id must not link to a local one');
   assert.ok(
-    Math.abs(hit.confidence - withUpstreamKeys) < 1e-9,
-    `retrieve must carry the resolver to the index (${hit.confidence} vs ${withUpstreamKeys})`,
+    Math.abs(summary.derived.confidence - Number(withOwnKeys.toFixed(3))) < 1e-9,
+    `summarise must agree with the ranker (${summary.derived.confidence} vs ${withOwnKeys})`,
   );
 });

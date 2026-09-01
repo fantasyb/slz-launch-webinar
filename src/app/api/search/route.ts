@@ -28,8 +28,7 @@ export async function GET(request: Request) {
    * only from its own directory while `cairn:find` on the same install
    * answered from both would be two different corpora behind one name.
    */
-  const searchable = loadSearchable();
-  const hits = retrieve(q, searchable.findings, { keysFor: searchable.keysFor });
+  const hits = retrieve(q, loadSearchable().findings);
   const kept = includeRetired ? hits : hits.filter((h) => h.finding.status !== 'retired');
   const results = kept.map((h) => h.finding);
   // Default to the minimal projection. Full prose is a deliberate second

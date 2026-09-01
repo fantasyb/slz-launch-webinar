@@ -33,7 +33,6 @@
  * correct answer for most tasks and must stay cheap.
  */
 import type { Finding } from './schema';
-import type { KeyRecord } from './signing';
 import { retrieve } from './retrieval';
 
 export interface BriefOptions {
@@ -46,8 +45,6 @@ export interface BriefOptions {
   maxChars?: number;
   /** Evaluate preconditions against this process's environment. */
   useLocalEnvironment?: boolean;
-  /** Verify a federated finding against its own upstream's keys. */
-  keysFor?: (f: Finding) => Map<string, KeyRecord>;
 }
 
 /*
@@ -96,7 +93,6 @@ export function briefEntries(task: string, corpus: Finding[], opts: BriefOptions
   return retrieve(task, corpus, {
     useLocalEnvironment: opts.useLocalEnvironment,
     limit: Math.max(limit * 3, 9),
-    keysFor: opts.keysFor,
   })
     /*
      * The retriever's own weak/strong label rather than a score threshold: it
@@ -108,7 +104,12 @@ export function briefEntries(task: string, corpus: Finding[], opts: BriefOptions
     .filter((h) => h.strength === 'strong' && h.explained >= MIN_EXPLAINED)
     .slice(0, limit)
     .map((h) => ({
-      id: h.finding.id,
+      /*
+       * The namespaced id for an upstream finding. The brief is read by an
+       * agent that may then cite the id back, and on a corpus subscribed to
+       * an upstream "cairn-0001" names two different claims.
+       */
+      id: (h.finding as { displayId?: string }).displayId ?? h.finding.id,
       title: h.finding.title,
       reality: h.finding.reality,
       ...(h.finding.workaround ? { workaround: h.finding.workaround } : {}),

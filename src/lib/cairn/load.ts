@@ -183,14 +183,35 @@ export function summarise(f: Finding, now: Date = new Date()) {
       standing: standing(f, now),
       environments: environmentCount(f, now),
     },
-    detail: `/api/findings/${f.id}`,
+    detail: `/api/findings/${publicView(f).id}`,
   };
+}
+
+/**
+ * The id a reader should see, and nothing internal.
+ *
+ * Two corpora can both hold a cairn-0002 and mean different things, so an
+ * upstream finding is presented under its namespaced displayId -- otherwise
+ * `detail` links a stranger's claim to whichever local finding happens to
+ * share its number. `keys` is stripped for the same reason it exists: it is
+ * a verification input carried on the object, not part of the record, and
+ * serialize() spreads the whole finding.
+ */
+function publicView(f: Finding): { id: string; rest: Record<string, unknown> } {
+  const { keys: _keys, upstreamName: _n, ...rest } = f as Finding & {
+    keys?: unknown;
+    upstreamName?: string;
+    displayId?: string;
+  };
+  return { id: (f as { displayId?: string }).displayId ?? f.id, rest: rest as Record<string, unknown> };
 }
 
 /** Public shape served by the API. Adds derived scores so agents need no math. */
 export function serialize(f: Finding, now: Date = new Date()) {
+  const view = publicView(f);
   return {
-    ...f,
+    ...view.rest,
+    id: view.id,
     derived: {
       confidence: Number(confidence(f, now).toFixed(3)),
       standing: standing(f, now),
