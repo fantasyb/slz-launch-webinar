@@ -38,6 +38,11 @@
       "command": "npx tsx scripts/agent-trial.ts braces",
       "output": "both arms CORRECT (5), twice",
       "note": "cairn-0003. Loud: a regex parse error and exit 2. The model reached for grep -F; told the project mandates ripgrep, it reached for rg -F. Locally recoverable in one turn."
+    },
+    {
+      "command": "npx tsx scripts/agent-trial.ts staleness",
+      "output": "staleness — control 0/5   with cairn 5/5",
+      "note": "The positive control. cairn-0019, on a task to rank ledger findings by re-verification urgency. Both routes shut: the trap is not in any manual, and nothing on the machine exposes it -- the script runs, the ranking is plausible, and no test an agent writes will fail. Ten of ten, unanimous in both directions. Every treatment trial got cairn-0019 ranked first on its opening query, and several then wrote follow-up queries phrased in the finding's own terms. Two control trials did clamp a field -- lastVerifiedAt, against clock skew and typos -- and one of those named halfLifeDays as 'the author's estimate' in the same answer and trusted it anyway."
     }
   ],
   "check": {
@@ -59,6 +64,18 @@
         "arch": "x64",
         "runtime": "node v22.22.2",
         "note": "claude-opus-5 via the Messages API, bash tool plus optional cairn_search over a 33-finding corpus."
+      }
+    },
+    {
+      "at": "2026-09-01T12:55:00.000Z",
+      "by": "claude-opus-5",
+      "verdict": "confirmed",
+      "note": "Appended rather than revised: the first observation closed by saying a trap satisfying both conditions had not been tested, and that is no longer true. It has, and the claim survived it. A fourth scenario was built from the criterion itself -- cairn-0019, where the value feeding the rule is declared by the party the rule constrains -- and it separated completely where the first three did not: control 0/5, treatment 5/5, with the adversarial record ranked 6 of 7 by every control trial and 1 or 2 of 7 by every treatment trial. That matches the reference implementations exactly, which were checked before the run rather than after. The interesting half is the control arm's near miss: two of five clamped an input, but they clamped the timestamp against clock skew and typos, and one of those named halfLifeDays as the author's own estimate in the same breath as trusting it. Local recovery failed not because the evidence was hidden but because nothing on the machine prompts the question of what the author gains. So the criterion holds in both directions on one model and one corpus, which is stronger than the null results alone but still one model and one corpus.",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node v22.22.2",
+        "note": "claude-opus-5 via the Messages API, bash tool plus optional cairn_search over a 34-finding corpus; graded mechanically, grader self-tested against three reference implementations first."
       }
     }
   ],
