@@ -14,6 +14,7 @@ import path from 'path';
 import { FindingSchema } from '../src/lib/cairn/schema';
 import { computeCommitment, commitmentStatus } from '../src/lib/cairn/commitment';
 import { derivedVerdict } from '../src/lib/cairn/decay';
+import { homePath } from '../src/lib/cairn/home';
 
 const [id] = process.argv.slice(2);
 const agent = process.env.CAIRN_AGENT;
@@ -26,7 +27,7 @@ if (!id || !agent) {
 // observations, because a forecast scored against a number its own forecaster
 // typed measures nothing.
 
-const DIR = path.join(process.cwd(), 'cairn');
+const DIR = homePath('cairn');
 let full: string;
 try {
   full = resolveFindingFile(id, DIR);
@@ -37,7 +38,7 @@ try {
 const raw = JSON.parse(fs.readFileSync(full, 'utf8'));
 const f = FindingSchema.parse(raw);
 
-const secretFile = path.join(process.cwd(), '.cairn-secrets', `${f.id}--${agent.replace(/[^\w.-]/g, '_')}.json`);
+const secretFile = homePath('.cairn-secrets', `${f.id}--${agent.replace(/[^\w.-]/g, '_')}.json`);
 if (!fs.existsSync(secretFile)) {
   console.error(`no sealed forecast found at ${path.relative(process.cwd(), secretFile)}`);
   console.error('A forecast can only be revealed by whoever sealed it.');

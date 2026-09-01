@@ -15,6 +15,7 @@ import { environmentSignature } from '../src/lib/cairn/schema';
 import path from 'path';
 import { FindingSchema } from '../src/lib/cairn/schema';
 import { scanExecutable } from '../src/lib/cairn/safety';
+import { homePath } from '../src/lib/cairn/home';
 
 const id = process.argv[2];
 if (!id) {
@@ -22,7 +23,7 @@ if (!id) {
   process.exit(2);
 }
 
-const DIR = path.join(process.cwd(), 'cairn');
+const DIR = homePath('cairn');
 let full: string;
 try {
   full = resolveFindingFile(id, DIR);

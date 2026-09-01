@@ -24,7 +24,7 @@
 import { execFileSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
-import { cairnHome } from './home';
+import { cairnHome, installRoot } from './home';
 
 function git(args: string[]): string | null {
   try {
@@ -116,12 +116,30 @@ export function stalenessNote(f: Freshness = freshness()): string | null {
   const days = (n: number) => (n < 1 ? 'today' : n < 2 ? '1 day ago' : `${Math.floor(n)} days ago`);
 
   if (f.behind !== null && f.behind > 0) {
-    return `${f.behind} finding commit${f.behind === 1 ? '' : 's'} behind. Run: npm run cairn:sync`;
+    return `${f.behind} finding commit${f.behind === 1 ? '' : 's'} behind. Run: ${syncCommand()}`;
   }
   /* Never fetched, or not fetched in a fortnight: the zero above means nothing. */
   if (f.sinceFetchDays === null || f.sinceFetchDays > 14) {
     const when = f.sinceFetchDays === null ? 'never' : days(f.sinceFetchDays);
-    return `You have not checked for new findings (last fetch: ${when}). Run: npm run cairn:sync`;
+    return `You have not checked for new findings (last fetch: ${when}). Run: ${syncCommand()}`;
   }
   return null;
+}
+
+/**
+ * The command that actually refreshes THIS reader's corpus.
+ *
+ * This said `npm run cairn:sync` unconditionally. The reader who most needs
+ * it is by definition working in their own project, where npm resolves
+ * nothing and that line is simply wrong -- the tool's one piece of
+ * unprompted advice, given at the moment of use, naming a command that
+ * fails. An install can always be reached by its own path.
+ */
+export function syncCommand(): string {
+  const root = installRoot();
+  if (!root) return 'npm run cairn:sync';
+  const bin = path.join(root, 'bin', 'cairn-sync.js');
+  /* Inside the checkout the npm script is the idiom people know. */
+  if (path.resolve(process.cwd()) === path.resolve(root)) return 'npm run cairn:sync';
+  return `node ${bin}`;
 }

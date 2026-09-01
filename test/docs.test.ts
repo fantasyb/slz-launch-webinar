@@ -10,6 +10,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
 import { loadCorpus } from '../src/lib/cairn/load';
 import {
   ledgerIntegrity,
@@ -151,11 +152,37 @@ test('every corpus file is covered by the corpus license', () => {
  * everyone the tool is being handed to.
  */
 test('each launcher falls back to its own script, not to find', () => {
-  for (const name of ['find', 'brief', 'sync']) {
+  for (const name of ['find', 'brief', 'sync', 'record']) {
     const src = fs.readFileSync(path.join(process.cwd(), 'bin', `cairn-${name}.js`), 'utf8');
     const bundle = src.match(/'dist', 'cli', '([a-z]+)\.js'/)?.[1];
     const fallback = src.match(/'scripts', '([a-z-]+)\.ts'/)?.[1];
     assert.equal(bundle, name, `cairn-${name}.js requires the wrong bundle`);
     assert.equal(fallback, name, `cairn-${name}.js falls back to ${fallback}.ts, not ${name}.ts`);
+  }
+});
+
+/**
+ * The refresh advice must name a command the reader can actually run.
+ *
+ * stalenessNote said `npm run cairn:sync` unconditionally. The reader who
+ * most needs it is by definition working in their own project, where npm
+ * resolves nothing -- so the tool's one piece of unprompted advice, given at
+ * the exact moment of use, named a command that fails.
+ */
+test('the staleness note names a runnable command from a foreign directory', async () => {
+  const { syncCommand } = await import('../src/lib/cairn/freshness');
+  const inRepo = syncCommand();
+  assert.equal(inRepo, 'npm run cairn:sync', 'inside the checkout, the npm script is the idiom');
+
+  const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'cairn-cwd-'));
+  const prior = process.cwd();
+  try {
+    process.chdir(elsewhere);
+    const away = syncCommand();
+    assert.notEqual(away, 'npm run cairn:sync', 'npm resolves nothing from another project');
+    assert.match(away, /^node .*bin[/\\]cairn-sync\.js$/);
+    assert.ok(fs.existsSync(away.slice('node '.length)), 'and the path it names must exist');
+  } finally {
+    process.chdir(prior);
   }
 });

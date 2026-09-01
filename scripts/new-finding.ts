@@ -6,6 +6,7 @@
  */
 import fs from 'fs';
 import path from 'path';
+import { homePath } from '../src/lib/cairn/home';
 
 const title = process.argv.slice(2).join(' ').trim();
 if (!title) {
@@ -13,7 +14,7 @@ if (!title) {
   process.exit(2);
 }
 
-const DIR = path.join(process.cwd(), 'cairn');
+const DIR = homePath('cairn');
 const existing = fs.readdirSync(DIR).filter((f) => f.endsWith('.json'));
 const next = existing.reduce((max, f) => Math.max(max, parseInt(f.slice(0, 4), 10) || 0), 0) + 1;
 const num = String(next).padStart(4, '0');

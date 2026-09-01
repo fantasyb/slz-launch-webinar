@@ -19,6 +19,7 @@ import { FindingSchema } from '../src/lib/cairn/schema';
 import { computeCommitment, generateNonce } from '../src/lib/cairn/commitment';
 import { writeJsonAtomic } from '../src/lib/cairn/atomic';
 import { findingBodyHash } from '../src/lib/cairn/signing';
+import { homePath } from '../src/lib/cairn/home';
 
 const [id, priorArg, ...reasoningParts] = process.argv.slice(2);
 const agent = process.env.CAIRN_AGENT;
@@ -28,7 +29,7 @@ if (!id) {
   process.exit(2);
 }
 
-const DIR = path.join(process.cwd(), 'cairn');
+const DIR = homePath('cairn');
 let full: string;
 try {
   full = resolveFindingFile(id, DIR);
@@ -87,7 +88,7 @@ const hash = computeCommitment({ findingId: f.id, by: agent, priorConfirmed: pri
 // the forecast is stuck `sealed` forever and looks identical to an honest
 // pending one. Writing the corpus first put the unrecoverable failure on the
 // likelier path.
-const secretDir = path.join(process.cwd(), '.cairn-secrets');
+const secretDir = homePath('.cairn-secrets');
 fs.mkdirSync(secretDir, { recursive: true, mode: 0o700 });
 const secretFile = path.join(secretDir, `${f.id}--${agent.replace(/[^\w.-]/g, '_')}.json`);
 // 0600: until reveal, the confidentiality of this file is the entire blind.

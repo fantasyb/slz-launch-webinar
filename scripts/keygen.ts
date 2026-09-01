@@ -9,6 +9,7 @@ import fs from 'fs';
 import path from 'path';
 import { generateKeypair, keyFingerprint } from '../src/lib/cairn/signing';
 import { loadKeys } from '../src/lib/cairn/keys';
+import { homePath } from '../src/lib/cairn/home';
 
 const label = process.argv.slice(2).join(' ').trim();
 if (!label) {
@@ -30,11 +31,11 @@ const { record, privateKey } = generateKeypair(label);
   }
 }
 
-const keyFile = path.join(process.cwd(), 'keys', `${record.keyId}.json`);
+const keyFile = homePath('keys', `${record.keyId}.json`);
 fs.mkdirSync(path.dirname(keyFile), { recursive: true });
 fs.writeFileSync(keyFile, `${JSON.stringify(record, null, 2)}\n`);
 
-const secretDir = path.join(process.cwd(), '.cairn-secrets');
+const secretDir = homePath('.cairn-secrets');
 // 0700: the directory holds private keys and unrevealed forecast preimages.
 // The key file was already 0600; the directory around it was 0755.
 fs.mkdirSync(secretDir, { recursive: true, mode: 0o700 });

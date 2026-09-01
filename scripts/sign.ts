@@ -14,6 +14,7 @@ import path from 'path';
 import { FindingSchema } from '../src/lib/cairn/schema';
 import { signObservation, deriveKeyId, findingBodyHash } from '../src/lib/cairn/signing';
 import { loadKeys } from '../src/lib/cairn/keys';
+import { homePath } from '../src/lib/cairn/home';
 
 const keyId = process.env.CAIRN_KEY;
 if (!keyId) {
@@ -25,7 +26,7 @@ if (!key) {
   console.error(`no published key ${keyId} in keys/`);
   process.exit(2);
 }
-const privFile = path.join(process.cwd(), '.cairn-secrets', `${keyId}.key`);
+const privFile = homePath('.cairn-secrets', `${keyId}.key`);
 if (!fs.existsSync(privFile)) {
   console.error(`private key not found at ${path.relative(process.cwd(), privFile)}`);
   process.exit(2);
@@ -54,7 +55,7 @@ try {
   process.exit(2);
 }
 
-const DIR = path.join(process.cwd(), 'cairn');
+const DIR = homePath('cairn');
 let signed = 0;
 let skipped = 0;
 

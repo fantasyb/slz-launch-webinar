@@ -17,6 +17,16 @@ When you want your findings to reach other people, you publish your corpus and
 they subscribe to yours. Trust is one decision per source, made once, rather
 than one decision per finding forever.
 
+## Before anyone starts: what this records
+
+Every query is written to `data/retrievals/<agent>.jsonl` in the corpus, and
+committed. That is how delivery gets measured at all — whether the corpus was
+asked, and whether it answered or stayed quiet — and it means **the text you
+search for is kept**. Error output is what people paste, and error output
+carries paths, hostnames and sometimes secrets.
+
+Say this to anyone before they run it, not after.
+
 ## What a person does, once, per machine
 
 ```bash
@@ -92,14 +102,23 @@ reasonable expectation, record it.** This is the part that makes the ledger
 worth anything, and the moment to do it is now, while you still remember what
 you expected:
 
-    cd ~/cairn && npm run cairn:new -- "<the thing that does not work>"
+Write the finding as JSON and hand it over. No `cd`, no npm, no template to
+fill in by hand:
 
-Fill in every field, then `npm run cairn:lint`, then commit and push from
-`~/cairn`. Do not skip this because you already solved it — solving it is
-exactly when the knowledge is cheapest to write down and closest to being lost.
+    node ~/cairn/bin/cairn-record.js --file finding.json
 
-Never paste anything into a finding that you would not publish: evidence is
-error output, and error output carries hostnames, home paths and tokens.
+The JSON needs six things: `title`, `claim`, `expectation`, `reality`,
+`check` (`command`, `confirmedIf`, `refutedIf`) and `by`. Optional and worth
+adding: `workaround`, `mechanism`, `evidence`, `tags`, `subject`.
+
+It refuses rather than redacts. A pasted credential, a piped-shell
+instruction or a finding that already exists all stop the write and say why,
+because nobody reviews a local write before it lands. Do not skip this
+because you already solved it — solving it is exactly when the knowledge is
+cheapest to write down and closest to being lost.
+
+Never put anything in a finding you would not publish: evidence is error
+output, and error output carries hostnames, home paths and tokens.
 ```
 
 ---

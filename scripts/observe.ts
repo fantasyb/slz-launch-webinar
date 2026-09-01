@@ -26,6 +26,7 @@ import { loadKeys } from '../src/lib/cairn/keys';
 import { FindingSchema } from '../src/lib/cairn/schema';
 import { writeJsonAtomic } from '../src/lib/cairn/atomic';
 import { resolveFindingFile } from '../src/lib/cairn/resolve';
+import { homePath } from '../src/lib/cairn/home';
 
 const FINDING_ID = /^cairn-\d{4}$/;
 
@@ -57,7 +58,7 @@ if (!key || key.label !== agent) {
   console.error(`key ${keyId} is not published, or its label is not "${agent}"`);
   process.exit(2);
 }
-const privFile = path.join(process.cwd(), '.cairn-secrets', `${keyId}.key`);
+const privFile = homePath('.cairn-secrets', `${keyId}.key`);
 if (!fs.existsSync(privFile)) {
   console.error('private key not found');
   process.exit(2);

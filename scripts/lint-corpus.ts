@@ -12,8 +12,9 @@ import { derivedVerdict } from '../src/lib/cairn/decay';
 import { loadKeys } from '../src/lib/cairn/keys';
 import { scanExecutable, scanInjection } from '../src/lib/cairn/safety';
 import { longestVerbatimRun, VERBATIM_RUN_LIMIT, indexedText } from '../src/lib/cairn/evalset';
+import { homePath } from '../src/lib/cairn/home';
 
-const DIR = path.join(process.cwd(), 'cairn');
+const DIR = homePath('cairn');
 const problems: string[] = [];
 const warnings: string[] = [];
 
@@ -359,7 +360,7 @@ for (const c of subjectCollisions(all)) {
  * reason and with the same run length.
  */
 try {
-  const field = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'data/field-queries.json'), 'utf8')) as {
+  const field = JSON.parse(fs.readFileSync(homePath('data', 'field-queries.json'), 'utf8')) as {
     queries: { q: string }[];
   };
   for (const f of all) {
@@ -379,7 +380,7 @@ try {
    * queries a searcher would arrive with is exactly the thing most likely to
    * land on one of them by coincidence. Same rule, same run length.
    */
-  const gen = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'data/expansions.json'), 'utf8')) as {
+  const gen = JSON.parse(fs.readFileSync(homePath('data', 'expansions.json'), 'utf8')) as {
     expansions: Record<string, string[]>;
   };
   for (const [id, queries] of Object.entries(gen.expansions ?? {})) {

@@ -34,6 +34,10 @@ const ENTRIES = [
   // An agent has to be able to refresh its own corpus without npm and without
   // knowing where it lives.
   ['scripts/sync.ts', 'dist/cli/sync.js'],
+  // Reading was portable and writing was not: recording a finding still meant
+  // cd'ing into the checkout and running an npm script, so a second user could
+  // consult the corpus and never add to it.
+  ['scripts/record.ts', 'dist/cli/record.js'],
 ];
 
 mkdirSync('dist/cli', { recursive: true });
