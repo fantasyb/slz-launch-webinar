@@ -1944,6 +1944,44 @@ function linkSiblings(hits: Hit[]): Hit[] {
 
 
 /*
+ * GIT AS A RETRIEVAL SIGNAL: null here, and the reason is specific.
+ *
+ * A commit is linked to the findings whose files it touched, so a commit
+ * matching a query is a vote for those findings -- evidence of a different
+ * kind from a finding's own text, being how it came to exist. Worth trying,
+ * and measured on 60 held-out cases after filtering the 6 whose notes a commit
+ * quotes verbatim (commit messages repeat an observation when they add it, so
+ * indexing them unfiltered would have been memorisation).
+ *
+ *   fused by RRF position    0.864 -> 0.379   catastrophic
+ *   the same, inverted       0.864 -> 0.379   identical
+ *   fused by vote strength   0.864 -> 0.864   null
+ *
+ * The middle row is the interesting one. If a signal reliably picked the WRONG
+ * finding its inverse would pick the right one, so inverting is the cheap test
+ * for anti-correlation -- and it changed nothing, which means the collapse was
+ * never about the signal at all.
+ *
+ * It was the sparse-list artefact, already recorded in this file after the
+ * strong-field experiment and walked into again anyway: under RRF, rank 1 of a
+ * two-entry list scores exactly what rank 1 of a thirty-entry list scores, so
+ * anything a commit merely mentions is catapulted to the top. Fusing by
+ * strength instead of position removes the artefact and reveals the truth,
+ * which is that the votes carry no information.
+ *
+ * WHY NULL HERE AND NOT ELSEWHERE. The commits that touch finding files are
+ * ledger administration -- "Sign what matters", "Bind signatures to the
+ * finding body", "seal: panel-2026-08-31" -- and the largest touches 26
+ * findings at once. They are about building cairn, not about proxies or DNS or
+ * Playwright. That is a property of THIS repository: on a codebase whose
+ * commits describe the domain ("fix the race in payment retry"), the same
+ * signal would be about the traps and is worth re-measuring. The 242KB of
+ * reasoning in these commit bodies is real and valuable, which is why
+ * cairn:history exists -- it is simply reasoning about the SYSTEM, and answers
+ * "did we try compression" rather than "why did my DNS lookup return nothing".
+ */
+
+/*
  * FOUR WALLS, AND WHY SEVENTEEN ATTEMPTS HIT THEM RATHER THAN SEVENTEEN
  * SEPARATE PROBLEMS.
  *
