@@ -1619,6 +1619,31 @@ export function retrieve(
       .filter((x) => x.v > 0)
       .sort((a, b) => b.v - a.v)
       .map((x) => x.id);
+  /*
+   * COVERAGE IS DEGENERATE ON A SHORT QUERY.
+   *
+   * `explains` and `spectrum` both rank by what FRACTION of the query a finding
+   * accounts for. Over a sentence that is a real signal. Over two words it is
+   * almost none: any document containing both is 100% explained, however
+   * incidentally it mentions them.
+   *
+   * Measured on `proxies blocked`, which is the query this file already has a
+   * test for. The finding that IS about the allowlist proxy scores 6.7; a
+   * finding about signing oracles whose prose mentions a proxy in passing
+   * scores 1.8 — and led both coverage rankers, because two of two words is a
+   * perfect score for a passing mention too. Three quarters of the fusion then
+   * agreed on the wrong answer at 27% of the score.
+   *
+   * So coverage votes only once the query is long enough for a fraction to
+   * mean something. The typed scorer and BM25 still run: they weigh how much
+   * each term narrowed the corpus, which is exactly the judgement a two-word
+   * query needs and coverage cannot make.
+   */
+  const informativeTerms = [...queryInformation.values()].filter(
+    (v) => v >= MIN_TERM_INFORMATION,
+  ).length;
+  const coverageIsMeaningful = informativeTerms >= coverageMinTerms();
+
   const rankers = [
     { name: 'typed', order: typedOrder.map((x) => x.h.finding.id), weight: 1 },
     {
@@ -1628,12 +1653,12 @@ export function retrieve(
     },
     {
       name: 'explains',
-      order: byCoverage(explains),
+      order: coverageIsMeaningful ? byCoverage(explains) : [],
       weight: Number(process.env.CAIRN_EXPLAINED_WEIGHT ?? EXPLAINED_WEIGHT),
     },
     {
       name: 'spectrum',
-      order: byCoverage(lineSpectrum),
+      order: coverageIsMeaningful ? byCoverage(lineSpectrum) : [],
       weight: Number(process.env.CAIRN_LINE_WEIGHT ?? LINE_WEIGHT),
     },
   ];
@@ -2548,6 +2573,28 @@ const LINE_WEIGHT = 0.4;
  */
 const CONTEST_WINDOW = 10;
 
+/*
+ * Distinct informative query terms below which the coverage rankers do not vote.
+ *
+ * A fraction needs enough denominator to discriminate. Over three terms
+ * coverage can only take the values 0, 1/3, 2/3 and 1, so most candidates tie
+ * and the tie-break decides the ranking; over two it is 0, 1/2, 1. That is not
+ * a ranking, it is a coin toss with a plausible name.
+ *
+ * Swept 3..14 against all four suites. Everything is identical from 4 to 10 —
+ * held-out P@1 0.849, P@5 0.918, MRR 0.883, delivery 0.863, agent 4/4, field
+ * 6/11 and 4/8 — and `proxies blocked` returns the proxy finding from 4 up.
+ * Cost appears at 14, where held-out P@5 and field P@1 both drop, and with
+ * coverage disabled entirely P@1 falls to 0.795: the ranker earns its place,
+ * just not on short queries. 4 is the lowest value that works, ten steps from
+ * the cliff, and touches the fewest queries.
+ */
+const COVERAGE_MIN_TERMS = 4;
+/* Read per call, like rrfK: a constant a sweep cannot move measures nothing,
+ * and the first version of this gate showed no effect at any value because it
+ * was resolved once at import. */
+const coverageMinTerms = () => Number(process.env.CAIRN_COVERAGE_MIN_TERMS ?? COVERAGE_MIN_TERMS);
+
 function fuse(rankings: Array<{ order: string[]; weight: number }>): Map<string, number> {
   const fused = new Map<string, number>();
   const k = rrfK();
@@ -2951,6 +2998,7 @@ export function rankerSignature(): string {
     COMMON_RATE,
     dataFingerprint(),
     CONTEST_WINDOW,
+    coverageMinTerms(),
   ].join(',');
   return crypto.createHash('sha256').update(constants).digest('hex').slice(0, 12);
 }

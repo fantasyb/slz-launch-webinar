@@ -1,6 +1,33 @@
 #!/bin/sh
-# Cairn: refuse to commit secrets, and refuse to commit findings that would
-# hand other agents a dangerous command.
+# Refuse a commit whose tests are red.
 #
-# Enable with: npm run cairn:hooks
-exec npx tsx scripts/precommit.ts
+# This exists because it has happened twice. Once by reading a grep exit code
+# instead of a test exit code -- grep returns 0 because it FOUND the "# fail"
+# line -- and once by running `npm test` as its own statement so the `&&` that
+# followed never saw its status. Both times the commit landed green-looking and
+# red. Intent is not a mechanism; this is.
+#
+# Tests and lint only. The full guard runs several suites and takes far too
+# long to sit in front of every commit, which is how a hook gets disabled.
+#
+# Install:  git config core.hooksPath .githooks
+# Bypass:   git commit --no-verify   (say why in the message)
+set -e
+
+echo "pre-commit: tests"
+npm test >/tmp/cairn-precommit.log 2>&1 || {
+  echo "REFUSED — tests are red:"
+  grep -E "^not ok|^# (pass|fail)" /tmp/cairn-precommit.log | head -20
+  echo "  full output: /tmp/cairn-precommit.log"
+  exit 1
+}
+
+echo "pre-commit: corpus lint"
+npx tsx scripts/lint-corpus.ts >/tmp/cairn-precommit-lint.log 2>&1 || true
+if grep -qE "^error" /tmp/cairn-precommit-lint.log; then
+  echo "REFUSED — corpus lint errors:"
+  grep -E "^error" /tmp/cairn-precommit-lint.log | head -10
+  exit 1
+fi
+
+echo "pre-commit: ok"
