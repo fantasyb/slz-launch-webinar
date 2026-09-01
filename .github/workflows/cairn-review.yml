@@ -85,3 +85,18 @@ jobs:
           # branch name is contributor-controlled text.
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: npm run cairn:adjudicate -- --changed-against "$BASE_SHA"
+
+      # Everything a finding should be asked before it lands, in one place and
+      # in words a contributor can act on. Duplicate detection was the gap that
+      # mattered: nothing was asking whether the trap was already recorded, and
+      # that is how a corpus ends up with fifty thin records of one trap instead
+      # of one record with fifty attesters.
+      #
+      # Runs even when the model half cannot — a pull request from a fork gets
+      # no secrets, which is exactly how somebody outside the team contributes
+      # their first finding. It says which half ran.
+      - name: review the findings themselves
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: npm run cairn:review -- --changed-against "$BASE_SHA"

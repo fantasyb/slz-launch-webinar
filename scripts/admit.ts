@@ -55,6 +55,21 @@ if (!file) {
   process.exit(2);
 }
 
+/*
+ * OFFLINE MODE, and it is not a lesser version — it is the one that runs where
+ * it matters most.
+ *
+ * Adjudication and the payoff check both call a model, which needs a key. A
+ * pull request from a fork does not get repository secrets, and a fork is
+ * exactly how somebody outside the team contributes their first finding. So
+ * the half that needs no key — candidate generation by term overlap, measured
+ * at 9/9 recall on independently written duplicates — runs regardless, and the
+ * contributor is told which existing records look close and asked to judge.
+ *
+ * A near neighbour named and left to a human beats a verdict that never ran.
+ */
+const offline = process.argv.includes('--offline') || !process.env.ANTHROPIC_API_KEY;
+
 const draft = FindingSchema.parse(JSON.parse(fs.readFileSync(file, 'utf8'))) as Finding;
 const corpus = loadCorpus().filter((f) => f.status !== 'retired' && f.id !== draft.id);
 
@@ -183,6 +198,24 @@ async function payoff(client: Anthropic) {
 async function main() {
   console.log(`\nADMITTING  ${draft.id}  ${draft.title.slice(0, 60)}`);
   console.log('='.repeat(72));
+  if (offline) {
+    if (nearest.length === 0) {
+      console.log('\n  Nothing in the corpus is lexically close. Nobody has obviously');
+      console.log('  recorded this already.\n');
+      return;
+    }
+    console.log('\n  CLOSEST EXISTING RECORDS — no model available, so these are');
+    console.log('  lexical neighbours and not a verdict. Read them before adding yours.\n');
+    for (const { f, jac } of nearest) {
+      console.log(`  ${((jac * 100).toFixed(0) + '%').padStart(4)} overlap  ${f.id}  ${f.title.slice(0, 62)}`);
+    }
+    console.log('\n  If one of these is the SAME trap, do not add a record: add an');
+    console.log('  observation to it instead. One finding with fifty attesters is worth');
+    console.log('  more than fifty thin records, and confidence and scope both key on');
+    console.log('  exactly that. Run this with ANTHROPIC_API_KEY set for an adjudication.\n');
+    return;
+  }
+
   const client = new Anthropic();
   if (nearest.length === 0) {
     console.log('\n  Nothing in the corpus is close. ACCEPT as a new finding.');
