@@ -41,7 +41,8 @@
     "cairn:quick": "tsx scripts/quick.ts",
     "cairn:expand": "tsx scripts/expand.ts",
     "cairn:semantic-ceiling": "tsx scripts/semantic-ceiling.ts",
-    "cairn:eval-audit": "tsx scripts/eval-audit.ts"
+    "cairn:eval-audit": "tsx scripts/eval-audit.ts",
+    "cairn:spectrum": "tsx scripts/spectrum.ts"
   },
   "dependencies": {
     "clsx": "^2.1.1",
