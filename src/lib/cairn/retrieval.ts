@@ -1944,6 +1944,42 @@ function linkSiblings(hits: Hit[]): Hit[] {
 
 
 /*
+ * SHOWING THE CONTRAST MAKES THE READER WORSE. Measured, and it changes how
+ * results should be presented.
+ *
+ * When candidates tie, ranking asks the reader to trust a number; the obvious
+ * better answer is to show them side by side with the difference made
+ * explicit -- what they SHARE (why both matched, and why that cannot separate
+ * them) and what is UNIQUE to each. The line-spectrum ranking already computes
+ * exactly this and discards it, so surfacing it is nearly free.
+ *
+ * Tested by giving a reader the same query and the same two findings, with
+ * and without the contrast on the page:
+ *
+ *   query + both findings                 6/9
+ *   query + both findings + the contrast  3/9
+ *
+ * It halves the reader's accuracy. The mechanism is visible in the data: the
+ * gold finding's unique matched terms number zero or one in most of these
+ * pairs, so the contrast truthfully reports that the RIGHT answer has nothing
+ * distinctive -- and a reader who believes it is pushed away.
+ *
+ * The lesson generalises past this feature. Lexical difference is not what
+ * separates these findings; today established that across eighteen attempts.
+ * Putting it prominently on the page does not merely fail to help, it ANCHORS
+ * the reader on the least informative signal available and overrides a
+ * semantic judgement that was doing better unaided.
+ *
+ * Which is why the caveats this file emits say "matched only on ordinary
+ * words, not on anything distinctive" -- a statement about RELIABILITY -- and
+ * never list the terms as though they were evidence to reason from. That was
+ * a design instinct before this measurement; it is a measured decision now.
+ *
+ * n=9, so the size of the effect is uncertain. The direction is not, and the
+ * mechanism explains it.
+ */
+
+/*
  * GIT AS A RETRIEVAL SIGNAL: null here, and the reason is specific.
  *
  * A commit is linked to the findings whose files it touched, so a commit
