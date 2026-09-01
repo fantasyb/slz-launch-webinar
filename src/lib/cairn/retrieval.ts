@@ -1959,7 +1959,27 @@ function linkSiblings(hits: Hit[]): Hit[] {
  *   query + both findings                 6/9
  *   query + both findings + the contrast  3/9
  *
- * It halves the reader's accuracy. The mechanism is visible in the data: the
+ * CORRECTED BY A RERUN, and the correction matters more than the result. A
+ * second pass, with a third arm added, gave:
+ *
+ *   plain     6/10      contrast  5/10      context  5/10
+ *
+ * Same direction, nothing like the magnitude. "Halves the reader's accuracy"
+ * was a claim about a three-case difference at n=9, where the standard error
+ * is about 0.15 -- it was noise, stated as a finding, and committed. The
+ * honest reading is that NONE of these presentations can be distinguished at
+ * this sample size, and that augmenting the page has not been shown to help.
+ *
+ * The third arm was the more promising idea and also failed to separate: a
+ * unified profile of everything known about each candidate that is not its
+ * text -- decayed confidence, whether its precondition holds on this machine,
+ * how many distinct attesters confirmed it and when, measured confusions, how
+ * often models get it wrong. Salesforce's Data 360 grounds agents that way,
+ * with verified facts rather than a similarity score, and the analogy is a
+ * good one; it simply cannot be evaluated on ten cases.
+ *
+ * The mechanism below is still worth recording as a hypothesis, because it is
+ * checkable when the corpus is large enough to check it: the
  * gold finding's unique matched terms number zero or one in most of these
  * pairs, so the contrast truthfully reports that the RIGHT answer has nothing
  * distinctive -- and a reader who believes it is pushed away.
@@ -1975,8 +1995,10 @@ function linkSiblings(hits: Hit[]): Hit[] {
  * never list the terms as though they were evidence to reason from. That was
  * a design instinct before this measurement; it is a measured decision now.
  *
- * n=9, so the size of the effect is uncertain. The direction is not, and the
- * mechanism explains it.
+ * n=9 then n=10, and the two runs disagree by three cases. Nothing here is
+ * established. What IS established is the process failure: a single small
+ * run produced a clean story, the story was written up as measured, and only
+ * a rerun caught it. Rerun before recording, at these sizes.
  */
 
 /*
