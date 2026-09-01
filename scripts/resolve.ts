@@ -28,6 +28,32 @@
  *   FACETS     one trap, two symptoms worth stating separately. Link hard.
  *   DISTINCT   adjacent, genuinely different. Leave alone.
  *
+ * WHAT IT FOUND HERE, WHICH REFUTES THE HYPOTHESIS THAT PROMPTED IT
+ *
+ * 23 candidate pairs, including all three measured confusions, adjudicated
+ * with a bias toward DISTINCT:
+ *
+ *   0 duplicate, 1 facets, 22 distinct
+ *   merging the duplicates would move held-out P@1 0.864 -> 0.864
+ *
+ * So the sibling residual is NOT a duplicate-identity problem. That was the
+ * appealing explanation -- eighteen ranking experiments failed, and a customer
+ * data platform would have called those pairs duplicate records rather than a
+ * ranking failure -- and it is wrong. These findings really are distinct
+ * traps; they are simply hard to tell apart from a short query, which is the
+ * conclusion the four-walls comment in retrieval.ts already reached the long
+ * way around.
+ *
+ * The one FACETS pair is cairn-0007 and cairn-0012, on the reasoning that
+ * Playwright resolves browsers by pinned revision rather than by presence, so
+ * the launch-time check and the install are two symptoms of one mechanism.
+ * They are already linked -- measured confusion puts each in the other's
+ * disclosure -- so even that verdict asks for nothing new.
+ *
+ * The tool stays because the answer will change. A corpus with one contributor
+ * cannot have duplicate records; a corpus with fifty will, and by then the
+ * question is expensive to ask by hand.
+ *
  * NOTHING IS MUTATED. A merge rewrites a finding's body, which changes
  * findingBodyHash, which invalidates every observation signature on both
  * findings and every sealed forecast bound to them. That is a corpus surgery
