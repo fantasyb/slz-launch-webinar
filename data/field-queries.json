@@ -44,7 +44,18 @@
     "Each trial issued about ONE query, at the start, about the task in front of",
     "it. The unanswerable queries in the original set were mid-task asides — a",
     "timezone parse, a NaN comparator — and these agents raised none. Query volume",
-    "and query kind are properties of the task, not of the agent."
+    "and query kind are properties of the task, not of the agent.",
+    "",
+    "HARVEST 2026-09-01b added fifteen UNANSWERABLE queries, which is the half that",
+    "had never been tested on new ground. Four debugging tasks in domains probed",
+    "first and confirmed uncovered — money rounding, retry and backoff, a",
+    "daylight-saving boundary, CSV encoding — each with several sub-problems and a",
+    "planted bug, because an agent that has to form a theory asks asides and asides",
+    "are where unanswerable queries come from. It worked: these tasks produced two",
+    "and three queries per trial where the first harvest produced one, including",
+    "genuine mid-task asides about Retry-After parsing and byte order marks.",
+    "",
+    "None was built around anything in the corpus. Scored before being added here."
   ],
   "harvestedAt": "2026-09-01",
   "queries": [
@@ -221,6 +232,96 @@
       "gold": "cairn-0028",
       "task": "review-gate",
       "harvest": "2026-09-01"
+    },
+    {
+      "q": "invoice total rounding discrepancy with payment processor, per-line rounding to cents",
+      "gold": null,
+      "task": "invoice-rounding",
+      "harvest": "2026-09-01b"
+    },
+    {
+      "q": "invoice total rounding mismatch with payment processor, off by a cent",
+      "gold": null,
+      "task": "invoice-rounding",
+      "harvest": "2026-09-01b"
+    },
+    {
+      "q": "invoice total rounding mismatch with payment processor, cents rounding per line",
+      "gold": null,
+      "task": "invoice-rounding",
+      "harvest": "2026-09-01b"
+    },
+    {
+      "q": "rate limiting 429 retry backoff workers thundering herd",
+      "gold": null,
+      "task": "retry-waves",
+      "harvest": "2026-09-01b"
+    },
+    {
+      "q": "exponential backoff jitter synchronised retries waves of traffic",
+      "gold": null,
+      "task": "retry-waves",
+      "harvest": "2026-09-01b"
+    },
+    {
+      "q": "rate limiting 429 retry workers thundering herd",
+      "gold": null,
+      "task": "retry-waves",
+      "harvest": "2026-09-01b"
+    },
+    {
+      "q": "Retry-After header parsing seconds or HTTP date",
+      "gold": null,
+      "task": "retry-waves",
+      "harvest": "2026-09-01b"
+    },
+    {
+      "q": "rate limiting 429 retry many workers thundering herd",
+      "gold": null,
+      "task": "retry-waves",
+      "harvest": "2026-09-01b"
+    },
+    {
+      "q": "exponential backoff without jitter synchronized retries clients self-synchronise waves",
+      "gold": null,
+      "task": "retry-waves",
+      "harvest": "2026-09-01b"
+    },
+    {
+      "q": "weekly report Monday numbers disagree twice a year",
+      "gold": null,
+      "task": "dst-weeks",
+      "harvest": "2026-09-01b"
+    },
+    {
+      "q": "weekly report Monday numbers disagree twice a year, off by an hour",
+      "gold": null,
+      "task": "dst-weeks",
+      "harvest": "2026-09-01b"
+    },
+    {
+      "q": "CSV import first column strange name duplicate rows",
+      "gold": null,
+      "task": "csv-import",
+      "harvest": "2026-09-01b"
+    },
+    {
+      "q": "CSV import first column strange name",
+      "gold": null,
+      "task": "csv-import",
+      "harvest": "2026-09-01b"
+    },
+    {
+      "q": "UTF-8 BOM in CSV header corrupts first column key name",
+      "gold": null,
+      "task": "csv-import",
+      "harvest": "2026-09-01b"
+    },
+    {
+      "q": "UTF-8 BOM in CSV header leading ﻿ column name",
+      "gold": null,
+      "task": "csv-import",
+      "harvest": "2026-09-01b"
     }
   ],
   "selfReferential": [

@@ -232,9 +232,19 @@
       "fits. It is still ONE MODEL writing the queries, four tasks I chose, and every",
       "new query is answerable — silence was not tested on new ground at all, and it",
       "is the half that protects the reader. The next harvest should be built to",
-      "produce mid-task asides, which is where the unanswerable queries come from."
+      "produce mid-task asides, which is where the unanswerable queries come from.",
+      "",
+      "SILENCE RAISED 0.75 -> 0.90 after the negative half grew from 8 to 23 and",
+      "quiet reached 22/23 (0.957). The fifteen added queries came from four",
+      "debugging tasks in domains probed first and confirmed uncovered, built around",
+      "nothing in the corpus, scored before being recorded. Every one came back",
+      "quiet: 15 of 15, no confident answer to a question this corpus cannot answer.",
+      "",
+      "That is the half that protects the reader and it had only ever been measured",
+      "on eight queries from scenarios the retriever was tuned against. The one",
+      "remaining CLAIMS is the disputable half-life query, unchanged."
     ],
     "minP1": 0.9,
-    "minQuiet": 0.75
+    "minQuiet": 0.9
   }
 }

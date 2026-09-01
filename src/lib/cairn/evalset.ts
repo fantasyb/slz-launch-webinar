@@ -109,11 +109,21 @@ export function indexedText(f: Finding): string {
 
 /** Longest run of consecutive words from `q` appearing verbatim in `doc`. */
 export function longestVerbatimRun(q: string, doc: string): number {
+  /*
+   * BOTH SIDES LOWERCASED. The query was folded and the document was not, so
+   * every run broke at the first capitalised word: an eval query present in a
+   * document verbatim scored 5 instead of 10, under a limit of 7.
+   *
+   * This function is the leakage guard for the held-out split, for generated
+   * expansions, and for the retrieval ledger. It was under-detecting
+   * contamination in all three, silently and in the direction that flatters.
+   */
+  const haystack = doc.toLowerCase();
   const w = q.toLowerCase().split(/\s+/).filter(Boolean);
   let best = 0;
   for (let i = 0; i < w.length; i++) {
     for (let n = best + 1; i + n <= w.length; n++) {
-      if (doc.includes(w.slice(i, i + n).join(' '))) best = n;
+      if (haystack.includes(w.slice(i, i + n).join(' '))) best = n;
       else break;
     }
   }
