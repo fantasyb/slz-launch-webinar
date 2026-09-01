@@ -50,6 +50,49 @@
  * They are already linked -- measured confusion puts each in the other's
  * disclosure -- so even that verdict asks for nothing new.
  *
+ * SIMULATED AT THE SCALE WHERE THE PROBLEM EXISTS
+ *
+ * A single-contributor corpus cannot contain duplicate records, so "0
+ * duplicate" measured nothing about the tool. Nine independent write-ups of
+ * four traps were generated -- a different engineer hitting the same failure
+ * and recording it in their own words -- and injected in memory.
+ *
+ *   candidate generator recall     9/9, with 31 false candidates alongside
+ *   measured confusion recall      0/9
+ *   term overlap with the original 32% median (organic pairs top out at 27%)
+ *   held-out P@1 with 9 injected   0.864 -> 0.848
+ *
+ * Three things follow. Lexical overlap FINDS independently-written duplicates
+ * reliably, and they sit above anything the real corpus produces, so the
+ * candidate rule generalises. Measured confusion does NOT find them, because
+ * it probes with mechanism/appliesTo and a freshly submitted finding often has
+ * neither -- so admission control must key on similarity, not on confusion.
+ *
+ * And the retrieval degradation number is not to be trusted: the synthetic
+ * write-ups carry no evidence, mechanism, appliesTo or expansions, so they are
+ * far thinner than a real finding and never once outranked their original. A
+ * genuine duplicate arrives with its own evidence and competes properly. The
+ * simulation understates the harm and is only trustworthy about detection.
+ *
+ * WHY THE SHAPE OF THE PROBLEM ARGUES FOR ADMISSION CONTROL
+ *
+ * Traps are power-law distributed -- nearly everyone hits the sandbox proxy,
+ * almost nobody hits the rare one. Modelling that: records grow linearly with
+ * contributors and confusable PAIRS grow with the square, because most growth
+ * is more people hitting the same popular traps. At a thousand contributors,
+ * ten thousand records cover roughly two hundred real traps and produce
+ * millions of sibling pairs.
+ *
+ * Which is why the useful version of this is not periodic cleanup over every
+ * pair, but a check at WRITE time: is this one we already have? That is one
+ * record against the corpus rather than N-squared against itself, it prevents
+ * the problem instead of mopping it up, and a DUPLICATE verdict should add an
+ * observation to the existing finding rather than a record -- turning fifty
+ * thin write-ups into one finding with fifty attesters, which is exactly what
+ * `confidence`, `scope: universal` and the two-environment lint rule already
+ * reward. Nothing is signed at submission, so the merge cost that makes
+ * retroactive merging expensive does not apply there.
+ *
  * The tool stays because the answer will change. A corpus with one contributor
  * cannot have duplicate records; a corpus with fifty will, and by then the
  * question is expensive to ask by hand.
