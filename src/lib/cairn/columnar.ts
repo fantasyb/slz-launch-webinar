@@ -28,6 +28,7 @@
  *   int32     postDoc, postTerm, postTf              (typed-token postings)
  *   int32     bmDoc, bmTerm, bmTf                    (plain-token postings)
  *   int32     strongDoc, strongTerm                  (strong-field membership)
+ *   int32     weakDoc, weakTerm                      (weak-field-only membership)
  *   utf8      term dictionary, newline-joined
  *
  * Float64 blocks lead because they need 8-byte alignment and everything after
@@ -65,6 +66,16 @@ export interface ColumnarIndex {
   strongDoc: Int32Array;
   strongTerm: Int32Array;
   /**
+   * Terms that appear ONLY in a finding's mechanism/appliesTo prose.
+   *
+   * The mirror of the strong set. Those fields explain why a finding is true
+   * and where it applies; a term that turns up nowhere else in the finding is
+   * commentary about the subject rather than the subject, and is damped rather
+   * than dropped.
+   */
+  weakDoc: Int32Array;
+  weakTerm: Int32Array;
+  /**
    * Program name -> finding indices, flattened the same way.
    *
    * Derived by tokenising each finding's check command, title and subject,
@@ -85,6 +96,7 @@ interface Header {
   nPost: number;
   nBm: number;
   nStrong: number;
+  nWeak: number;
   nCmd: number;
   nTerms: number;
   nCommands: number;
@@ -93,7 +105,7 @@ interface Header {
 }
 
 /** Bump when the layout changes; a stale layout must not be reinterpreted. */
-const FORMAT_VERSION = 1;
+const FORMAT_VERSION = 2;
 
 const align = (n: number, to: number) => (n % to === 0 ? 0 : to - (n % to));
 
@@ -106,6 +118,7 @@ export function serialize(ix: Omit<ColumnarIndex, 'builtAt'> & { builtAt?: numbe
     nPost: ix.postDoc.length,
     nBm: ix.bmDoc.length,
     nStrong: ix.strongDoc.length,
+    nWeak: ix.weakDoc.length,
     nCmd: ix.cmdDoc.length,
     nTerms: ix.terms.length,
     nCommands: ix.commands.length,
@@ -134,6 +147,8 @@ export function serialize(ix: Omit<ColumnarIndex, 'builtAt'> & { builtAt?: numbe
     view(ix.bmTf),
     view(ix.strongDoc),
     view(ix.strongTerm),
+    view(ix.weakDoc),
+    view(ix.weakTerm),
     view(ix.cmdOffset),
     view(ix.cmdDoc),
     Buffer.from(ix.terms.join('\n'), 'utf8'),
@@ -183,6 +198,8 @@ export function deserialize(buf: Buffer, expectFingerprint?: string): ColumnarIn
     const bmTf = i32(header.nBm);
     const strongDoc = i32(header.nStrong);
     const strongTerm = i32(header.nStrong);
+    const weakDoc = i32(header.nWeak);
+    const weakTerm = i32(header.nWeak);
     const cmdOffset = i32(header.nCommands + 1);
     const cmdDoc = i32(header.nCmd);
 
@@ -208,6 +225,8 @@ export function deserialize(buf: Buffer, expectFingerprint?: string): ColumnarIn
       bmTf,
       strongDoc,
       strongTerm,
+      weakDoc,
+      weakTerm,
       cmdOffset,
       cmdDoc,
       commands,

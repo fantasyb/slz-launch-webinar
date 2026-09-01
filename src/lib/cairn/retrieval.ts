@@ -229,8 +229,8 @@ export function tokenize(text: string): Token[] {
   return out;
 }
 
-/** The text of a finding that a query could reasonably match against. */
-function findingText(f: Finding): string {
+/** Everything except the explanatory fields; see weakText. */
+function coreText(f: Finding): string {
   return [
     f.title,
     f.claim,
@@ -246,6 +246,24 @@ function findingText(f: Finding): string {
     f.check.confirmedIf,
     f.check.refutedIf,
     ...f.tags,
+    /*
+     * `mechanism` and `appliesTo`, indexed as of the eval-set rebuild.
+     *
+     * These were held out for most of this project's life and were the only
+     * unbiased measurement it had. They are also the clearest explanatory
+     * prose a finding carries -- WHY it is true and WHERE it applies -- which
+     * is exactly what made them a good eval set and exactly what made
+     * withholding them from real searchers expensive. Held out, P@1 on queries
+     * that need them is 0.895; indexed, it is 1.000.
+     *
+     * The identical trade was made once before with `evidence`, and indexing
+     * that was the single largest accuracy gain ever measured here. The cost
+     * both times is the same and is not waved away: a field cannot be indexed
+     * and held out, so the eval set had to be REPLACED before this line could
+     * be written, not after. See src/lib/cairn/evalset.ts -- observation notes
+     * and prediction reasoning, filtered for verbatim quotation, 67 cases
+     * against the old split's 38.
+     */
     /*
      * Evidence — the captured output of the failure — is indexed, and leaving
      * it out was the single largest accuracy defect measured.
@@ -267,9 +285,33 @@ function findingText(f: Finding): string {
   ].join('\n');
 }
 
+/** The text of a finding that a query could reasonably match against. */
+function findingText(f: Finding): string {
+  return `${coreText(f)}\n${weakText(f)}`;
+}
+
 /** Fields whose match counts for more, because they are what the finding is about. */
 function strongText(f: Finding): string {
   return [f.title, f.subject.name, f.subject.ecosystem, ...f.tags].join('\n');
+}
+
+/**
+ * Fields whose match counts for LESS, because they are about the subject
+ * rather than being it.
+ *
+ * `mechanism` and `appliesTo` explain why a finding is true and where it
+ * holds. Indexing them is worth real accuracy (see findingText), and it also
+ * doubled the surface a short query can collide with: `proxies blocked`, two
+ * words, started returning a finding about signing oracles whose mechanism
+ * prose mentions a proxy in passing, over the finding that IS about the proxy.
+ *
+ * A term that appears in these fields AND anywhere else in the finding is not
+ * affected -- it is already attested by the finding proper. Only a term
+ * appearing NOWHERE ELSE is damped, which is exactly the incidental mention
+ * this is meant to catch.
+ */
+function weakText(f: Finding): string {
+  return [f.mechanism ?? '', f.appliesTo ?? ''].join('\n');
 }
 
 interface Indexed {
@@ -285,6 +327,8 @@ interface Indexed {
   /** token text -> occurrences, over the whole finding. */
   terms: Map<string, number>;
   strong: Set<string>;
+  /** Terms attested only by mechanism/appliesTo. See weakText. */
+  weak: Set<string>;
 }
 
 /**
@@ -358,6 +402,7 @@ export interface CorpusIndex {
    * strong in this document" -- is answered the same way either round.
    */
   strongByTerm: Map<string, Set<number>>;
+  weakByTerm: Map<string, Set<number>>;
   /**
    * Plain token -> the documents containing it, with frequency. The BM25 arm's
    * postings, for the same reason the typed arm has them: scoring every
@@ -487,6 +532,8 @@ export function indexIdentity(findings: Finding[]): string {
     // The functions that decide what text is indexed and how it is split.
     .update(findingText.toString())
     .update(strongText.toString())
+    .update(weakText.toString())
+    .update(coreText.toString())
     .update(tokenize.toString())
     .update(String(NOISE_FLOOR))
     .update(String(GENERATION_SPREAD))
@@ -512,6 +559,8 @@ interface CachedDoc {
   surprise: number | null;
   terms: Array<[string, number]>;
   strong: string[];
+  /** Terms attested only by mechanism/appliesTo; optional for older entries. */
+  weak?: string[];
   /** Plain-token frequencies and length, so the BM25 arm is cached too. */
   bm25: { tf: Array<[string, number]>; length: number };
 }
@@ -610,6 +659,7 @@ export function buildIndex(findings: Finding[]): CorpusIndex {
         surprise: hit.surprise,
         terms: new Map(hit.terms),
         strong: new Set(hit.strong),
+        weak: new Set(hit.weak ?? []),
       };
     }
 
@@ -619,12 +669,19 @@ export function buildIndex(findings: Finding[]): CorpusIndex {
       terms.set(t.text, (terms.get(t.text) ?? 0) + 1);
     }
     const strong = new Set(tokenize(strongText(f)).map((t) => t.text));
+    // Weak means "attested ONLY by the explanatory prose". A term the finding
+    // proper also uses is not incidental and is left alone.
+    const core = new Set(tokenize(coreText(f)).map((t) => t.text));
+    const weak = new Set(
+      tokenize(weakText(f)).map((t) => t.text).filter((t) => !core.has(t)),
+    );
     const bm25 = bm25Doc(f);
     const entry: CachedDoc = {
       confidence: confidence(f, at),
       surprise: surprise(f),
       terms: [...terms],
       strong: [...strong],
+      weak: [...weak],
       bm25: { tf: [...bm25.tf], length: bm25.length },
     };
     store.entries[key] = entry;
@@ -638,6 +695,7 @@ export function buildIndex(findings: Finding[]): CorpusIndex {
       surprise: entry.surprise,
       terms,
       strong,
+      weak,
     };
   });
 
@@ -660,6 +718,15 @@ export function buildIndex(findings: Finding[]): CorpusIndex {
       const set = strongByTerm.get(t);
       if (set) set.add(i);
       else strongByTerm.set(t, new Set([i]));
+    }
+  });
+
+  const weakByTerm = new Map<string, Set<number>>();
+  docs.forEach((d, i) => {
+    for (const t of d.weak) {
+      const set = weakByTerm.get(t);
+      if (set) set.add(i);
+      else weakByTerm.set(t, new Set([i]));
     }
   });
 
@@ -693,7 +760,7 @@ export function buildIndex(findings: Finding[]): CorpusIndex {
 
   const index: CorpusIndex = {
     docs, df, n: docs.length, builtAt: Date.now(), bm25Df, avgdl, avgTypedLen,
-    byCommand, strongByTerm,
+    byCommand, strongByTerm, weakByTerm,
     ...flatten(postings, bm25Postings),
   };
   writeColumnar(COLUMNAR_FILE, toColumnar(index, fingerprint));
@@ -1146,8 +1213,12 @@ export function retrieve(
       const norm = 1 - LENGTH_B + (LENGTH_B * doclen) / index.avgTypedLen;
       const saturation = ((tf * (LENGTH_K1 + 1)) / (tf + LENGTH_K1 * norm)) || 0;
       const strong = index.strongByTerm.get(tok.text)?.has(doc) ?? false;
-      const contribution =
-        information * tok.weight * saturation * (strong ? STRONG_FIELD_BOOST : 1);
+      // Three tiers, not two: what the finding IS, what it says, and what it
+      // says ABOUT itself. A term attested only by the explanatory prose is
+      // evidence, but weaker evidence than the finding's own account.
+      const weakOnly = !strong && (index.weakByTerm.get(tok.text)?.has(doc) ?? false);
+      const tier = strong ? STRONG_FIELD_BOOST : weakOnly ? WEAK_FIELD_DAMP : 1;
+      const contribution = information * tok.weight * saturation * tier;
       const slot = acc.get(doc);
       if (!slot) {
         if (!generative) continue;
@@ -2058,6 +2129,18 @@ const RRF_K = 60;
 const STRONG_FIELD_BOOST = 2.5;
 
 /**
+ * How much less a term counts when the explanatory prose is its only source.
+ *
+ * Indexing mechanism/appliesTo is worth real accuracy and it also doubled the
+ * surface a short query can collide with. `proxies blocked` -- two words --
+ * began returning a finding about signing oracles whose mechanism prose
+ * mentions a proxy in passing, ahead of the finding that IS about the proxy.
+ * Damping rather than excluding, because the mention is still evidence; it is
+ * just weaker than the finding's own account of itself.
+ */
+const WEAK_FIELD_DAMP = 0.5;
+
+/**
  * How much the BM25 ordering counts against the typed ordering.
  *
  * Equal weight was measured first and it was a trade, not a win: prose P@1
@@ -2317,6 +2400,7 @@ export function rankerSignature(): string {
     MIN_QUERY_EXPLAINED,
     MIN_TERM_INFORMATION,
     STRONG_FIELD_BOOST,
+    WEAK_FIELD_DAMP,
     Number(process.env.CAIRN_LINE_WEIGHT ?? LINE_WEIGHT),
     COMMON_RATE,
     CONTEST_WINDOW,
@@ -2420,6 +2504,7 @@ function toColumnar(index: CorpusIndex, fingerprint: string) {
   const pDoc: number[] = [], pTerm: number[] = [], pTf: number[] = [];
   const bDoc: number[] = [], bTerm: number[] = [], bTf: number[] = [];
   const strongDoc: number[] = [], strongTerm: number[] = [];
+  const weakDoc: number[] = [], weakTerm: number[] = [];
   const confidence = new Float64Array(index.docs.length);
   const surprise = new Float64Array(index.docs.length);
   const docLength = new Int32Array(index.docs.length);
@@ -2451,6 +2536,24 @@ function toColumnar(index: CorpusIndex, fingerprint: string) {
   for (const [term, docs] of index.strongByTerm) {
     const id = idOf(term);
     for (const d of docs) { strongDoc.push(d); strongTerm.push(id); }
+  }
+  /*
+   * Its own loop, deliberately.
+   *
+   * This was nested inside the strong loop above, which silently wrote almost
+   * nothing: a weak term is BY DEFINITION one that appears only in the
+   * explanatory prose, so it is precisely the term that is not in
+   * `strongByTerm`, and iterating the strong map to find weak entries visits
+   * the one collection guaranteed not to contain them. The index was correct
+   * when built and lost its weak tier on every reload after -- first run
+   * 0.836 held-out with machine 8/8, every run after 0.851 with machine 7/8.
+   *
+   * cairn-0028's shape once more: a loop whose input selector cannot return
+   * what it is looking for does not fail, it finds nothing.
+   */
+  for (const [term, docs] of index.weakByTerm) {
+    const id = idOf(term);
+    for (const d of docs) { weakDoc.push(d); weakTerm.push(id); }
   }
 
   const nTerms = termIds.size;
@@ -2488,6 +2591,8 @@ function toColumnar(index: CorpusIndex, fingerprint: string) {
     bmTf: bmPacked.postTf,
     strongDoc: Int32Array.from(strongDoc),
     strongTerm: Int32Array.from(strongTerm),
+    weakDoc: Int32Array.from(weakDoc),
+    weakTerm: Int32Array.from(weakTerm),
     cmdOffset: cmdPacked.offset,
     cmdDoc: cmdPacked.postDoc,
     commands: [...cmdIds.keys()],
@@ -2519,6 +2624,7 @@ function fromColumnar(c: ColumnarIndex, findings: Finding[]): CorpusIndex {
     surprise: Number.isNaN(c.surprise[i]) ? null : c.surprise[i],
     terms: new Map<string, number>(),
     strong: new Set<string>(),
+    weak: new Set<string>(),
   }));
 
   /*
@@ -2552,6 +2658,14 @@ function fromColumnar(c: ColumnarIndex, findings: Finding[]): CorpusIndex {
     else strongByTerm.set(term, new Set([c.strongDoc[k]]));
   }
 
+
+  const weakByTerm = new Map<string, Set<number>>();
+  for (let k = 0; k < c.weakDoc.length; k++) {
+    const term = c.terms[c.weakTerm[k]];
+    const set = weakByTerm.get(term);
+    if (set) set.add(c.weakDoc[k]);
+    else weakByTerm.set(term, new Set([c.weakDoc[k]]));
+  }
   const byCommand = new Map<string, Set<string>>();
   c.commands.forEach((cmd, ci) => {
     const set = new Set<string>();
@@ -2579,6 +2693,7 @@ function fromColumnar(c: ColumnarIndex, findings: Finding[]): CorpusIndex {
     avgTypedLen: sumLen / Math.max(1, docs.length),
     byCommand,
     strongByTerm,
+    weakByTerm,
     termId,
     termOffset: c.postOffset,
     postDoc: c.postDoc,

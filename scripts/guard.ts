@@ -68,7 +68,9 @@ async function main() {
   ]);
 
   // --- held-out retrieval accuracy ---
-  const heldOut = evalOut.match(/TOTAL\s+\d+\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)/);
+  // The named line, not the first TOTAL row: see the note in eval.ts. Reading
+  // a report's layout is how a gate ends up measuring the wrong section.
+  const heldOut = evalOut.match(/HELDOUT n=\d+ p1=([\d.]+) p5=([\d.]+) mrr=([\d.]+)/);
   if (!heldOut) {
     failures.push('could not parse cairn:eval output — the guard is blind, which is a failure');
   } else {

@@ -26,6 +26,7 @@
  */
 import { loadCorpus } from '../src/lib/cairn/load';
 import { retrieve, tokenize } from '../src/lib/cairn/retrieval';
+import { heldOutCases } from '../src/lib/cairn/evalset';
 import type { Finding } from '../src/lib/cairn/schema';
 
 const all = loadCorpus();
@@ -35,6 +36,9 @@ function docText(f: Finding): string {
   return [
     f.title, f.claim, f.subject.name, f.subject.ecosystem, f.expectation, f.reality,
     f.workaround ?? '', f.check.command, f.check.confirmedIf, f.check.refutedIf,
+    // Indexed as of the eval-set rebuild; the baseline must see what we see or
+    // it is not a comparison.
+    f.mechanism ?? '', f.appliesTo ?? '',
     ...f.tags,
     ...(f.evidence ?? []).flatMap((e) => [e.command ?? '', e.output ?? '']),
   ].join('\n');
@@ -93,14 +97,8 @@ const arms: Array<[string, (q: string) => string[]]> = [
   ['cairn', (q) => retrieve(q, all).map((h) => h.finding.id)],
 ];
 
-// ---------- held-out accuracy: mechanism and appliesTo, never indexed -------
-interface Case { q: string; gold: string }
-const heldOut: Case[] = [];
-for (const f of all) {
-  if (f.status === 'retired') continue;
-  if (f.mechanism && f.mechanism.length > 40) heldOut.push({ q: f.mechanism.slice(0, 240), gold: f.id });
-  if (f.appliesTo && f.appliesTo.length > 30) heldOut.push({ q: f.appliesTo.slice(0, 240), gold: f.id });
-}
+// ---------- held-out accuracy: observation notes + prediction reasoning ----
+const heldOut = heldOutCases(all);
 
 console.log('\nBASELINE COMPARISON — same corpus, same evaluations');
 console.log('='.repeat(64));

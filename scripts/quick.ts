@@ -36,21 +36,17 @@
  */
 import { loadCorpus } from '../src/lib/cairn/load';
 import { retrieve } from '../src/lib/cairn/retrieval';
+import { heldOutCases, inSampleCases, type EvalCase } from '../src/lib/cairn/evalset';
 
 const all = loadCorpus();
 const argv = process.argv.slice(2);
 const foldArg = argv.indexOf('--folds');
 const folds = foldArg >= 0 ? Number(argv[foldArg + 1]) : 0;
 
-interface Case { q: string; gold: string }
-const cases: Case[] = [];
-for (const f of all) {
-  if (f.status === 'retired') continue;
-  if (f.mechanism && f.mechanism.length > 40) cases.push({ q: f.mechanism.slice(0, 240), gold: f.id });
-  if (f.appliesTo && f.appliesTo.length > 30) cases.push({ q: f.appliesTo.slice(0, 240), gold: f.id });
-}
+const cases = heldOutCases(all);
+const inSample = inSampleCases(all);
 
-function score(subset: Case[]) {
+function score(subset: EvalCase[]) {
   let p1 = 0, p5 = 0, rr = 0, delivered = 0;
   const misses: string[] = [];
   for (const c of subset) {
@@ -95,10 +91,15 @@ for (let i = 0; i < 200; i++) retrieve(machine[i % machine.length][0], all);
 const ms = Number(process.hrtime.bigint() - t) / 1e6 / 200;
 
 const a = score(cases);
+const tripwire = score(inSample);
 console.log(
-  `prose P@1 ${a.p1.toFixed(3)}  P@5 ${a.p5.toFixed(3)}  MRR ${a.mrr.toFixed(3)}  ` +
+  `held-out P@1 ${a.p1.toFixed(3)}  P@5 ${a.p5.toFixed(3)}  MRR ${a.mrr.toFixed(3)}  ` +
   `delivery ${a.delivery.toFixed(3)}  |  machine ${m}/${machine.length}  ` +
   `silent ${u}/${unknown.length}  |  ${ms.toFixed(3)}ms`,
+);
+console.log(
+  `  n=${a.n} held out (observation notes + prediction reasoning, quotation-filtered).  ` +
+  `in-sample tripwire ${tripwire.p1.toFixed(3)} over ${tripwire.n} — measures nothing, catches a broken index.`,
 );
 if (a.misses.length) console.log(`  misses: ${a.misses.join(' ')}`);
 

@@ -3,28 +3,30 @@
  *
  *   npm run cairn:eval
  *
- * Retrieval quality is the kind of thing that is easy to believe you have
- * improved and hard to know you have. Every anecdote in this file's history
- * was a query somebody had already tuned against, which measures memory rather
- * than accuracy. So accuracy is measured the way the corpus measures its own
- * claims: against data the thing being tested has not seen.
+ * Retrieval quality is easy to believe you have improved and hard to know you
+ * have. Every anecdote in this file's history was a query somebody had already
+ * tuned against, which measures memory rather than accuracy. So accuracy is
+ * measured the way the corpus measures its own claims: against data the thing
+ * being tested has not seen.
  *
- * THE HELD-OUT SPLIT
- * ------------------
- * `mechanism` and `appliesTo` are deliberately NOT indexed by retrieval.ts.
- * They are prose the author wrote explaining why a finding is true and where
- * it applies, they are never part of the searchable text, and they exist here
- * as a permanent evaluation set. Indexing them would raise these numbers and
- * destroy the only unbiased measurement in the project.
+ * THE HELD-OUT SPLIT, AND THE FACT THAT IT CHANGED
+ * ------------------------------------------------
+ * It used to be `mechanism` and `appliesTo` — author prose explaining why a
+ * finding is true, deliberately unindexed. Those are INDEXED now, and the
+ * split is observation notes and prediction reasoning instead: text written
+ * ABOUT a finding by people who ran its check or forecast its outcome, which
+ * is closer to a real query than author prose ever was. The full reasoning,
+ * including the quotation filter that keeps a note from scoring against text
+ * it is copying, is in src/lib/cairn/evalset.ts.
  *
- * `evidence` used to be held out too, and evaluating against it is what
- * revealed that not indexing it was the single largest accuracy defect: P@1
- * was 0.548, and every total miss was raw output with no prose in it —
- * `/dev/vda 252G 8.1G 29G 22% /` — which no weighting on the prose fields
- * could ever have reached. It is indexed now, so queries drawn from it are
- * reported separately and clearly marked: they measure nothing, because the
- * retriever has seen that exact text. They are kept only as a regression
- * tripwire.
+ * NUMBERS FROM BEFORE 2026-09-01 ARE NOT COMPARABLE TO NUMBERS AFTER IT. The
+ * same retriever scores 0.895 on the old split and 0.836 on the new one. The
+ * new split is harder and more honest: 67 cases instead of 38, and every one
+ * of them is somebody describing an encounter in their own words.
+ *
+ * The former split is still reported, clearly marked in-sample, scoring 1.000.
+ * That number measures nothing — it is text the retriever has read. It is kept
+ * for the same reason `evidence` is: a sharp drop there means indexing broke.
  *
  * WHAT THE NUMBERS MEAN
  *   P@1  the right finding was first. What an agent taking one answer gets.
@@ -33,12 +35,15 @@
  *
  * READ THIS BEFORE TUNING AGAINST IT
  * ----------------------------------
- * There are 39 cases. That is few enough that repeated tuning against them
- * fits the ranker to this set rather than to retrieval, and the number stops
- * meaning anything without ever looking like it stopped meaning anything.
+ * 67 cases is few enough that repeated tuning fits the ranker to this set
+ * rather than to retrieval, and the number stops meaning anything without ever
+ * looking like it stopped meaning anything. `npm run cairn:quick -- --folds 5`
+ * exists to catch exactly that: a real gain moves every fold, a fitted one
+ * moves the fold holding the cases it was built from.
  *
- * Attempts already spent against this split, so the next person can count
- * honestly rather than starting from zero:
+ * Attempts already spent against the OLD split, so the next person can count
+ * honestly rather than starting from zero. These are kept because the failures
+ * are still informative, not because the numbers carry over:
  *
  *   1. index `evidence`            0.650 -> (evidence left the held-out set)
  *   2. bigram / phrase matching    0.692 -> 0.641, reverted
@@ -47,34 +52,14 @@
  *   5. fuse BM25's ordering        0.763 -> 0.789
  *   6. fuse query coverage         0.789 -> 0.868, MRR 0.882 -> 0.928
  *   7. fuse strong-field coverage  0.868 -> 0.711, reverted
- *   8. subtract English globally    0.868 -> 0.816, reverted alone
- *   9. + subtract the shared        0.868 -> 0.895, MRR 0.928 -> 0.941
- *
- * A large improvement from here should be validated on cases this file has
- * never seen — observation notes and prediction reasoning are both unindexed
- * and could supply them — rather than on another pass over these.
- *
- * P@1 is also pessimistic in a specific, known way, and after (6) it is the
- * ONLY thing left in the residual. Every one of the four remaining failures is
- * the gold finding sitting behind a SIBLING about the same trap -- cairn-0016,
- * -0018 and -0019 among the findings about what an assertion does and does not
- * bind, cairn-0030 behind cairn-0001 on egress interception.
- *
- * That is also what (9) is about, and why it is the last big move available
- * here. Siblings are lost on the terms the two findings SHARE, which say what
- * the query is about and nothing about which finding is meant, so the contest
- * falls to whatever filler differs. Subtracting the shared terms from the
- * ordering fixed one of the five and is the reason P@1 now leads BM25 rather
- * than matching it. The four that remain share almost everything.
- *
- * An agent handed the sibling has not been misled, and DELIVERY -- which
- * counts the sibling naming the gold -- is 1.000. Driving P@1 to 1.000 on this
- * split would mean separating findings that the held-out prose itself does not
- * separate, which is fitting the ranker to the labels rather than to
- * retrieval. P@5 and delivery are the better guides from here.
+ *   8. subtract English globally   0.868 -> 0.816, reverted alone
+ *   9. + subtract the shared       0.868 -> 0.895, MRR 0.928 -> 0.941
+ *  10. nine further attempts at the sibling residual, all reverted; see the
+ *      block comment in retrieval.ts for why the family is closed.
  */
 import { loadCorpus } from '../src/lib/cairn/load';
 import { retrieve } from '../src/lib/cairn/retrieval';
+import { heldOutCases, inSampleCases } from '../src/lib/cairn/evalset';
 
 const all = loadCorpus();
 
@@ -95,22 +80,10 @@ interface Case {
  * is exactly where it belongs and exactly what the metric should not call an
  * error.
  */
-const cases: Case[] = [];
-for (const f of all) {
-  if (f.status === 'retired') continue;
-  const mech = f.mechanism;
-  if (mech && mech.length > 40)
-    cases.push({ q: mech.slice(0, 240), gold: f.id, source: 'mechanism', heldOut: true });
-  if (f.appliesTo && f.appliesTo.length > 30)
-    cases.push({ q: f.appliesTo.slice(0, 240), gold: f.id, source: 'appliesTo', heldOut: true });
-  for (const e of f.evidence ?? []) {
-    const out = (e.output ?? '').trim();
-    if (out.length >= 12)
-      cases.push({ q: out.slice(0, 240), gold: f.id, source: 'evidence.output', heldOut: false });
-    if (e.command && e.command.length > 4)
-      cases.push({ q: e.command, gold: f.id, source: 'evidence.command', heldOut: false });
-  }
-}
+const cases: Case[] = [
+  ...heldOutCases(all).map((c) => ({ ...c, source: `held-out.${c.source}` })),
+  ...inSampleCases(all).map((c) => ({ ...c, source: 'in-sample.mechanism+appliesTo' })),
+];
 
 interface Bucket {
   n: number;
@@ -148,16 +121,12 @@ for (const c of cases) {
  */
 function delivery(): { n: number; first: number; delivered: number } {
   let n = 0, first = 0, delivered = 0;
-  for (const f of all) {
-    if (f.status === 'retired') continue;
-    for (const txt of [f.mechanism, f.appliesTo]) {
-      if (!txt || txt.length < 40) continue;
-      n++;
-      const hits = retrieve(txt.slice(0, 240), all);
-      if (hits[0]?.finding.id === f.id) { first++; delivered++; continue; }
-      const top = hits[0];
-      if (top && (top.siblings.includes(f.id) || top.confusedWith.includes(f.id))) delivered++;
-    }
+  for (const c of heldOutCases(all)) {
+    n++;
+    const hits = retrieve(c.q, all);
+    if (hits[0]?.finding.id === c.gold) { first++; delivered++; continue; }
+    const top = hits[0];
+    if (top && (top.siblings.includes(c.gold) || top.confusedWith.includes(c.gold))) delivered++;
   }
   return { n, first, delivered };
 }
@@ -187,10 +156,14 @@ function report(title: string, sources: string[]) {
   return { N, P1, P5, RR };
 }
 
-const held = report('HELD OUT — the honest number (mechanism and appliesTo are not indexed)',
-  ['mechanism', 'appliesTo']);
-report('IN-SAMPLE — measures nothing, kept as a regression tripwire',
-  ['evidence.output', 'evidence.command']);
+const held = report(
+  'HELD OUT — the honest number (observation notes and prediction reasoning are not indexed)',
+  ['held-out.observation', 'held-out.prediction'],
+);
+report(
+  'IN-SAMPLE — measures nothing, kept as a regression tripwire',
+  ['in-sample.mechanism+appliesTo'],
+);
 
 const misses = [...buckets].flatMap(([, b]) => b.misses).filter((m) => m.heldOut);
 if (misses.length) {
@@ -198,6 +171,23 @@ if (misses.length) {
   for (const m of misses.slice(0, 8)) {
     console.log(`  ${m.gold} [${m.source}] ${JSON.stringify(m.q.slice(0, 72))}`);
   }
+}
+
+/*
+ * A machine-readable line, emitted unconditionally and named.
+ *
+ * The guard used to scrape the first `TOTAL` row out of this report. That
+ * happened to be the held-out one, and would have kept happening right up
+ * until somebody reordered the sections, at which point the guard would have
+ * read the IN-SAMPLE 1.000 and passed everything forever. The doctor grew an
+ * unconditional SUMMARY line for the same reason; a gate that parses a human
+ * report is a gate that depends on the report's layout.
+ */
+if (held) {
+  console.log(
+    `\nHELDOUT n=${held.N} p1=${(held.P1 / held.N).toFixed(4)} ` +
+      `p5=${(held.P5 / held.N).toFixed(4)} mrr=${(held.RR / held.N).toFixed(4)}`,
+  );
 }
 
 const d = delivery();

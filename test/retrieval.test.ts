@@ -402,3 +402,50 @@ test('the index identity covers the indexer, not only the corpus', () => {
     'and the corpus fingerprint must still track the corpus on its own',
   );
 });
+
+/*
+ * The index's own structures must survive the round trip, not just a handful
+ * of queries.
+ *
+ * There WAS a test that a reloaded index ranks identically to a fresh one, and
+ * it passed for hours while the weak-field tier was being dropped on every
+ * reload. It compared six queries; whether a defect shows up that way depends
+ * on whether one of those six happens to turn on the broken structure, and on
+ * whether a parallel test file rewrote the shared cache first. Both are
+ * accidents of the test rather than properties of the code.
+ *
+ * The symptom was as bad as it gets: the FIRST run after a clean cache scored
+ * held-out 0.836 with machine stderr 8/8, and every run after it scored 0.851
+ * with 7/8. A number that changes depending on whether a cache file exists is
+ * not a measurement, and two scripts reporting different values for the same
+ * split is how it was noticed at all.
+ */
+test('every index structure survives the columnar round trip', () => {
+  const fresh = buildIndex(corpus);
+  // A distinct array with identical contents misses the identity-keyed memo
+  // and is forced through the on-disk path.
+  const reloaded = buildIndex([...corpus]);
+  for (const key of ['strongByTerm', 'weakByTerm', 'byCommand'] as const) {
+    assert.equal(
+      reloaded[key].size,
+      fresh[key].size,
+      `${key} lost entries on reload: ${fresh[key].size} -> ${reloaded[key].size}`,
+    );
+  }
+  assert.equal(reloaded.docs.length, fresh.docs.length, 'documents lost on reload');
+  assert.equal(reloaded.termId.size, fresh.termId.size, 'terms lost on reload');
+  assert.ok(fresh.weakByTerm.size > 0, 'the weak tier must be populated at all');
+});
+
+/*
+ * The explanatory fields are indexed but must not outrank the finding itself.
+ *
+ * `proxies blocked` is two words. When mechanism/appliesTo were first indexed
+ * it returned a finding about signing oracles whose mechanism prose mentions a
+ * proxy in passing, ahead of the finding that IS about the proxy. More indexed
+ * text means more surface for a short query to collide with, and the answer is
+ * a third tier rather than fewer fields.
+ */
+test('a passing mention in explanatory prose does not outrank the subject', () => {
+  assert.equal(retrieve('proxies blocked', corpus)[0]?.finding.id, 'cairn-0001');
+});
