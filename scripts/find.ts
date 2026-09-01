@@ -16,6 +16,7 @@ import { preflight } from '../src/lib/cairn/retrieval';
 import { observe } from '../src/lib/cairn/observe';
 import { corpusPresent, homePath } from '../src/lib/cairn/home';
 import { stalenessNote } from '../src/lib/cairn/freshness';
+import { ExecutionRefused } from '../src/lib/cairn/policy';
 
 const argv = process.argv.slice(2);
 const confirm = argv.includes('--confirm');
@@ -190,10 +191,19 @@ async function main() {
   const local = hits.filter((h) => !(h.finding as SearchableFinding).upstreamName);
   const skipped = hits.length - local.length;
   console.log('\nrunning checks (local corpus only)...\n');
-  const results = await confirmCandidates(
-    local.map((h) => h.finding),
-    { max: 3 },
-  );
+  let results;
+  try {
+    results = await confirmCandidates(
+      local.map((h) => h.finding),
+      { max: 3 },
+    );
+  } catch (e) {
+    if (e instanceof ExecutionRefused) {
+      console.error(`\n${e.message}\n`);
+      process.exit(3);
+    }
+    throw e;
+  }
   if (skipped > 0) {
     console.log(
       `  ${skipped} upstream finding(s) not run — a check from another corpus is not executed here.`,

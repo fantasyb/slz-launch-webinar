@@ -30,6 +30,7 @@ import { loadCorpus } from '../src/lib/cairn/load';
 import { loadSearchable } from '../src/lib/cairn/federation';
 import { checkFlaws } from '../src/lib/cairn/checkquality';
 import { gate } from '../src/lib/cairn/gate';
+import { executionPolicy } from '../src/lib/cairn/policy';
 import { homePath, cairnHome, installRoot } from '../src/lib/cairn/home';
 import { spawnSync } from 'child_process';
 
@@ -159,7 +160,7 @@ async function main() {
    * manual ones, and a corpus that only accepts what it can prove is a corpus
    * that loses the hardest findings.
    */
-  if (finding.check.absentWhen && !finding.check.manual) {
+  if (finding.check.absentWhen && !finding.check.manual && !executionPolicy().strict) {
     const verdict = await gate(finding);
     if (verdict.verdict === 'same-either-way') {
       console.error('\n  refused — the check does not distinguish the trap from its absence:\n');

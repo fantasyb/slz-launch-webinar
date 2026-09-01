@@ -45,6 +45,7 @@ import path from 'path';
 import crypto from 'crypto';
 import type { Finding } from './schema';
 import { loadCorpus } from './load';
+import { assertExecutionAllowed } from './policy';
 import { matchEnvironment } from './precondition';
 
 export type Fired = 'fires' | 'does-not-fire' | 'inconclusive' | 'skipped';
@@ -88,6 +89,14 @@ export interface ConfirmOptions {
  * be the same object the local loader produced from the local directory.
  */
 export function assertLocalCorpus(findings: Finding[]): void {
+  /*
+   * Policy first, provenance second. Both refuse, but they refuse different
+   * things: this one asks whether this corpus runs checks AT ALL, and the
+   * loop below asks whether these particular findings came off local disk.
+   * A reviewer disabling execution must not have to trust that every call
+   * site remembered to ask.
+   */
+  assertExecutionAllowed('checks from the corpus');
   const local = new Set(loadCorpus());
   for (const f of findings) {
     if (!local.has(f)) {

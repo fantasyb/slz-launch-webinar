@@ -13,12 +13,21 @@ import { loadCorpus } from '../src/lib/cairn/load';
 import { assertLocalCorpus } from '../src/lib/cairn/confirm';
 import { gate } from '../src/lib/cairn/gate';
 import { checkFlaws } from '../src/lib/cairn/checkquality';
+import { ExecutionRefused } from '../src/lib/cairn/policy';
 
 const only = process.argv.slice(2).filter((a) => !a.startsWith('-'));
 const corpus = loadCorpus().filter((f) => f.status !== 'retired');
 const targets = only.length ? corpus.filter((f) => only.includes(f.id)) : corpus;
 /* Same rule as confirm: a check from an upstream corpus is never executed. */
-assertLocalCorpus(targets);
+try {
+  assertLocalCorpus(targets);
+} catch (e) {
+  if (e instanceof ExecutionRefused) {
+    console.error(`\n${e.message}\n`);
+    process.exit(3);
+  }
+  throw e;
+}
 
 const tally: Record<string, number> = {};
 

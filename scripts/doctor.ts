@@ -32,6 +32,7 @@ import { loadCorpus } from '../src/lib/cairn/load';
 import { confirmCandidates, type Confirmation } from '../src/lib/cairn/confirm';
 import { matchEnvironment } from '../src/lib/cairn/precondition';
 import { standing, confidence } from '../src/lib/cairn/decay';
+import { ExecutionRefused } from '../src/lib/cairn/policy';
 
 const all = loadCorpus().filter((f) => f.status === 'active');
 const ignorePreconditions = process.argv.includes('--all');
@@ -49,11 +50,26 @@ console.log(
 
 async function main() {
   const started = Date.now();
-  const results: Confirmation[] = await confirmCandidates(runnable, {
-    max: runnable.length,
-    timeoutMs: 30_000,
-    concurrency: 6,
-  });
+  /*
+   * A policy refusal is an answer, not a crash. Dumping a stack trace at
+   * somebody whose organisation has deliberately not enabled execution tells
+   * them the tool is broken, when in fact it is doing exactly what they
+   * asked.
+   */
+  let results: Confirmation[];
+  try {
+    results = await confirmCandidates(runnable, {
+      max: runnable.length,
+      timeoutMs: 30_000,
+      concurrency: 6,
+    });
+  } catch (e) {
+    if (e instanceof ExecutionRefused) {
+      console.error(`\n${e.message}\n`);
+      process.exit(3);
+    }
+    throw e;
+  }
   const elapsed = Date.now() - started;
 
   const byId = new Map(all.map((f) => [f.id, f]));
