@@ -50,7 +50,8 @@
     "cairn:case-guard": "tsx scripts/case-guard.ts",
     "cairn:grader-selftest": "tsx scripts/grader-selftest.ts",
     "cairn:brief": "tsx scripts/brief.ts",
-    "cairn:field-eval": "tsx scripts/field-eval.ts"
+    "cairn:field-eval": "tsx scripts/field-eval.ts",
+    "cairn:harvest": "tsx scripts/harvest.ts"
   },
   "dependencies": {
     "clsx": "^2.1.1",
