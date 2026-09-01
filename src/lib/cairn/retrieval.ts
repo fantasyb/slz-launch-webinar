@@ -312,7 +312,43 @@ function strongText(f: Finding): string {
  * this is meant to catch.
  */
 function weakText(f: Finding): string {
-  return [f.mechanism ?? '', f.appliesTo ?? '', ...(EXPANSIONS[f.id] ?? [])].join('\n');
+  return [
+    f.mechanism ?? '',
+    f.appliesTo ?? '',
+    ...(EXPANSIONS_IN_TEXT ? (EXPANSIONS[f.id] ?? []) : []),
+  ].join('\n');
+}
+
+/*
+ * Whether the generated questions ALSO go into the text bag.
+ *
+ * They used to have to: it was the only way they could influence anything.
+ * Since the `question` ranker exists they are scored directly, at the best
+ * single match, and leaving them in the bag as well counts them twice — once
+ * as evidence and once as description. That inflates `explained`, which is
+ * what the strong/weak label is computed from, so a finding starts looking
+ * confident about queries it merely shares vocabulary with.
+ */
+const EXPANSIONS_IN_TEXT = process.env.CAIRN_EXPANSIONS_IN_TEXT !== '0';
+
+/*
+ * Tokens a finding ATTESTS — everything somebody actually wrote about it, with
+ * the generated questions excluded.
+ *
+ * The expansions are a model's guess at how a searcher might phrase things.
+ * That is worth ranking on, and it is not worth being confident about: a hit
+ * whose every matched term comes only from guessed phrasing has matched a
+ * hypothesis, not a record. Memoised per finding; the index is rebuilt when the
+ * corpus changes, and this rides along with it.
+ */
+const attestedMemo = new WeakMap<Finding, Set<string>>();
+function attestedTokens(f: Finding): Set<string> {
+  let set = attestedMemo.get(f);
+  if (!set) {
+    set = new Set(plainTokens([strongText(f), coreText(f), f.mechanism ?? '', f.appliesTo ?? ''].join('\n')));
+    attestedMemo.set(f, set);
+  }
+  return set;
 }
 
 /**
@@ -335,13 +371,21 @@ function weakText(f: Finding): string {
  * empty map and retrieval exactly as it was -- this is an enhancement to the
  * index, never a requirement of it.
  */
+/*
+ * Cap on generated questions per finding, for measuring how much surface is
+ * worth having. In the index signature: it changes what is indexed.
+ */
+const EXPANSION_CAP = Number(process.env.CAIRN_EXPANSION_CAP ?? 0) || Infinity;
+
 function loadExpansions(): Record<string, string[]> {
   try {
     const file = path.join(process.cwd(), 'data', 'expansions.json');
     const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as {
       expansions?: Record<string, string[]>;
     };
-    return raw.expansions ?? {};
+    const capped: Record<string, string[]> = {};
+    for (const [k, v] of Object.entries(raw.expansions ?? {})) capped[k] = v.slice(0, EXPANSION_CAP);
+    return capped;
   } catch {
     return {};
   }
@@ -630,6 +674,17 @@ export function indexerSignature(): string {
       .update(tokenize.toString())
       .update(String(NOISE_FLOOR))
       .update(String(GENERATION_SPREAD))
+      /*
+       * The VALUE, not just the function that reads it. weakText.toString() is
+       * already hashed above and mentions this flag by name, which is exactly
+       * enough to look correct and not enough to work: the source text is
+       * identical whichever way the flag is set, so a cached index built one
+       * way was silently reused for the other and the measurement showed no
+       * difference at all. Fifth instance in this file of a cache keyed on the
+       * data but not on the code path that produced it.
+       */
+      .update(String(EXPANSIONS_IN_TEXT))
+      .update(String(EXPANSION_CAP))
       .digest('hex')
       .slice(0, 12);
   }
@@ -1503,8 +1558,27 @@ export function retrieve(
    */
   const queryInformation = new Map<string, number>();
   for (const tok of tokens) {
-    // Deliberately the UNDAMPED idf, floored -- see the note at its second use
-    // below: damping is a scoring decision, not a claim about what was typed.
+    /*
+     * The UNDAMPED idf, floored. Damping is a scoring decision, not a claim
+     * about what was typed -- and that reasoning survived a direct attempt to
+     * overturn it.
+     *
+     * The attempt was well motivated. Taken apart on the field queries, `url`
+     * and `failing` each carried 20% of "a nightly job fetching an external URL
+     * started failing, cannot reach the host". They are rare across thirty-nine
+     * documents and therefore score as distinctive; they are in fact what
+     * anyone says about any broken fetch, and the proxy finding held only 53%
+     * of that query while losing to one that owns those two words. Weighing
+     * each term by its measured English/dev-docs rate before taking the
+     * fraction should have fixed exactly that.
+     *
+     * It did not. Field P@1 did not move at all -- 6/11, reachability still 2/5
+     * -- and held-out P@1 fell 0.877 to 0.849, P@5 0.945 to 0.918, delivery
+     * 0.890 to 0.863. The task-context words are not what is holding the
+     * ranking back; the finding simply has no surface that a person describing
+     * their situation would land on. That is a corpus problem, not a weighting
+     * one, and it is fixed on the other side -- in what the expansions cover.
+     */
     queryInformation.set(
       tok.text,
       Math.max(idf(index.df.get(tok.text) ?? 0, index.n), MIN_TERM_INFORMATION),
@@ -1517,6 +1591,27 @@ export function retrieve(
     // `matched` is deduplicated per term by the accumulator, so this sums
     // distinct terms without materialising a Set per hit.
     for (const m of h.matched) sum += queryInformation.get(m.term) ?? 0;
+    return sum / totalQueryInformation;
+  };
+
+  /*
+   * The same fraction, counting only terms the finding ATTESTS — its own
+   * account of itself, not the questions generated to guess how somebody might
+   * ask about it.
+   *
+   * Ranking may use every signal available. A claim of CONFIDENCE may not.
+   * Raising the generated set from eight questions to fourteen pushed coverage
+   * on questions this corpus cannot answer to 45-78%, which silenced the "only
+   * accounts for N% of your query" caveat, which dropped those hits to a single
+   * caveat, which the strong/weak rule reads as confident. Silence on the
+   * unanswerable fell from 4/8 to 1/8 without a single ranking change — the
+   * corpus had not learned anything, it had just stopped hedging.
+   */
+  const attestedExplains = (h: Hit) => {
+    if (totalQueryInformation <= 0) return 0;
+    const attested = attestedTokens(h.finding);
+    let sum = 0;
+    for (const m of h.matched) if (attested.has(m.term)) sum += queryInformation.get(m.term) ?? 0;
     return sum / totalQueryInformation;
   };
 
@@ -1855,7 +1950,9 @@ export function retrieve(
        */
       const ANNOTATE_WINDOW = 25;
       for (const h of relevant.slice(0, ANNOTATE_WINDOW)) {
-        h.explained = explains(h);
+        // Reported and gated on the attested fraction: what this finding's own
+        // words account for. Ranking above still uses the full one.
+        h.explained = attestedExplains(h);
         const typed = h.matched.filter((m) => m.kind !== 'word');
         const caveats: string[] = [];
         // A hit resting only on ordinary English is the shape every false
@@ -1884,6 +1981,7 @@ export function retrieve(
         if (typed.length === 0) {
           caveats.push('no error code, path or flag in common');
         }
+
         if (concerned) {
           if (concerned.has(h.finding.id)) {
             // Wipes the text-derived doubts: the query named the program this

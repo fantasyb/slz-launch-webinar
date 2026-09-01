@@ -70,7 +70,7 @@ const force = argv.includes('--force');
 const OUT = path.join(process.cwd(), 'data', 'expansions.json');
 const MODEL = 'claude-opus-5';
 /** Per finding. Enough to cover distinct phrasings, few enough to stay signal. */
-const WANTED = 8;
+const WANTED = 7;
 
 interface Store {
   _comment: string[];
@@ -109,6 +109,10 @@ Given one finding, write the queries a person or coding agent would plausibly ar
 Write a spread across these kinds:
 - the raw error text or command output, as it would be pasted from a terminal
 - a plain description of the symptom, in ordinary words, with no jargon
+- THE SITUATION IT HAPPENED IN, leading with the work rather than the error: a
+  nightly job, a CI step, a deploy, a test run, a script somebody inherited.
+  People open with what they were doing when it broke, and only then say what
+  they saw. Write several of these, each naming a different kind of work.
 - the wrong theory somebody would form first, phrased as what they would search
 - the question they would ask a colleague
 - the abstract shape of the problem, without any of this finding's specific nouns

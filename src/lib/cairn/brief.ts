@@ -48,30 +48,29 @@ export interface BriefOptions {
 }
 
 /*
- * MIN_EXPLAINED was measured, not chosen. Two populations: the 69 held-out
- * cases, each genuinely about one finding, and 15 ordinary engineering tasks
- * in domains this corpus says nothing about -- a CSS overlap, an i18n pass, a
- * nullable column, an Outlook email template.
+ * MIN_EXPLAINED was measured, and re-measured when the quantity changed under
+ * it. `explained` now counts only the terms a finding ATTESTS -- its own
+ * account of itself, not the questions generated to guess how somebody might
+ * ask -- so the old 0.5, calibrated against the undiscounted fraction, silenced
+ * the brief entirely on a task it had been getting right.
  *
- *   gate                      gold delivered   false alarms
- *   strong                        86%              27%
- *   strong + explained >= 40%     74%              20%
- *   strong + explained >= 50%     59%               7%
- *   strong + no caveats           12%               0%
+ * Re-swept against the same two populations: the held-out cases, each genuinely
+ * about one finding, and 15 ordinary tasks in domains this corpus says nothing
+ * about.
  *
- * A tool call is opt-in and a bad result costs the agent that asked. Injection
- * is paid for by every task, so the right column is the expensive one: at 27%
- * roughly one ordinary task in four gets an unrelated trap pushed at it, and a
- * channel that wrong that often teaches its reader to skip it. The false
- * alarms are lexical accidents rather than near misses -- the headless-Chromium
- * localhost timeout firing on "debounce the search box" -- so they do not
- * degrade gracefully either.
+ *   gate    gold delivered   false alarms
+ *   0.15         81%              7%
+ *   0.20         79%              7%
+ *   0.25         78%              7%
+ *   0.50         34%              7%
  *
- * 50% keeps most of the delivery for a quarter of the noise. The floor is soft:
- * 15 negatives puts wide error bars on that 7%, and they are 15 tasks written
- * by the same author as this file.
+ * The false-alarm rate is now FLAT across the range, which is the real result:
+ * noise is being held out by the strong/weak label rather than by this
+ * threshold, because attested coverage feeds the caveat that decides it. Under
+ * the old measure the same 7% cost 59% of delivery. So this is set for recall
+ * with one step of margin, and it is no longer the part carrying precision.
  */
-const MIN_EXPLAINED = 0.5;
+const MIN_EXPLAINED = 0.2;
 const DEFAULTS = { limit: 3, maxChars: 2400 } as const;
 
 /** One line per finding, in the order the retriever ranked them. */
