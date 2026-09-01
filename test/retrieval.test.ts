@@ -11,7 +11,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { loadCorpus } from '../src/lib/cairn/load';
 import {
-  retrieve, tokenize, buildIndex, associationStatus, rankerSignature,
+  retrieve, tokenize, buildIndex, associationStatus, rankerSignature, type FusionTrace,
   corpusFingerprint, indexIdentity, docTerms, preflight, programsIn,
 } from '../src/lib/cairn/retrieval';
 import { assertLocalCorpus, runCommand } from '../src/lib/cairn/confirm';
@@ -596,4 +596,66 @@ test('programsIn sees through wrappers and pipelines', () => {
   const q = programsIn('cat x | rg "interface{}" | wc -l');
   assert.ok(q.includes('rg'), `missed a program mid-pipeline: ${q.join(' ')}`);
   assert.deepEqual(programsIn(''), []);
+});
+
+/*
+ * FUSION MUST RESPECT A MAJORITY, NOT AVERAGE IT AWAY
+ *
+ * With RRF's original k=60 applied to a corpus of forty, 1/(60+1) against
+ * 1/(60+2) is a 1.6% gap: every ranker contributes almost the same amount
+ * however decisively it ranks. On the proxy 403 stderr, cairn-0001 won three
+ * of the four rankers and lost the fusion by 0.16%, which handed an agent the
+ * DNS-bypass finding ahead of the one saying a 403 on CONNECT is a policy
+ * denial rather than an outage.
+ *
+ * The ordering assertion alone would not have caught it: it passed on a 2%
+ * margin for months and flipped when two unrelated findings were added, neither
+ * sharing any vocabulary with a proxy. So this pins the PROPERTY rather than
+ * the outcome.
+ */
+test('a candidate winning most rankers ranks first', () => {
+  const all = loadCorpus();
+  const trace: FusionTrace = {};
+  const hits = retrieve('curl: (56) CONNECT tunnel failed, response 403\n', all, { trace });
+
+  const rankers = trace.rankers ?? [];
+  assert.ok(rankers.length >= 4, 'expected the trace to report every ranker');
+
+  const won = (id: string) =>
+    rankers.filter((r) => r.order.length > 0 && r.order[0] === id).length;
+  const winner = hits[0].finding.id;
+  const rival = hits[1]?.finding.id;
+
+  assert.equal(winner, 'cairn-0001', 'the policy-denial finding must lead its own stderr');
+  assert.ok(
+    won('cairn-0001') > won(rival ?? ''),
+    `cairn-0001 leads ${won('cairn-0001')} of ${rankers.length} rankers but ranked below ${rival}` +
+      ' — fusion is averaging away a majority, which is what k=60 did on a corpus this size',
+  );
+});
+
+/*
+ * The same failure as pure arithmetic, so it is caught even if the corpus
+ * changes out from under the test above.
+ *
+ * These are the real traced positions and weights from the proxy query.
+ * cairn-0001 leads three of four rankers; cairn-0029 leads only `explains`,
+ * which carries the joint-highest weight. A first draft of this test used
+ * made-up positions and passed at every k, asserting nothing — the failure
+ * needs the actual weights to reproduce, which is the point worth pinning.
+ */
+test('one heavily-weighted dissent cannot outvote three agreeing rankers', () => {
+  const k = Number(process.env.CAIRN_RRF_K ?? 2);
+  const rrf = (weight: number, pos: number) => weight / (k + pos + 1);
+
+  //                     typed        bm25          explains      spectrum
+  const first = rrf(1, 0) + rrf(0.3, 0) + rrf(1, 2) + rrf(0.4, 0);
+  const rival = rrf(1, 1) + rrf(0.3, 1) + rrf(1, 0) + rrf(0.4, 1);
+
+  assert.ok(
+    first > rival,
+    `k=${k}: a candidate leading three of four rankers scores ${first.toFixed(5)} against ` +
+      `${rival.toFixed(5)} for one leading a single ranker. RRF's k must stay small relative ` +
+      'to the list length being fused, or position stops carrying information.',
+  );
 });

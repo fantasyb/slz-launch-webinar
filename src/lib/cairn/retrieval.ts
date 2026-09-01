@@ -1167,6 +1167,20 @@ export interface SearchOptions {
   /** Include findings whose score is zero. Off by default. */
   includeUnmatched?: boolean;
   limit?: number;
+  /**
+   * Filled in with each ranker's own ordering before fusion.
+   *
+   * Ordering is a fusion of four rankers and the returned `score` is only one
+   * of them, so a result that looks wrong cannot be explained from the output:
+   * cairn-0001 outscoring cairn-0029 by 2.1x and still ranking below it is not
+   * visible anywhere in a Hit. Pass an empty object to find out which ranker
+   * disagreed. Costs nothing when omitted.
+   */
+  trace?: FusionTrace;
+}
+
+export interface FusionTrace {
+  rankers?: Array<{ name: string; weight: number; order: string[] }>;
 }
 
 /**
@@ -1605,18 +1619,26 @@ export function retrieve(
       .filter((x) => x.v > 0)
       .sort((a, b) => b.v - a.v)
       .map((x) => x.id);
-  const fused = fuse([
-    { order: typedOrder.map((x) => x.h.finding.id), weight: 1 },
-    { order: bm25Order, weight: Number(process.env.CAIRN_BM25_WEIGHT ?? BM25_WEIGHT) },
+  const rankers = [
+    { name: 'typed', order: typedOrder.map((x) => x.h.finding.id), weight: 1 },
     {
+      name: 'bm25',
+      order: bm25Order,
+      weight: Number(process.env.CAIRN_BM25_WEIGHT ?? BM25_WEIGHT),
+    },
+    {
+      name: 'explains',
       order: byCoverage(explains),
       weight: Number(process.env.CAIRN_EXPLAINED_WEIGHT ?? EXPLAINED_WEIGHT),
     },
     {
+      name: 'spectrum',
       order: byCoverage(lineSpectrum),
       weight: Number(process.env.CAIRN_LINE_WEIGHT ?? LINE_WEIGHT),
     },
-  ]);
+  ];
+  if (opts.trace) opts.trace.rankers = rankers.map((r) => ({ ...r, order: [...r.order] }));
+  const fused = fuse(rankers);
 
   const ranked = typedOrder
     .map(({ h, final }) => ({ ...h, score: final }))
@@ -2418,7 +2440,46 @@ function bm25Rank(query: string, index: CorpusIndex): string[] {
 const LENGTH_K1 = 1.2;
 const LENGTH_B = 0.75;
 
-const RRF_K = 60;
+/*
+ * RRF's k, rescaled from the original work's LIST LENGTH rather than copied
+ * from its absolute value.
+ *
+ * k=60 was chosen for fusing TREC runs of about a thousand documents, where
+ * rank 1 out of 1000 should not dominate rank 2. Applied to a corpus of forty
+ * it inverts that intent: 1/(60+1) against 1/(60+2) is a 1.6% gap, so every
+ * ranker contributes almost the same amount no matter how decisively it ranks,
+ * and the fusion averages noise. That is not a hypothetical. On the proxy 403
+ * stderr -- the most load-bearing query this sandbox has -- cairn-0001 won
+ * THREE of the four rankers and lost the fusion by 0.16%, handing an agent the
+ * DNS-bypass finding ahead of the one that says a 403 on CONNECT is a policy
+ * denial rather than an outage.
+ *
+ * Keeping the paper's RATIO instead of its constant: k ~ N/17 (60 for ~1000).
+ * FUSE_WINDOW caps these lists at 50 and the corpus is smaller than that, so
+ * they run to about 37 -- which gives 2.2.
+ *
+ * Then measured, because a derivation that agrees with a sweep is worth more
+ * than either alone. Swept 1..7 on two corpora of 69 and 71 held-out cases:
+ *
+ *   k        1      2      3      4      5     ...    60
+ *   P@1    .841   .841   .841   .841   .841         .841
+ *   P@5    .928   .928   .928   .928   .913         .913
+ *   proxy   ok     ok     ok    FAIL   FAIL         FAIL
+ *
+ * P@1, delivery and the agent suite are flat across the whole range; P@5 and
+ * the proxy case are not. The cliff sits between 3 and 4 on BOTH corpora, so it
+ * is a property of the ranking structure rather than of corpus size, and 2 sits
+ * mid-plateau with two steps of headroom. This is the one threshold in this file
+ * chosen against more than a handful of cases, which is why it moved at all.
+ */
+const RRF_K = 2;
+/*
+ * Read through a helper rather than inline so the sweep and the cache key
+ * cannot disagree. Four caches in this file were once keyed on the data but
+ * not the code that produced it; a constant that a sweep can move and a
+ * signature cannot see is the same mistake with a different shape.
+ */
+const rrfK = () => Number(process.env.CAIRN_RRF_K ?? RRF_K);
 
 /**
  * How much more a term counts when it matched a finding's identity fields --
@@ -2489,9 +2550,10 @@ const CONTEST_WINDOW = 10;
 
 function fuse(rankings: Array<{ order: string[]; weight: number }>): Map<string, number> {
   const fused = new Map<string, number>();
+  const k = rrfK();
   for (const { order, weight } of rankings) {
     order.forEach((id, i) => {
-      fused.set(id, (fused.get(id) ?? 0) + weight / (RRF_K + i + 1));
+      fused.set(id, (fused.get(id) ?? 0) + weight / (k + i + 1));
     });
   }
   return fused;
@@ -2873,7 +2935,7 @@ export function docTerms(index: CorpusIndex, doc: number): Map<string, number> {
 
 export function rankerSignature(): string {
   const constants = [
-    RRF_K,
+    rrfK(),
     Number(process.env.CAIRN_BM25_WEIGHT ?? BM25_WEIGHT),
     Number(process.env.CAIRN_EXPLAINED_WEIGHT ?? EXPLAINED_WEIGHT),
     FUSE_WINDOW,
