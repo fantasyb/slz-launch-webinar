@@ -23,6 +23,10 @@ import { join } from 'path';
 import Anthropic from '@anthropic-ai/sdk';
 import { loadCorpus } from '../src/lib/cairn/load';
 import { retrieve } from '../src/lib/cairn/retrieval';
+import { SubmissionSchema, normalise } from '../src/lib/cairn/submission';
+import { FindingSchema } from '../src/lib/cairn/schema';
+import { checkFlaws } from '../src/lib/cairn/checkquality';
+import { gate } from '../src/lib/cairn/gate';
 
 /* In the repo, not a scratch directory: a harvest nobody else can run is a
  * number nobody else can dispute. */
@@ -142,6 +146,96 @@ const cairnTool = {
   input_schema: { type: 'object' as const, properties: { query: { type: 'string' } }, required: ['query'] },
 };
 
+const recordTool = {
+  name: 'cairn_record',
+  description:
+    'Record a trap you just hit, so the next agent does not lose the same time to it. Use it ' +
+    'AFTER you have solved something that surprised you — not for your own mistakes, and not ' +
+    'for errors you expected. You need six things: title; claim (one falsifiable sentence); ' +
+    'expectation (what a competent person would reasonably predict); reality (what actually ' +
+    'happens instead); evidence (the command you ran and what it printed); and check — a ' +
+    'command that EXITS NON-ZERO when this trap is absent, plus absentWhen, the command that ' +
+    'makes the trap stop happening. A check that exits zero either way records nothing.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      title: { type: 'string' },
+      claim: { type: 'string' },
+      expectation: { type: 'string' },
+      reality: { type: 'string' },
+      workaround: { type: 'string' },
+      evidence: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: { command: { type: 'string' }, output: { type: 'string' } },
+          required: ['command', 'output'],
+        },
+      },
+      check: {
+        type: 'object',
+        properties: {
+          command: { type: 'string' },
+          confirmedIf: { type: 'string' },
+          refutedIf: { type: 'string' },
+          absentWhen: { type: 'string' },
+        },
+        required: ['command', 'confirmedIf', 'refutedIf'],
+      },
+    },
+    required: ['title', 'claim', 'expectation', 'reality', 'evidence', 'check'],
+  },
+};
+
+/*
+ * What the agent tried to record, and whether it would have survived the gate.
+ *
+ * NOTHING IS WRITTEN. This measures supply, and a measurement that mutates the
+ * corpus it measures is worthless -- and these are trial agents on planted
+ * bugs, so their findings are about fixtures, not about the world. The
+ * submission is validated, scanned and gated exactly as `record` would, and
+ * the verdict is what gets counted.
+ */
+const RECORDS: Array<{
+  task: string;
+  trial: number;
+  title: string;
+  accepted: boolean;
+  reason: string;
+  gate: string;
+}> = [];
+
+async function runRecord(task: string, trial: number, raw: unknown): Promise<string> {
+  const parsed = SubmissionSchema.safeParse({ ...(raw as object), by: 'harvest-agent' });
+  if (!parsed.success) {
+    const why = parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ');
+    RECORDS.push({ task, trial, title: String((raw as { title?: string }).title ?? ''), accepted: false, reason: `schema: ${why}`, gate: 'n/a' });
+    return `rejected — ${why}`;
+  }
+  const title = parsed.data.title;
+  const flaws = checkFlaws({ ...parsed.data.check, manual: false });
+  if (flaws.length) {
+    RECORDS.push({ task, trial, title, accepted: false, reason: `static: ${flaws[0].rule}`, gate: 'static-flaw' });
+    return `rejected — ${flaws[0].detail}. Make the check exit non-zero when the trap is absent.`;
+  }
+  const draft = normalise(parsed.data, new Date(), 'cairn-9999').finding;
+  const checked = FindingSchema.safeParse(draft);
+  if (!checked.success) {
+    RECORDS.push({ task, trial, title, accepted: false, reason: 'normalisation', gate: 'n/a' });
+    return 'rejected — the finding did not validate.';
+  }
+  const g = await gate(checked.data);
+  RECORDS.push({
+    task, trial, title,
+    accepted: g.verdict === 'discriminates',
+    reason: g.verdict,
+    gate: g.verdict,
+  });
+  if (g.verdict === 'discriminates') return `recorded — ${g.detail}`;
+  if (g.verdict === 'same-either-way') return `rejected — ${g.detail}`;
+  return `recorded, ungated — ${g.detail}`;
+}
+
 /*
  * CWD IS NOT CONTAINMENT.
  *
@@ -197,6 +291,35 @@ function repoState(): string {
   }
 }
 
+/*
+ * The instruction, delivered the way CLAUDE.md is delivered.
+ *
+ * In a real session the paste-block from SETUP.md reaches the agent as system
+ * context, so that is how it arrives here. This is the variable under test:
+ * the forty findings in this corpus were written by an agent reading this
+ * instruction IN THE REPOSITORY THAT CONTAINS IT, about that repository, with
+ * its owner directing the session. Whether the same instruction produces a
+ * finding in a foreign project, on unrelated work, with nobody watching, has
+ * never been run. If it does not, the premise the whole design rests on is
+ * wrong rather than merely unmeasured.
+ */
+const SYSTEM = `## Cairn — recorded traps from this team
+
+A ledger of things that do not work. Use it without being asked.
+
+**Before building in unfamiliar territory, or when something fails in a way
+you did not expect**, search it with \`cairn_search\` — paste the actual error
+text, not a keyword. Silence means nothing is recorded about it; that is the
+common case, so proceed.
+
+**When you lose more than a few minutes to behaviour that contradicted a
+reasonable expectation, record it with \`cairn_record\`.** Do this once you
+have solved it, while you still remember what you expected. Not for your own
+mistakes, and not for errors you saw coming. Solving it is exactly when the
+knowledge is cheapest to write down and closest to being lost.
+
+Never put anything in a finding you would not publish.`;
+
 async function main() {
   const before = repoState();
   const client = new Anthropic();
@@ -212,10 +335,11 @@ async function main() {
       const queries: string[] = [];
       for (let turn = 0; turn < 12; turn++) {
         const res = await client.messages.create({
+          system: SYSTEM,
           model: 'claude-opus-5',
           max_tokens: 6000,
           thinking: { type: 'adaptive' },
-          tools: [bashTool, cairnTool],
+          tools: [bashTool, cairnTool, recordTool],
           messages,
         });
         if (res.stop_reason === 'refusal') break;
@@ -227,6 +351,12 @@ async function main() {
           const inp = u.input as { command?: string; query?: string };
           if (u.name === 'bash') {
             results.push({ type: 'tool_result', tool_use_id: u.id, content: runBash(inp.command ?? '', dir) });
+          } else if (u.name === 'cairn_record') {
+            results.push({
+              type: 'tool_result',
+              tool_use_id: u.id,
+              content: await runRecord(t.name, trial, u.input),
+            });
           } else {
             const q = (inp.query ?? '').trim();
             if (q) { queries.push(q); harvested.push({ task: t.name, about: t.about, trial, q }); }
@@ -240,6 +370,36 @@ async function main() {
       for (const q of queries) console.log(`      ${q.slice(0, 104)}`);
     }
   }
+  /*
+   * The number this run exists to produce.
+   *
+   * Every experiment before this one gave the agent `cairn_search` and
+   * nothing else, so the project measured whether agents READ the corpus and
+   * never once whether they write to it -- and then reasoned about supply
+   * from a corpus its own author had written. An agent that solves something
+   * surprising and does not reach for the tool is the falsification.
+   */
+  const unprompted = RECORDS.length;
+  const discriminating = RECORDS.filter((r) => r.gate === 'discriminates').length;
+  console.log(`\n${'='.repeat(66)}\nSUPPLY`);
+  console.log(`  records attempted        ${unprompted}`);
+  console.log(`  passed the check gate    ${discriminating}`);
+  for (const r of RECORDS) {
+    console.log(`    ${r.accepted ? 'PASS' : 'no  '}  ${r.gate.padEnd(16)} ${r.title.slice(0, 60)}`);
+    if (!r.accepted) console.log(`            ${r.reason.slice(0, 96)}`);
+  }
+  if (unprompted === 0) {
+    console.log(
+      '\n  Nobody recorded anything. Either nothing surprising happened, or the\n' +
+        '  instruction to record does not transfer outside the repository that\n' +
+        '  contains it. The transcripts say which.',
+    );
+  }
+  writeFileSync(
+    join(process.cwd(), 'data', 'harvest-records.json'),
+    `${JSON.stringify({ generatedAt: new Date().toISOString(), records: RECORDS }, null, 2)}\n`,
+  );
+
   const after = repoState();
   if (after !== before) {
     console.log('\n  !! THE REPOSITORY CHANGED DURING THIS RUN. A trial wrote outside its directory.');
