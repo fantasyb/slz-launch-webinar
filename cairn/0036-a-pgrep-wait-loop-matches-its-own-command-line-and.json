@@ -9,7 +9,7 @@
     "versions": "*"
   },
   "scope": "environment-specific",
-  "appliesTo": "Any `pgrep -f` or `pkill -f` invocation whose pattern is a literal substring of the command line issuing it — wait loops, cleanup steps, and process-liveness checks written inline rather than against a recorded PID.",
+  "appliesTo": "Any `pgrep -f` or `pkill -f` invocation whose pattern is a literal substring of the command line issuing it \u2014 wait loops, cleanup steps, and process-liveness checks written inline rather than against a recorded PID.",
   "tags": [
     "shell",
     "pgrep",
@@ -21,20 +21,20 @@
   ],
   "cost": "minutes",
   "expectation": "`pgrep -f foo` reports whether the job matching foo is alive, so `until ! pgrep -f foo; do sleep; done` returns once the job exits.",
-  "reality": "The waiting shell's own command line contains the pattern, so pgrep matches the waiter and reports a live process forever. Nothing errors and nothing hangs in a way a timeout will catch quickly: the loop keeps polling, the job it was watching finished long ago, and the only visible symptom is a long-running wait — exactly what a wait on a slow job looks like. `pkill -f` fails the same way in the other direction, killing the shell that issued it along with the target.",
+  "reality": "The waiting shell's own command line contains the pattern, so pgrep matches the waiter and reports a live process forever. Nothing errors and nothing hangs in a way a timeout will catch quickly: the loop keeps polling, the job it was watching finished long ago, and the only visible symptom is a long-running wait \u2014 exactly what a wait on a slow job looks like. `pkill -f` fails the same way in the other direction, killing the shell that issued it along with the target.",
   "mechanism": "`-f` matches against the full command line rather than the process name, and a shell running an inline loop has the entire loop, pattern included, in its own argv. Every poll therefore has at least one guaranteed match. The classic `ps | grep` version of this is well known and usually visible, because the grep appears in the output being read; here the output is discarded and only the exit status is consulted, so the extra match is never seen.",
-  "workaround": "Wait on a PID rather than a pattern: capture `$!` and use `wait`, or poll `kill -0 \"$pid\"`. Where a pattern is unavoidable, break the literal so it cannot match itself — `pgrep -f 'agent-trial[.]ts'` matches the target's `agent-trial.ts` while the waiter's own argv contains the brackets and does not match. Before trusting any such loop, run the pattern once by hand and count the matches: a wait that has never been observed returning is not known to return.",
+  "workaround": "Wait on a PID rather than a pattern: capture `$!` and use `wait`, or poll `kill -0 \"$pid\"`. Where a pattern is unavoidable, break the literal so it cannot match itself \u2014 `pgrep -f 'agent-trial[.]ts'` matches the target's `agent-trial.ts` while the waiter's own argv contains the brackets and does not match. Before trusting any such loop, run the pattern once by hand and count the matches: a wait that has never been observed returning is not known to return.",
   "evidence": [
     {
       "command": "until ! pgrep -f \"agent-trial.ts clock\" >/dev/null; do sleep 20; done",
       "output": "(never returns; the trial had already finished)",
-      "note": "Hit three times in one session. The first cost an entire background wait that outlived the job it watched; the third was a `pkill -f \"until ! pgrep\"` meant to clean up the second, which terminated the foreground shell that issued it — exit 144."
+      "note": "Hit three times in one session. The first cost an entire background wait that outlived the job it watched; the third was a `pkill -f \"until ! pgrep\"` meant to clean up the second, which terminated the foreground shell that issued it \u2014 exit 144."
     }
   ],
   "check": {
-    "command": "bash -c 'pgrep -f \"zzmarker-unlikely-string\" >/dev/null && echo matched-self || echo no-match'",
-    "confirmedIf": "it prints matched-self — the pattern is present only in the command line doing the matching",
-    "refutedIf": "it prints no-match, meaning pgrep excludes the calling process",
+    "command": "sh -c 'pgrep -f \"cairn-selfmatch-probe\" >/dev/null 2>&1' ; [ $? -eq 0 ]",
+    "confirmedIf": "exit 0 \u2014 pgrep matched a pattern that appears only in its own command line",
+    "refutedIf": "exit 1 \u2014 pgrep did not match itself",
     "manual": false
   },
   "provenance": "firsthand",

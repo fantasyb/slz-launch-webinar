@@ -29,26 +29,33 @@ try {
   throw e;
 }
 
-const tally: Record<string, number> = {};
+// tsx emits CJS for this script, where top-level await is unavailable. The
+// first version used a top-level for-await and could not run at all.
+async function main() {
+  const tally: Record<string, number> = {};
 
-for (const f of targets) {
-  const flaws = checkFlaws(f.check);
-  if (flaws.length) {
-    tally['static-flaw'] = (tally['static-flaw'] ?? 0) + 1;
-    if (only.length) console.log(`  ${f.id}  static-flaw — ${flaws[0].detail}`);
-    continue;
+  for (const f of targets) {
+    const flaws = checkFlaws(f.check);
+    if (flaws.length) {
+      tally['static-flaw'] = (tally['static-flaw'] ?? 0) + 1;
+      if (only.length) console.log(`  ${f.id}  static-flaw — ${flaws[0].detail}`);
+      continue;
+    }
+    const r = await gate(f);
+    tally[r.verdict] = (tally[r.verdict] ?? 0) + 1;
+    if (only.length || r.verdict === 'discriminates' || r.verdict === 'same-either-way') {
+      console.log(`  ${f.id}  ${r.verdict}\n      ${r.detail}`);
+    }
   }
-  const r = await gate(f);
-  tally[r.verdict] = (tally[r.verdict] ?? 0) + 1;
-  if (only.length || r.verdict === 'discriminates' || r.verdict === 'same-either-way') {
-    console.log(`  ${f.id}  ${r.verdict}\n      ${r.detail}`);
+
+  console.log(`\n${targets.length} finding(s)`);
+  for (const [k, v] of Object.entries(tally).sort((a, b) => b[1] - a[1])) {
+    console.log(`  ${String(v).padStart(3)}  ${k}`);
   }
+  console.log(
+    '\n`discriminates` is the only verdict that means the check is worth anything to doctor.\n',
+  );
+
 }
 
-console.log(`\n${targets.length} finding(s)`);
-for (const [k, v] of Object.entries(tally).sort((a, b) => b[1] - a[1])) {
-  console.log(`  ${String(v).padStart(3)}  ${k}`);
-}
-console.log(
-  '\n`discriminates` is the only verdict that means the check is worth anything to doctor.\n',
-);
+main();

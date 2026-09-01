@@ -33,6 +33,7 @@ import { confirmCandidates, type Confirmation } from '../src/lib/cairn/confirm';
 import { matchEnvironment } from '../src/lib/cairn/precondition';
 import { standing, confidence } from '../src/lib/cairn/decay';
 import { ExecutionRefused } from '../src/lib/cairn/policy';
+import { checkFlaws } from '../src/lib/cairn/checkquality';
 
 const all = loadCorpus().filter((f) => f.status === 'active');
 const ignorePreconditions = process.argv.includes('--all');
@@ -73,7 +74,22 @@ async function main() {
   const elapsed = Date.now() - started;
 
   const byId = new Map(all.map((f) => [f.id, f]));
-  const fires = results.filter((r) => r.fired === 'fires');
+  /*
+   * "Live" is only information when the check could have said otherwise.
+   *
+   * A check that exits zero regardless reports every finding as live wherever
+   * a shell exists, and this is the one place that costs something: the hook
+   * hands this straight to an agent before it starts, so noise here does not
+   * merely fail to help -- it teaches the reader to skip the channel. Four of
+   * nineteen runnable checks in this corpus discriminate, so unpartitioned
+   * output is mostly the shell reporting that it ran.
+   */
+  const decides = (id: string) => {
+    const f = byId.get(id);
+    return f ? checkFlaws(f.check).length === 0 : false;
+  };
+  const fires = results.filter((r) => r.fired === 'fires' && decides(r.id));
+  const unreliable = results.filter((r) => r.fired === 'fires' && !decides(r.id));
   const quiet = results.filter((r) => r.fired === 'does-not-fire');
   const unclear = results.filter((r) => r.fired === 'inconclusive');
 
@@ -87,6 +103,15 @@ async function main() {
   }
 
   if (quiet.length) {
+  if (unreliable.length) {
+    console.log('\nREPORTED LIVE BY A CHECK THAT CANNOT DECIDE');
+    console.log('  These exit zero whether or not the trap is present, so this says the');
+    console.log('  shell ran. Fix the check or mark it manual; see npm run cairn:gate.');
+    for (const r of unreliable) {
+      console.log(`  ${r.id}  ${byId.get(r.id)?.title.slice(0, 68) ?? ''}`);
+    }
+  }
+
     console.log('\nDID NOT REPRODUCE HERE');
     for (const r of quiet) console.log(`  ${r.id}  ${byId.get(r.id)!.title.slice(0, 66)}`);
   }
