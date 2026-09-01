@@ -84,6 +84,24 @@ error output, and error output carries hostnames, home paths and tokens.
 Sync at the start. Ask before building. Paste errors when stuck. Write a
 finding when it loses time. None of it needs you.
 
+## Checking it is working
+
+```bash
+cd ~/cairn && git pull && npm run cairn:status
+```
+
+Who has used it, how many queries, how often it answered confidently versus
+stayed quiet, and how many people have actually contributed an observation as
+opposed to consuming one.
+
+Read the quiet number carefully. It is not a failure rate: a corpus asked mostly
+about things it does not cover **should** be mostly quiet, and one that answers
+everything is worse than one that answers less.
+
+Nobody can see anybody else's machine. The only evidence that reaches you is
+what people push, so "nobody used it" and "nobody pushed their shard" look
+identical from here.
+
 ## What you will see
 
 New findings arriving as commits in `~/cairn` from whoever is testing, and
