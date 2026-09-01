@@ -491,7 +491,34 @@ const MAX_CACHE_ENTRIES = 50_000;
 /** Cache shape version. Bump when the cached fields change meaning. */
 const CACHE_SCHEMA = 3;
 
-const ENTRY_FILE = path.join(CACHE_DIR, `${ENTRY_FILE_NAME}-v${CACHE_SCHEMA}.json`);
+/**
+ * The per-finding entry cache, keyed on the code that produced it.
+ *
+ * This was `entries-v${CACHE_SCHEMA}.json` with CACHE_SCHEMA bumped by hand,
+ * and it is the third cache in this file to have had that bug -- the columnar
+ * index and the confusion pairs were both fixed before anyone noticed this one
+ * had it too. Adding a field to CachedDoc without bumping the constant leaves
+ * entries written by the old code silently accepted by the new, which is how
+ * the weak-field tier came back empty for any finding still in the cache.
+ *
+ * It surfaced as a FLAKY TEST, which is the expensive way to find it: the
+ * suite was green run alone and red two times in three when run beside the
+ * guard, because whichever process wrote the entry store first decided which
+ * shape the other read. A test that fails only under concurrency is the kind
+ * that gets dismissed as infrastructure.
+ *
+ * Lazy, because it depends on constants declared further down this file.
+ */
+let entryFileMemo: string | null = null;
+function entryFile(): string {
+  if (!entryFileMemo) {
+    entryFileMemo = path.join(
+      CACHE_DIR,
+      `${ENTRY_FILE_NAME}-v${CACHE_SCHEMA}-${indexerSignature()}.json`,
+    );
+  }
+  return entryFileMemo;
+}
 
 /** The assembled index, laid out flat. See columnar.ts for why. */
 const COLUMNAR_FILE = path.join(CACHE_DIR, `index-v${CACHE_SCHEMA}.bin`);
@@ -524,19 +551,39 @@ export function corpusFingerprint(findings: Finding[]): string {
  * cost of that is one rebuild. That is the correct direction to be wrong in:
  * a spurious rebuild is slow and right, a missed one is fast and wrong.
  */
+/**
+ * What the indexing CODE is, independent of any corpus.
+ *
+ * Every derived artefact in this file -- the entry cache, the columnar index,
+ * the measured confusions -- is a function of the corpus and of this. Naming
+ * it once means a cache cannot be keyed on only half of what produced it,
+ * which all three of them were at some point.
+ */
+let indexerMemo: string | null = null;
+export function indexerSignature(): string {
+  if (!indexerMemo) {
+    indexerMemo = crypto
+      .createHash('sha256')
+      .update(String(CACHE_SCHEMA))
+      // The functions that decide what text is indexed and how it is split.
+      .update(findingText.toString())
+      .update(strongText.toString())
+      .update(weakText.toString())
+      .update(coreText.toString())
+      .update(tokenize.toString())
+      .update(String(NOISE_FLOOR))
+      .update(String(GENERATION_SPREAD))
+      .digest('hex')
+      .slice(0, 12);
+  }
+  return indexerMemo;
+}
+
 export function indexIdentity(findings: Finding[]): string {
   return crypto
     .createHash('sha256')
     .update(corpusFingerprint(findings))
-    .update(String(CACHE_SCHEMA))
-    // The functions that decide what text is indexed and how it is split.
-    .update(findingText.toString())
-    .update(strongText.toString())
-    .update(weakText.toString())
-    .update(coreText.toString())
-    .update(tokenize.toString())
-    .update(String(NOISE_FLOOR))
-    .update(String(GENERATION_SPREAD))
+    .update(indexerSignature())
     .digest('hex');
 }
 
@@ -559,15 +606,15 @@ interface CachedDoc {
   surprise: number | null;
   terms: Array<[string, number]>;
   strong: string[];
-  /** Terms attested only by mechanism/appliesTo; optional for older entries. */
-  weak?: string[];
+  /** Terms attested only by mechanism/appliesTo. See weakText. */
+  weak: string[];
   /** Plain-token frequencies and length, so the BM25 arm is cached too. */
   bm25: { tf: Array<[string, number]>; length: number };
 }
 
 function readEntryStore(): { at: number; entries: Record<string, CachedDoc> } {
   try {
-    const raw = JSON.parse(fs.readFileSync(ENTRY_FILE, 'utf8')) as {
+    const raw = JSON.parse(fs.readFileSync(entryFile(), 'utf8')) as {
       at: number;
       entries: Record<string, CachedDoc>;
     };
@@ -595,9 +642,9 @@ function writeEntryStore(entries: Record<string, CachedDoc>): void {
       for (const k of keys) if (!keep.has(k)) delete entries[k];
       keys = Object.keys(entries);
     }
-    const tmp = `${ENTRY_FILE}.${process.pid}.tmp`;
+    const tmp = `${entryFile()}.${process.pid}.tmp`;
     fs.writeFileSync(tmp, JSON.stringify({ at: Date.now(), entries }));
-    fs.renameSync(tmp, ENTRY_FILE);
+    fs.renameSync(tmp, entryFile());
   } catch {
     /* read-only filesystem, or no space. Entries are recomputed next time. */
   }
@@ -659,7 +706,7 @@ export function buildIndex(findings: Finding[]): CorpusIndex {
         surprise: hit.surprise,
         terms: new Map(hit.terms),
         strong: new Set(hit.strong),
-        weak: new Set(hit.weak ?? []),
+        weak: new Set(hit.weak),
       };
     }
 

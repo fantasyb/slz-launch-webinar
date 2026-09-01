@@ -433,8 +433,24 @@ test('every index structure survives the columnar round trip', () => {
     );
   }
   assert.equal(reloaded.docs.length, fresh.docs.length, 'documents lost on reload');
-  assert.equal(reloaded.termId.size, fresh.termId.size, 'terms lost on reload');
+  assert.equal(reloaded.postDoc.length, fresh.postDoc.length, 'postings lost on reload');
+  assert.equal(reloaded.bmPostDoc.length, fresh.bmPostDoc.length, 'bm postings lost on reload');
   assert.ok(fresh.weakByTerm.size > 0, 'the weak tier must be populated at all');
+
+  /*
+   * NOT asserted: that termId.size matches. It legitimately does not, and
+   * asserting it cost an hour chasing a test that was green alone and red
+   * beside the guard -- which turned out to depend only on whether a cache
+   * file happened to exist when the suite started.
+   *
+   * A freshly built index keeps two dictionaries, typed terms (2554 here) and
+   * plain terms (2290). The columnar file stores ONE shared dictionary, so a
+   * reload maps every term into both (2775 each). Ids whose offset range is
+   * empty contribute nothing, the postings are identical either way, and the
+   * rankings are identical -- which is what the test above this one checks and
+   * what actually matters. Sizes of internal maps are a representation
+   * detail, and an assertion on one is a test of the representation.
+   */
 });
 
 /*
