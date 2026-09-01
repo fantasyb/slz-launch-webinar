@@ -1,0 +1,13 @@
+{
+  "generatedAt": "2026-09-01T21:57:43.555Z",
+  "records": [],
+  "offered": [
+    "bash",
+    "cairn_search",
+    "cairn_record"
+  ],
+  "called": {
+    "bash": 33,
+    "cairn_search": 3
+  }
+}
