@@ -13,6 +13,9 @@ import assert from 'node:assert/strict';
 import { gate, deltaPlan } from '../src/lib/cairn/gate';
 import { checkFlaws } from '../src/lib/cairn/checkquality';
 import type { Finding } from '../src/lib/cairn/schema';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 
 const base = {
   title: 't', claim: 'c', kind: 'trap', scope: 'environment-specific', appliesTo: 'here',
@@ -25,25 +28,44 @@ const base = {
 const withCheck = (id: string, command: string, absentWhen?: string) =>
   ({ ...base, id, check: { command, confirmedIf: 'a', refutedIf: 'b', manual: false, absentWhen } }) as Finding;
 
+/*
+ * A FILE-based trap, not an environment one, and that is a consequence worth
+ * knowing rather than a detail of the test.
+ *
+ * Checks run with an allowlisted environment — PATH, HOME, the proxy and CA
+ * variables — so a check cannot read an arbitrary variable and a delta cannot
+ * unset one that was never visible. The first version of this test set
+ * CAIRN_TEST_TRAP and asserted the gate saw it, which passed only while
+ * checks inherited every secret in the shell.
+ *
+ * So: a trap that lives in an environment variable outside the allowlist
+ * cannot be gated. That is a real capability lost to the scrub, taken
+ * knowingly — the alternative is every check seeing every credential — and
+ * traps about the proxy variables, which is the class this corpus actually
+ * holds, are unaffected because those are allowlisted.
+ */
 test('a check that tests the trap discriminates; one that prints does not', async () => {
-  process.env.CAIRN_TEST_TRAP = '1';
+  const marker = path.join(os.tmpdir(), `cairn-trap-${process.pid}`);
+  fs.writeFileSync(marker, 'present');
   try {
-    const real = await gate(withCheck('t-1', '[ -n "$CAIRN_TEST_TRAP" ]', 'unset CAIRN_TEST_TRAP'));
+    const real = await gate(withCheck('t-1', `test -f ${marker}`, `rm -f ${marker}`));
     assert.equal(real.verdict, 'discriminates', real.detail);
     assert.equal(real.live, 0);
     assert.notEqual(real.absent, 0);
 
     // Same trap, same delta, a command that succeeds either way. This is the
     // shape of most checks in the corpus and the reason the gate exists.
-    const fake = await gate(withCheck('t-2', 'echo "$CAIRN_TEST_TRAP"', 'unset CAIRN_TEST_TRAP'));
+    fs.writeFileSync(marker, 'present');
+    const fake = await gate(withCheck('t-2', `ls ${marker} >/dev/null 2>&1; true`, `rm -f ${marker}`));
     assert.equal(fake.verdict, 'same-either-way', fake.detail);
   } finally {
-    delete process.env.CAIRN_TEST_TRAP;
+    fs.rmSync(marker, { force: true });
   }
 });
 
 test('the delta is on this machine, so a check that reads only the repo is refused', async () => {
-  process.env.CAIRN_TEST_TRAP = '1';
+  const marker = path.join(os.tmpdir(), `cairn-inc-${process.pid}`);
+  fs.writeFileSync(marker, 'present');
   try {
     /*
      * The failure a two-MACHINE gate cannot catch. This greps a file that
@@ -53,11 +75,11 @@ test('the delta is on this machine, so a check that reads only the repo is refus
      * variable on one machine cannot be fooled: the repository did not move.
      */
     const incidental = await gate(
-      withCheck('t-3', 'test -f package.json', 'unset CAIRN_TEST_TRAP'),
+      withCheck('t-3', 'test -f package.json', `rm -f ${marker}`),
     );
     assert.equal(incidental.verdict, 'same-either-way', incidental.detail);
   } finally {
-    delete process.env.CAIRN_TEST_TRAP;
+    fs.rmSync(marker, { force: true });
   }
 });
 

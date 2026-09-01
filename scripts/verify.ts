@@ -17,6 +17,7 @@ import { FindingSchema } from '../src/lib/cairn/schema';
 import { scanExecutable } from '../src/lib/cairn/safety';
 import { homePath } from '../src/lib/cairn/home';
 import { assertExecutionAllowed, ExecutionRefused } from '../src/lib/cairn/policy';
+import { scrubbedEnv } from '../src/lib/cairn/confirm';
 
 const id = process.argv[2];
 if (!id) {
@@ -122,6 +123,10 @@ try {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
       timeout: 120_000,
+      /* The same allowlist confirm.ts uses. This path ran a corpus check with
+       * the full environment, so every check saw every credential in the
+       * shell and its output is printed straight to the terminal. */
+      env: scrubbedEnv() as unknown as NodeJS.ProcessEnv,
       // SIGTERM is ignorable: `trap '' TERM; sleep 100000` outlived the timeout.
       killSignal: 'SIGKILL',
     });

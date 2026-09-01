@@ -103,6 +103,10 @@ check in the submission it is recording, which is the caller's own code, and
 
 ## What this page does not claim
 
+- A trap that lives in an environment variable outside the allowlist cannot
+  be checked or gated at all. That capability is given up knowingly; the
+  alternative is every check seeing every credential. Traps about the proxy
+  variables are unaffected, because those are allowlisted.
 - Checks are not sandboxed. They run as you, with your filesystem. Several in
   this corpus write temp files and make outbound requests; `cairn:gate` and
   `cairn:doctor` will show you which.
