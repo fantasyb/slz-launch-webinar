@@ -2625,6 +2625,16 @@ export function failingCommand(text: string): string | undefined {
  */
 const CONFUSION_MAX_CORPUS = 400;
 
+/**
+ * How close a rival must score, against a finding's own description, to count
+ * as something that finding is confused with.
+ *
+ * 0.6 is the same margin `linkSiblings` uses to decide two hits are
+ * comparable, reused deliberately: one notion of "the ranking could have gone
+ * either way" is enough for a file this size to have.
+ */
+const CONFUSION_MARGIN = 0.6;
+
 let confusionCache: WeakMap<object, Map<string, string[]>> = new WeakMap();
 
 export function confusionPairs(findings: Finding[]): Map<string, string[]> {
@@ -2704,8 +2714,38 @@ export function confusionPairs(findings: Finding[]): Map<string, string[]> {
       if (!probe || probe.length < 40) continue;
       if (probes >= MAX_PROBES) break;
       probes += 1;
-      const top = retrieve(probe.slice(0, 240), findings, { limit: 1 })[0];
-      if (!top || top.finding.id === f.id) continue;
+      /*
+       * The nearest hit that is NOT this finding.
+       *
+       * This read `limit: 1` and skipped when the top hit was the finding
+       * itself, which was right while `mechanism` was held out of the index:
+       * a probe that retrieved its own source meant the ranking had nothing
+       * to confuse it with. Indexing `mechanism` made that condition
+       * ALWAYS true -- the probe is now the indexed text, so it retrieves
+       * itself every time -- and confusion learning silently stopped. The map
+       * has been empty since, and nothing caught it because DELIVERY is also
+       * carried by declarative siblings, so the metric never moved.
+       *
+       * Asking for the nearest OTHER finding is the question that was always
+       * meant: what does this finding's own description reach, if not itself.
+       */
+      const ranked = retrieve(probe.slice(0, 240), findings, { limit: 4 });
+      const self = ranked.find((h) => h.finding.id === f.id);
+      const near = ranked.find((h) => h.finding.id !== f.id);
+      if (!near) continue;
+      /*
+       * Only when the other finding is NEARLY AS GOOD an answer.
+       *
+       * Taking the nearest neighbour unconditionally gives every finding a
+       * confusion, which is the cry-wolf failure: a disclosure that always
+       * fires carries no information. A confusion means the ranking could
+       * plausibly have chosen the other one, so it is recorded only when the
+       * alternative scores within a margin of the finding's own text. Where
+       * the probe does not retrieve its own finding at all, the confusion is
+       * unconditional -- the ranking already preferred the other.
+       */
+      if (self && near.score < self.score * CONFUSION_MARGIN) continue;
+      const top = near;
       // Symmetric: if this finding's own description reaches that one, an
       // agent landing on either should be told about the other.
       add(top.finding.id, f.id);
