@@ -14,7 +14,7 @@
  */
 import { execFileSync } from 'child_process';
 import { cairnHome, installRoot } from '../src/lib/cairn/home';
-import { loadConfig } from '../src/lib/cairn/federation';
+import { loadConfig, loadSearchable, type SearchableFinding } from '../src/lib/cairn/federation';
 import { knowledgeRemote } from '../src/lib/cairn/freshness';
 import fs from 'fs';
 import path from 'path';
@@ -61,6 +61,9 @@ function isGitRepo(): boolean {
 
 const tracked = isGitRepo();
 const before = new Set(loadCorpus().map((f) => f.id));
+const beforeUpstream = loadSearchable().findings.filter(
+  (f) => (f as SearchableFinding).upstreamName,
+).length;
 const head = tracked ? git(['rev-parse', 'HEAD']) : '';
 
 /*
@@ -121,16 +124,38 @@ if (root) {
  * once the file is transpiled — a command nobody had run, shipped broken. The
  * ids are in the filenames; there is no reason to involve a module system.
  */
-const after = fs
-  .readdirSync(path.join(cairnHome(), 'cairn'))
-  .filter((f) => f.endsWith('.json'))
-  .map((f) => readFinding(path.join(cairnHome(), 'cairn', f)));
+const dir = path.join(cairnHome(), 'cairn');
+const after = fs.existsSync(dir)
+  ? fs
+      .readdirSync(dir)
+      .filter((f) => f.endsWith('.json'))
+      .map((f) => readFinding(path.join(dir, f)))
+  : [];
 const fresh = after.filter((f) => !before.has(f.id));
 
-if ((!tracked || git(['rev-parse', 'HEAD']) === head) && fresh.length === 0) {
+/*
+ * Upstream arrivals count as new, because to the reader they are.
+ *
+ * This counted local files only, so the first federation into a personal
+ * corpus -- forty findings arriving from an upstream, the entire reason that
+ * user ran the command -- reported "already current, nothing new". A sync
+ * that fetches a corpus and then denies anything happened is worse than one
+ * that does nothing, because the reader now believes they are current.
+ */
+const upstream = loadSearchable().findings.filter(
+  (f) => (f as SearchableFinding).upstreamName,
+).length;
+const upstreamNew = upstream - beforeUpstream;
+
+if (
+  (!tracked || git(['rev-parse', 'HEAD']) === head) &&
+  fresh.length === 0 &&
+  upstreamNew === 0
+) {
   console.log('  already current — nothing new.\n');
 } else {
-  console.log(`  ${after.length} findings (${fresh.length} new)\n`);
+  const fromUpstream = upstream > 0 ? `, ${upstream} from upstream` : '';
+  console.log(`  ${after.length + upstream} findings (${fresh.length + upstreamNew} new${fromUpstream})\n`);
   for (const f of fresh) console.log(`    ${f.id}  ${f.title.slice(0, 68)}`);
   if (fresh.length) console.log('');
 }
