@@ -47,20 +47,25 @@
  *   5. fuse BM25's ordering        0.763 -> 0.789
  *   6. fuse query coverage         0.789 -> 0.868, MRR 0.882 -> 0.928
  *   7. fuse strong-field coverage  0.868 -> 0.711, reverted
+ *   8. subtract English globally    0.868 -> 0.816, reverted alone
+ *   9. + subtract the shared        0.868 -> 0.895, MRR 0.928 -> 0.941
  *
  * A large improvement from here should be validated on cases this file has
  * never seen — observation notes and prediction reasoning are both unindexed
  * and could supply them — rather than on another pass over these.
  *
  * P@1 is also pessimistic in a specific, known way, and after (6) it is the
- * ONLY thing left in the residual. Every one of the five remaining failures is
- * the gold finding sitting behind a SIBLING about the same trap: cairn-0002
- * behind cairn-0029, both about DNS in this sandbox; cairn-0018 behind
- * cairn-0026 and cairn-0019 behind cairn-0027, all about what an assertion
- * does and does not bind; cairn-0030 behind cairn-0001, both about egress
- * interception. The fifth is arguably mislabelled: cairn-0031's mechanism
- * prose describes the cairn-0030 experiment it was derived from, so returning
- * cairn-0030 for it is a defensible answer to the question actually asked.
+ * ONLY thing left in the residual. Every one of the four remaining failures is
+ * the gold finding sitting behind a SIBLING about the same trap -- cairn-0016,
+ * -0018 and -0019 among the findings about what an assertion does and does not
+ * bind, cairn-0030 behind cairn-0001 on egress interception.
+ *
+ * That is also what (9) is about, and why it is the last big move available
+ * here. Siblings are lost on the terms the two findings SHARE, which say what
+ * the query is about and nothing about which finding is meant, so the contest
+ * falls to whatever filler differs. Subtracting the shared terms from the
+ * ordering fixed one of the five and is the reason P@1 now leads BM25 rather
+ * than matching it. The four that remain share almost everything.
  *
  * An agent handed the sibling has not been misled, and DELIVERY -- which
  * counts the sibling naming the gold -- is 1.000. Driving P@1 to 1.000 on this

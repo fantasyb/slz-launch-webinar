@@ -788,6 +788,33 @@ function isCommonWord(t: string): boolean {
 }
 
 /**
+ * How much of a term's weight survives subtracting what English does anyway.
+ *
+ * IDF measures rarity IN THIS CORPUS, and over thirty-one findings that is a
+ * poor estimator of meaning. `because` appears in three of them and scores as
+ * informative; it means nothing. `egress` appears in one and scores the same;
+ * it means everything. Corpus rarity cannot tell them apart, because on the
+ * only evidence it has they are identical.
+ *
+ * The measured table can, and this is the reference it exists to be. A term
+ * rare here AND rare in English is a line. A term rare here and ordinary in
+ * English is an artefact of a small corpus -- the continuum, not a line.
+ *
+ * Graded rather than binary, because commonness is: a word at 120 per million
+ * is barely ordinary and one at 5000 is filler, and a single threshold has to
+ * treat them the same. Returns 1 for anything the table does not rate as
+ * common, so a corpus with no table loses this ranking and nothing else.
+ */
+function lineWeight(t: string): number {
+  const rate = WORD_RATES[t] ?? 0;
+  if (rate >= COMMON_RATE) return COMMON_RATE / rate;
+  // The hand list has no measured rate to grade by. One tenth is the weight a
+  // word at ten times COMMON_RATE gets, which is roughly where these sit.
+  if (RESIDUAL_COMMON.has(t)) return 0.1;
+  return 1;
+}
+
+/**
  * Fraction of a query's information the best hit must account for, or the
  * corpus says nothing.
  *
@@ -1161,6 +1188,61 @@ export function retrieve(
    * file would accept, and computing coverage for a thousand candidates a
    * broad query never returns is the shape of the quadratic bug above.
    */
+  /*
+   * The line spectrum: this hit's score with the English continuum subtracted.
+   *
+   * Reuses each term's own contribution -- so the tf saturation, the length
+   * normalisation and the strong-field boost all still apply -- and reweights
+   * it by how much the term says beyond being English. A finding that won on
+   * `remains`, `does` and `later` keeps almost none of its score here; one
+   * that won on `egress` or `decision` keeps all of it.
+   *
+   * Deliberately a RANKING and not a change to the score. Damping common words
+   * in the score itself was tried, in the era when a common word could also
+   * block a hit, and it cost held-out P@5 1.000 -> 0.921: three prose queries
+   * whose only anchors were ordinary words vanished from the result set
+   * entirely. That was a membership effect, not an ordering one, and the two
+   * are separable -- membership is still decided by the undamped path, so this
+   * cannot remove a hit from the results at any weight. It can only decide
+   * which of the hits that already qualify comes first.
+   */
+  /*
+   * Two references, and both are needed.
+   *
+   * ENGLISH, subtracted globally: `because` is rare in thirty-one findings and
+   * ordinary in the language, so its corpus rarity is an artefact.
+   *
+   * THE CONTEST, subtracted locally: a term matched by every candidate in
+   * contention discriminates nothing FOR THIS QUERY whatever its rarity
+   * anywhere. When the query is a paragraph about commitment schemes and the
+   * top candidates are all findings about commitment schemes, `forecast` and
+   * `seal` are the continuum -- shared, bright, and silent about which one is
+   * meant. `decision` and `publish`, which only one of them matched, are the
+   * lines.
+   *
+   * Subtracting either alone was measured and neither works. English alone is
+   * held-out P@1 0.816 at weight 0.7: it damps the filler the wrong answers
+   * win on, and also damps the ordinary English that prose queries legitimately
+   * carry, which is the same trade this file has recorded twice before.
+   */
+  const contested = typedOrder.slice(0, CONTEST_WINDOW);
+  const inContest = new Map<string, number>();
+  for (const { h } of contested) {
+    for (const m of h.matched) inContest.set(m.term, (inContest.get(m.term) ?? 0) + 1);
+  }
+  const contestants = Math.max(1, contested.length);
+  const lineSpectrum = (h: Hit) => {
+    let sum = 0;
+    for (const m of h.matched) {
+      // Shared by everyone -> ~0. Held by one -> ~1. The +0.5 keeps a term
+      // matched by a single candidate from being worth an unbounded amount.
+      const local = Math.log((contestants + 1) / ((inContest.get(m.term) ?? 1) + 0.5));
+      if (local <= 0) continue;
+      sum += m.contribution * lineWeight(m.term) * local;
+    }
+    return sum;
+  };
+
   const head = typedOrder.slice(0, FUSE_WINDOW);
   const byCoverage = (of: (h: Hit) => number) =>
     head
@@ -1177,6 +1259,10 @@ export function retrieve(
     {
       order: byCoverage(explains),
       weight: Number(process.env.CAIRN_EXPLAINED_WEIGHT ?? EXPLAINED_WEIGHT),
+    },
+    {
+      order: byCoverage(lineSpectrum),
+      weight: Number(process.env.CAIRN_LINE_WEIGHT ?? LINE_WEIGHT),
     },
   ]);
 
@@ -1782,6 +1868,23 @@ const EXPLAINED_WEIGHT = 1.0;
  */
 const FUSE_WINDOW = 50;
 
+/**
+ * How much the English-subtracted ordering counts.
+ *
+ * The other three rankings all measure a term by its rarity in this corpus.
+ * This is the only one that consults a reference outside it, which is why it
+ * is worth fusing separately rather than folding into any of them.
+ */
+const LINE_WEIGHT = 0.4;
+
+/**
+ * How many candidates count as "in contention" when subtracting the shared
+ * continuum. Wide enough to include the sibling that actually competes,
+ * narrow enough that a long tail of incidental matches does not dilute what
+ * counts as shared.
+ */
+const CONTEST_WINDOW = 10;
+
 function fuse(rankings: Array<{ order: string[]; weight: number }>): Map<string, number> {
   const fused = new Map<string, number>();
   for (const { order, weight } of rankings) {
@@ -1991,6 +2094,9 @@ export function rankerSignature(): string {
     MIN_QUERY_EXPLAINED,
     MIN_TERM_INFORMATION,
     STRONG_FIELD_BOOST,
+    Number(process.env.CAIRN_LINE_WEIGHT ?? LINE_WEIGHT),
+    COMMON_RATE,
+    CONTEST_WINDOW,
   ].join(',');
   return crypto.createHash('sha256').update(constants).digest('hex').slice(0, 12);
 }

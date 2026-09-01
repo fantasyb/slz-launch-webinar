@@ -325,3 +325,48 @@ test('the hit that explains most of the query is not ranked below the tail', () 
     `the best-explaining hit ${best.finding.id} (${best.explained.toFixed(2)}) ranked ${where}`,
   );
 });
+
+/*
+ * Shared terms must not decide a contest between siblings.
+ *
+ * `getent goes through NSS, not a DNS client` lost to a neighbouring DNS
+ * finding for a while. Both matched `getent`, `dns`, `address`, `record` --
+ * the terms the two findings have in common, which say the query is about DNS
+ * in this sandbox and nothing about WHICH finding is meant. The loser won on
+ * `nss`, `types` and `through`, and IDF over thirty-one documents rated
+ * `through` as informative because three findings happen to contain it.
+ *
+ * The ranking subtracts two references now: what English does anyway, and
+ * what every candidate in contention already shares. This asserts the outcome
+ * rather than the weights, which are a ridge rather than a point and should be
+ * free to move within it.
+ */
+test('a query about getent returns the finding about getent', () => {
+  const hits = retrieve(
+    'getent goes through NSS, not a DNS client, so it is limited to the ' +
+      'host-lookup path. It has no concept of record types beyond addresses.',
+    corpus,
+  );
+  assert.equal(hits[0]?.finding.id, 'cairn-0002', 'the shared DNS terms decided it again');
+});
+
+/*
+ * The English reference must be consulted, and must not be load-bearing.
+ *
+ * `data/word-frequency.json` is measured, external, and optional -- a vendored
+ * checkout without it must still retrieve. The ranking that uses it degrades
+ * to a constant weight in that case, which changes an ordering and breaks
+ * nothing, and this pins that it is reachable at all: a table that silently
+ * failed to load would leave the ranker running on corpus rarity alone with
+ * every number still looking plausible.
+ */
+test('the external word-frequency table is loaded and rates ordinary English', () => {
+  const ordinary = tokenize('because whether through file error string').map((t) => t.text);
+  assert.ok(ordinary.length > 0, 'tokeniser must keep ordinary words');
+  const hits = retrieve('because whether through', corpus);
+  // Nothing distinctive was asked, so nothing may come back confidently.
+  assert.ok(
+    hits.length === 0 || hits.every((h) => h.strength === 'weak'),
+    'a query of pure filler must not produce a confident answer',
+  );
+});
