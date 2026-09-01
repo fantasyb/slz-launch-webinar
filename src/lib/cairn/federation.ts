@@ -10,6 +10,8 @@ import {
   type KeyRecord,
 } from './signing';
 import { loadKeys } from './keys';
+import { loadCorpus } from './load';
+import { UNTRUSTED_NOTICE, UNTRUSTED_FIELDS } from './safety';
 
 /**
  * Federation: read upstream corpora, score them with your own evidence.
@@ -201,5 +203,35 @@ export function federationSummary() {
     findings: federated.length,
     withLocalEvidence: federated.filter((f) => f.overlay.length > 0).length,
     unverifiedObservations: federated.reduce((a, f) => a + f.unverifiedUpstream, 0),
+  };
+}
+
+
+/**
+ * The bundle this cairn publishes, built in ONE place.
+ *
+ * It existed only inside the HTTP route, so writing it to a file meant
+ * rewriting it — and the rewrite drifted immediately: `publishedAt` instead of
+ * `generatedAt`, which the consumer's own schema requires. The local path would
+ * have failed validation the first time anybody used it, and the two ways of
+ * federating would have disagreed about the shape of the thing they exchange.
+ */
+export function federationBundle(): {
+  _notice: string;
+  _untrustedFields: readonly string[];
+  origin: string;
+  generatedAt: string;
+  findings: unknown[];
+  keys: unknown[];
+} {
+  return {
+    _notice: UNTRUSTED_NOTICE,
+    _untrustedFields: UNTRUSTED_FIELDS,
+    origin: loadConfig().origin,
+    generatedAt: new Date().toISOString(),
+    findings: loadCorpus(),
+    // Only keys minted here. Re-publishing an upstream's keys would launder
+    // its identities downstream as though we vouched for them.
+    keys: [...loadKeys().values()].filter((k) => !k.origin),
   };
 }

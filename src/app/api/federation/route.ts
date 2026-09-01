@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { UNTRUSTED_NOTICE, UNTRUSTED_FIELDS } from '@/lib/cairn/safety';
 import { loadCorpus } from '@/lib/cairn/load';
-import { loadKeys } from '@/lib/cairn/keys';
+import { federationBundle } from '@/lib/cairn/federation';
 import { loadConfig } from '@/lib/cairn/federation';
 
 export const dynamic = 'force-dynamic';
@@ -12,15 +12,7 @@ export const dynamic = 'force-dynamic';
  * to trust the operator's key list, so it travels as one bundle.
  */
 export async function GET() {
-  return NextResponse.json({
-    _notice: UNTRUSTED_NOTICE,
-    _untrustedFields: UNTRUSTED_FIELDS,
-    origin: loadConfig().origin,
-    generatedAt: new Date().toISOString(),
-    findings: loadCorpus(),
-    // Only keys minted here. Re-publishing an upstream's keys would launder
-    // its identities downstream as though we vouched for them, and would let a
-    // chain of cairns quietly widen who can sign as whom.
-    keys: [...loadKeys().values()].filter((k) => !k.origin),
-  });
+  // Built by federationBundle() so the HTTP path and the published file cannot
+  // disagree about the shape of the thing peers consume.
+  return NextResponse.json(federationBundle());
 }

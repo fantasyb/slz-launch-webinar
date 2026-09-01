@@ -54,7 +54,8 @@
     "cairn:harvest": "tsx scripts/harvest.ts",
     "cairn:backfill-ledger": "tsx scripts/backfill-ledger.ts",
     "cairn:sync": "tsx scripts/sync.ts",
-    "cairn:review": "tsx scripts/review.ts"
+    "cairn:review": "tsx scripts/review.ts",
+    "cairn:publish": "tsx scripts/publish.ts"
   },
   "dependencies": {
     "clsx": "^2.1.1",
