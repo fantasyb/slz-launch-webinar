@@ -46,6 +46,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { loadCorpus } from '../src/lib/cairn/load';
 import { buildIndex, docTerms, tokenize } from '../src/lib/cairn/retrieval';
 import { FindingSchema } from '../src/lib/cairn/schema';
+import { proposeSurvivor } from '../src/lib/cairn/survivorship';
 import type { Finding } from '../src/lib/cairn/schema';
 
 const file = process.argv.slice(2).find((a) => !a.startsWith('--'));
@@ -140,6 +141,33 @@ async function main() {
     }, null, 2).split('\n').map((l) => `    ${l}`).join('\n'));
     console.log(`\n  That turns a duplicate into evidence: ${dup.id} gains an attester, and`);
     console.log('  confidence and scope both key on exactly that.');
+
+    /*
+     * And the rest of the submission is not thrown away.
+     *
+     * "Keep the observation, discard the record" is the crudest survivorship
+     * rule there is, and at scale it loses real improvements: the fifty-first
+     * person to hit a trap may have written the clearer title or captured
+     * output nobody had. Master data management resolves this per FIELD --
+     * union what must never be lost, take the safer value where two records
+     * disagree, and hand genuinely subjective prose to a person.
+     */
+    const existing = corpus.find((f) => f.id === dup.id)!;
+    const decisions = proposeSurvivor(existing, draft);
+    if (decisions.length) {
+      console.log(`\n  SURVIVORSHIP — what else ${dup.id} would gain:\n`);
+      for (const d of decisions) {
+        const head = `  ${d.rule.toUpperCase().padEnd(7)} ${d.field}`;
+        if (d.rule === 'judged') {
+          console.log(`${head}   A PERSON DECIDES`);
+          console.log(`             existing: ${String(d.existing).replace(/\s+/g, ' ').slice(0, 74)}`);
+          console.log(`             incoming: ${String(d.incoming).replace(/\s+/g, ' ').slice(0, 74)}`);
+        } else {
+          console.log(`${head} -> ${JSON.stringify(d.value).slice(0, 60)}`);
+        }
+        console.log(`             ${d.why.slice(0, 88)}`);
+      }
+    }
   } else if (fac.length) {
     console.log(`  RECOMMEND: accept, and link as facets of one trap with ${fac.map((x) => x.id).join(', ')}.`);
   } else {
