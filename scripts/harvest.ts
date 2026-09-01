@@ -196,6 +196,9 @@ const recordTool = {
  * submission is validated, scanned and gated exactly as `record` would, and
  * the verdict is what gets counted.
  */
+const TOOL_CALLS: Record<string, number> = {};
+let TOOLS_OFFERED: string[] = [];
+
 const RECORDS: Array<{
   task: string;
   trial: number;
@@ -339,12 +342,17 @@ async function main() {
           model: 'claude-opus-5',
           max_tokens: 6000,
           thinking: { type: 'adaptive' },
-          tools: [bashTool, cairnTool, recordTool],
+          tools: (TOOLS_OFFERED = [bashTool.name, cairnTool.name, recordTool.name]) && [
+            bashTool,
+            cairnTool,
+            recordTool,
+          ],
           messages,
         });
         if (res.stop_reason === 'refusal') break;
         messages.push({ role: 'assistant', content: res.content });
         const uses = res.content.filter((b): b is Anthropic.ToolUseBlock => b.type === 'tool_use');
+        for (const u of uses) TOOL_CALLS[u.name] = (TOOL_CALLS[u.name] ?? 0) + 1;
         if (!uses.length) break;
         const results: Anthropic.ToolResultBlockParam[] = [];
         for (const u of uses) {
@@ -382,6 +390,8 @@ async function main() {
   const unprompted = RECORDS.length;
   const discriminating = RECORDS.filter((r) => r.gate === 'discriminates').length;
   console.log(`\n${'='.repeat(66)}\nSUPPLY`);
+  console.log(`  tools offered            ${TOOLS_OFFERED.join(', ') || 'NONE'}`);
+  console.log(`  tool calls               ${Object.entries(TOOL_CALLS).map(([k, v]) => `${k}=${v}`).join('  ') || 'none'}`);
   console.log(`  records attempted        ${unprompted}`);
   console.log(`  passed the check gate    ${discriminating}`);
   for (const r of RECORDS) {
@@ -395,11 +405,6 @@ async function main() {
         '  contains it. The transcripts say which.',
     );
   }
-  writeFileSync(
-    join(process.cwd(), 'data', 'harvest-records.json'),
-    `${JSON.stringify({ generatedAt: new Date().toISOString(), records: RECORDS }, null, 2)}\n`,
-  );
-
   const after = repoState();
   if (after !== before) {
     console.log('\n  !! THE REPOSITORY CHANGED DURING THIS RUN. A trial wrote outside its directory.');
@@ -407,6 +412,16 @@ async function main() {
     console.log('     Commands are logged below; find the one that did it.\n');
     for (const a of ACTIONS) console.log(`     $ ${a.replace(/\s+/g, ' ').slice(0, 120)}`);
   }
+
+  /*
+   * Written AFTER the escape comparison. The first version wrote it before,
+   * so the harness detected its own file as a trial escaping its directory
+   * and dumped thirty commands accusing an agent of what the harness did.
+   */
+  writeFileSync(
+    join(process.cwd(), 'data', 'harvest-records.json'),
+    `${JSON.stringify({ generatedAt: new Date().toISOString(), records: RECORDS, offered: TOOLS_OFFERED, called: TOOL_CALLS }, null, 2)}\n`,
+  );
 
   const out = join(tmpdir(), 'harvest.json');
   writeFileSync(out, JSON.stringify(harvested, null, 2));
