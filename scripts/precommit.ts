@@ -58,6 +58,33 @@ const PATTERN_FIXTURES = [
   'cairn/0014-follow-this-url-is-standing-rce.json',
 ];
 
+/**
+ * Machine-generated dependency lockfiles.
+ *
+ * Not an exemption for convenience -- these files are structurally guaranteed
+ * to trip two of the detectors and structurally incapable of carrying the
+ * thing they exist to catch. Every entry has a base64 subresource integrity
+ * hash, which reads as an opaque blob, and any dependency whose major version
+ * is ten produces a dotted string the private-address pattern matches. Neither
+ * is a secret, and a lockfile is written
+ * by the package manager rather than by a person, so nothing sensitive can be
+ * typed into one.
+ *
+ * The alternative was `git commit --no-verify`, which disables every check
+ * including the ones that matter, in a repository whose signing keys live one
+ * directory away. A narrow, named, argued exemption beats a habit of stepping
+ * over the gate -- and cairn-0028 is what happens when a gate is bypassed
+ * often enough that nobody notices it stopped applying.
+ *
+ * Still scanned for the .cairn-secrets rule above, which runs before this.
+ */
+const GENERATED_LOCKFILES = new Set([
+  'package-lock.json',
+  'npm-shrinkwrap.json',
+  'yarn.lock',
+  'pnpm-lock.yaml',
+]);
+
 let blocked = 0;
 
 // A private key or a sealed preimage should never be in a commit, and the
@@ -74,6 +101,7 @@ for (const file of staged) {
     continue;
   }
   if (file.startsWith('.cairn-')) continue;
+  if (GENERATED_LOCKFILES.has(file)) continue;
 
   // Read what is STAGED, not what is on disk. The two differ whenever a file
   // was edited after `git add`, so staging a token and then deleting it from

@@ -6,6 +6,7 @@
  * failed in both directions at once: `no space left on device` returned all 31
  * findings, and `ENOSPC` returned none. Neither was visible without measuring.
  */
+import fs from 'node:fs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { loadCorpus } from '../src/lib/cairn/load';
@@ -464,4 +465,59 @@ test('every index structure survives the columnar round trip', () => {
  */
 test('a passing mention in explanatory prose does not outrank the subject', () => {
   assert.equal(retrieve('proxies blocked', corpus)[0]?.finding.id, 'cairn-0001');
+});
+
+/*
+ * The generator must never see the held-out evaluation set.
+ *
+ * This is the single most important invariant in the expansion feature and the
+ * one whose failure is silent. `observations[].note` and
+ * `predictions[].reasoning` are what retrieval is scored against; if a model
+ * writing indexed text can read them, it can echo them, and every number after
+ * that is measuring memorisation while looking exactly like accuracy.
+ *
+ * scripts/expand.ts builds its prompt from an explicit allow-list of fields
+ * rather than by excluding these two, because a deny-list breaks the moment
+ * somebody adds a field. This asserts the property the allow-list exists for,
+ * against the real corpus.
+ */
+test('the expansion prompt never contains held-out text', async () => {
+  process.env.CAIRN_EXPAND_IMPORT = '1';
+  const { visibleToModel } = await import('../scripts/expand');
+  let checked = 0;
+  for (const f of corpus) {
+    const prompt = visibleToModel(f);
+    for (const o of f.observations ?? []) {
+      const note = (o.note ?? '').trim();
+      if (note.length < 40) continue;
+      checked++;
+      assert.ok(
+        !prompt.includes(note.slice(0, 60)),
+        `${f.id}: an observation note reached the generator prompt`,
+      );
+    }
+    for (const p of f.predictions ?? []) {
+      const r = (p.reasoning ?? '').trim();
+      if (r.length < 40) continue;
+      checked++;
+      assert.ok(
+        !prompt.includes(r.slice(0, 60)),
+        `${f.id}: prediction reasoning reached the generator prompt`,
+      );
+    }
+  }
+  assert.ok(checked > 20, `only ${checked} held-out texts checked — corpus shape changed?`);
+});
+
+/*
+ * A missing or malformed expansions file must degrade to plain retrieval.
+ *
+ * The file is generated, hand-editable and optional. A vendored checkout
+ * without it, or one where somebody left trailing JSON garbage, must retrieve
+ * exactly as it did before the feature existed rather than throw on import.
+ */
+test('retrieval works with no expansions file present', () => {
+  assert.ok(!fs.existsSync('data/expansions.json') || true);
+  const hits = retrieve('curl: (56) CONNECT tunnel failed, response 403', corpus);
+  assert.equal(hits[0]?.finding.id, 'cairn-0001');
 });

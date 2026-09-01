@@ -38,7 +38,8 @@
     "cairn:guard": "tsx scripts/guard.ts",
     "cairn:baseline": "tsx scripts/baseline.ts",
     "cairn:warm": "tsx scripts/warm.ts",
-    "cairn:quick": "tsx scripts/quick.ts"
+    "cairn:quick": "tsx scripts/quick.ts",
+    "cairn:expand": "tsx scripts/expand.ts"
   },
   "dependencies": {
     "clsx": "^2.1.1",
@@ -50,6 +51,7 @@
     "zod": "^3.24.1"
   },
   "devDependencies": {
+    "@anthropic-ai/sdk": "^0.122.0",
     "@eslint/eslintrc": "^3",
     "@types/node": "^20",
     "@types/react": "^19",

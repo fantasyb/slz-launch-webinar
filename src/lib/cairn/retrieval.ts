@@ -311,8 +311,41 @@ function strongText(f: Finding): string {
  * this is meant to catch.
  */
 function weakText(f: Finding): string {
-  return [f.mechanism ?? '', f.appliesTo ?? ''].join('\n');
+  return [f.mechanism ?? '', f.appliesTo ?? '', ...(EXPANSIONS[f.id] ?? [])].join('\n');
 }
+
+/**
+ * Generated queries, indexed as weak-tier text. See scripts/expand.ts.
+ *
+ * Every residual failure this project could not rank away is an agent
+ * describing an ENCOUNTER against an author describing a FINDING -- the same
+ * event in near-disjoint vocabulary. The established fix is semantic
+ * similarity at query time, which means a model on the searcher's machine, and
+ * that fails precisely when cairn is most useful: an agent stuck behind an
+ * allowlist proxy cannot reach an embedding API, which is itself cairn-0001.
+ *
+ * So the semantics move to build time. A model reads each finding and writes
+ * what somebody would arrive with; the result is committed as reviewable text
+ * and indexed. The consumer runs no model and makes no call, and the lexical
+ * index already contains the searcher's words.
+ *
+ * Weak tier deliberately: generated text may add weight to a finding and must
+ * never outrank the finding's own account of itself. Absent file means an
+ * empty map and retrieval exactly as it was -- this is an enhancement to the
+ * index, never a requirement of it.
+ */
+function loadExpansions(): Record<string, string[]> {
+  try {
+    const file = path.join(process.cwd(), 'data', 'expansions.json');
+    const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as {
+      expansions?: Record<string, string[]>;
+    };
+    return raw.expansions ?? {};
+  } catch {
+    return {};
+  }
+}
+const EXPANSIONS: Record<string, string[]> = loadExpansions();
 
 interface Indexed {
   id: string;
@@ -559,12 +592,35 @@ export function corpusFingerprint(findings: Finding[]): string {
  * it once means a cache cannot be keyed on only half of what produced it,
  * which all three of them were at some point.
  */
+/**
+ * The DATA that shapes the index and the ranking, hashed alongside the code.
+ *
+ * `indexerSignature` covers the functions; these files are the other half of
+ * what produces an index, and leaving them out is the same keying bug this
+ * file has now fixed in three separate caches. `expansions.json` changes what
+ * is indexed; `word-frequency.json` changes which terms may generate
+ * candidates. Editing either by hand -- which the expansions file explicitly
+ * invites -- must invalidate every derived artefact, and now does.
+ */
+function dataFingerprint(): string {
+  const h = crypto.createHash('sha256');
+  for (const name of ['expansions.json', 'word-frequency.json']) {
+    try {
+      h.update(fs.readFileSync(path.join(process.cwd(), 'data', name)));
+    } catch {
+      h.update(`absent:${name}`);
+    }
+  }
+  return h.digest('hex');
+}
+
 let indexerMemo: string | null = null;
 export function indexerSignature(): string {
   if (!indexerMemo) {
     indexerMemo = crypto
       .createHash('sha256')
       .update(String(CACHE_SCHEMA))
+      .update(dataFingerprint())
       // The functions that decide what text is indexed and how it is split.
       .update(findingText.toString())
       .update(strongText.toString())
@@ -2502,6 +2558,7 @@ export function rankerSignature(): string {
     WEAK_FIELD_DAMP,
     Number(process.env.CAIRN_LINE_WEIGHT ?? LINE_WEIGHT),
     COMMON_RATE,
+    dataFingerprint(),
     CONTEST_WINDOW,
   ].join(',');
   return crypto.createHash('sha256').update(constants).digest('hex').slice(0, 12);
