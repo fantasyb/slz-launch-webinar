@@ -717,8 +717,26 @@ export function indexIdentity(findings: Finding[]): string {
  * scope: this asks "is this record byte-identical", the body hash asks "is the
  * claim byte-identical", and the cache needs the former.
  */
-function entryKey(f: Finding): string {
-  return crypto.createHash('sha256').update(String(CACHE_SCHEMA)).update(JSON.stringify(f)).digest('hex');
+export function entryKey(f: Finding): string {
+  /*
+   * The key map is part of the identity, and JSON.stringify cannot see it.
+   *
+   * A federated finding carries the keys its observations verify against, and
+   * `confidence` -- which this cache stores -- depends on them. JSON.stringify
+   * renders a Map as `{}`, so the same finding with and without its upstream
+   * keys hashed IDENTICALLY while scoring differently: whichever process
+   * wrote the entry first decided what every later reader saw, and a suite
+   * running test files in parallel raced on it. Moving the keys onto the
+   * object fixed who supplies them and not what identifies them.
+   */
+  const keys = (f as { keys?: Map<string, unknown> }).keys;
+  const keyIds = keys ? [...keys.keys()].sort().join(',') : '';
+  return crypto
+    .createHash('sha256')
+    .update(String(CACHE_SCHEMA))
+    .update(JSON.stringify(f))
+    .update(keyIds)
+    .digest('hex');
 }
 
 interface CachedDoc {
