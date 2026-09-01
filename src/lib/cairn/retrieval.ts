@@ -1132,7 +1132,27 @@ function lineWeight(t: string): number {
  * accuracy set, so it trades on the axis it is meant to: silence when the
  * corpus does not know, at some cost in recall on queries buried in noise.
  */
-const MIN_QUERY_EXPLAINED = 0.28;
+/*
+ * Below this share of the query, a hit says so. Re-measured when `explained`
+ * changed meaning to attested-only coverage: 0.28 was calibrated against the
+ * undiscounted fraction and, in the new units, stopped firing on questions the
+ * corpus cannot answer at all. Those hits then carried a single caveat, and a
+ * single caveat reads as confident.
+ *
+ *   minExpl   field P@1   silence   brief on a task it should answer
+ *   0.30       11/11       4/8      yes
+ *   0.40       11/11       6/8      yes
+ *   0.55       11/11       7/8      yes
+ *   0.60       11/11       7/8      yes
+ *   0.70       11/11       7/8      SILENT
+ *
+ * 7/8 is the ceiling, not 8/8: the remaining one is a question about half-life
+ * scoring pitfalls answered by the finding about half-lives being author-
+ * supplied, which is labelled unanswerable and is arguably not. 0.6 sits
+ * mid-plateau, one step from the value where the brief stops speaking.
+ */
+const MIN_QUERY_EXPLAINED = 0.6;
+const minQueryExplained = () => Number(process.env.CAIRN_MIN_QUERY_EXPLAINED ?? MIN_QUERY_EXPLAINED);
 
 /**
  * Explained fraction at which a single signal is allowed to stand alone.
@@ -1994,7 +2014,7 @@ export function retrieve(
         if (discriminating.size === 1) {
           caveats.push(`matched on only one distinctive term, "${[...discriminating][0]}"`);
         }
-        if (h.explained < MIN_QUERY_EXPLAINED) {
+        if (h.explained < minQueryExplained()) {
           caveats.push(`accounts for ${(h.explained * 100).toFixed(0)}% of your query`);
         }
         if (typed.length === 0) {
@@ -3177,7 +3197,7 @@ export function rankerSignature(): string {
     LENGTH_B,
     NOISE_FLOOR,
     SIGNAL_FLOOR,
-    MIN_QUERY_EXPLAINED,
+    minQueryExplained(),
     MIN_TERM_INFORMATION,
     STRONG_FIELD_BOOST,
     WEAK_FIELD_DAMP,
