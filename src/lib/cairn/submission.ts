@@ -82,6 +82,17 @@ export const SubmissionSchema = z.object({
   cost: z.enum(['minutes', 'hours', 'days']).default('hours'),
   /** Where it holds. Defaults to the honest answer: where you saw it. */
   appliesTo: z.string().max(1000).optional(),
+  /**
+   * The tool this is about, when the trap is a tool's behaviour.
+   *
+   * Set it and the finding is delivered the next time any agent reaches for
+   * that tool, through preflight -- which is the delivery path this class
+   * needs, because an MCP server's quirks are entered by USING it rather than
+   * by an error you can paste afterwards. It also fills in the fields this
+   * class would otherwise need spelled out by hand: the subject, the
+   * ecosystem, and a trigger.
+   */
+  tool: z.string().min(2).max(120).optional(),
   note: z.string().max(4000).optional(),
 });
 export type Submission = z.infer<typeof SubmissionSchema>;
@@ -148,7 +159,12 @@ export function normalise(s: Submission, now = new Date(), mintedId?: string) {
           : 'Environment not reported by the submitter.'),
       claim: s.claim,
       kind: s.kind,
-      subject: s.subject ?? { name: 'unknown', ecosystem: 'unknown', versions: '*' },
+      subject:
+        s.subject ??
+        (s.tool
+          ? { name: s.tool, ecosystem: 'mcp', versions: '*' }
+          : { name: 'unknown', ecosystem: 'unknown', versions: '*' }),
+      ...(s.tool ? { triggers: [s.tool] } : {}),
       tags: s.tags,
       cost: s.cost,
       expectation: s.expectation,

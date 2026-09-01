@@ -12,6 +12,7 @@
  */
 import { record, type RetrievalRecord } from './ledger';
 import type { Hit } from './retrieval';
+import { redactForLedger } from './safety';
 
 /**
  * Who is asking and in what run. Both come from the environment so a host can
@@ -28,6 +29,22 @@ export function who(): { by: string; session: string } {
 export function observe(query: string, hits: Hit[], source: string): void {
   if (!query.trim()) return;
   const { by, session } = who();
+  /*
+   * Redacted before it is written, because the ledger is committed.
+   *
+   * The whole point of this corpus is that people paste the error they
+   * actually got, and an error is the least sanitised text in software: it
+   * carries tokens, home paths, hostnames, and — in the environment this is
+   * about to be used in — record ids, org ids and email addresses out of an
+   * MCP tool's failure response. `record` refuses a submission carrying those
+   * and the ledger wrote them verbatim, so the safer-looking path was the
+   * leaking one.
+   *
+   * Redact rather than refuse: a query that cannot be logged is still a query
+   * worth measuring, and dropping it silently would bias the delivery numbers
+   * toward the queries that happen to be clean.
+   */
+  const { text: safeQuery } = redactForLedger(query);
   const returned = hits.slice(0, 5).map((h, i) => ({
     id: h.finding.id,
     rank: i + 1,
@@ -35,5 +52,5 @@ export function observe(query: string, hits: Hit[], source: string): void {
   }));
   const outcomes: RetrievalRecord['outcomes'] = {};
   for (const r of returned) outcomes[r.id] = r.rank === 1 ? 'surfaced' : 'served';
-  record({ at: new Date().toISOString(), by, session, query, returned, source, outcomes });
+  record({ at: new Date().toISOString(), by, session, query: safeQuery, returned, source, outcomes });
 }

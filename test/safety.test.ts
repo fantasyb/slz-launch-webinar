@@ -160,3 +160,38 @@ test('normalise honours an externally minted id', () => {
   assert.equal(minted.path, 'cairn/9999-a-finding-used-only-by-this-test.json');
   assert.ok(minted.branch.startsWith('cairn/9999-'), 'the branch must carry the minted number too');
 });
+
+/**
+ * The ledger is committed, so what it stores must be redacted first.
+ *
+ * Every query is written to data/retrievals/ and committed, and a query is
+ * pasted error output — the least sanitised text in software. `record`
+ * refuses a submission carrying a credential while the ledger wrote one
+ * verbatim, so the safer-looking path was the leaking one.
+ *
+ * Stricter than `redact` on purpose: nobody reads a ledger entry for its
+ * prose, it exists to be counted, so a false positive costs nothing there and
+ * costs a reader everything in a finding.
+ */
+test('ledger redaction removes what an MCP failure carries', async () => {
+  const { redactForLedger } = await import('../src/lib/cairn/safety');
+  const out = redactForLedger(
+    'query failed for 0035g00000XyZaBAAV, contact jo.smith@example.com, home /home/jsmith/work',
+  ).text;
+  assert.doesNotMatch(out, /0035g00000XyZaBAAV/, 'an 18-character record id must not be stored');
+  assert.doesNotMatch(out, /jo\.smith@example\.com/, 'an email address must not be stored');
+  assert.doesNotMatch(out, /jsmith/, 'a home directory names a person');
+});
+
+test('ledger redaction leaves ordinary text alone', async () => {
+  const { redactForLedger } = await import('../src/lib/cairn/safety');
+  // Over-redaction here would bias the delivery measurements toward whichever
+  // queries happen to be clean, which is worse than useless.
+  for (const q of [
+    'the Data 360 mapping returned empty for the Account object',
+    'broken since commit 4d21bcb8f0a2c1e9',
+    'rg exits 2 on a literal brace',
+  ]) {
+    assert.equal(redactForLedger(q).text, q, `must not touch: ${q}`);
+  }
+});

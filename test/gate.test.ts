@@ -103,3 +103,39 @@ test('the static rules catch what never decides, and pass what does', () => {
   // A manual check is outside the gate rather than failing it.
   assert.equal(checkFlaws({ command: 'Ask the operator whether billing is enabled', confirmedIf: 'a', refutedIf: 'b', manual: true }).length, 0);
 });
+
+/**
+ * The `tool` field is what turns a recorded finding into a delivered one.
+ *
+ * A finding about an MCP tool's behaviour is entered by USING the tool, not
+ * by an error you can paste afterwards, so it has to arrive when the agent
+ * reaches for it. That is preflight, matching on triggers — so `tool` must
+ * become a trigger, or the finding is only ever found by searching, and
+ * cairn-0035 is the measurement that agents do not search.
+ */
+test('a tool-scoped submission becomes a preflight trigger', async () => {
+  const { normalise } = await import('../src/lib/cairn/submission');
+  const { preflight } = await import('../src/lib/cairn/retrieval');
+  const { FindingSchema } = await import('../src/lib/cairn/schema');
+
+  const submission = {
+    title: 'the query tool returns empty rather than erroring on a stale mapping',
+    claim: 'a stale mapping yields an empty result set with a success status, so no rows is indistinguishable from a broken mapping',
+    expectation: 'a stale mapping surfaces as an error',
+    reality: 'the call succeeds and returns zero rows',
+    tool: 'mcp__data360__query_records',
+    check: { command: 'Compare against a mapping known to be current', confirmedIf: 'zero rows with success', refutedIf: 'an error', manual: true },
+    by: 'test',
+    evidence: [{ command: 'query_records({object:"Account"})', output: '{"status":"success","records":[]}' }],
+    tags: [], kind: 'trap' as const, cost: 'hours' as const,
+  };
+
+  const f = FindingSchema.parse(normalise(submission, new Date(), 'cairn-9001').finding);
+  assert.deepEqual(f.triggers, ['mcp__data360__query_records']);
+  assert.equal(f.subject.ecosystem, 'mcp');
+
+  const warned = preflight('mcp__data360__query_records', [f], { useLocalEnvironment: false });
+  assert.equal(warned.length, 1, 'reaching for the tool must surface the finding');
+  // And nothing else: a hook that speaks on every tool call is one people skip.
+  assert.equal(preflight('mcp__slack__post_message', [f], { useLocalEnvironment: false }).length, 0);
+});
