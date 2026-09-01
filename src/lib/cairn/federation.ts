@@ -122,6 +122,31 @@ function readOverlay(upstream: string, findingId: string): Observation[] {
 }
 
 /**
+ * The key gate every upstream bundle passes, in one place.
+ *
+ * Two record-level checks, for the reasons keys.ts states: an id must be
+ * derived from the material it claims, and a label must render
+ * unambiguously. Upstream bundles are the least trusted input in the system,
+ * so they get the same gate rather than a weaker one.
+ */
+function bundleKeys(bundle: FederationBundle): { keys: Map<string, KeyRecord>; rejected: number } {
+  const keys = new Map<string, KeyRecord>();
+  let rejected = 0;
+  for (const k of bundle.keys as KeyRecord[]) {
+    if (deriveKeyId(k.publicKey) !== k.keyId) {
+      rejected++;
+      continue;
+    }
+    if (validateLabel(k.label)) {
+      rejected++;
+      continue;
+    }
+    keys.set(k.keyId, k);
+  }
+  return { keys, rejected };
+}
+
+/**
  * Merge: an upstream finding with local observations appended.
  *
  * The merged finding keeps upstream's claim, check and half-life — those are
@@ -147,19 +172,7 @@ export function loadFederated(): FederatedFinding[] {
     // (or it can impersonate another by appearance alone). Upstream bundles
     // are the least trusted input in the system, so they get the same gate
     // rather than a weaker one.
-    const upstreamKeys = new Map<string, KeyRecord>();
-    let rejectedKeys = 0;
-    for (const k of bundle.keys as KeyRecord[]) {
-      if (deriveKeyId(k.publicKey) !== k.keyId) {
-        rejectedKeys++;
-        continue;
-      }
-      if (validateLabel(k.label)) {
-        rejectedKeys++;
-        continue;
-      }
-      upstreamKeys.set(k.keyId, k);
-    }
+    const { keys: upstreamKeys, rejected: rejectedKeys } = bundleKeys(bundle);
 
     for (const finding of bundle.findings) {
       const overlay = readOverlay(up.name, finding.id);
@@ -234,5 +247,83 @@ export function federationBundle(): {
     // Only keys minted here. Re-publishing an upstream's keys would launder
     // its identities downstream as though we vouched for them.
     keys: [...loadKeys().values()].filter((k) => !k.origin),
+  };
+}
+
+/**
+ * A finding carrying where it came from, for the paths that search.
+ *
+ * The id stays NATIVE. Namespacing it would be the obvious way to avoid
+ * collisions and it silently breaks every upstream signature, because
+ * confidence verifies observations against the finding id (decay.ts:149).
+ * `displayId` carries the namespaced form for anything user-facing.
+ */
+export interface SearchableFinding extends Finding {
+  upstreamName?: string;
+  upstreamOrigin?: string;
+  displayId?: string;
+}
+
+export interface Searchable {
+  findings: SearchableFinding[];
+  /**
+   * The key map a given finding must be verified against.
+   *
+   * Not one merged map, and that is a security property rather than
+   * tidiness: keys.ts excludes federated keys from loadKeys() precisely so an
+   * upstream cannot publish a key under a local agent's label and have it
+   * verify a LOCAL observation. Merging the maps to make this convenient
+   * would reintroduce exactly that. So a local finding is verified against
+   * local keys, and an upstream finding against that upstream's keys plus
+   * local keys, which sign the overlay.
+   */
+  keysFor(f: Finding): Map<string, KeyRecord>;
+}
+
+/**
+ * Everything this installation can answer from: its own corpus, plus every
+ * upstream it subscribes to.
+ *
+ * This is the merge point the two-tier design always described and never
+ * had. loadCorpus() reads only the local directory, and loadFederated() was
+ * consumed by the federation web page and by `observe`, so `find` and
+ * `brief` -- the only two things anybody actually runs -- never saw an
+ * upstream finding. A personal corpus with forty findings cached from its
+ * upstream answered "No corpus found."
+ */
+export function loadSearchable(): Searchable {
+  const local: SearchableFinding[] = loadCorpus();
+  const localKeys = loadKeys();
+  const perFinding = new WeakMap<object, Map<string, KeyRecord>>();
+  const findings: SearchableFinding[] = [...local];
+
+  const config = loadConfig();
+  for (const up of config.upstreams) {
+    const bundle = readBundle(up.name);
+    if (!bundle) continue;
+    const { keys: upstreamKeys } = bundleKeys(bundle);
+
+    // The overlay is signed by local keys and the upstream body by upstream
+    // keys, so verification needs both -- scoped to this finding, never
+    // folded into the map that verifies local findings.
+    const merged = new Map<string, KeyRecord>(upstreamKeys);
+    for (const [id, rec] of localKeys) merged.set(id, rec);
+
+    for (const finding of bundle.findings) {
+      const entry: SearchableFinding = {
+        ...finding,
+        observations: [...finding.observations, ...readOverlay(up.name, finding.id)],
+        upstreamName: up.name,
+        upstreamOrigin: bundle.origin,
+        displayId: federatedId(up.name, finding.id),
+      };
+      perFinding.set(entry, merged);
+      findings.push(entry);
+    }
+  }
+
+  return {
+    findings,
+    keysFor: (f: Finding) => perFinding.get(f) ?? localKeys,
   };
 }

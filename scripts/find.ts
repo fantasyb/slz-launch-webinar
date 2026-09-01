@@ -8,7 +8,7 @@
  * use two signals the HTTP path cannot: preconditions evaluated against this
  * environment, and — with --confirm — the checks themselves.
  */
-import { loadCorpus } from '../src/lib/cairn/load';
+import { loadSearchable, type SearchableFinding } from '../src/lib/cairn/federation';
 import { retrieve } from '../src/lib/cairn/retrieval';
 import { confirmCandidates } from '../src/lib/cairn/confirm';
 import { alsoSeenWith } from '../src/lib/cairn/graph';
@@ -44,7 +44,7 @@ if (!query) {
  * block a command is a tool people stop invoking.
  */
 if (before) {
-  const warnings = preflight(query, loadCorpus(), { useLocalEnvironment: true });
+  const warnings = preflight(query, loadSearchable().findings, { useLocalEnvironment: true });
   if (warnings.length === 0) {
     console.log(`\nnothing known about \`${query}\`.\n`);
     process.exit(0);
@@ -61,8 +61,19 @@ if (before) {
   process.exit(0);
 }
 
-const all = loadCorpus();
-const hits = retrieve(query, all, { useLocalEnvironment: true, limit: 5 });
+/*
+ * Local corpus AND every subscribed upstream. Searching only the local
+ * directory is what made the two-tier design a page on the website: a
+ * personal corpus with forty findings cached from its upstream answered
+ * "No corpus found."
+ */
+const searchable = loadSearchable();
+const all = searchable.findings;
+const hits = retrieve(query, all, {
+  useLocalEnvironment: true,
+  limit: 5,
+  keysFor: searchable.keysFor,
+});
 /*
  * Written down before it is printed. Until now every query this corpus ever
  * answered was discarded the moment it was served, which is why the only
@@ -78,9 +89,10 @@ if (hits.length === 0) {
    * the corpus matches". A reader would conclude the ledger is empty; it was
    * simply somewhere else.
    */
-  if (!corpusPresent()) {
+  if (!corpusPresent() && all.length === 0) {
     console.error(
-      `\n  No corpus found. Looked in ${homePath('cairn')}.\n` +
+      `\n  No corpus found. Looked in ${homePath('cairn')}, and in every\n` +
+        '  upstream this corpus subscribes to.\n' +
         '  Set CAIRN_HOME to the checkout, or run the CLI by its full path so it\n' +
         '  can find its own install. This is not an empty ledger — it is no ledger.\n',
     );
@@ -99,10 +111,20 @@ for (const h of hits) {
       : h.applicability === 'fails'
         ? ' [precondition does NOT hold here]'
         : '';
-  console.log(`  ${h.finding.id}  ${h.score.toFixed(1).padStart(6)}  ${h.finding.title}`);
+  /*
+   * An upstream finding is shown under its NAMESPACED id and named as
+   * somebody else's. Two corpora can both hold a cairn-0002 and mean
+   * different things; printing the native id for both would present a
+   * stranger's claim as one of yours.
+   */
+  const fed = h.finding as SearchableFinding;
+  console.log(
+    `  ${fed.displayId ?? h.finding.id}  ${h.score.toFixed(1).padStart(6)}  ${h.finding.title}`,
+  );
   console.log(
     `      ${h.finding.status === 'retired' ? 'RETIRED · ' : ''}` +
-      `confidence ${(h.confidence * 100).toFixed(0)}%${applies}`,
+      `confidence ${(h.confidence * 100).toFixed(0)}%${applies}` +
+      `${fed.upstreamOrigin ? ` · from ${fed.upstreamOrigin}` : ''}`,
   );
   console.log(`      matched: ${h.matched.slice(0, 5).map((m) => m.term).join(', ')}`);
   if (h.confusedWith.length) {

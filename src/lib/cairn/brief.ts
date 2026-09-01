@@ -33,6 +33,7 @@
  * correct answer for most tasks and must stay cheap.
  */
 import type { Finding } from './schema';
+import type { KeyRecord } from './signing';
 import { retrieve } from './retrieval';
 
 export interface BriefOptions {
@@ -45,6 +46,8 @@ export interface BriefOptions {
   maxChars?: number;
   /** Evaluate preconditions against this process's environment. */
   useLocalEnvironment?: boolean;
+  /** Verify a federated finding against its own upstream's keys. */
+  keysFor?: (f: Finding) => Map<string, KeyRecord>;
 }
 
 /*
@@ -93,6 +96,7 @@ export function briefEntries(task: string, corpus: Finding[], opts: BriefOptions
   return retrieve(task, corpus, {
     useLocalEnvironment: opts.useLocalEnvironment,
     limit: Math.max(limit * 3, 9),
+    keysFor: opts.keysFor,
   })
     /*
      * The retriever's own weak/strong label rather than a score threshold: it

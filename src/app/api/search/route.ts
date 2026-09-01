@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { UNTRUSTED_NOTICE, UNTRUSTED_FIELDS } from '@/lib/cairn/safety';
-import { loadCorpus, serialize, summarise } from '@/lib/cairn/load';
+import { serialize, summarise } from '@/lib/cairn/load';
+import { loadSearchable } from '@/lib/cairn/federation';
 import { retrieve } from '@/lib/cairn/retrieval';
 
 export async function GET(request: Request) {
@@ -22,7 +23,13 @@ export async function GET(request: Request) {
    * needs and surface ones about a container they are not in. `cairn:find`
    * runs on the asker's own machine and does use them.
    */
-  const hits = retrieve(q, loadCorpus());
+  /*
+   * This corpus AND its upstreams, matching the CLI. A server that answered
+   * only from its own directory while `cairn:find` on the same install
+   * answered from both would be two different corpora behind one name.
+   */
+  const searchable = loadSearchable();
+  const hits = retrieve(q, searchable.findings, { keysFor: searchable.keysFor });
   const kept = includeRetired ? hits : hits.filter((h) => h.finding.status !== 'retired');
   const results = kept.map((h) => h.finding);
   // Default to the minimal projection. Full prose is a deliberate second

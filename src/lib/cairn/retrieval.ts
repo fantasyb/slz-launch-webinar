@@ -44,6 +44,7 @@ import type { Finding } from './schema';
 import { sameSubject as isSameSubject } from './subject';
 import { surprise } from './calibration';
 import { confidence } from './decay';
+import type { KeyRecord } from './signing';
 import { matchEnvironment } from './precondition';
 import { coOccurrence } from './graph';
 import { readColumnar, writeColumnar, type ColumnarIndex } from './columnar';
@@ -780,7 +781,10 @@ function writeEntryStore(entries: Record<string, CachedDoc>): void {
  * re-lowercased every field of every finding on every keystroke; this is the
  * difference between O(corpus x query) per call and O(query).
  */
-export function buildIndex(findings: Finding[]): CorpusIndex {
+export function buildIndex(
+  findings: Finding[],
+  keysFor?: (f: Finding) => Map<string, KeyRecord>,
+): CorpusIndex {
   const hit = indexCache.get(findings);
   if (hit && Date.now() - hit.builtAt < INDEX_TTL_MS) return hit;
   const at = new Date();
@@ -844,7 +848,7 @@ export function buildIndex(findings: Finding[]): CorpusIndex {
     );
     const bm25 = bm25Doc(f);
     const entry: CachedDoc = {
-      confidence: confidence(f, at),
+      confidence: keysFor ? confidence(f, at, keysFor(f)) : confidence(f, at),
       surprise: surprise(f),
       terms: [...terms],
       strong: [...strong],
@@ -1260,6 +1264,16 @@ export interface SearchOptions {
    * disagreed. Costs nothing when omitted.
    */
   trace?: FusionTrace;
+  /**
+   * The key map to verify a given finding's observations against.
+   *
+   * Needed because an upstream finding's observations are signed by upstream
+   * keys, which loadKeys() deliberately excludes. Without this, every
+   * federated finding scored as though its attestations were forged, and the
+   * corpus that had been vouched for hardest looked the least trustworthy.
+   * Defaults to the local key map, which is what a local-only corpus wants.
+   */
+  keysFor?: (f: Finding) => Map<string, KeyRecord>;
 }
 
 export interface FusionTrace {
@@ -1278,7 +1292,7 @@ export function retrieve(
   findings: Finding[],
   opts: SearchOptions = {},
 ): Hit[] {
-  const index = buildIndex(findings);
+  const index = buildIndex(findings, opts.keysFor);
   const tokens = tokenize(query);
 
   /*
