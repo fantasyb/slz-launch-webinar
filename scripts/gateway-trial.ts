@@ -737,6 +737,36 @@ function regrade(file: string): void {
   console.log(`regraded ${n} of ${run.trials.length} trial(s) in ${file}: ${fields.join(', ')}`);
 }
 
+/* ---- scoring the forecast ---------------------------------------------- */
+
+/**
+ * The forecast is scored the way a finding's forecast is: per trial, as a
+ * probability. A cell forecast of 3 of 5 is p = 0.6 that any one trial is
+ * correct, and each trial then contributes (p - outcome)^2 -- the Brier
+ * score calibration.ts uses on sealed predictions. A miss lands with the
+ * same weight as a hit, in the record and on the screen, because a forecast
+ * that is only reported when it was right is not a forecast.
+ */
+interface CellScore { scenario: string; arm: Arm; forecast: number; observed: number; trials: number; error: number; brier: number }
+function scoreForecast(trials: Trial[], scenarios: Scenario[]): { cells: CellScore[]; meanBrier: number; totalAbsError: number } {
+  const cells: CellScore[] = [];
+  for (const sc of scenarios) {
+    for (const arm of ARMS) {
+      const ts = trials.filter((t) => t.scenario === sc.name && t.arm === arm);
+      if (!ts.length) continue;
+      const p = sc.forecast[arm] / T.trials;
+      const brier = ts.reduce((a, t) => a + (p - (t.correct ? 1 : 0)) ** 2, 0) / ts.length;
+      const observed = ts.filter((t) => t.correct).length;
+      cells.push({ scenario: sc.name, arm, forecast: sc.forecast[arm], observed, trials: ts.length, error: observed - sc.forecast[arm], brier });
+    }
+  }
+  return {
+    cells,
+    meanBrier: cells.length ? cells.reduce((a, c) => a + c.brier, 0) / cells.length : 0,
+    totalAbsError: cells.reduce((a, c) => a + Math.abs(c.error), 0),
+  };
+}
+
 /* ---- main --------------------------------------------------------------- */
 
 async function main() {
@@ -779,6 +809,8 @@ async function main() {
           /* The tool surface the tools were chosen from, every change seen during the run, and the surface at the end. */
           surface: { atStart: surfaceAtStart, changes: watcher.events, atEnd: watcher.shapes },
           stopped,
+          /* How wrong the sealed forecast was, per cell and overall. Written whether it was right or not. */
+          forecastScore: SMOKE ? null : scoreForecast(trials, T.scenarios),
           trials,
         },
         null,
@@ -848,6 +880,15 @@ async function main() {
       return `${arm} ${ok}/${ts.length} [${sc.forecast[arm]}]${arm === 'control' ? '' : ` delivered ${delivered}`} (mcp avg ${calls.toFixed(1)})`;
     });
     console.log(`  ${sc.name.padEnd(16)} ${row.join('   ')}`);
+  }
+  if (!SMOKE) {
+    const score = scoreForecast(trials, T.scenarios);
+    console.log('\nFORECAST, scored (per-trial Brier; 0 is perfect, 0.25 is a coin, 1 is confidently wrong)');
+    for (const c of score.cells) {
+      console.log(`  ${c.scenario.padEnd(16)} ${c.arm.padEnd(8)} forecast ${c.forecast}/${c.trials}  observed ${c.observed}/${c.trials}  off by ${c.error >= 0 ? '+' : ''}${c.error}  Brier ${c.brier.toFixed(3)}`);
+    }
+    console.log(`  mean Brier ${score.meanBrier.toFixed(3)}, ${score.totalAbsError} trial(s) off across ${score.cells.length} cells.` +
+      (score.totalAbsError === 0 ? '' : ' The forecast was wrong; the record says by how much.'));
   }
   console.log(`\n  ${caveat}`);
   console.log(`\nwritten: ${OUT}`);
