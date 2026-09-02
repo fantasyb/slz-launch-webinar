@@ -19,8 +19,9 @@ right now". Three commands reach it:
 | `cairn:doctor` | every applicable check in the local corpus | policy |
 | `cairn:find --confirm` | up to 3 checks for the findings just matched | policy + the `--confirm` flag |
 | `cairn:gate` | one check twice, to test whether it discriminates | policy |
-| `cairn:record` | the check in the submission being recorded, and its `absentWhen` | `strict` policy |
+| `cairn:record` | the check in the submission being recorded, and its `absentWhen` | policy, and never under `strict` |
 | `cairn:verify --run` | one named finding's check | policy + the `--run` flag |
+| `cairn_record` (gateway, MCP server) | **nothing** — a finding recorded by an agent is never executed, whatever the policy says | `origin: 'agent'` in `recordFinding.ts` |
 
 Search, brief, sync, federate, lint, publish and the web API never execute
 anything.
@@ -74,6 +75,14 @@ only mechanism that makes a recorded check verifiable rather than merely
 runnable, so the corpus fills with checks nobody has established decide
 anything.
 
+The exception is for a person. The same submission arriving through the
+gateway's `cairn_record` tool, or the standalone MCP server's, was written by
+a model out of text it read from an upstream tool — a record field, a Case
+description, anything a third party can put into the system the agent is
+reading. Every door goes through `recordSubmission()` in
+`src/lib/cairn/recordFinding.ts`, and those two doors pass `origin: 'agent'`,
+which never executes. There is no policy setting that turns that on.
+
 ## Bounds on anything that does run
 
 - **A scrubbed environment.** Checks receive an allowlist — `PATH`, `HOME`,
@@ -97,9 +106,10 @@ repository you cloned, and no safer. The corpus is the thing to review, and it
 is plain JSON in git with an author and a signature on every observation.
 
 With execution disabled — the default — no code path runs a command from a
-finding. `record` is the one exception and it is listed above: it runs the
-check in the submission it is recording, which is the caller's own code, and
-`"strict": true` closes it.
+finding, from any door. With it enabled, `cairn:record` from the command line
+also runs the check in the submission it is recording, which is the caller's
+own code, and `"strict": true` closes that. An agent's `cairn_record` never
+runs it in either state.
 
 ## What this page does not claim
 

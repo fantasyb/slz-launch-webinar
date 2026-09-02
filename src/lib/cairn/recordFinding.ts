@@ -74,7 +74,7 @@ function freshLocal(): Finding[] {
  */
 export async function recordSubmission(
   raw: unknown,
-  opts: { by?: string; origin?: 'human' | 'agent' } = {},
+  opts: { by?: string; origin?: 'human' | 'agent'; force?: boolean } = {},
 ): Promise<RecordOutcome> {
   const withBy = typeof raw === 'object' && raw !== null && opts.by && !(raw as Record<string, unknown>).by
     ? { ...(raw as Record<string, unknown>), by: opts.by }
@@ -97,8 +97,13 @@ export async function recordSubmission(
     };
   }
 
+  /*
+   * `force` is the CLI's "I have read the refusal and I mean it": it skips
+   * the check-quality and near-duplicate gates, and nothing else. The scan
+   * for what must never be committed is not skippable from any door.
+   */
   const check = { ...data.check, manual: data.check.manual ?? readsAsProse(data.check.command) };
-  const flaws = checkFlaws(check);
+  const flaws = opts.force ? [] : checkFlaws(check);
   if (flaws.length) {
     return {
       ok: false,
@@ -115,11 +120,13 @@ export async function recordSubmission(
   } catch {
     /* no federation configured: local only */
   }
-  const dupes = likelyDuplicates(data.title, [...local, ...upstream]);
+  const dupes = opts.force ? [] : likelyDuplicates(data.title, [...local, ...upstream]);
   if (dupes.length) {
     return {
       ok: false,
-      message: `Already recorded — add an observation to the existing finding instead:\n${dupes.map((d) => `  ${d.id}  ${d.title}`).join('\n')}`,
+      message:
+        `Already recorded — add an observation to the existing finding instead:\n${dupes.map((d) => `  ${d.id}  ${d.title}`).join('\n')}` +
+        (opts.origin === 'human' ? '\nIf yours really is different, record it again with --force.' : ''),
     };
   }
 

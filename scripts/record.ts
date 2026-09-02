@@ -11,9 +11,12 @@
  * ever touch stops being a ledger.
  *
  * It takes the SAME submission shape as /api/contribute and runs the SAME
- * gates, deliberately. Two ways in with two different bars is how a corpus
- * ends up with a clean half and a dirty half, and the dirty half is always
- * the convenient one.
+ * gates, deliberately, by calling the one function every door calls:
+ * recordSubmission() in src/lib/cairn/recordFinding.ts. This file used to
+ * carry its own copy of that sequence, and so did the MCP server, which is
+ * how a corpus ends up with a clean half and a dirty half -- the dirty half
+ * being whichever door was most convenient. What is left here is the part
+ * only a command line has: arguments, exit codes, and the lint-after-write.
  *
  * What it does NOT do is sign. Signing needs a key, generating a key is a
  * decision about identity, and demanding one before the first contribution
@@ -23,16 +26,9 @@
  */
 import fs from 'fs';
 import path from 'path';
-import { SubmissionSchema, normalise, likelyDuplicates, slugify, readsAsProse } from '../src/lib/cairn/submission';
-import { FindingSchema } from '../src/lib/cairn/schema';
-import { scanExecutable, scanInjection, scanSensitive, draftSurface } from '../src/lib/cairn/safety';
-import { loadCorpus } from '../src/lib/cairn/load';
-import { loadSearchable } from '../src/lib/cairn/federation';
-import { checkFlaws } from '../src/lib/cairn/checkquality';
-import { gate } from '../src/lib/cairn/gate';
-import { executionPolicy } from '../src/lib/cairn/policy';
-import { homePath, cairnHome, installRoot } from '../src/lib/cairn/home';
 import { spawnSync } from 'child_process';
+import { recordSubmission } from '../src/lib/cairn/recordFinding';
+import { cairnHome, installRoot } from '../src/lib/cairn/home';
 
 const args = process.argv.slice(2);
 const fileArg = args.indexOf('--file');
@@ -65,123 +61,23 @@ try {
   usage(`that is not JSON — ${(e as Error).message}`);
 }
 
-const submission = SubmissionSchema.safeParse(parsedJson);
-if (!submission.success) {
-  console.error('\n  that submission is not recordable yet:\n');
-  for (const i of submission.error.issues) {
-    console.error(`    ${i.path.join('.') || '(root)'}: ${i.message}`);
-  }
-  console.error('');
-  process.exit(2);
-}
-/* Narrowed here: the guard above does not survive the function boundary below. */
-const data = submission.data;
+const indent = (s: string) => s.split('\n').map((l) => `  ${l}`).join('\n');
 
-/*
- * Scanned before anything else looks at it, and refused rather than
- * redacted. Evidence is error output, and error output carries hostnames,
- * home paths and tokens -- the writer may not have noticed, and once it is
- * committed it is in everybody's clone. A local write is MORE dangerous
- * here than the HTTP path, not less: nobody is reviewing it before it lands.
- */
-const surface = draftSurface(data as unknown as Record<string, unknown>);
-const flags = [...scanExecutable(surface), ...scanInjection(surface), ...scanSensitive(surface)];
-if (flags.length) {
-  console.error('\n  refused — this must not be committed:\n');
-  for (const f of flags) console.error(`    ${f.pattern.padEnd(24)} ${f.reason}\n      ${f.sample}`);
-  console.error('\n  Take it out and record it again. Nothing was written.\n');
-  process.exit(1);
-}
-
-/*
- * Against the corpus the reader actually searches, upstream included.
- * loadCorpus() is local only, so a near-copy of a shared finding was accepted
- * silently -- on the path that will produce the most records, and the exact
- * fifty-thin-records failure the duplicate gate exists to prevent.
- */
-/*
- * A check that cannot decide anything is not a check.
- *
- * doctor reports a finding LIVE when its check exits zero, so a check that
- * exits zero regardless makes doctor report it live everywhere. Across the
- * first forty findings only four of nineteen runnable checks discriminated,
- * all written by an agent with the schema in front of it -- which is the one
- * measured failure mode of agent-written findings, and the reason this
- * refuses at the door rather than warning after.
- */
-const flaws = checkFlaws({ ...data.check, manual: data.check.manual ?? readsAsProse(data.check.command) });
-if (flaws.length && !force) {
-  console.error('\n  refused — the check cannot decide whether this is happening:\n');
-  for (const f of flaws) console.error(`    ${f.rule.padEnd(24)} ${f.detail}`);
-  console.error(
-    '\n  Make it exit non-zero when the trap is ABSENT, or set check.manual to true\n' +
-      '  if nothing on the machine can tell. Nothing was written.\n',
-  );
-  process.exit(1);
-}
-
-const dupes = likelyDuplicates(data.title, loadSearchable().findings);
-if (dupes.length && !force) {
-  console.error('\n  already recorded — add an observation to the existing finding instead:\n');
-  for (const d of dupes) console.error(`    ${d.id}  ${d.title}`);
-  console.error('\n  If yours really is different, record it again with --force.\n');
-  process.exit(1);
-}
-
-/*
- * The id comes from THIS corpus, which for a local write is the live one --
- * unlike the server, whose bundled copy is frozen at build time.
- */
-const max = loadCorpus().reduce((m, f) => Math.max(m, parseInt(f.id.slice(6), 10)), 0);
-const num = String(max + 1).padStart(4, '0');
-const draft = normalise(data, new Date(), `cairn-${num}`).finding;
-
-const checked = FindingSchema.safeParse(draft);
-if (!checked.success) {
-  console.error('\n  the finding did not validate after normalisation:\n');
-  for (const i of checked.error.issues) console.error(`    ${i.path.join('.')}: ${i.message}`);
-  console.error('');
-  process.exit(2);
-}
-/* Narrowed here: the guard above does not survive the function boundary below. */
-const finding = checked.data;
-
-// tsx emits CJS for this script, where top-level await is unavailable, so the
-// gate -- the only asynchronous step -- runs inside main(). Nothing above is async.
+// tsx emits CJS for this script, where top-level await is unavailable, so
+// everything asynchronous runs inside main().
 async function main() {
   /*
-   * The runtime half of the gate, when the writer supplied a delta.
-   *
-   * The static rules catch a check that never decides anything. This catches
-   * the ones that LOOK like they decide: run the check, apply the finding's own
-   * absentWhen, run it again, and refuse if the answer did not move. Skipped
-   * when no absentWhen was given -- an ungated finding still lands, because
-   * demanding a delta for traps that have no on-machine remedy would refuse the
-   * manual ones, and a corpus that only accepts what it can prove is a corpus
-   * that loses the hardest findings.
+   * `origin: 'human'`: a person at a keyboard, recording a check they wrote
+   * seconds ago. That is the one origin whose absentWhen the gate may run,
+   * and only unless this machine's policy says strict -- see EXECUTION.md.
    */
-  if (finding.check.absentWhen && !finding.check.manual && !executionPolicy().strict) {
-    const verdict = await gate(finding);
-    if (verdict.verdict === 'same-either-way') {
-      console.error('\n  refused — the check does not distinguish the trap from its absence:\n');
-      console.error(`    ${verdict.detail}`);
-      console.error('\n  Nothing was written.\n');
-      process.exit(1);
-    }
-    if (verdict.verdict === 'discriminates') {
-      console.log(`\n  gate: ${verdict.detail}`);
-    }
+  const outcome = await recordSubmission(parsedJson, { origin: 'human', force });
+  if (!outcome.ok) {
+    console.error(`\n${indent(outcome.message)}\n`);
+    process.exit(outcome.message.startsWith('Not recordable') ? 2 : 1);
   }
-
-  const root = installRoot();
-  const dir = homePath('cairn');
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  const file = path.join(dir, `${num}-${slugify(data.title)}.json`);
-  if (fs.existsSync(file)) {
-    console.error(`\n  ${file} already exists. Nothing was written.\n`);
-    process.exit(1);
-  }
-  fs.writeFileSync(file, `${JSON.stringify(finding, null, 2)}\n`);
+  const file = outcome.file!;
+  const finding = outcome.finding!;
 
   /*
    * Linted after writing, and REMOVED again if it does not pass.
@@ -194,6 +90,7 @@ async function main() {
    * unmergeable everywhere after. Better to refuse it here, while they still
    * have the context to fix it.
    */
+  const root = installRoot();
   const lint = spawnSync('npx', ['tsx', path.join(root ?? '.', 'scripts', 'lint-corpus.ts')], {
     cwd: root ?? process.cwd(),
     env: { ...process.env, CAIRN_HOME: cairnHome() },
@@ -222,11 +119,9 @@ async function main() {
   console.log(`    ${file}`);
   console.log(`    ${finding.title}`);
   for (const w of warned) console.log(`    ${w.trim()}`);
-  console.log(
-    '\n  Unsigned, so it counts as one environment and cannot raise scope on its own.',
-  );
+  /* Everything recordSubmission had to say after the first line: the tool hand-over, the gate, the signing note. */
+  for (const line of outcome.message.split('\n').slice(1)) console.log(`  ${line}`);
   console.log('  Commit it to share it. To sign it: cairn:keygen, then cairn:sign.\n');
-
 }
 
 main();

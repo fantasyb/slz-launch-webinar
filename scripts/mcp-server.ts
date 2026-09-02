@@ -15,6 +15,20 @@
  * without anyone asking -- needs a client-side hook and cannot be an MCP
  * server. So: MCP for universal reach, hooks for delivery where they exist.
  *
+ * WHEN THIS ONE, AND WHEN THE GATEWAY. The gateway (mcp-proxy.ts) offers the
+ * same two tools and delivers findings on the surfaces a decision is made
+ * from, but it needs an upstream to wrap: it refuses to start with no
+ * --server. An agent whose work is files and shell rather than MCP tools has
+ * nothing to put it in front of, and this is the server for that case --
+ * find and record, over stdio, with no upstream. Two differences are
+ * deliberate: cairn_find here searches the federated corpus (loadSearchable),
+ * where the gateway annotates from LOCAL findings only, because injecting a
+ * stranger's finding into a result the model trusts is the org's decision and
+ * not this file's; and cairn_brief exists here because a task description is
+ * a thing an agent can offer before starting, which a gateway never sees.
+ * Recording goes through recordSubmission(), the same door as the CLI and
+ * the gateway, so the bar cannot differ by entrance.
+ *
  * The tool DESCRIPTIONS carry the requirement rather than a document
  * carrying it. That is not a style choice: in the twelve-trial run, agents
  * given a tool whose description spelled out what a check must do wrote a
@@ -28,14 +42,7 @@ import { retrieve } from '../src/lib/cairn/retrieval';
 import { loadSearchable, type SearchableFinding } from '../src/lib/cairn/federation';
 import { brief } from '../src/lib/cairn/brief';
 import { observe } from '../src/lib/cairn/observe';
-import { SubmissionSchema, normalise, likelyDuplicates, readsAsProse } from '../src/lib/cairn/submission';
-import { FindingSchema } from '../src/lib/cairn/schema';
-import { checkFlaws } from '../src/lib/cairn/checkquality';
-import { scanExecutable, scanInjection, scanSensitive, draftSurface } from '../src/lib/cairn/safety';
-import { cairnHome, homePath } from '../src/lib/cairn/home';
-import { slugify } from '../src/lib/cairn/submission';
-import fs from 'fs';
-import path from 'path';
+import { recordSubmission } from '../src/lib/cairn/recordFinding';
 
 const server = new McpServer({ name: 'cairn', version: '0.1.0' });
 
@@ -120,63 +127,13 @@ server.registerTool(
     },
   },
   async (args) => {
-    const parsed = SubmissionSchema.safeParse(args);
-    if (!parsed.success) {
-      return text(
-        `Not recordable yet:\n${parsed.error.issues.map((i) => `  ${i.path.join('.')}: ${i.message}`).join('\n')}`,
-      );
-    }
-    const data = parsed.data;
-
-    /* The same gates as the CLI and the HTTP endpoint. Two ways in with two
-     * bars is how a corpus ends up with a clean half and a dirty half. */
-    const flags = [
-      ...scanExecutable(draftSurface(data as unknown as Record<string, unknown>)),
-      ...scanInjection(draftSurface(data as unknown as Record<string, unknown>)),
-      ...scanSensitive(draftSurface(data as unknown as Record<string, unknown>)),
-    ];
-    if (flags.length) {
-      return text(
-        `Refused — this must not be committed:\n${flags.map((f) => `  ${f.pattern}: ${f.reason}`).join('\n')}`,
-      );
-    }
-
-    const flaws = checkFlaws({ ...data.check, manual: data.check.manual ?? readsAsProse(data.check.command) });
-    if (flaws.length) {
-      return text(
-        `Refused — the check cannot decide whether this is happening:\n` +
-          flaws.map((f) => `  ${f.rule}: ${f.detail}`).join('\n') +
-          '\n\nMake it exit non-zero when the trap is ABSENT, or describe it in prose to mark it manual.',
-      );
-    }
-
-    const dupes = likelyDuplicates(data.title, loadSearchable().findings);
-    if (dupes.length) {
-      return text(
-        `Already recorded — add an observation to the existing finding instead:\n` +
-          dupes.map((d) => `  ${d.id}  ${d.title}`).join('\n'),
-      );
-    }
-
-    const dir = homePath('cairn');
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    const max = loadSearchable()
-      .findings.filter((f) => !(f as SearchableFinding).upstreamName)
-      .reduce((m, f) => Math.max(m, parseInt(f.id.slice(6), 10) || 0), 0);
-    const num = String(max + 1).padStart(4, '0');
-    const checked = FindingSchema.safeParse(normalise(data, new Date(), `cairn-${num}`).finding);
-    if (!checked.success) return text('The finding did not validate after normalisation.');
-
-    const file = path.join(dir, `${num}-${slugify(data.title)}.json`);
-    if (fs.existsSync(file)) return text(`${file} already exists; nothing was written.`);
-    fs.writeFileSync(file, `${JSON.stringify(checked.data, null, 2)}\n`);
-    return text(
-      `Recorded ${checked.data.id} in ${cairnHome()}.\n` +
-        (data.tool
-          ? `It will be handed over the next time anyone reaches for ${data.tool}.`
-          : 'Set `tool` next time if this is about an MCP tool — that is what makes it come back.') +
-        '\nUnsigned, so it counts as one environment and cannot raise scope on its own.',
-    );
+    /*
+     * The one write path, shared with the CLI and the gateway. `origin:
+     * 'agent'`: whatever the machine's execution policy says, a check that
+     * arrived through a tool call is never run -- see recordFinding.ts.
+     */
+    const outcome = await recordSubmission(args, { origin: 'agent' });
+    return { isError: !outcome.ok, content: [{ type: 'text' as const, text: outcome.message }] };
   },
 );
 
