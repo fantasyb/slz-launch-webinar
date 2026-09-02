@@ -10,6 +10,10 @@ import assert from 'node:assert/strict';
 import { scanSensitive, scanExecutable, redact } from '../src/lib/cairn/safety';
 import { validateBlockShape, installBlock } from '../src/lib/cairn/block';
 import { normalise } from '../src/lib/cairn/submission';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import { execFileSync } from 'child_process';
 
 const changed = (s: string) => redact(s).text !== s;
 const flagged = (s: string) => scanSensitive(s).length > 0;
@@ -257,4 +261,54 @@ test('base64-looking data is still caught, and still stripped', () => {
     scanSensitive('/home/jahern/work/notes.md').some((f) => f.pattern === 'home-path'),
     'a real username is still a real username',
   );
+});
+
+/*
+ * The gate must see a rename, and must not fire on the project's own output.
+ *
+ * Two ways a secret scanner stops scanning. The first is silence:
+ * --diff-filter=ACM omits R, so `git mv` a large file and append a credential
+ * and the gate returns clean -- reproduced at R099, one added line holding a
+ * session id, exit 0. A large refactor is exactly the commit that produces
+ * renames and exactly the one nobody reads closely.
+ *
+ * The second is noise. Trial transcripts are JSONL and every assistant turn
+ * carries a base64 `signature`, so scanned as prose all thirty-four committed
+ * transcripts trip opaque-blob, as would every future run's. The way out that
+ * presents itself is --no-verify, which switches the secret scan off too. A
+ * gate that must be bypassed to do ordinary work teaches the bypass.
+ */
+test('a rename that adds a credential is refused', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'cairn-rename-gate-'));
+  const git = (...args: string[]) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' });
+  git('init', '-q', '.');
+  git('config', 'user.email', 'p@example.com');
+  git('config', 'user.name', 'p');
+
+  /* Large, so git records the move as a rename rather than a delete plus add. */
+  fs.mkdirSync(path.join(repo, 'a'));
+  fs.writeFileSync(path.join(repo, 'a', 'big.ts'), Array.from({ length: 200 }, (_, i) => `export const k${i} = ${i};`).join('\n'));
+  git('add', '-A');
+  git('commit', '-qm', 'base');
+
+  fs.mkdirSync(path.join(repo, 'b'));
+  git('mv', 'a/big.ts', 'b/big.ts');
+  fs.appendFileSync(
+    path.join(repo, 'b', 'big.ts'),
+    '\n// session token 00D5f000000abcDEF!AQEAQFakeTokenForTestingOnly_xyz123\n',
+  );
+  git('add', '-A');
+  assert.match(git('diff', '--cached', '--name-status', '-M'), /^R\d+\s/m, 'the premise: git calls this a rename');
+
+  let refused = false;
+  try {
+    execFileSync('npx', ['tsx', path.join(process.cwd(), 'scripts', 'precommit.ts')], {
+      cwd: repo,
+      encoding: 'utf8',
+      stdio: 'pipe',
+    });
+  } catch {
+    refused = true;
+  }
+  assert.ok(refused, 'a credential added during a rename must not reach the commit');
 });

@@ -18,7 +18,7 @@ import { scanSensitive, scanExecutable, redact } from '../src/lib/cairn/safety';
  * would train a contributor to pass --no-verify — the worst possible outcome
  * for a gate whose only job is to be trusted when it fires.
  */
-const CRYPTO_FIELDS = new Set(['value', 'hash', 'nonce', 'publicKey', 'anchor', 'keyId']);
+const CRYPTO_FIELDS = new Set(['value', 'hash', 'nonce', 'publicKey', 'anchor', 'keyId', 'signature']);
 
 /** Text a JSON file actually contributes, excluding crypto material. */
 function proseOf(text: string): string {
@@ -46,7 +46,17 @@ function proseOf(text: string): string {
 // were dropped from the scan without a word.
 const staged = execFileSync(
   'git',
-  ['diff', '--cached', '--name-only', '--diff-filter=ACM', '-z'],
+  /*
+   * R, for renamed, and it was missing.
+   *
+   * A rename that also edits the file is reported as R, not M, so
+   * --diff-filter=ACM skipped it entirely: `git mv` a large file, append a
+   * credential, and the gate returns clean. Reproduced at R099 -- ninety-nine
+   * percent similar, one added line holding a session id, exit 0. A
+   * forty-seven file refactor moving code between directories is exactly the
+   * commit that produces renames, and exactly the commit nobody reads closely.
+   */
+  ['diff', '--cached', '--name-only', '--diff-filter=ACMR', '-z'],
   { encoding: 'utf8' },
 )
   .split('\0')
@@ -56,6 +66,15 @@ const PATTERN_FIXTURES = [
   'src/lib/cairn/safety.ts',
   'test/safety.test.ts',
   'cairn/0014-follow-this-url-is-standing-rce.json',
+  /* Asserts what the execution policy does with a credential-shaped value. */
+  'test/policy.test.ts',
+  /*
+   * A harvest fixture: a small fake codebase that is supposed to look like a
+   * real one, internal hostname included. Named individually rather than
+   * exempting research/fixtures/, so the next fixture added there has to
+   * justify itself the same way.
+   */
+  'research/fixtures/harvest/zod/src/client.ts',
 ];
 
 /**
@@ -115,7 +134,24 @@ for (const file of staged) {
   } catch {
     continue; // not resolvable in the index (submodule, or a race) — nothing to scan
   }
-  const text = file.endsWith('.json') ? proseOf(raw) : raw;
+  /*
+   * .jsonl as well as .json, one object per line.
+   *
+   * Trial transcripts are JSONL, and every assistant turn carries a
+   * `signature` -- base64 by construction, and structurally indistinguishable
+   * from an encoded secret. Scanned as prose, all thirty-four committed
+   * transcripts trip opaque-blob, and so would every transcript of every
+   * future run. That is the gate firing on its own correct output at the
+   * moment somebody is committing an experiment's results, and the way out
+   * that presents itself is --no-verify, which switches off the secret scan
+   * too. A gate that has to be bypassed to do ordinary work is worse than no
+   * gate, because it teaches the bypass.
+   */
+  const text = file.endsWith('.json')
+    ? proseOf(raw)
+    : file.endsWith('.jsonl')
+      ? raw.split('\n').filter(Boolean).map(proseOf).join('\n')
+      : raw;
 
   // Secrets: never, in any file.
   for (const flag of scanSensitive(text)) {
