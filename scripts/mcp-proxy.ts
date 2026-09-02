@@ -62,10 +62,16 @@ import {
   type ServerCapabilities,
   type Tool,
 } from '@modelcontextprotocol/sdk/types.js';
-import { preflight } from '../src/lib/cairn/retrieval';
+import http from 'http';
+import { randomUUID } from 'crypto';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
+import { preflight, retrieve } from '../src/lib/cairn/retrieval';
 import { FindingSchema, type Finding } from '../src/lib/cairn/schema';
-import { homePath } from '../src/lib/cairn/home';
+import { homePath, cairnHome } from '../src/lib/cairn/home';
 import { observe } from '../src/lib/cairn/observe';
+import { recordSubmission } from '../src/lib/cairn/recordFinding';
+import { redactForLedger } from '../src/lib/cairn/safety';
 
 /* ------------------------------------------------------------------------ */
 /* Configuration                                                             */
@@ -82,15 +88,23 @@ function usage(): never {
   console.error(
     'usage: cairn-proxy --server "<command>"            one upstream, names untouched\n' +
       '       cairn-proxy --server name="<command>" ...   several; tools become name__tool\n' +
-      '       cairn-proxy --config <mcp.json>              a client\'s {"mcpServers": {...}}',
+      '       cairn-proxy --config <mcp.json>              a client\'s {"mcpServers": {...}}\n' +
+      '       ... --http <port>                            serve over Streamable HTTP at /mcp instead of stdio',
   );
   process.exit(2);
 }
 
+/** Port for the hosted mode, or null for stdio. */
+let HTTP_PORT: number | null = null;
+
 function parseArgs(argv: string[]): UpstreamSpec[] {
   const specs: UpstreamSpec[] = [];
   for (let i = 0; i < argv.length; i++) {
-    if (argv[i] === '--server') {
+    if (argv[i] === '--http') {
+      const v = argv[++i];
+      if (v === undefined || !/^\d+$/.test(v)) usage();
+      HTTP_PORT = Number(v);
+    } else if (argv[i] === '--server') {
       const v = argv[++i];
       if (!v) usage();
       const m = /^([A-Za-z0-9_-]+)=(.+)$/.exec(v);
@@ -292,9 +306,9 @@ function propertyNames(tool: Tool): string[] {
   return props ? Object.keys(props) : [];
 }
 
-function describe(tool: Tool, about: About[], budgetLeft: number): Tool {
+function describe(session: SessionState, tool: Tool, about: About[], budgetLeft: number): Tool {
   if (!about.length) return tool;
-  for (const a of about) served(a.finding.id, tool.name, a.props.length ? 'argument' : 'description');
+  for (const a of about) served(session, a.finding.id, tool.name, a.props.length ? 'argument' : 'description');
   const out: Tool = { ...tool, inputSchema: { ...tool.inputSchema } };
   const props = (out.inputSchema as { properties?: Props }).properties;
 
@@ -346,11 +360,38 @@ function describe(tool: Tool, about: About[], budgetLeft: number): Tool {
  * a long session; the reminder is what survives that.
  */
 const REMIND_EVERY = 10;
-/** Upstreams whose trap index has already been delivered on a result this session. */
-const introduced = new Set<string>();
-const callsByTool = new Map<string, number>();
-const shown = new Set<string>();
-const nudged = new Set<string>();
+
+/**
+ * Everything that is "once per session" lives here, and nowhere else.
+ *
+ * Over stdio one process is one session, and module-level sets were enough.
+ * Hosted, one process serves every client that connects, and a set shared
+ * between them means the second client never receives the note the first
+ * one already saw. That is the kind of bug that looks like delivery working
+ * -- the ledger shows the note served -- while half the sessions got nothing.
+ */
+interface SessionState {
+  id: string;
+  /** The client's own name from initialize, for attribution. */
+  agent?: string;
+  /** Upstreams whose trap index has already been delivered on a result. */
+  introduced: Set<string>;
+  callsByTool: Map<string, number>;
+  /** `${tool}|${findingId}` pairs whose full note has been delivered. */
+  shown: Set<string>;
+  /** Tools that have carried the record-this invitation. */
+  nudged: Set<string>;
+  /** The last failed call per tool: the open holes. */
+  holes: Map<string, { args: Record<string, unknown>; output: string; at: string }>;
+  /** Tools for which a draft has already been opened this session. */
+  drafted: Set<string>;
+}
+
+function newSession(id: string): SessionState {
+  return {
+    id, introduced: new Set(), callsByTool: new Map(), shown: new Set(), nudged: new Set(), holes: new Map(), drafted: new Set(),
+  };
+}
 
 /**
  * Write down what was actually delivered, and on which surface.
@@ -370,9 +411,14 @@ const nudged = new Set<string>();
  * Tagged `mcp-proxy:*` and never `cli:find`, so served annotations can never
  * be mistaken for somebody asking a question.
  */
-function served(findingId: string, tool: string, surface: string): void {
+function served(session: SessionState, findingId: string, tool: string, surface: string): void {
   try {
-    observe(`${tool} [${surface}]`, [{ finding: { id: findingId }, rank: 1, strength: 'strong' }] as never, `mcp-proxy:${surface}`);
+    observe(
+      `${tool} [${surface}]`,
+      [{ finding: { id: findingId }, rank: 1, strength: 'strong' }] as never,
+      `mcp-proxy:${surface}`,
+      { by: session.agent, session: session.id },
+    );
   } catch (e) {
     /*
      * Delivery must never fail because the ledger could not be written — but
@@ -384,7 +430,8 @@ function served(findingId: string, tool: string, surface: string): void {
   }
 }
 
-function annotate(exposed: string, about: About[], isError: boolean, args: Record<string, unknown>): string {
+function annotate(session: SessionState, exposed: string, about: About[], isError: boolean, args: Record<string, unknown>): string {
+  const { callsByTool, shown, nudged } = session;
   const calls = (callsByTool.get(exposed) ?? 0) + 1;
   callsByTool.set(exposed, calls);
   let out = '';
@@ -396,10 +443,10 @@ function annotate(exposed: string, about: About[], isError: boolean, args: Recor
     if (!shown.has(key)) {
       shown.add(key);
       out += fullNote(f);
-      served(f.id, exposed, 'result');
+      served(session, f.id, exposed, 'result');
     } else if (calls % REMIND_EVERY === 0) {
       out += reminderNote(f);
-      served(f.id, exposed, 'result-reminder');
+      served(session, f.id, exposed, 'result-reminder');
     }
   }
   /*
@@ -416,6 +463,78 @@ function annotate(exposed: string, about: About[], isError: boolean, args: Recor
     out += bankNudge();
   }
   return out;
+}
+
+/* ------------------------------------------------------------------------ */
+/* The hole-to-draft loop                                                    */
+/* ------------------------------------------------------------------------ */
+
+/*
+ * "Bank that" needs a person to notice. The gateway can notice one shape by
+ * itself, with no opinion: a call to a tool failed, and a later call to the
+ * same tool in the same session worked. Something changed between them, the
+ * agent knows what, and it is the exact moment cairn-0034 says the knowledge
+ * is cheapest -- the trap has just been made to go away.
+ *
+ * So the working result carries a draft: the failing call and its output as
+ * evidence, the arguments that differed, the tool as the trigger, and a
+ * prose check. What it cannot supply is what only the writer knows --
+ * expectation, reality, absentWhen -- and it asks for exactly those. The
+ * draft is also written under drafts/ in the corpus home, so a session that
+ * ends without recording leaves the hole visible to a person.
+ *
+ * Once per tool per session. A tool that fails and recovers ten times is one
+ * trap, not ten, and the tenth draft is wallpaper.
+ */
+function argDiff(a: Record<string, unknown>, b: Record<string, unknown>): string[] {
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+  return [...keys].filter((k) => JSON.stringify(a[k]) !== JSON.stringify(b[k]));
+}
+
+function draftFor(session: SessionState, tool: string, args: Record<string, unknown>): string {
+  const hole = session.holes.get(tool);
+  if (!hole || session.drafted.has(tool)) return '';
+  session.drafted.add(tool);
+  session.holes.delete(tool);
+  const differed = argDiff(hole.args, args);
+  const draft = {
+    tool,
+    title: '',
+    claim: '',
+    expectation: '',
+    reality: '',
+    workaround: differed.length ? `Differed in: ${differed.join(', ')}` : '',
+    evidence: [
+      { command: `${tool} ${JSON.stringify(hole.args)}`, output: hole.output.slice(0, 2000) },
+      { command: `${tool} ${JSON.stringify(args)}`, output: '(succeeded)' },
+    ],
+    check: {
+      command: `Call ${tool} with the failing arguments and confirm the error, then with the working ones and confirm success.`,
+      confirmedIf: 'the first call fails as recorded and the second succeeds',
+      refutedIf: 'the first call succeeds, or fails for a reason unrelated to the recorded one',
+      absentWhen: '',
+    },
+  };
+  try {
+    const dir = homePath('drafts');
+    fs.mkdirSync(dir, { recursive: true });
+    const safe = redactForLedger(JSON.stringify(draft, null, 2)).text;
+    fs.writeFileSync(path.join(dir, `${session.id}-${tool.replace(/[^A-Za-z0-9_.-]+/g, '_')}.json`), `${safe}\n`);
+  } catch (e) {
+    process.stderr.write(`cairn-proxy: could not write draft: ${(e as Error).message}\n`);
+  }
+  try {
+    observe(`${tool} [draft]`, [], 'mcp-proxy:draft', { by: session.agent, session: session.id });
+  } catch { /* never fatal */ }
+  return (
+    `\n\n--- ${LABEL} ---\n` +
+    `Earlier in this session ${tool} failed (${clip(hole.output, 200)}) and this call succeeded` +
+    (differed.length ? `; the arguments differed in: ${differed.join(', ')}.` : '.') +
+    ' If that failure contradicted a reasonable expectation, record it now with cairn_record, ' +
+    'filling in title, claim, expectation, reality and workaround, and absentWhen if something on the machine made it stop:\n' +
+    JSON.stringify(draft) +
+    `\n--- end ---`
+  );
 }
 
 /* ------------------------------------------------------------------------ */
@@ -473,6 +592,61 @@ async function spawn(up: Upstream, onNotification: (u: Upstream, method: string,
 /* Main                                                                      */
 /* ------------------------------------------------------------------------ */
 
+/* ------------------------------------------------------------------------ */
+/* The gateway's own tools                                                   */
+/* ------------------------------------------------------------------------ */
+
+/*
+ * The nudge on a failed result said "record it with cairn_record" and the
+ * gateway did not offer one: the writer half lived in a separate MCP server
+ * a client had to be told about. One integration point now carries both
+ * halves. Names are checked against the upstreams' so a server that already
+ * offers a tool called cairn_find keeps its own.
+ */
+const GATEWAY_TOOLS: Tool[] = [
+  {
+    name: 'cairn_find',
+    description:
+      'Search the ledger of recorded traps behind this gateway: paste an error you cannot explain, ' +
+      'or describe what you are about to do. Silence means nothing is recorded, which is the common case.',
+    inputSchema: { type: 'object', properties: { query: { type: 'string', description: 'The error text, verbatim, or what you are about to do' } }, required: ['query'] },
+  },
+  {
+    name: 'cairn_record',
+    description:
+      'Record a trap you just hit, so the next agent does not lose the same time to it. Use it AFTER you ' +
+      'have solved something that surprised you — not for your own mistakes. Set `tool` to the MCP tool ' +
+      'this is about, named exactly: that is what makes the finding come back on that tool. The `check` ' +
+      'must EXIT NON-ZERO when the trap is absent, or be described in prose to be marked manual; ' +
+      '`absentWhen` is what makes the trap stop happening.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string' },
+        claim: { type: 'string', description: 'One falsifiable sentence' },
+        expectation: { type: 'string', description: 'What a competent person would reasonably predict' },
+        reality: { type: 'string', description: 'What actually happens instead' },
+        workaround: { type: 'string' },
+        tool: { type: 'string', description: 'The MCP tool this is about, named exactly' },
+        evidence: { type: 'array', items: { type: 'object', properties: { command: { type: 'string' }, output: { type: 'string' } }, required: ['command', 'output'] } },
+        check: {
+          type: 'object',
+          properties: { command: { type: 'string' }, confirmedIf: { type: 'string' }, refutedIf: { type: 'string' }, absentWhen: { type: 'string' } },
+          required: ['command', 'confirmedIf', 'refutedIf'],
+        },
+        by: { type: 'string', description: 'Your model or agent identifier' },
+      },
+      required: ['title', 'claim', 'expectation', 'reality', 'evidence', 'check'],
+    },
+  },
+];
+
+const textResult = (text: string, isError = false) => ({ isError, content: [{ type: 'text' as const, text }] });
+
+/* ------------------------------------------------------------------------ */
+/* Main                                                                      */
+/* ------------------------------------------------------------------------ */
+
 async function main() {
   const specs = parseArgs(process.argv.slice(2));
   const single = specs.length === 1;
@@ -480,20 +654,21 @@ async function main() {
   const expose = (up: Upstream, raw: string) => (single ? raw : `${up.spec.name}__${raw}`);
 
   /*
-   * THE PROXY IS THE SESSION. Every CLI invocation an agent makes runs in its
-   * own process with no way to know which session it belongs to, so the
-   * ledger's session field was 'adhoc' for everything and "this session's
-   * holes" meant "the last four hours of everyone". This process lives
-   * exactly one client session, so it can name it.
+   * THE PROXY IS THE SESSION, over stdio. Every CLI invocation an agent makes
+   * runs in its own process with no way to know which session it belongs to,
+   * so the ledger's session field was 'adhoc' for everything. This process
+   * lives exactly one client session over stdio and can name it. Hosted,
+   * each client gets its own SessionState and the id the transport minted.
    */
   process.env.CAIRN_SESSION ??= `proxy-${Date.now().toString(36)}-${process.pid}`;
 
-  let server: Server | null = null;
   /* Declared before the relay that reads it; assigned once the upstreams have said what they offer. */
   let capabilities: ServerCapabilities = {};
   const upstreams: Upstream[] = specs.map((spec) => ({
     spec, client: null, caps: {}, alive: false, respawned: false,
   }));
+  /* Every live server, so an upstream notification reaches every session. */
+  const servers = new Set<Server>();
 
   /* Owner maps, rebuilt whenever a list is fetched or an upstream says it changed. */
   const toolOwner = new Map<string, { up: Upstream; raw: string }>();
@@ -505,15 +680,16 @@ async function main() {
     if (method === 'notifications/tools/list_changed') toolOwner.clear();
     if (method === 'notifications/prompts/list_changed') promptOwner.clear();
     if (method === 'notifications/resources/list_changed') { resourceOwner.clear(); templateOwner.clear(); }
-    if (!server) return;
-    try {
-      /* Only what this server declared: the SDK refuses the rest, and a refusal here must not throw into a handler. */
-      if (method === 'notifications/message' && !capabilities.logging) return;
-      if (method.startsWith('notifications/resources/') && !capabilities.resources) return;
-      if (method === 'notifications/prompts/list_changed' && !capabilities.prompts) return;
-      void server.notification({ method, params: (params ?? {}) as Record<string, unknown> });
-    } catch {
-      /* a notification that cannot be relayed is dropped, never fatal */
+    for (const server of servers) {
+      try {
+        /* Only what this server declared: the SDK refuses the rest, and a refusal here must not throw into a handler. */
+        if (method === 'notifications/message' && !capabilities.logging) return;
+        if (method.startsWith('notifications/resources/') && !capabilities.resources) return;
+        if (method === 'notifications/prompts/list_changed' && !capabilities.prompts) return;
+        void server.notification({ method, params: (params ?? {}) as Record<string, unknown> });
+      } catch {
+        /* a notification that cannot be relayed is dropped, never fatal */
+      }
     }
   };
 
@@ -538,7 +714,7 @@ async function main() {
    * `delete_records` has one before it has ever reached for `delete_records`.
    */
   const INDEX_CAP = 8;
-  async function trapIndex(up: Upstream, findings: Finding[], except?: string): Promise<string[]> {
+  async function trapIndex(session: SessionState, up: Upstream, findings: Finding[], except?: string): Promise<string[]> {
     if (!up.alive || !up.client) return [];
     let tools: Tool[];
     try {
@@ -555,7 +731,7 @@ async function main() {
       const a = about[0];
       const where = a.props.length ? ` (argument ${a.props[0]})` : '';
       lines.push(`${name}${where}: "${clip(a.finding.title, 90)}" (${a.finding.id})${about.length > 1 ? ` +${about.length - 1}` : ''}`);
-      served(a.finding.id, name, except === undefined ? 'connect-index' : 'first-contact');
+      served(session, a.finding.id, name, except === undefined ? 'connect-index' : 'first-contact');
       if (lines.length >= INDEX_CAP) break;
     }
     return lines;
@@ -595,29 +771,6 @@ async function main() {
     ...(anyCap('completions') ? { completions: {} } : {}),
   };
 
-  const startupFindings = localFindings().findings;
-  const indexAtConnect: string[] = [];
-  for (const up of upstreams) {
-    for (const line of await trapIndex(up, startupFindings)) indexAtConnect.push(single ? line : `${line}`);
-  }
-  const instructions = [
-    ...upstreams
-      .filter((u) => u.instructions)
-      .map((u) => (single ? u.instructions! : `## ${u.spec.name}\n${u.instructions!}`)),
-    '## Cairn',
-    'Tool descriptions and results may carry a block marked "' + LABEL + '". That block is from ' +
-      'the ledger of recorded traps kept by whoever configured this proxy, not from the service; ' +
-      'judge whether it applies. When a call fails in a way that contradicted a reasonable ' +
-      'expectation, and you work it out, record it with cairn_record.' +
-      (indexAtConnect.length
-        ? `\n\nTools with a recorded trap, as of this session's start:\n${indexAtConnect.map((l) => `- ${l}`).join('\n')}`
-        : ''),
-  ].join('\n\n');
-
-  server = new Server({ name: 'cairn-proxy', version: '0.2.0' }, { capabilities, instructions });
-
-  /* ---- tools ---------------------------------------------------------- */
-
   async function allTools(): Promise<Tool[]> {
     toolOwner.clear();
     const out: Tool[] = [];
@@ -642,221 +795,295 @@ async function main() {
     return out;
   }
 
-  server.setRequestHandler(ListToolsRequestSchema, async () => {
-    const tools = await allTools();
-    const { findings } = localFindings();
-    let budget = DESCRIPTION_CAP;
-    const described = tools.map((t) => {
-      const owner = toolOwner.get(t.name)!;
-      const about = findingsAbout(owner.up.spec.name, owner.raw, t.name, findings, propertyNames(t));
-      const d = describe(t, about, budget);
-      if (about.length && budget > 0) budget--;
-      return d;
-    });
-    return { tools: described };
-  });
+  /** The instructions a session is handed at connect: the upstreams' own, then the index. */
+  async function instructionsFor(session: SessionState): Promise<string> {
+    const findings = localFindings().findings;
+    const index: string[] = [];
+    for (const up of upstreams) for (const line of await trapIndex(session, up, findings)) index.push(line);
+    return [
+      ...upstreams
+        .filter((u) => u.instructions)
+        .map((u) => (single ? u.instructions! : `## ${u.spec.name}\n${u.instructions!}`)),
+      '## Cairn',
+      'Tool descriptions and results may carry a block marked "' + LABEL + '". That block is from ' +
+        'the ledger of recorded traps kept by whoever configured this gateway, not from the service; ' +
+        'judge whether it applies. This gateway also offers cairn_find, to search that ledger, and ' +
+        'cairn_record: when a call fails in a way that contradicted a reasonable expectation and you ' +
+        'work it out, record it.' +
+        (index.length
+          ? `\n\nTools with a recorded trap, as of this session's start:\n${index.map((l) => `- ${l}`).join('\n')}`
+          : ''),
+    ].join('\n\n');
+  }
 
-  server.setRequestHandler(CallToolRequestSchema, async (req) => {
-    let owner = toolOwner.get(req.params.name);
-    if (!owner) {
-      await allTools();
-      owner = toolOwner.get(req.params.name);
-    }
-    if (!owner) {
-      return { isError: true, content: [{ type: 'text', text: `cairn-proxy: no upstream offers a tool named "${req.params.name}"` }] };
-    }
-    if (!(await ensure(owner.up))) {
-      return {
-        isError: true,
-        content: [{ type: 'text', text: `cairn-proxy: upstream "${owner.up.spec.name}" is not running (${owner.up.lastError ?? 'unknown'})` }],
-      };
-    }
+  /**
+   * One Server per session, all closing over the same upstreams. The
+   * handlers are the same whether the transport is stdio or HTTP; what
+   * differs is only how many of these exist at once.
+   */
+  function buildServer(session: SessionState, instructions: string): Server {
+    const server = new Server({ name: 'cairn-proxy', version: '0.3.0' }, { capabilities, instructions });
+    servers.add(server);
 
-    let result: Awaited<ReturnType<Client['callTool']>>;
-    try {
-      result = await owner.up.client!.callTool({ ...req.params, name: owner.raw }, undefined, FORWARD);
-    } catch (e) {
-      /*
-       * A transport failure mid-call is reported as the tool's error, not as
-       * the proxy's exception: the client gets a result it can read and act
-       * on, which is the only thing a gateway is allowed to hand back.
-       */
-      owner.up.lastError = (e as Error).message;
-      return { isError: true, content: [{ type: 'text', text: `cairn-proxy: call to "${req.params.name}" failed: ${owner.up.lastError}` }] };
-    }
+    /* ---- tools ---------------------------------------------------------- */
 
-    try {
+    server.setRequestHandler(ListToolsRequestSchema, async () => {
+      const tools = await allTools();
       const { findings } = localFindings();
+      let budget = DESCRIPTION_CAP;
+      const described = tools.map((t) => {
+        const owner = toolOwner.get(t.name)!;
+        const about = findingsAbout(owner.up.spec.name, owner.raw, t.name, findings, propertyNames(t));
+        const d = describe(session, t, about, budget);
+        if (about.length && budget > 0) budget--;
+        return d;
+      });
+      const taken = new Set(described.map((t) => t.name));
+      return { tools: [...described, ...GATEWAY_TOOLS.filter((g) => !taken.has(g.name))] };
+    });
+
+    server.setRequestHandler(CallToolRequestSchema, async (req) => {
       const args = (req.params.arguments ?? {}) as Record<string, unknown>;
-      const about = findingsAbout(owner.up.spec.name, owner.raw, req.params.name, findings, Object.keys(args));
-      const isError = result.isError === true;
-      if (isError) observe(`${req.params.name} ${JSON.stringify(args)}`, [], 'mcp-proxy:error');
-      let note = annotate(req.params.name, about, isError, args);
-      /*
-       * FIRST CONTACT. `instructions` is the right place for the index and
-       * not every client honours it; a result is read by all of them. So the
-       * first result from each upstream carries the index once, minus the tool
-       * just called (its own note is already here), and never again.
-       */
-      if (!introduced.has(owner.up.spec.name)) {
-        introduced.add(owner.up.spec.name);
-        const index = await trapIndex(owner.up, findings, req.params.name);
-        if (index.length) {
-          note += `\n\n--- ${LABEL} ---\nOther tools from this server with a recorded trap:\n` +
-            index.map((l) => `- ${l}`).join('\n') + `\n--- end ---`;
-        }
+
+      /* ---- the gateway's own tools, unless an upstream owns the name ---- */
+      if (!toolOwner.has(req.params.name) && req.params.name === 'cairn_record') {
+        const outcome = await recordSubmission(args, { by: session.agent });
+        try { observe(`cairn_record ${outcome.ok ? outcome.finding!.id : 'refused'}`, [], 'mcp-proxy:record', { by: session.agent, session: session.id }); } catch { /* never fatal */ }
+        return textResult(outcome.message, !outcome.ok);
       }
-      if (note) {
-        const content = Array.isArray(result.content) ? result.content : [];
-        result.content = [...content, { type: 'text', text: note.replace(/^\n+/, '') }];
+      if (!toolOwner.has(req.params.name) && req.params.name === 'cairn_find') {
+        const query = String(args.query ?? '');
+        const { findings } = localFindings();
+        let hits: ReturnType<typeof retrieve> = [];
+        try { hits = retrieve(query, findings, { limit: 5 }); } catch { /* a corpus problem never reaches the caller */ }
+        try { observe(query, hits, 'mcp-proxy:find', { by: session.agent, session: session.id }); } catch { /* never fatal */ }
+        if (!hits.length) return textResult('Nothing recorded bears on that.');
+        return textResult(
+          hits.map((h) => `${h.finding.id} [${h.strength}] ${h.finding.title}\n  ACTUALLY: ${clip(h.finding.reality, 400)}` + (h.finding.workaround ? `\n  INSTEAD: ${clip(h.finding.workaround, 400)}` : '')).join('\n\n'),
+        );
       }
-    } catch {
-      /* The result is the user's; a failure here must never withhold it. */
-    }
-    return result;
-  });
 
-  /* ---- resources ------------------------------------------------------ */
-
-  if (capabilities.resources) {
-    const withResources = () => alive().filter((u) => u.caps.resources);
-
-    server.setRequestHandler(ListResourcesRequestSchema, async () => {
-      resourceOwner.clear();
-      const resources: Array<Record<string, unknown>> = [];
-      for (const up of withResources()) {
-        let cursor: string | undefined;
-        do {
-          let page;
-          try { page = await up.client!.listResources({ cursor }, FORWARD); } catch { break; }
-          for (const r of page.resources) { resourceOwner.set(r.uri, up); resources.push(r); }
-          cursor = page.nextCursor;
-        } while (cursor);
-      }
-      return { resources };
-    });
-
-    server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => {
-      templateOwner.clear();
-      const resourceTemplates: Array<Record<string, unknown>> = [];
-      for (const up of withResources()) {
-        let cursor: string | undefined;
-        do {
-          let page;
-          try { page = await up.client!.listResourceTemplates({ cursor }, FORWARD); } catch { break; }
-          for (const t of page.resourceTemplates) { templateOwner.set(t.uriTemplate, up); resourceTemplates.push(t); }
-          cursor = page.nextCursor;
-        } while (cursor);
-      }
-      return { resourceTemplates };
-    });
-
-    /** The owner by exact URI, else by a template prefix, else whoever answers. */
-    async function ownerOf(uri: string): Promise<Upstream[]> {
-      const exact = resourceOwner.get(uri);
-      if (exact?.alive) return [exact];
-      for (const [tpl, up] of templateOwner) {
-        const prefix = tpl.split('{')[0];
-        if (prefix && uri.startsWith(prefix) && up.alive) return [up];
-      }
-      return withResources();
-    }
-
-    server.setRequestHandler(ReadResourceRequestSchema, async (req) => {
-      let last: Error | null = null;
-      for (const up of await ownerOf(req.params.uri)) {
-        try {
-          return await up.client!.readResource(req.params, FORWARD);
-        } catch (e) { last = e as Error; }
-      }
-      throw last ?? new Error(`no upstream serves ${req.params.uri}`);
-    });
-
-    if (capabilities.resources.subscribe) {
-      server.setRequestHandler(SubscribeRequestSchema, async (req) => {
-        for (const up of await ownerOf(req.params.uri)) {
-          if (!up.caps.resources?.subscribe) continue;
-          try { return await up.client!.subscribeResource(req.params, FORWARD); } catch { /* next */ }
-        }
-        return {};
-      });
-      server.setRequestHandler(UnsubscribeRequestSchema, async (req) => {
-        for (const up of await ownerOf(req.params.uri)) {
-          if (!up.caps.resources?.subscribe) continue;
-          try { return await up.client!.unsubscribeResource(req.params, FORWARD); } catch { /* next */ }
-        }
-        return {};
-      });
-    }
-  }
-
-  /* ---- prompts -------------------------------------------------------- */
-
-  if (capabilities.prompts) {
-    server.setRequestHandler(ListPromptsRequestSchema, async () => {
-      promptOwner.clear();
-      const prompts: Array<Record<string, unknown>> = [];
-      for (const up of alive().filter((u) => u.caps.prompts)) {
-        let cursor: string | undefined;
-        do {
-          let page;
-          try { page = await up.client!.listPrompts({ cursor }, FORWARD); } catch { break; }
-          for (const p of page.prompts) {
-            const name = expose(up, p.name);
-            promptOwner.set(name, { up, raw: p.name });
-            prompts.push({ ...p, name });
-          }
-          cursor = page.nextCursor;
-        } while (cursor);
-      }
-      return { prompts };
-    });
-
-    server.setRequestHandler(GetPromptRequestSchema, async (req) => {
-      let owner = promptOwner.get(req.params.name);
+      let owner = toolOwner.get(req.params.name);
       if (!owner) {
-        /* Lists are fetched lazily; a client may ask for a prompt before listing. */
-        for (const up of alive().filter((u) => u.caps.prompts)) {
-          try {
-            const page = await up.client!.listPrompts({}, FORWARD);
-            for (const p of page.prompts) promptOwner.set(expose(up, p.name), { up, raw: p.name });
-          } catch { /* skip */ }
+        await allTools();
+        owner = toolOwner.get(req.params.name);
+      }
+      if (!owner) {
+        return textResult(`cairn-proxy: no upstream offers a tool named "${req.params.name}"`, true);
+      }
+      if (!(await ensure(owner.up))) {
+        return textResult(`cairn-proxy: upstream "${owner.up.spec.name}" is not running (${owner.up.lastError ?? 'unknown'})`, true);
+      }
+
+      let result: Awaited<ReturnType<Client['callTool']>>;
+      try {
+        result = await owner.up.client!.callTool({ ...req.params, name: owner.raw }, undefined, FORWARD);
+      } catch (e) {
+        /*
+         * A transport failure mid-call is reported as the tool's error, not as
+         * the proxy's exception: the client gets a result it can read and act
+         * on, which is the only thing a gateway is allowed to hand back.
+         */
+        owner.up.lastError = (e as Error).message;
+        return textResult(`cairn-proxy: call to "${req.params.name}" failed: ${owner.up.lastError}`, true);
+      }
+
+      try {
+        const { findings } = localFindings();
+        const about = findingsAbout(owner.up.spec.name, owner.raw, req.params.name, findings, Object.keys(args));
+        const isError = result.isError === true;
+        const ctx = { by: session.agent, session: session.id };
+        const ownText = Array.isArray(result.content)
+          ? (result.content as Array<{ type: string; text?: string }>).filter((c) => c.type === 'text').map((c) => c.text ?? '').join('\n')
+          : '';
+        /*
+         * Every forwarded call is written down, error or not: the report
+         * counts calls per tool, and "warned in N of M sessions that called
+         * it" needs the M. Arguments are redacted by observe() before they
+         * are written, because a query's arguments are the least sanitised
+         * text an agent produces.
+         */
+        observe(`${req.params.name} ${JSON.stringify(args)}`, [], isError ? 'mcp-proxy:error' : 'mcp-proxy:call', ctx);
+        if (isError) session.holes.set(req.params.name, { args, output: ownText, at: new Date().toISOString() });
+        let note = annotate(session, req.params.name, about, isError, args);
+        if (!isError) note += draftFor(session, req.params.name, args);
+        /*
+         * FIRST CONTACT. `instructions` is the right place for the index and
+         * not every client honours it; a result is read by all of them. So the
+         * first result from each upstream carries the index once, minus the tool
+         * just called (its own note is already here), and never again.
+         */
+        if (!session.introduced.has(owner.up.spec.name)) {
+          session.introduced.add(owner.up.spec.name);
+          const index = await trapIndex(session, owner.up, findings, req.params.name);
+          if (index.length) {
+            note += `\n\n--- ${LABEL} ---\nOther tools from this server with a recorded trap:\n` +
+              index.map((l) => `- ${l}`).join('\n') + `\n--- end ---`;
+          }
         }
-        owner = promptOwner.get(req.params.name);
+        if (note) {
+          const content = Array.isArray(result.content) ? result.content : [];
+          result.content = [...content, { type: 'text', text: note.replace(/^\n+/, '') }];
+        }
+      } catch {
+        /* The result is the user's; a failure here must never withhold it. */
       }
-      if (!owner) throw new Error(`no upstream offers a prompt named "${req.params.name}"`);
-      return owner.up.client!.getPrompt({ ...req.params, name: owner.raw }, FORWARD);
+      return result;
     });
-  }
 
-  /* ---- completions and logging --------------------------------------- */
+    /* ---- resources ------------------------------------------------------ */
 
-  if (capabilities.completions) {
-    server.setRequestHandler(CompleteRequestSchema, async (req) => {
-      const ref = req.params.ref;
-      let targets: Array<{ up: Upstream; params: typeof req.params }> = [];
-      if (ref.type === 'ref/prompt') {
-        const owner = promptOwner.get(ref.name);
-        if (owner) targets = [{ up: owner.up, params: { ...req.params, ref: { ...ref, name: owner.raw } } }];
-      } else if (ref.type === 'ref/resource') {
-        const up = templateOwner.get(ref.uri) ?? resourceOwner.get(ref.uri);
-        if (up) targets = [{ up, params: req.params }];
-      }
-      if (!targets.length) targets = alive().filter((u) => u.caps.completions).map((up) => ({ up, params: req.params }));
-      for (const t of targets) {
-        try { return await t.up.client!.complete(t.params, FORWARD); } catch { /* next */ }
-      }
-      return { completion: { values: [] } };
-    });
-  }
+    if (capabilities.resources) {
+      const withResources = () => alive().filter((u) => u.caps.resources);
 
-  if (capabilities.logging) {
-    server.setRequestHandler(SetLevelRequestSchema, async (req) => {
-      for (const up of alive().filter((u) => u.caps.logging)) {
-        try { await up.client!.setLoggingLevel(req.params.level, FORWARD); } catch { /* one upstream's refusal is not the client's problem */ }
+      server.setRequestHandler(ListResourcesRequestSchema, async () => {
+        resourceOwner.clear();
+        const resources: Array<Record<string, unknown>> = [];
+        for (const up of withResources()) {
+          let cursor: string | undefined;
+          do {
+            let page;
+            try { page = await up.client!.listResources({ cursor }, FORWARD); } catch { break; }
+            for (const r of page.resources) { resourceOwner.set(r.uri, up); resources.push(r); }
+            cursor = page.nextCursor;
+          } while (cursor);
+        }
+        return { resources };
+      });
+
+      server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => {
+        templateOwner.clear();
+        const resourceTemplates: Array<Record<string, unknown>> = [];
+        for (const up of withResources()) {
+          let cursor: string | undefined;
+          do {
+            let page;
+            try { page = await up.client!.listResourceTemplates({ cursor }, FORWARD); } catch { break; }
+            for (const t of page.resourceTemplates) { templateOwner.set(t.uriTemplate, up); resourceTemplates.push(t); }
+            cursor = page.nextCursor;
+          } while (cursor);
+        }
+        return { resourceTemplates };
+      });
+
+      /** The owner by exact URI, else by a template prefix, else whoever answers. */
+      async function ownerOf(uri: string): Promise<Upstream[]> {
+        const exact = resourceOwner.get(uri);
+        if (exact?.alive) return [exact];
+        for (const [tpl, up] of templateOwner) {
+          const prefix = tpl.split('{')[0];
+          if (prefix && uri.startsWith(prefix) && up.alive) return [up];
+        }
+        return withResources();
       }
-      return {};
-    });
+
+      server.setRequestHandler(ReadResourceRequestSchema, async (req) => {
+        let last: Error | null = null;
+        for (const up of await ownerOf(req.params.uri)) {
+          try {
+            return await up.client!.readResource(req.params, FORWARD);
+          } catch (e) { last = e as Error; }
+        }
+        throw last ?? new Error(`no upstream serves ${req.params.uri}`);
+      });
+
+      if (capabilities.resources.subscribe) {
+        server.setRequestHandler(SubscribeRequestSchema, async (req) => {
+          for (const up of await ownerOf(req.params.uri)) {
+            if (!up.caps.resources?.subscribe) continue;
+            try { return await up.client!.subscribeResource(req.params, FORWARD); } catch { /* next */ }
+          }
+          return {};
+        });
+        server.setRequestHandler(UnsubscribeRequestSchema, async (req) => {
+          for (const up of await ownerOf(req.params.uri)) {
+            if (!up.caps.resources?.subscribe) continue;
+            try { return await up.client!.unsubscribeResource(req.params, FORWARD); } catch { /* next */ }
+          }
+          return {};
+        });
+      }
+    }
+
+    /* ---- prompts -------------------------------------------------------- */
+
+    if (capabilities.prompts) {
+      server.setRequestHandler(ListPromptsRequestSchema, async () => {
+        promptOwner.clear();
+        const prompts: Array<Record<string, unknown>> = [];
+        for (const up of alive().filter((u) => u.caps.prompts)) {
+          let cursor: string | undefined;
+          do {
+            let page;
+            try { page = await up.client!.listPrompts({ cursor }, FORWARD); } catch { break; }
+            for (const p of page.prompts) {
+              const name = expose(up, p.name);
+              promptOwner.set(name, { up, raw: p.name });
+              prompts.push({ ...p, name });
+            }
+            cursor = page.nextCursor;
+          } while (cursor);
+        }
+        return { prompts };
+      });
+
+      server.setRequestHandler(GetPromptRequestSchema, async (req) => {
+        let owner = promptOwner.get(req.params.name);
+        if (!owner) {
+          /* Lists are fetched lazily; a client may ask for a prompt before listing. */
+          for (const up of alive().filter((u) => u.caps.prompts)) {
+            try {
+              const page = await up.client!.listPrompts({}, FORWARD);
+              for (const p of page.prompts) promptOwner.set(expose(up, p.name), { up, raw: p.name });
+            } catch { /* skip */ }
+          }
+          owner = promptOwner.get(req.params.name);
+        }
+        if (!owner) throw new Error(`no upstream offers a prompt named "${req.params.name}"`);
+        return owner.up.client!.getPrompt({ ...req.params, name: owner.raw }, FORWARD);
+      });
+    }
+
+    /* ---- completions and logging --------------------------------------- */
+
+    if (capabilities.completions) {
+      server.setRequestHandler(CompleteRequestSchema, async (req) => {
+        const ref = req.params.ref;
+        let targets: Array<{ up: Upstream; params: typeof req.params }> = [];
+        if (ref.type === 'ref/prompt') {
+          const owner = promptOwner.get(ref.name);
+          if (owner) targets = [{ up: owner.up, params: { ...req.params, ref: { ...ref, name: owner.raw } } }];
+        } else if (ref.type === 'ref/resource') {
+          const up = templateOwner.get(ref.uri) ?? resourceOwner.get(ref.uri);
+          if (up) targets = [{ up, params: req.params }];
+        }
+        if (!targets.length) targets = alive().filter((u) => u.caps.completions).map((up) => ({ up, params: req.params }));
+        for (const t of targets) {
+          try { return await t.up.client!.complete(t.params, FORWARD); } catch { /* next */ }
+        }
+        return { completion: { values: [] } };
+      });
+    }
+
+    if (capabilities.logging) {
+      server.setRequestHandler(SetLevelRequestSchema, async (req) => {
+        for (const up of alive().filter((u) => u.caps.logging)) {
+          try { await up.client!.setLoggingLevel(req.params.level, FORWARD); } catch { /* one upstream's refusal is not the client's problem */ }
+        }
+        return {};
+      });
+    }
+
+    /*
+     * Attribution comes from initialize, which arrives AFTER connect returns:
+     * read at connect time the client's name was always undefined and every
+     * ledger row said 'cli'.
+     */
+    server.oninitialized = () => {
+      const client = server.getClientVersion();
+      if (client?.name) session.agent = process.env.CAIRN_AGENT ?? client.name;
+    };
+    return server;
   }
 
   /* ---- freshness ------------------------------------------------------ */
@@ -870,7 +1097,7 @@ async function main() {
   localFindings();
   setInterval(() => {
     try {
-      if (localFindings().changed) void server!.sendToolListChanged();
+      if (localFindings().changed) for (const server of servers) void server.sendToolListChanged();
     } catch { /* never fatal */ }
   }, 2000).unref();
 
@@ -884,21 +1111,79 @@ async function main() {
     await Promise.allSettled(upstreams.map((u) => u.client?.close()));
     process.exit(0);
   };
-  const transport = new StdioServerTransport();
-  transport.onclose = () => { void shutdown(); };
-  process.stdin.on('end', () => { void shutdown(); });
   for (const sig of ['SIGTERM', 'SIGINT', 'SIGHUP'] as const) process.on(sig, () => { void shutdown(); });
 
+  if (HTTP_PORT === null) {
+    /* ---- stdio: one process, one session ------------------------------ */
+    const session = newSession(process.env.CAIRN_SESSION!);
+    session.agent = process.env.CAIRN_AGENT;
+    const server = buildServer(session, await instructionsFor(session));
+    const transport = new StdioServerTransport();
+    transport.onclose = () => { void shutdown(); };
+    process.stdin.on('end', () => { void shutdown(); });
+    await server.connect(transport);
+    return;
+  }
+
+  /* ---- hosted: one process, a session per client ---------------------- */
+
   /*
-   * Attribution comes from initialize, which arrives AFTER connect returns:
-   * read at connect time the client's name was always undefined and every
-   * ledger row said 'cli'.
+   * Streamable HTTP at /mcp. Every client that initialises gets its own
+   * SessionState, its own Server and its own transport, keyed by the session
+   * id the transport minted; the upstreams are shared, which is the point of
+   * hosting -- one running copy of each MCP server, however many agents are
+   * behind it. A request without a session id that is not an initialize is
+   * refused, which is what the SDK's stateful mode expects.
+   *
+   * Bound to loopback unless CAIRN_HTTP_HOST says otherwise. This is a
+   * gateway that appends text to tool results; putting it on a network
+   * interface is a decision, not a default.
    */
-  server.oninitialized = () => {
-    const client = server!.getClientVersion();
-    if (client?.name && !process.env.CAIRN_AGENT) process.env.CAIRN_AGENT = client.name;
-  };
-  await server.connect(transport);
+  const transports = new Map<string, StreamableHTTPServerTransport>();
+  const host = process.env.CAIRN_HTTP_HOST || '127.0.0.1';
+  const httpServer = http.createServer(async (req, res) => {
+    const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+    if (url.pathname === '/healthz') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, sessions: transports.size, upstreams: upstreams.map((u) => ({ name: u.spec.name, alive: u.alive })), corpus: cairnHome() }));
+      return;
+    }
+    if (url.pathname !== '/mcp') {
+      res.writeHead(404).end();
+      return;
+    }
+    let body: unknown;
+    if (req.method === 'POST') {
+      const chunks: Buffer[] = [];
+      for await (const c of req) chunks.push(c as Buffer);
+      try { body = JSON.parse(Buffer.concat(chunks).toString('utf8') || 'null'); } catch { body = null; }
+    }
+    const sid = req.headers['mcp-session-id'];
+    const existing = typeof sid === 'string' ? transports.get(sid) : undefined;
+    if (existing) {
+      await existing.handleRequest(req, res, body);
+      return;
+    }
+    if (req.method === 'POST' && isInitializeRequest(body)) {
+      const session = newSession(randomUUID());
+      const transport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: () => session.id,
+        onsessioninitialized: (id) => { transports.set(id, transport); },
+        onsessionclosed: (id) => { transports.delete(id); },
+      });
+      const server = buildServer(session, await instructionsFor(session));
+      transport.onclose = () => { transports.delete(session.id); servers.delete(server); };
+      await server.connect(transport);
+      await transport.handleRequest(req, res, body);
+      return;
+    }
+    res.writeHead(400, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ jsonrpc: '2.0', error: { code: -32000, message: 'no session; send initialize first' }, id: null }));
+  });
+  await new Promise<void>((resolve) => httpServer.listen(HTTP_PORT!, host, resolve));
+  const addr = httpServer.address();
+  const port = typeof addr === 'object' && addr ? addr.port : HTTP_PORT;
+  process.stderr.write(`cairn-proxy: listening on http://${host}:${port}/mcp (corpus ${cairnHome()})\n`);
 }
 
 main().catch((e) => {

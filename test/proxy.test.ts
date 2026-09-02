@@ -437,3 +437,151 @@ test('a dead upstream is an error result, and it is respawned for the next call'
     intactThenLabelled(r2, 'ok');
   } finally { await s.close(); }
 });
+
+/* ---------------------------------------------------------------------- */
+/* The gateway: its own tools, the draft loop, and hosting                 */
+/* ---------------------------------------------------------------------- */
+
+const RECORDS = path.join(REPO, 'fixtures', 'mcp', 'records.mjs');
+
+test('the gateway offers cairn_record, and a finding recorded through it reaches the next tools/list', async () => {
+  const home = corpus(false);
+  const s = single(home);
+  try {
+    await s.init();
+    const before = await s.tools();
+    assert.ok(before.some((t) => t.name === 'cairn_record'), 'cairn_record is offered');
+    assert.ok(before.some((t) => t.name === 'cairn_find'), 'cairn_find is offered');
+    assert.ok(!before.find((t) => t.name === 'mcp__data360__unrelated')!.description!.includes('from your Cairn corpus'), 'nothing recorded yet');
+    const r = await s.call('cairn_record', {
+      title: 'unrelated succeeds with ok and does nothing when the mapping is missing',
+      claim: 'Calling the unrelated tool without a configured mapping returns ok and performs no work, so a caller cannot tell success from a silent no-op.',
+      expectation: 'A call with nothing to act on fails or says so.',
+      reality: 'It returns the string ok and nothing happens.',
+      workaround: 'Check the mapping exists before calling it.',
+      tool: 'mcp__data360__unrelated',
+      evidence: [{ command: 'mcp__data360__unrelated {}', output: 'ok' }],
+      check: {
+        command: 'Call unrelated with no mapping configured and inspect whether any work was done.',
+        confirmedIf: 'it returns ok and no work was done',
+        refutedIf: 'it errors, or work was done',
+      },
+      by: 'test-agent',
+    });
+    assert.ok(!r.isError, texts(r).join('\n'));
+    assert.match(texts(r).join('\n'), /Recorded cairn-0001/);
+    assert.ok(fs.readdirSync(path.join(home, 'cairn')).some((f) => f.startsWith('0001-')), 'the file landed in the corpus home');
+    const after = await s.tools();
+    assert.match(after.find((t) => t.name === 'mcp__data360__unrelated')!.description!, /from your Cairn corpus.*cairn-0001/, 'the next listing carries it');
+    const found = await s.call('cairn_find', { query: 'unrelated returns ok and does nothing when mapping missing' });
+    assert.match(texts(found).join('\n'), /cairn-0001/, 'cairn_find sees it');
+  } finally {
+    await s.close();
+  }
+});
+
+test('a refused record writes nothing and says why', async () => {
+  const home = corpus(false);
+  const s = single(home);
+  try {
+    await s.init();
+    const r = await s.call('cairn_record', {
+      title: 'a check that decides nothing',
+      claim: 'This claim is long enough to parse but its check prints a verdict and exits zero either way.',
+      expectation: 'x', reality: 'y',
+      evidence: [{ command: 'true', output: '' }],
+      check: { command: 'ls / ; echo checked', confirmedIf: 'prints checked', refutedIf: 'never' },
+      by: 'test-agent',
+    });
+    assert.equal(r.isError, true);
+    assert.match(texts(r).join('\n'), /cannot decide/);
+    assert.equal(fs.readdirSync(path.join(home, 'cairn')).length, 0, 'nothing was written');
+  } finally {
+    await s.close();
+  }
+});
+
+test('a failed call followed by a working one opens a draft on the result, once, and on disk', async () => {
+  const home = corpus(false);
+  const s = new Session(home, ['--server', `node ${RECORDS}`]);
+  try {
+    await s.init();
+    const bad = await s.call('query_records', { object: 'Contact', filter: { nonsense: 'x' } });
+    assert.equal(bad.isError, true, 'the bad filter errors upstream');
+    const good = await s.call('query_records', { object: 'Contact', filter: { status: 'churned' }, limit: 2 });
+    assert.ok(!good.isError);
+    intactThenLabelled(good, good.content[0].text!);
+    const note = texts(good).slice(1).join('\n');
+    assert.match(note, /Earlier in this session query_records failed/, 'the draft names the hole');
+    assert.match(note, /differed in: filter, limit/, 'it names what changed');
+    assert.match(note, /"tool":"query_records"/, 'the draft carries the trigger');
+    assert.match(note, /cairn_record/, 'and says how to record it');
+    const drafts = fs.readdirSync(path.join(home, 'drafts'));
+    assert.equal(drafts.length, 1, 'one draft file');
+    const draft = JSON.parse(fs.readFileSync(path.join(home, 'drafts', drafts[0]), 'utf8'));
+    assert.equal(draft.evidence.length, 2);
+    assert.match(draft.evidence[0].output, /unknown field nonsense/);
+    /* A second recovery on the same tool is not a second draft. */
+    const bad2 = await s.call('query_records', { object: 'Nope' });
+    assert.equal(bad2.isError, true);
+    const good2 = await s.call('query_records', { object: 'Contact', limit: 1 });
+    assert.ok(!texts(good2).slice(1).join('\n').includes('Earlier in this session'), 'once per tool per session');
+    const ledger = fs.readdirSync(path.join(home, 'data', 'retrievals')).flatMap((f) => fs.readFileSync(path.join(home, 'data', 'retrievals', f), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l) as { source: string }));
+    assert.ok(ledger.some((r) => r.source === 'mcp-proxy:draft'), 'the draft is in the ledger');
+    assert.ok(ledger.some((r) => r.source === 'mcp-proxy:call'), 'and so is every forwarded call');
+    assert.equal(ledger.filter((r) => r.source === 'mcp-proxy:error').length, 2);
+  } finally {
+    await s.close();
+  }
+});
+
+test('hosted over HTTP, two clients are two sessions: each gets its own first contact', async () => {
+  const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
+  const { StreamableHTTPClientTransport } = await import('@modelcontextprotocol/sdk/client/streamableHttp.js');
+  const home = corpus(true);
+  const env: Record<string, string | undefined> = { ...process.env, CAIRN_HOME: home };
+  delete env.CAIRN_SESSION;
+  delete env.CAIRN_AGENT;
+  const child = spawn('npx', ['tsx', 'scripts/mcp-proxy.ts', '--server', `node ${FIXTURE}`, '--http', '0'], {
+    cwd: REPO, env: env as NodeJS.ProcessEnv, stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  let stderr = '';
+  const port = await new Promise<number>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(`gateway did not announce a port\n${stderr}`)), 20_000);
+    child.stderr!.on('data', (d) => {
+      stderr += String(d);
+      const m = /listening on http:\/\/[^:]+:(\d+)\/mcp/.exec(stderr);
+      if (m) { clearTimeout(t); resolve(Number(m[1])); }
+    });
+  });
+  try {
+    const connect = async (name: string) => {
+      const c = new Client({ name, version: '1' }, { capabilities: {} });
+      await c.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp`)));
+      return c;
+    };
+    const a = await connect('client-a');
+    const b = await connect('client-b');
+    assert.match(a.getInstructions() ?? '', /Tools with a recorded trap/, 'instructions carry the index');
+    const ra = await a.callTool({ name: 'mcp__data360__query_records', arguments: { object: 'Lead' } });
+    const rb = await b.callTool({ name: 'mcp__data360__query_records', arguments: { object: 'Lead' } });
+    const noteA = (ra.content as Array<{ text?: string }>).slice(1).map((c) => c.text ?? '').join('\n');
+    const noteB = (rb.content as Array<{ text?: string }>).slice(1).map((c) => c.text ?? '').join('\n');
+    assert.match(noteA, /cairn-0001/, 'session A gets the full note');
+    assert.match(noteB, /cairn-0001/, 'session B gets the full note too, not a shared once-per-process dedupe');
+    const ra2 = await a.callTool({ name: 'mcp__data360__query_records', arguments: { object: 'Lead' } });
+    assert.equal((ra2.content as unknown[]).length, 1, 'the second call in A is not annotated again');
+    const health = await (await fetch(`http://127.0.0.1:${port}/healthz`)).json() as { sessions: number };
+    assert.equal(health.sessions, 2);
+    const ledger = fs.readdirSync(path.join(home, 'data', 'retrievals')).flatMap((f) => fs.readFileSync(path.join(home, 'data', 'retrievals', f), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l) as { by: string; session: string; source: string }));
+    const served = ledger.filter((r) => r.source === 'mcp-proxy:result');
+    assert.equal(new Set(served.map((r) => r.session)).size, 2, 'two sessions in the ledger');
+    assert.deepEqual(new Set(served.map((r) => r.by)), new Set(['client-a', 'client-b']), 'attributed to each client by name');
+    await a.close();
+    await b.close();
+  } finally {
+    child.kill('SIGKILL');
+    child.stdout?.destroy();
+    child.stderr?.destroy();
+  }
+});

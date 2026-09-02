@@ -65,3 +65,6 @@ dist/
 
 # Execution policy is per machine, never per corpus — see src/lib/cairn/policy.ts
 cairn.policy.json
+
+# Drafts the gateway opens when a failed call is followed by a working one; a person decides what to keep
+drafts/

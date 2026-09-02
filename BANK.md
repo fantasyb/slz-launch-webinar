@@ -60,6 +60,14 @@ is made from: the instructions at connect, the tool's own description, the
 argument's schema description, and the result. There is no hook, no client
 feature, and it costs one to two milliseconds per call.
 
+The gateway also offers `cairn_record` and `cairn_find` itself, so "bank
+that" needs no second server, and when a call fails and a later call to the
+same tool works it hands the agent a draft with the evidence already filled
+in. `npm run cairn:report` says what it delivered, per tool. Hosting, the
+trial that measured it in Claude Code, and its limits: GATEWAY.md. The
+format it delivers, for anyone who takes neither the gateway nor the
+ranker: FORMAT.md.
+
 **Why not a hook.** There was one, and it was removed. Between the model
 deciding on a call and the client executing it there is no model turn, so a
 `PreToolUse` hook's text reaches the model alongside the RESULT of the call

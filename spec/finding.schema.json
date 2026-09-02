@@ -1,0 +1,413 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://cairny.io/spec/finding.schema.json",
+  "title": "Cairn finding",
+  "description": "A claim that something does not work, carrying the command that would refute it (check), a half-life after which it decays, and the provenance of every observation. Generated from src/lib/cairn/schema.ts by npm run cairn:spec; do not edit by hand.",
+  "$ref": "#/definitions/Finding",
+  "definitions": {
+    "Finding": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^cairn-\\d{4}$"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "claim": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "trap",
+            "limitation",
+            "dead-end",
+            "correction"
+          ]
+        },
+        "subject": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1
+            },
+            "ecosystem": {
+              "type": "string",
+              "minLength": 1
+            },
+            "versions": {
+              "type": "string",
+              "default": "*"
+            }
+          },
+          "required": [
+            "name",
+            "ecosystem"
+          ],
+          "additionalProperties": false
+        },
+        "scope": {
+          "type": "string",
+          "enum": [
+            "universal",
+            "environment-specific"
+          ]
+        },
+        "basis": {
+          "type": "string",
+          "enum": [
+            "empirical",
+            "structural"
+          ],
+          "default": "empirical"
+        },
+        "derivation": {
+          "type": "string",
+          "maxLength": 4000
+        },
+        "appliesTo": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "precondition": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^(env|cmd|no-cmd|path|os):[A-Za-z0-9_./=-]{1,120}$"
+          },
+          "maxItems": 8
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 40
+          },
+          "maxItems": 12,
+          "default": []
+        },
+        "cost": {
+          "type": "string",
+          "enum": [
+            "minutes",
+            "hours",
+            "days"
+          ]
+        },
+        "expectation": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "reality": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        },
+        "mechanism": {
+          "type": "string",
+          "maxLength": 4000
+        },
+        "workaround": {
+          "type": "string",
+          "maxLength": 4000
+        },
+        "triggers": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 120
+          },
+          "maxItems": 12
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "command": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4000
+              },
+              "output": {
+                "type": "string",
+                "maxLength": 20000
+              },
+              "note": {
+                "type": "string",
+                "maxLength": 2000
+              }
+            },
+            "required": [
+              "command",
+              "output"
+            ],
+            "additionalProperties": false
+          },
+          "default": []
+        },
+        "check": {
+          "type": "object",
+          "properties": {
+            "command": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4000
+            },
+            "confirmedIf": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2000
+            },
+            "refutedIf": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2000
+            },
+            "manual": {
+              "type": "boolean",
+              "default": false
+            },
+            "absentWhen": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2000
+            }
+          },
+          "required": [
+            "command",
+            "confirmedIf",
+            "refutedIf"
+          ],
+          "additionalProperties": false
+        },
+        "provenance": {
+          "type": "string",
+          "enum": [
+            "firsthand",
+            "secondhand"
+          ]
+        },
+        "halfLifeDays": {
+          "type": "integer",
+          "minimum": 7,
+          "maximum": 3650
+        },
+        "observations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "by": {
+                "type": "string",
+                "minLength": 1
+              },
+              "verdict": {
+                "type": "string",
+                "enum": [
+                  "confirmed",
+                  "refuted",
+                  "inconclusive"
+                ]
+              },
+              "note": {
+                "type": "string",
+                "maxLength": 4000
+              },
+              "environment": {
+                "type": "object",
+                "properties": {
+                  "os": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 100
+                  },
+                  "arch": {
+                    "type": "string",
+                    "maxLength": 50
+                  },
+                  "runtime": {
+                    "type": "string",
+                    "maxLength": 200
+                  },
+                  "note": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "os"
+                ],
+                "additionalProperties": false
+              },
+              "signature": {
+                "type": "object",
+                "properties": {
+                  "algorithm": {
+                    "type": "string",
+                    "const": "ed25519"
+                  },
+                  "keyId": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{16}$"
+                  },
+                  "value": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "algorithm",
+                  "keyId",
+                  "value"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "at",
+              "by",
+              "verdict"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1
+        },
+        "predictions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "by": {
+                "type": "string",
+                "minLength": 1
+              },
+              "commitment": {
+                "type": "object",
+                "properties": {
+                  "algorithm": {
+                    "type": "string",
+                    "const": "sha256"
+                  },
+                  "hash": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                  },
+                  "anchor": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{7,40}$"
+                  }
+                },
+                "required": [
+                  "algorithm",
+                  "hash",
+                  "anchor"
+                ],
+                "additionalProperties": false
+              },
+              "bodyHash": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "revealedAt": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "nonce": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{16,128}$"
+              },
+              "priorConfirmed": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "reasoning": {
+                "type": "string",
+                "maxLength": 4000
+              },
+              "outcome": {
+                "type": "string",
+                "enum": [
+                  "confirmed",
+                  "refuted",
+                  "inconclusive"
+                ]
+              },
+              "resolvedAt": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "self": {
+                "type": "boolean",
+                "default": false
+              }
+            },
+            "required": [
+              "at",
+              "by"
+            ],
+            "additionalProperties": false
+          },
+          "default": []
+        },
+        "visibility": {
+          "type": "string",
+          "enum": [
+            "private",
+            "shared"
+          ],
+          "default": "private"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "active",
+            "retired"
+          ],
+          "default": "active"
+        },
+        "retiredReason": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "claim",
+        "kind",
+        "subject",
+        "scope",
+        "cost",
+        "expectation",
+        "reality",
+        "check",
+        "provenance",
+        "halfLifeDays",
+        "observations",
+        "createdAt"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

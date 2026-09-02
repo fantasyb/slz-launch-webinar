@@ -26,7 +26,12 @@ export function who(): { by: string; session: string } {
   };
 }
 
-export function observe(query: string, hits: Hit[], source: string): void {
+/**
+ * `ctx` names the session and agent explicitly. A stdio process serves one
+ * session and reads them from the environment; a hosted gateway serves many
+ * from one process, and the environment cannot tell them apart.
+ */
+export function observe(query: string, hits: Hit[], source: string, ctx: { by?: string; session?: string } = {}): void {
   if (!query.trim()) return;
   /*
    * Measurement runs do not count as usage.
@@ -42,7 +47,9 @@ export function observe(query: string, hits: Hit[], source: string): void {
    * the failure this corpus exists to catch, and it shipped here.
    */
   if (process.env.CAIRN_EVAL) return;
-  const { by, session } = who();
+  const env = who();
+  const by = ctx.by ?? env.by;
+  const session = ctx.session ?? env.session;
   /*
    * Redacted before it is written, because the ledger is committed.
    *

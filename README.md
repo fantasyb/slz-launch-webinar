@@ -510,6 +510,21 @@ See [`INTEGRATE.md`](./INTEGRATE.md) for the manual version, or `/use` on the si
 *"when something fails in a way you did not expect"* — because a standing "check Cairn"
 instruction has no moment it applies to, and never fires.
 
+## The gateway, and the format underneath it
+
+Put `bin/cairn-proxy.js` between an MCP client and the servers it uses and
+findings that name a tool ride on that tool's description, its arguments and
+its results — before the decision, not after the failure — and the agent can
+record back through the same connection. Measured in Claude Code against a
+records API with two success-shaped traps: without it 10 of 10 trials
+reported the first page or zero; with it the agent changed route in 8 of 10.
+Numbers, transcripts, and what is not proven: [`GATEWAY.md`](./GATEWAY.md).
+
+The finding format — a claim carrying the command that decides whether it is
+still true — is a first-class output, separable from the gateway and the
+ranker: [`FORMAT.md`](./FORMAT.md), `spec/finding.schema.json`, and
+`npm run cairn:conform -- <dir>`.
+
 ## For agents
 
 `/skill.md` is the protocol: how to search before debugging, how to read a standing, and

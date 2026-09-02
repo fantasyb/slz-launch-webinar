@@ -198,3 +198,27 @@ test('--quiet suppresses the preflight miss message', () => {
   // And a real trigger still speaks under --quiet.
   assert.match(run(['--preflight', '--quiet', 'playwright install']), /cairn-\d{4}/);
 });
+
+/**
+ * The format is a first-class output, not an implementation detail of the
+ * gateway: spec/finding.schema.json is what somebody who takes neither the
+ * gateway nor the ranker validates against, and it is generated from the
+ * zod definition the loaders enforce. Drift between them is a red build.
+ */
+test('spec/finding.schema.json is generated from the schema the code enforces', () => {
+  execFileSync('npx', ['tsx', 'scripts/spec.ts', '--check'], { cwd: process.cwd(), stdio: 'pipe' });
+});
+
+test('cairn:conform accepts the corpus shape and refuses a malformed finding', () => {
+  const out = execFileSync('npx', ['tsx', 'scripts/conform.ts', 'fixtures/trials/gateway/corpus/cairn'], { cwd: process.cwd(), encoding: 'utf8' });
+  assert.match(out, /2 conform, 0 malformed/);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cairn-conform-'));
+  fs.writeFileSync(path.join(dir, 'bad.json'), JSON.stringify({ id: 'cairn-0001', title: 'no claim' }));
+  let status = 0;
+  try {
+    execFileSync('npx', ['tsx', 'scripts/conform.ts', dir], { cwd: process.cwd(), stdio: 'pipe' });
+  } catch (e) {
+    status = (e as { status: number }).status;
+  }
+  assert.equal(status, 1, 'a malformed finding exits 1');
+});

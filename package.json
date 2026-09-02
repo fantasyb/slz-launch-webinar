@@ -62,7 +62,10 @@
     "cairn:unanswered": "tsx scripts/unanswered.ts",
     "cairn:mcp": "tsx scripts/mcp-server.ts",
     "cairn:proxy": "tsx scripts/mcp-proxy.ts",
-    "cairn:gateway-trial": "tsx scripts/gateway-trial.ts"
+    "cairn:gateway-trial": "tsx scripts/gateway-trial.ts",
+    "cairn:report": "tsx scripts/report.ts",
+    "cairn:conform": "tsx scripts/conform.ts",
+    "cairn:spec": "tsx scripts/spec.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
