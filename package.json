@@ -58,7 +58,8 @@
     "cairn:publish": "tsx scripts/publish.ts",
     "cairn:status": "tsx scripts/status.ts",
     "cairn:record": "tsx scripts/record.ts",
-    "cairn:gate": "tsx scripts/gate.ts"
+    "cairn:gate": "tsx scripts/gate.ts",
+    "cairn:unanswered": "tsx scripts/unanswered.ts"
   },
   "dependencies": {
     "clsx": "^2.1.1",

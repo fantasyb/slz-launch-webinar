@@ -139,3 +139,31 @@ test('a tool-scoped submission becomes a preflight trigger', async () => {
   // And nothing else: a hook that speaks on every tool call is one people skip.
   assert.equal(preflight('mcp__slack__post_message', [f], { useLocalEnvironment: false }).length, 0);
 });
+
+/**
+ * An agent with nobody to tell it to bank must be told by the ledger.
+ *
+ * "Bank that" needs a person who noticed they struggled. An autonomous agent
+ * has nobody, and asking it to introspect is the weakest available trigger:
+ * having just solved something is exactly the state in which it does not feel
+ * hard. The ledger holds a better signal recorded by a mechanism with no
+ * opinion — a search the corpus could not usefully answer.
+ *
+ * The shape of that signal is the whole test. Keyed on an EMPTY result it
+ * would never fire: retrieve returns weak matches for nearly any text, so two
+ * queries about tools this corpus knows nothing about still came back with
+ * five weak hits each. "No strong match" is the corpus's own word for having
+ * nothing worth handing over, and it is the same judgement `brief` uses.
+ */
+test('a hole is no strong match, not an empty result', async () => {
+  const { retrieve } = await import('../src/lib/cairn/retrieval');
+  const { loadCorpus } = await import('../src/lib/cairn/load');
+  const corpus = loadCorpus();
+
+  const hits = retrieve('data 360 mapping returns empty with a success status', corpus, { limit: 5 });
+  assert.ok(hits.length > 0, 'the retriever returns weak matches for almost anything');
+  assert.ok(
+    hits.every((h) => h.strength === 'weak'),
+    'this corpus knows nothing about Data 360, so nothing should come back strong',
+  );
+});
