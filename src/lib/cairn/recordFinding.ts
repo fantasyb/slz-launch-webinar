@@ -17,7 +17,8 @@ import fs from 'fs';
 import path from 'path';
 import { FindingSchema, type Finding } from './schema';
 import { SubmissionSchema, normalise, likelyDuplicates, slugify, readsAsProse } from './submission';
-import { scanExecutable, scanInjection, scanSensitive, draftSurface } from './safety';
+import { scanExecutable, scanInjection, scanSensitive, draftSurface, redact } from './safety';
+import type { ZodIssue } from 'zod';
 import { checkFlaws } from './checkquality';
 import { gate } from './gate';
 import { executionPolicy } from './policy';
@@ -72,6 +73,66 @@ function freshLocal(): Finding[] {
  * says, because there is no policy setting that makes "a model recording
  * something it read from production data" a safe thing to run.
  */
+/* ------------------------------------------------------------------------ */
+/* Refusals that hand back the satisfying value                              */
+/* ------------------------------------------------------------------------ */
+
+/**
+ * A gate that makes a model guess twice is a gate that costs three calls.
+ *
+ * Watched in a real session: a title over 120 characters was refused with
+ * "String must contain at most 120 character(s)", trimmed, refused again,
+ * shortened hard, accepted -- three round trips through cairn_record, each a
+ * tool call and a model turn, in the middle of a deploy that was failing.
+ * Every one of those refusals could have said by how much, and handed back
+ * a value that would pass. Now they do: any bound that can be satisfied
+ * mechanically comes back with the satisfying value, the way redact()
+ * suggests a replacement rather than only objecting.
+ */
+function at(raw: unknown, path: (string | number)[]): unknown {
+  let v: unknown = raw;
+  for (const k of path) v = v && typeof v === 'object' ? (v as Record<string | number, unknown>)[k] : undefined;
+  return v;
+}
+
+/** Cut at a word boundary within `max`, so the suggestion reads as a title and not as a fragment. */
+export function trimTo(text: string, max: number): string {
+  const t = text.trim().replace(/\s+/g, ' ');
+  if (t.length <= max) return t;
+  const cut = t.slice(0, max);
+  const space = cut.lastIndexOf(' ');
+  return (space > max * 0.6 ? cut.slice(0, space) : cut).replace(/[\s,;:—-]+$/, '');
+}
+
+function explain(issue: ZodIssue, raw: unknown): string {
+  const field = issue.path.join('.') || '(root)';
+  const value = at(raw, issue.path);
+  if (issue.code === 'too_big' && typeof value === 'string') {
+    const max = Number(issue.maximum);
+    const over = value.length - max;
+    return `${field}: ${value.length} characters; the limit is ${max}, so ${over} over. This fits and will be accepted as-is:\n    ${JSON.stringify(trimTo(value, max))}`;
+  }
+  if (issue.code === 'too_small' && typeof value === 'string') {
+    const min = Number(issue.minimum);
+    return `${field}: ${value.length} characters; at least ${min} needed, so ${min - value.length} short. Say what would be observed, not just that it fails.`;
+  }
+  if (issue.code === 'too_big' && Array.isArray(value)) return `${field}: ${value.length} entries; the limit is ${issue.maximum}. Keep the first ${issue.maximum}.`;
+  if (issue.code === 'too_small' && Array.isArray(value)) return `${field}: ${issue.message}`;
+  if (issue.code === 'invalid_type' && issue.received === 'undefined') {
+    const hints: Record<string, string> = {
+      by: 'your model or agent name, e.g. "claude-opus-4-8"',
+      claim: 'one falsifiable sentence, 40 to 2000 characters',
+      expectation: 'what a competent person would have predicted',
+      reality: 'what happened instead',
+      evidence: 'at least one { "command", "output" } from the session',
+      check: '{ "command", "confirmedIf", "refutedIf" }; prose in command marks it manual',
+      title: 'one line, at most 120 characters',
+    };
+    return `${field}: missing${hints[field] ? ` — ${hints[field]}` : ''}`;
+  }
+  return `${field}: ${issue.message}`;
+}
+
 export async function recordSubmission(
   raw: unknown,
   opts: { by?: string; origin?: 'human' | 'agent'; force?: boolean } = {},
@@ -83,7 +144,7 @@ export async function recordSubmission(
   if (!parsed.success) {
     return {
       ok: false,
-      message: `Not recordable yet:\n${parsed.error.issues.map((i) => `  ${i.path.join('.') || '(root)'}: ${i.message}`).join('\n')}`,
+      message: `Not recordable yet — each line below says what would be accepted:\n${parsed.error.issues.map((i) => `  ${explain(i, withBy)}`).join('\n')}`,
     };
   }
   const data = parsed.data;
@@ -93,7 +154,13 @@ export async function recordSubmission(
   if (flags.length) {
     return {
       ok: false,
-      message: `Refused — this must not be committed:\n${flags.map((f) => `  ${f.pattern}: ${f.reason}`).join('\n')}\nTake it out and record it again. Nothing was written.`,
+      message:
+        `Refused — this must not be committed:\n${flags
+          .map((f) => {
+            const fixed = redact(f.sample).text;
+            return `  ${f.pattern}: ${f.reason} — ${JSON.stringify(f.sample)}${fixed !== f.sample ? `\n    accepted if written as ${JSON.stringify(fixed)}` : ''}`;
+          })
+          .join('\n')}\nTake it out and record it again. Nothing was written.`,
     };
   }
 

@@ -107,11 +107,11 @@ server.registerTool(
       "MCP tool's behaviour — that is what makes the finding come back the next time anyone " +
       'reaches for that tool.',
     inputSchema: {
-      title: z.string().min(1).max(120),
-      claim: z.string().min(40).max(2000).describe('One falsifiable sentence'),
-      expectation: z.string().min(1).describe('What a competent person would reasonably predict'),
-      reality: z.string().min(1).describe('What actually happens instead'),
-      workaround: z.string().optional().describe('What to do instead'),
+      title: z.string().min(1).max(120).describe('One line, what does not work. At most 120 characters.'),
+      claim: z.string().min(40).max(2000).describe('One falsifiable sentence, 40 to 2000 characters'),
+      expectation: z.string().min(1).max(2000).describe('What a competent person would reasonably predict. Up to 2000 characters.'),
+      reality: z.string().min(1).max(4000).describe('What actually happens instead. Up to 4000 characters.'),
+      workaround: z.string().max(4000).optional().describe('What to do instead. Up to 4000 characters.'),
       tool: z.string().optional().describe('The MCP tool this is about, named exactly'),
       evidence: z
         .array(z.object({ command: z.string(), output: z.string() }))

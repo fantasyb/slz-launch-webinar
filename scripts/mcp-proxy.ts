@@ -771,19 +771,28 @@ const GATEWAY_TOOLS: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        title: { type: 'string' },
-        claim: { type: 'string', description: 'One falsifiable sentence' },
-        expectation: { type: 'string', description: 'What a competent person would reasonably predict' },
-        reality: { type: 'string', description: 'What actually happens instead' },
-        workaround: { type: 'string' },
-        tool: { type: 'string', description: 'The MCP tool this is about, named exactly' },
-        evidence: { type: 'array', items: { type: 'object', properties: { command: { type: 'string' }, output: { type: 'string' } }, required: ['command', 'output'] } },
+        /* Limits on the argument itself, where the model reads them before it writes: a refusal is a round trip, a description is free. */
+        title: { type: 'string', maxLength: 120, description: 'One line, what does not work. At most 120 characters.' },
+        claim: { type: 'string', minLength: 40, maxLength: 2000, description: 'One falsifiable sentence, 40 to 2000 characters' },
+        expectation: { type: 'string', maxLength: 2000, description: 'What a competent person would reasonably predict. Up to 2000 characters.' },
+        reality: { type: 'string', maxLength: 4000, description: 'What actually happens instead. Up to 4000 characters.' },
+        workaround: { type: 'string', maxLength: 4000, description: 'What to do instead. Up to 4000 characters.' },
+        tool: { type: 'string', maxLength: 120, description: 'The MCP tool this is about, named exactly' },
+        evidence: {
+          type: 'array', minItems: 1, maxItems: 20, description: 'The call you made and what it returned, verbatim; 1 to 20 entries',
+          items: { type: 'object', properties: { command: { type: 'string', maxLength: 4000 }, output: { type: 'string', maxLength: 20000, description: 'Up to 20000 characters; cut the middle, keep the error' } }, required: ['command', 'output'] },
+        },
         check: {
           type: 'object',
-          properties: { command: { type: 'string' }, confirmedIf: { type: 'string' }, refutedIf: { type: 'string' }, absentWhen: { type: 'string' } },
+          properties: {
+            command: { type: 'string', maxLength: 4000, description: 'Shell that exits non-zero when the trap is absent; or a sentence in prose, which marks it manual' },
+            confirmedIf: { type: 'string', maxLength: 2000 },
+            refutedIf: { type: 'string', maxLength: 2000 },
+            absentWhen: { type: 'string', maxLength: 2000, description: 'What makes the trap stop happening' },
+          },
           required: ['command', 'confirmedIf', 'refutedIf'],
         },
-        by: { type: 'string', description: 'Your model or agent identifier' },
+        by: { type: 'string', maxLength: 200, description: 'Your model or agent identifier' },
       },
       required: ['title', 'claim', 'expectation', 'reality', 'evidence', 'check'],
     },
