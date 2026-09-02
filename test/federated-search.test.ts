@@ -132,8 +132,20 @@ test('a federated finding is verified against its own upstream keys', async (t) 
     (h: { finding: { id: string } }) => h.finding.id === signed.id,
   );
   assert.ok(hit, 'the signed upstream finding must be retrievable by its own text');
+  /*
+   * Not 1e-9. The two numbers are computed at two clock reads -- this
+   * test's `new Date()` above, and the one retrieval takes when it builds its
+   * index -- and freshness decays continuously: a 90-day half-life moves a
+   * confidence of 0.3 by about 3e-11 per millisecond. Between the reads sit a
+   * dynamic import of retrieval.ts and an index build, tens of milliseconds
+   * alone and hundreds under a full-suite load, which is why this failed only
+   * in full runs and never by itself, and looked like the cache-identity
+   * hazard this repository has met before. It was the clock. A second of
+   * drift is 3e-8; what this asserts is that keys are handled the same way,
+   * which is a difference of order 0.1 when it is wrong.
+   */
   assert.ok(
-    Math.abs(hit.confidence - withOwnKeys) < 1e-9,
+    Math.abs(hit.confidence - withOwnKeys) < 1e-6,
     `retrieve must reach the same verdict as confidence (${hit.confidence} vs ${withOwnKeys})`,
   );
 
@@ -146,8 +158,9 @@ test('a federated finding is verified against its own upstream keys', async (t) 
   const { summarise } = await import(`../src/lib/cairn/load?seam=${stamp}`);
   const summary = summarise(signed);
   assert.match(summary.detail, /^\/api\/findings\/shared:/, 'an upstream id must not link to a local one');
+  /* Same two clocks; summarise rounds to three places, so the drift can land on either side of a rounding boundary. */
   assert.ok(
-    Math.abs(summary.derived.confidence - Number(withOwnKeys.toFixed(3))) < 1e-9,
+    Math.abs(summary.derived.confidence - Number(withOwnKeys.toFixed(3))) <= 0.001 + 1e-9,
     `summarise must agree with the ranker (${summary.derived.confidence} vs ${withOwnKeys})`,
   );
 });
