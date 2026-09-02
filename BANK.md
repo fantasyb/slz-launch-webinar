@@ -49,20 +49,26 @@ the tool as a `trigger`, which is what the PreToolUse hook matches on.
 
 ## The other half
 
-`.claude/hooks/pre-tool-use.sh` reads the tool the agent is about to call and
-prints anything recorded against it. Register it in `.claude/settings.json`:
+Point your client at `cairn-proxy` instead of at the MCP server it wraps:
 
-```json
-{ "hooks": { "PreToolUse": [ { "matcher": "*",
-  "hooks": [ { "type": "command",
-    "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/pre-tool-use.sh" } ] } ] } }
+```bash
+node ~/cairn/bin/cairn-proxy.js --server "npx -y @acme/their-mcp-server"
 ```
 
-Set `CAIRN_ROOT` to the install and `CAIRN_HOME` to your corpus if they are
-not the same directory.
+It forwards every call untouched and speaks on all four surfaces a decision
+is made from: the instructions at connect, the tool's own description, the
+argument's schema description, and the result. There is no hook, no client
+feature, and it costs one to two milliseconds per call.
 
-It is silent unless something is recorded, which is the common case. A hook
-that speaks on every tool call is one you learn to skip.
+**Why not a hook.** There was one, and it was removed. Between the model
+deciding on a call and the client executing it there is no model turn, so a
+`PreToolUse` hook's text reaches the model alongside the RESULT of the call
+it was about — after-the-action delivery, at 130ms per tool call against the
+proxy's one to two. The only form of that hook which truly precedes execution
+is `deny`/`ask`, which is a gate, and this is advice.
+
+So "before the call" is really **before the decision**, and the surfaces that
+are in context when a decision is made are the ones the proxy now writes to.
 
 ## Before you start
 
