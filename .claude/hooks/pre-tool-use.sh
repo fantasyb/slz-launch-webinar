@@ -32,17 +32,17 @@ let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{
 });' 2>/dev/null)"
 [ -n "$TOOL" ] || exit 0
 
-OUT="$(cd "$ROOT" 2>/dev/null && timeout 10 node bin/cairn-find.js --preflight "$TOOL" 2>/dev/null)"
+OUT="$(cd "$ROOT" 2>/dev/null && timeout 10 node bin/cairn-find.js --preflight --quiet "$TOOL" 2>/dev/null)"
 
 # Silence is the common case and must stay silent: a hook that speaks on every
 # tool call is one the reader learns to skip, which is the failure the brief's
 # precision-over-recall design exists to avoid.
-# A finding id at the start of a line, never the substring "cairn-" anywhere.
-# preflight echoes the command back in "nothing known about `...`", so a
-# command that merely MENTIONS cairn matched its own text and the hook spoke
-# when it had nothing -- which it did, live, on a heredoc containing the
-# string "cairn-holes-". Same false positive install.sh had, repeated here.
-printf '%s' "$OUT" | grep -qE '^[[:space:]]*!?[[:space:]]*cairn-[0-9]{4}' || exit 0
+# Emptiness, not a pattern. --quiet prints nothing when there is nothing, so
+# there is no text to match and no way for the echoed command to fool the
+# test. Three greps shipped today looking for "cairn-" or a finding id in
+# output that echoes the query back, and each was defeated by a command that
+# merely mentioned one — including the commit message describing the fix.
+[ -n "$OUT" ] || exit 0
 
 # AS JSON, because plain stdout from this event reaches the debug log and not
 # the model. Claude Code adds plain-text stdout as context for exactly four

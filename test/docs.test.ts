@@ -11,6 +11,7 @@ import assert from 'node:assert/strict';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
+import { execFileSync } from 'child_process';
 import { loadCorpus } from '../src/lib/cairn/load';
 import {
   ledgerIntegrity,
@@ -185,4 +186,40 @@ test('the staleness note names a runnable command from a foreign directory', asy
   } finally {
     process.chdir(prior);
   }
+});
+
+/**
+ * The hook tests emptiness, never a pattern in the output.
+ *
+ * `--preflight` echoes the query back in "nothing known about `...`", so any
+ * grep over its output can be defeated by an input that contains what the
+ * grep looks for. Three variants shipped today: `cairn-`, then a finding id
+ * at line start, then a finding id anywhere — each fixed with a better
+ * pattern, and each defeated within the hour by an ordinary command. The last
+ * was a git commit whose message described this very bug.
+ *
+ * The pattern was never the problem. Output that contains the input cannot be
+ * tested by searching it, so `--quiet` prints nothing when there is nothing
+ * and the hook tests for output at all.
+ */
+test('the pre-tool-use hook does not grep for finding ids', () => {
+  const hook = fs.readFileSync(path.join(process.cwd(), '.claude/hooks/pre-tool-use.sh'), 'utf8');
+  assert.match(hook, /--preflight --quiet/, 'it must ask for silence rather than filter noise');
+  assert.doesNotMatch(
+    hook,
+    /grep -q[E]? ['"][^'"]*cairn-/,
+    'grepping output that echoes the query back is defeated by a query mentioning a finding',
+  );
+  assert.match(hook, /\[ -n "\$OUT" \]/, 'emptiness is the test');
+});
+
+test('--quiet suppresses the preflight miss message', () => {
+  const run = (args: string[]) =>
+    execFileSync('node', [path.join(process.cwd(), 'bin/cairn-find.js'), ...args], {
+      encoding: 'utf8',
+    }).trim();
+  assert.match(run(['--preflight', 'totally-unknown-program-xyz']), /nothing known about/);
+  assert.equal(run(['--preflight', '--quiet', 'totally-unknown-program-xyz']), '');
+  // And a real trigger still speaks under --quiet.
+  assert.match(run(['--preflight', '--quiet', 'playwright install']), /cairn-\d{4}/);
 });

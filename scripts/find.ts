@@ -47,7 +47,16 @@ if (!query) {
 if (before) {
   const warnings = preflight(query, loadSearchable().findings, { useLocalEnvironment: true });
   if (warnings.length === 0) {
-    console.log(`\nnothing known about \`${query}\`.\n`);
+    /*
+     * --quiet emits NOTHING, so a caller can test emptiness instead of
+     * grepping. The hook that consumes this grepped the output for a finding
+     * id, and this branch echoes the query back — so a command that merely
+     * MENTIONED a finding id matched, and the hook announced it had something
+     * when it had nothing. Three variants of that bug shipped today, each
+     * fixed with a better pattern; the pattern is not the problem. Output
+     * that contains the input cannot be tested by searching it.
+     */
+    if (!argv.includes('--quiet')) console.log(`\nnothing known about \`${query}\`.\n`);
     process.exit(0);
   }
   console.log(`\nbefore you run \`${query}\`:\n`);
