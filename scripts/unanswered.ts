@@ -19,6 +19,9 @@
 import { readLedger } from '../src/lib/cairn/ledger';
 import { who } from '../src/lib/cairn/observe';
 import { listNotes, ageDays } from '../src/lib/cairn/notes';
+import { readArcs } from '../src/lib/cairn/arcs';
+import fs from 'fs';
+import path from 'path';
 
 const { session } = who();
 const SINCE_MS = Number(process.env.CAIRN_UNANSWERED_WINDOW_MIN ?? 240) * 60_000;
@@ -62,13 +65,37 @@ const holes = silent.filter((r) => {
 let open: ReturnType<typeof listNotes> = [];
 try { open = listNotes().filter((n) => n.state === 'open'); } catch { /* no drafts, no notes */ }
 
-if (holes.length === 0 && open.length === 0) process.exit(0);
+/*
+ * The session-end sweep. The Bash hook remembers fail-then-recover arcs for
+ * this session in a state file; the ones it put a question on and that were
+ * not banked are still there. And a live detector misses the quiet failures
+ * -- "looked like success but wasn't" -- which nothing can see without the
+ * person; this is the one place to ask, once, with no task interrupted.
+ */
+interface BashState { fired?: Array<{ key: string; arc?: string; failing: string; working: string; at: string; muted?: string | null }> }
+let arcs: NonNullable<BashState['fired']> = [];
+try {
+  const file = path.join(process.env.TMPDIR || '/tmp', `cairn-bash-${session.replace(/[^A-Za-z0-9_-]/g, '_')}.json`);
+  if (session !== 'adhoc' && fs.existsSync(file)) arcs = (JSON.parse(fs.readFileSync(file, 'utf8')) as BashState).fired ?? [];
+} catch { /* no state, no arcs */ }
+
+/* Only the arcs that were offered and never answered: the answered ones are in ~/.cairn/arcs.jsonl. */
+const answered = new Set(readArcs().filter((r) => r.choice !== 'offered').map((r) => r.arc));
+const unanswered = arcs.filter((a) => !a.muted && (!a.arc || !answered.has(a.arc)));
+if (unanswered.length) {
+  console.log(`\n## ${unanswered.length} fail-then-recover arc(s) this session you did not answer\n`);
+  for (const a of unanswered) console.log(`  - ${a.arc ?? ''} \`${a.key}\`: failed as \`${a.failing.slice(0, 70)}\`, then \`${a.working.slice(0, 70)}\` worked`);
+  console.log('\nOne call each: cairn_note with the arc to bank it, or cairn_note {"dismiss": "<arc>", "as": "my-mistake" | "not-surprising"}.\n' +
+    'And the quiet kind -- a call that looked like success and was not -- leaves no arc; if there was one this session,\n' +
+    'it is worth a note now.\n');
+}
 
 if (open.length) {
   console.log(`\n## ${open.length} note(s) you left unfinished\n`);
   for (const n of open) console.log(`  - ${n.note.id}  ${Math.floor(ageDays(n.note))}d  ${n.note.tool}: ${n.note.title.slice(0, 80)}`);
   console.log('\nEach has the evidence already. Finish it with cairn_record, passing note: "<id>", or discard it.\n');
 }
+if (holes.length === 0 && open.length === 0 && unanswered.length === 0) process.exit(0);
 if (holes.length === 0) process.exit(0);
 
 console.log(`\n## ${holes.length} thing(s) you asked about that nothing useful was recorded on\n`);
