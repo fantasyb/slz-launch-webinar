@@ -162,9 +162,28 @@ if (JSON_OUT) {
 
 console.log(`\nCAIRN GATEWAY REPORT — ${cairnHome()}${Number.isFinite(DAYS) ? ` — last ${DAYS} days` : ''}`);
 console.log('='.repeat(66));
+/*
+ * Verification is a property of the corpus, not of the ledger: it is worth
+ * printing even when no session has gone through the gateway yet.
+ */
+function printVerification(): void {
+  if (verified.length) {
+    console.log(`\n  VERIFICATION — what the standing of ${verified.length} finding(s) rests on:`);
+    console.log(`    standing      fresh ${byStanding.fresh}  aging ${byStanding.aging}  stale ${byStanding.stale}  contested ${byStanding.contested}`);
+    console.log(`    confirmed by  a machine check ${bySource.machine}  a person or agent ${bySource.attested}  nobody ${bySource.none}`);
+    console.log(`    checks        ${verified.length - manualChecks} runnable (npm run cairn:doctor -- --attest)  ${manualChecks} manual (only whoever uses the tool can re-confirm)`);
+    console.log(`    refutations   ${refutations} on record` + (refutations === 0 && verified.length > 5 ? '  — the falsification machinery has never fired; read "fresh" accordingly' : ''));
+    if (dueForReverification) {
+      console.log(`    ${dueForReverification} not confirmed in ${REVERIFY_AFTER_DAYS} days or ever; the gateway asks whoever next uses the tool.`);
+    }
+  }
+}
+
 if (!rows.length) {
   console.log('\n  The gateway has recorded nothing yet. Either no session has gone');
-  console.log('  through it, or CAIRN_HOME points somewhere else.\n');
+  console.log('  through it, or CAIRN_HOME points somewhere else.');
+  printVerification();
+  console.log('');
   process.exit(0);
 }
 console.log(`\n  ${sessions.size} session(s) from ${agents.size} client(s): ${[...agents].join(', ')}\n`);
@@ -183,16 +202,7 @@ if (unrecorded.length) {
   console.log('\n  FAILED WITH NOTHING RECORDED — the holes worth filling first:');
   for (const t of unrecorded) console.log(`    ${t.tool}  ${t.errors} error(s)`);
 }
-if (verified.length) {
-  console.log(`\n  VERIFICATION — what the standing of ${verified.length} finding(s) rests on:`);
-  console.log(`    standing      fresh ${byStanding.fresh}  aging ${byStanding.aging}  stale ${byStanding.stale}  contested ${byStanding.contested}`);
-  console.log(`    confirmed by  a machine check ${bySource.machine}  a person or agent ${bySource.attested}  nobody ${bySource.none}`);
-  console.log(`    checks        ${verified.length - manualChecks} runnable (npm run cairn:doctor -- --attest)  ${manualChecks} manual (only whoever uses the tool can re-confirm)`);
-  console.log(`    refutations   ${refutations} on record` + (refutations === 0 && verified.length > 5 ? '  — the falsification machinery has never fired; read "fresh" accordingly' : ''));
-  if (dueForReverification) {
-    console.log(`    ${dueForReverification} not confirmed in ${REVERIFY_AFTER_DAYS} days or ever; the gateway asks whoever next uses the tool.`);
-  }
-}
+printVerification();
 /* The Bash detector's calibration: what the person said about each arc it offered. */
 if (arcs.offered) {
   const answered = arcs.bank + arcs.myMistake + arcs.notSurprising;

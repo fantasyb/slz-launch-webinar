@@ -176,7 +176,7 @@ test('a finding rides back on the result of the tool it is about', async () => {
     assert.match(instructions, /paginate with limit 50/, 'the upstream\'s own instructions must survive the proxy');
     assert.match(instructions, /from your Cairn corpus/, 'the connect-time floor for clients with no hooks');
     assert.match(instructions, /ledger of tool behaviour: what breaks, where, and what to do instead\. It is not memory/, 'says what it is and what it is not');
-    assert.match(instructions, /where the check has been re-run, you can tell whether it is still true/, 'the advantage is conditional, not a promise');
+    assert.match(instructions, /where the check has been re-run you can tell whether it is still true/, 'the advantage is conditional, not a promise');
 
     const r = await s.call('mcp__data360__query_records', { object: 'Account' });
     const t = texts(r);

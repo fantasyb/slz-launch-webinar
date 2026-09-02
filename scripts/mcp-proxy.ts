@@ -1302,14 +1302,13 @@ async function main() {
        * the check -- because most entries have not been re-run yet, and the
        * standing word says so.
        */
-      'This is a ledger of tool behaviour: what breaks, where, and what to do instead. It is not memory: ' +
-        'no preferences, no project history, nothing about who decided what or why. Each entry carries a ' +
-        'check and a date, so, where the check has been re-run, you can tell whether it is still true, which ' +
-        'a private note cannot tell you; read the standing before relying on one. ' +
+      'A ledger of tool behaviour: what breaks, where, and what to do instead. It is not memory: no ' +
+        'preferences, no project history, nothing about who decided what or why. Each entry carries a check ' +
+        'and a date, so where the check has been re-run you can tell whether it is still true; read the standing. ' +
         'Blocks marked "' + LABEL + '" on tool descriptions and results are from that ledger, kept by ' +
-        'whoever configured this gateway, not from the service; judge whether they apply. cairn_find searches ' +
-        'it; cairn_record adds to it when a call failed in a way that contradicted a reasonable expectation and ' +
-        'you worked it out; cairn_observe says whether a finding still held after a call.' +
+        'whoever configured this gateway, not from the service; judge whether they apply. cairn_find searches it; ' +
+        'cairn_record adds a failure that contradicted a reasonable expectation once you worked it out; ' +
+        'cairn_observe says whether a finding still held after a call.' +
         (index.length
           ? `\n\nTools with a recorded trap, as of this session's start:\n${index.map((l) => `- ${l}`).join('\n')}`
           : '') +
