@@ -37,12 +37,35 @@ Four surfaces, all of which are in context when a decision is made:
 4. **On the result of the tool the finding is about** — the finding in full,
    once per tool per session, then a one-line reminder every ten calls.
 
-Two tools of its own: `cairn_find` (search the corpus) and `cairn_record`
+Three tools of its own: `cairn_find` (search the corpus), `cairn_note` (what
+you write when there is no time for a finding; see below) and `cairn_record`
 (write to it, through the same gates as every other door: scanned, the
 check must decide, near-duplicates refused, and — when the writer supplies
 `absentWhen` and the machine's execution policy allows — the check is run
 with and without the trap before the finding lands). A finding recorded
 mid-session reaches the tool list before the next decision.
+
+**The second tier: `cairn_note`.** A finding costs thinking — claim,
+expectation, reality, a check that can refute itself — and that thinking is
+the value. It is also paid mid-work, by someone with a deploy failing in
+front of them, and "I'll write it later" means never. A note takes what the
+session already has and nothing that needs thought: the title, the tool,
+the exact command and its output, the fix if any. One call. It is kept in
+`drafts/` under the corpus home, never in `cairn/`, and that is the whole
+safety argument: `cairn_find`, the tool index and `federationBundle()` all
+read `cairn/`, so a note cannot be cited, scored, federated or served — a
+stub by construction, not by a flag something could forget to check. The
+secret gate is not tiered. The bar for `cairn/` does not move: `cairn_record`
+demands today what it demanded yesterday, and nothing derives a claim from a
+title.
+
+A note is offered back once, on the first result from its tool in a later
+session — the person is back in the same territory and the memory is fresh —
+with the evidence already in it: finish it with `cairn_record` passing
+`note: "<id>"`, or discard it with `cairn_note {"discard": "<id>"}`. After
+14 days it is listed as abandoned by `cairn:report` and `cairn:unanswered`,
+never offered again, and stays on disk with its timestamp as honest data
+about what was noticed and never finished.
 
 **The contradiction writer.** cairn-0045 measured that a writer keyed on
 errors is blind to the traps worth recording, because those return success

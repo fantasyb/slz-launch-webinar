@@ -898,3 +898,73 @@ test('an empty success followed by a superset that returns rows offers a draft, 
     assert.equal(ledger.filter((r) => r.source === 'mcp-proxy:contradiction').length, 1);
   } finally { await s.close(); }
 });
+
+/* ------------------------------------------------------------------------ */
+/* The second tier: notes                                                    */
+/* ------------------------------------------------------------------------ */
+
+/**
+ * One call, no thinking, kept outside the corpus, offered back once in a
+ * later session on the first result from its tool, and closed by the
+ * finding it becomes. The corpus's readers cannot see it in between.
+ */
+test('a note is one call, unreachable through the gateway, offered back by a later session, and closed by cairn_record', async () => {
+  const home = corpus(false);
+  const first = single(home);
+  let noteId = '';
+  try {
+    await first.init();
+    assert.ok((await first.tools()).some((t) => t.name === 'cairn_note'), 'cairn_note is offered beside cairn_record');
+    const r = await first.call('cairn_note', {
+      title: 'query_records returns nothing for Case with the default mapping',
+      tool: 'mcp__data360__query_records',
+      evidence: [{ command: 'query_records {"object":"Case"}', output: '{"status":"success","records":[]}' }],
+      workaround: 'pass mapping_id explicitly',
+    });
+    assert.ok(!r.isError, texts(r).join('\n'));
+    const m = /Noted \((note-[a-z0-9]+)\); not a finding until/.exec(texts(r)[0]);
+    assert.ok(m, texts(r)[0]);
+    noteId = m![1];
+    assert.equal(fs.readdirSync(path.join(home, 'cairn')).length, 0, 'the corpus is untouched');
+
+    /* Unreachable through every surface the gateway owns. */
+    assert.match(texts(await first.call('cairn_find', { query: 'query_records returns nothing for Case default mapping' }))[0], /Nothing recorded/);
+    const q = (await first.tools()).find((t) => t.name === 'mcp__data360__query_records')!;
+    assert.equal(q.description, 'Query records', 'no index line, no description note');
+    const same = await first.call('mcp__data360__query_records', { object: 'Case' });
+    assert.ok(!texts(same).some((x) => x.includes('unfinished note')), 'the session that wrote it is not offered it back');
+  } finally { await first.close(); }
+
+  const later = single(home);
+  try {
+    await later.init();
+    const r = await later.call('mcp__data360__query_records', { object: 'Case' });
+    intactThenLabelled(r, '{"status":"success","records":[]}');
+    const offer = texts(r).slice(1).join('\n');
+    assert.match(offer, /You left an unfinished note about mcp__data360__query_records earlier today: "query_records returns nothing for Case with the default mapping"/);
+    assert.match(offer, new RegExp(`passing note: "${noteId}"`));
+    assert.match(offer, /the evidence is already in it/);
+    const again = await later.call('mcp__data360__query_records', { object: 'Case' });
+    assert.ok(!texts(again).some((x) => x.includes('unfinished note')), 'offered once per session');
+
+    const rec = await later.call('cairn_record', {
+      title: 'query_records returns an empty success for Case through the default mapping',
+      claim: 'query_records on Case without mapping_id goes through a stale default mapping and returns success with no rows rather than an error.',
+      expectation: 'A stale mapping fails loudly, or an empty result means no rows.',
+      reality: 'It returns {"status":"success","records":[]} for every Case query through the default mapping.',
+      workaround: 'Pass mapping_id explicitly.',
+      tool: 'mcp__data360__query_records',
+      evidence: [{ command: 'query_records {"object":"Case"}', output: '{"status":"success","records":[]}' }],
+      check: { command: 'Query Case with no mapping_id and then with the freshest mapping; compare row counts.', confirmedIf: 'the default returns zero rows and the fresh mapping returns rows', refutedIf: 'the default returns rows' },
+      note: noteId,
+    });
+    assert.ok(!rec.isError, texts(rec).join('\n'));
+    assert.match(texts(rec)[0], new RegExp(`Finished note ${noteId}`));
+    const drafts = fs.readdirSync(path.join(home, 'drafts')).filter((f) => f.startsWith('note-'));
+    assert.equal(drafts.length, 1);
+    const stored = JSON.parse(fs.readFileSync(path.join(home, 'drafts', drafts[0]), 'utf8'));
+    assert.equal(stored.status, 'finished');
+    assert.equal(stored.findingId, 'cairn-0001');
+    assert.equal(fs.readdirSync(path.join(home, 'cairn')).length, 1, 'and now, through cairn_record, the corpus has it');
+  } finally { await later.close(); }
+});

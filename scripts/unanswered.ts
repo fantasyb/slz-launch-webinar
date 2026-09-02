@@ -18,6 +18,7 @@
  */
 import { readLedger } from '../src/lib/cairn/ledger';
 import { who } from '../src/lib/cairn/observe';
+import { listNotes, ageDays } from '../src/lib/cairn/notes';
 
 const { session } = who();
 const SINCE_MS = Number(process.env.CAIRN_UNANSWERED_WINDOW_MIN ?? 240) * 60_000;
@@ -57,6 +58,17 @@ const holes = silent.filter((r) => {
   return true;
 });
 
+/* Notes: noticed and written down, in one call, and not yet thought through. Open ones only; abandoned ones are the report's. */
+let open: ReturnType<typeof listNotes> = [];
+try { open = listNotes().filter((n) => n.state === 'open'); } catch { /* no drafts, no notes */ }
+
+if (holes.length === 0 && open.length === 0) process.exit(0);
+
+if (open.length) {
+  console.log(`\n## ${open.length} note(s) you left unfinished\n`);
+  for (const n of open) console.log(`  - ${n.note.id}  ${Math.floor(ageDays(n.note))}d  ${n.note.tool}: ${n.note.title.slice(0, 80)}`);
+  console.log('\nEach has the evidence already. Finish it with cairn_record, passing note: "<id>", or discard it.\n');
+}
 if (holes.length === 0) process.exit(0);
 
 console.log(`\n## ${holes.length} thing(s) you asked about that nothing useful was recorded on\n`);

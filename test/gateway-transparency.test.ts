@@ -83,7 +83,7 @@ test('a finding recorded through the gateway never has its check executed', asyn
   assert.ok(agentBranch !== -1 && agentBranch < policyBranch, 'agent is checked first');
 
   const proxy = fs.readFileSync(path.join(process.cwd(), 'scripts', 'mcp-proxy.ts'), 'utf8');
-  assert.match(proxy, /recordSubmission\(args, \{ by: session\.agent, origin: 'agent' \}\)/, 'the gateway declares itself');
+  assert.match(proxy, /recordSubmission\(submission, \{ by: session\.agent, origin: 'agent' \}\)/, 'the gateway declares itself');
   assert.equal(typeof recordSubmission, 'function');
 });
 

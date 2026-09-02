@@ -43,6 +43,7 @@ import { loadSearchable, type SearchableFinding } from '../src/lib/cairn/federat
 import { brief } from '../src/lib/cairn/brief';
 import { observe } from '../src/lib/cairn/observe';
 import { recordSubmission } from '../src/lib/cairn/recordFinding';
+import { recordNote } from '../src/lib/cairn/notes';
 
 const server = new McpServer({ name: 'cairn', version: '0.1.0' });
 
@@ -133,6 +134,28 @@ server.registerTool(
      * arrived through a tool call is never run -- see recordFinding.ts.
      */
     const outcome = await recordSubmission(args, { origin: 'agent' });
+    return { isError: !outcome.ok, content: [{ type: 'text' as const, text: outcome.message }] };
+  },
+);
+
+/* The second tier, the same as the gateway offers: see src/lib/cairn/notes.ts. */
+server.registerTool(
+  'cairn_note',
+  {
+    description:
+      'When there is no time for a finding: note what just did not work, in one call, with what you already have — ' +
+      'the tool, the exact command and its output, the fix if any. Kept as a draft outside the corpus: not searchable, ' +
+      'not delivered, not published, until you finish it with cairn_record. Dropped after 14 days.',
+    inputSchema: {
+      title: z.string().min(1).max(120).describe('One line, what did not work. At most 120 characters.'),
+      tool: z.string().min(2).max(120).describe('The MCP tool this is about, named exactly'),
+      evidence: z.array(z.object({ command: z.string(), output: z.string() })).min(1).max(20),
+      workaround: z.string().max(4000).optional(),
+      by: z.string().describe('Your model or agent identifier'),
+    },
+  },
+  async (args) => {
+    const outcome = recordNote(args, { origin: 'agent' } as never);
     return { isError: !outcome.ok, content: [{ type: 'text' as const, text: outcome.message }] };
   },
 );

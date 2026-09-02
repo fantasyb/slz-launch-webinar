@@ -76,6 +76,7 @@ import { recordSubmission } from '../src/lib/cairn/recordFinding';
 import { redactForLedger } from '../src/lib/cairn/safety';
 import { shapeOf, diffSurface, findingNames, type ToolShape, type SurfaceChange } from '../src/lib/cairn/toolsurface';
 import { summarise, detect, type CallSummary } from '../src/lib/cairn/contradiction';
+import { recordNote, discardNote, finishNotes, openNotesFor, ageDays } from '../src/lib/cairn/notes';
 
 /* ------------------------------------------------------------------------ */
 /* Configuration                                                             */
@@ -440,11 +441,13 @@ interface SessionState {
   recent: Map<string, CallSummary[]>;
   /** Tools for which a contradiction draft has already been offered this session. */
   contradicted: Set<string>;
+  /** Tools whose unfinished notes have been offered back this session. */
+  notesOffered: Set<string>;
 }
 
 function newSession(id: string): SessionState {
   return {
-    id, introduced: new Set(), callsByTool: new Map(), shown: new Set(), nudged: new Set(), holes: new Map(), drafted: new Set(), surfaceSeen: new Map(), recent: new Map(), contradicted: new Set(),
+    id, introduced: new Set(), callsByTool: new Map(), shown: new Set(), nudged: new Set(), holes: new Map(), drafted: new Set(), surfaceSeen: new Map(), recent: new Map(), contradicted: new Set(), notesOffered: new Set(),
   };
 }
 
@@ -793,8 +796,39 @@ const GATEWAY_TOOLS: Tool[] = [
           required: ['command', 'confirmedIf', 'refutedIf'],
         },
         by: { type: 'string', maxLength: 200, description: 'Your model or agent identifier' },
+        note: { type: 'string', description: 'The id of the cairn_note this finishes, if it grew out of one' },
       },
       required: ['title', 'claim', 'expectation', 'reality', 'evidence', 'check'],
+    },
+  },
+  /*
+   * THE SECOND TIER. When there is no time for a finding -- a deploy failing
+   * in front of the person -- a note takes what the session already has and
+   * nothing that needs thought. It is kept in drafts/, outside the corpus:
+   * cairn_find, the tool index and federation all read cairn/, so a note is
+   * unreachable by construction until cairn_record turns it into a finding.
+   * The bar for cairn/ does not move. See src/lib/cairn/notes.ts.
+   */
+  {
+    name: 'cairn_note',
+    description:
+      'When there is no time for a finding: note what just did not work, in one call, with what you already have — ' +
+      'the tool, the exact command and its output, the fix if any. Kept as a draft outside the corpus: not searchable, ' +
+      'not delivered, not published, until you finish it with cairn_record (pass its id as `note`). It is offered back ' +
+      'once, the next session that touches the tool, and dropped after 14 days. Pass {"discard": "<note id>"} to drop one now.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', maxLength: 120, description: 'One line, what did not work. At most 120 characters.' },
+        tool: { type: 'string', maxLength: 120, description: 'The MCP tool this is about, named exactly. What brings it back.' },
+        evidence: {
+          type: 'array', minItems: 1, maxItems: 20, description: 'The call you made and what it returned, verbatim',
+          items: { type: 'object', properties: { command: { type: 'string', maxLength: 4000 }, output: { type: 'string', maxLength: 20000 }, note: { type: 'string', maxLength: 2000 } }, required: ['command', 'output'] },
+        },
+        workaround: { type: 'string', maxLength: 4000, description: 'What worked instead, if anything did' },
+        by: { type: 'string', maxLength: 200, description: 'Your model or agent identifier' },
+        discard: { type: 'string', description: 'Instead of noting: the id of a note to drop' },
+      },
     },
   },
 ];
@@ -1240,8 +1274,26 @@ async function main() {
          * anyone who can write into the system that tool reads. Its check is
          * never executed here, whatever this machine's execution policy says.
          */
-        const outcome = await recordSubmission(args, { by: session.agent, origin: 'agent' });
+        const { note: noteId, ...submission } = args as Record<string, unknown> & { note?: unknown };
+        const outcome = await recordSubmission(submission, { by: session.agent, origin: 'agent' });
         try { observe(`cairn_record ${outcome.ok ? outcome.finding!.id : 'refused'}`, [], 'mcp-proxy:record', { by: session.agent, session: session.id }); } catch { /* never fatal */ }
+        let closed = '';
+        if (outcome.ok) {
+          try {
+            const done = finishNotes(outcome.finding!, typeof noteId === 'string' ? noteId : undefined);
+            if (done.length) closed = `\nFinished note${done.length > 1 ? 's' : ''} ${done.map((n) => n.id).join(', ')}.`;
+          } catch { /* a note that cannot be closed is not a failed record */ }
+        }
+        return textResult(outcome.message + closed, !outcome.ok);
+      }
+      if (!toolOwner.has(req.params.name) && req.params.name === 'cairn_note') {
+        if (typeof args.discard === 'string') {
+          const dropped = discardNote(args.discard);
+          try { observe(`cairn_note discard ${args.discard}`, [], 'mcp-proxy:note-discarded', { by: session.agent, session: session.id }); } catch { /* never fatal */ }
+          return textResult(dropped ? `Discarded ${dropped.id}.` : `No open note with id ${args.discard}.`, !dropped);
+        }
+        const outcome = recordNote(args, { by: session.agent, session: session.id });
+        try { observe(`cairn_note ${outcome.ok ? outcome.note!.id : 'refused'}`, [], 'mcp-proxy:note', { by: session.agent, session: session.id }); } catch { /* never fatal */ }
         return textResult(outcome.message, !outcome.ok);
       }
       if (!toolOwner.has(req.params.name) && req.params.name === 'cairn_find') {
@@ -1381,6 +1433,32 @@ async function main() {
           try {
             observe(`${owner.up.spec.name} [surface told]`, named.map((f, i) => ({ finding: f, rank: i + 1, strength: 'strong' })) as never, 'mcp-proxy:told-surface', ctx);
           } catch { /* never fatal */ }
+        }
+        /*
+         * THE CLOSE. An unfinished note about this tool, left by an earlier
+         * session, is offered back once on the first result from the tool:
+         * the person is in the same territory again and the memory is fresh.
+         * Never the session that wrote it, never after it is abandoned, never
+         * when degraded.
+         */
+        if (!degraded() && !session.notesOffered.has(req.params.name)) {
+          session.notesOffered.add(req.params.name);
+          let open: ReturnType<typeof openNotesFor> = [];
+          try { open = openNotesFor(namesFor(owner.up.spec.name, owner.raw, req.params.name)).filter((n) => n.session !== session.id); } catch { /* never fatal */ }
+          if (open.length) {
+            const now = new Date();
+            note +=
+              `\n\n--- ${LABEL} ---\n` +
+              open.slice(0, 3).map((n) => {
+                const days = Math.floor(ageDays(n, now));
+                return `You left an unfinished note about ${req.params.name} ${days === 0 ? 'earlier today' : `${days} day${days === 1 ? '' : 's'} ago`}: "${n.title}" (${n.id}). ` +
+                  `Finish it with cairn_record, passing note: "${n.id}" — the evidence is already in it: ${clip(JSON.stringify(n.evidence), 300)}` +
+                  (n.workaround ? ` Workaround noted: ${clip(n.workaround, 120)}` : '') +
+                  ` — or discard it with cairn_note {"discard": "${n.id}"}.`;
+              }).join('\n') +
+              `\n--- end ---`;
+            try { observe(`${req.params.name} [note offered]`, [], 'mcp-proxy:note-offered', ctx); } catch { /* never fatal */ }
+          }
         }
         if (note) {
           const content = Array.isArray(result.content) ? result.content : [];

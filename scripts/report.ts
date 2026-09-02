@@ -22,6 +22,7 @@
  */
 import { readLedger, type RetrievalRecord } from '../src/lib/cairn/ledger';
 import { cairnHome } from '../src/lib/cairn/home';
+import { listNotes, ageDays, ABANDON_AFTER_DAYS } from '../src/lib/cairn/notes';
 
 const argv = process.argv.slice(2);
 const JSON_OUT = argv.includes('--json');
@@ -93,6 +94,13 @@ const surface = rows
 const rotting = new Map<string, Set<string>>();
 for (const c of surface) for (const id of c.findings) rotting.set(id, (rotting.get(id) ?? new Set()).add(c.what));
 
+/* Notes: what was noticed and not yet finished, and what was noticed and never will be. Read from drafts/, never from cairn/. */
+let notes: ReturnType<typeof listNotes> = [];
+try { notes = listNotes(); } catch { /* no drafts directory is no notes */ }
+const openNotes = notes.filter((n) => n.state === 'open');
+const abandonedNotes = notes.filter((n) => n.state === 'abandoned');
+const finishedNotes = notes.filter((n) => n.state === 'finished');
+
 if (JSON_OUT) {
   console.log(
     JSON.stringify(
@@ -112,6 +120,7 @@ if (JSON_OUT) {
           drafts: t.drafts,
         })),
         unrecordedFailures: unrecorded.map((t) => ({ tool: t.tool, errors: t.errors })),
+        notes: { open: openNotes.map((n) => ({ id: n.note.id, tool: n.note.tool, title: n.note.title, at: n.note.at })), abandoned: abandonedNotes.length, finished: finishedNotes.length },
         surfaceChanges: surface,
         findingsNamingChangedTools: [...rotting].map(([id, what]) => ({ id, changes: [...what] })),
       },
@@ -144,6 +153,12 @@ console.log('  drafts: offered on a result after a failure that later worked, or
 if (unrecorded.length) {
   console.log('\n  FAILED WITH NOTHING RECORDED — the holes worth filling first:');
   for (const t of unrecorded) console.log(`    ${t.tool}  ${t.errors} error(s)`);
+}
+if (openNotes.length || abandonedNotes.length) {
+  console.log(`\n  NOTES — noticed, not yet findings (${openNotes.length} open, ${finishedNotes.length} finished, ${abandonedNotes.length} abandoned after ${ABANDON_AFTER_DAYS} days):`);
+  for (const n of openNotes) console.log(`    ${n.note.id}  ${String(Math.floor(ageDays(n.note))).padStart(2)}d  ${n.note.tool.padEnd(28)} ${n.note.title}`);
+  for (const n of abandonedNotes) console.log(`    ${n.note.id}  abandoned  ${n.note.tool.padEnd(28)} ${n.note.title}`);
+  if (openNotes.length) console.log('    An open note is offered back once, the next session that touches its tool. Finish it with cairn_record, passing note: "<id>".');
 }
 if (surface.length) {
   console.log('\n  TOOL SURFACE CHANGED under the corpus — noticed by the gateway, never acted on:');

@@ -54,7 +54,7 @@ const CALL = opt('call', 'echo')!;
 const CALL_ARGS = JSON.parse(opt('args', '{"message":"cairn-smoke"}')!) as Record<string, unknown>;
 
 /* A word the gateway prints on the surfaces it owns, so its additions are identifiable. */
-const GATEWAY_TOOLS = ['cairn_find', 'cairn_record'];
+const GATEWAY_TOOLS = ['cairn_find', 'cairn_record', 'cairn_note'];
 
 interface Probe {
   arm: string;

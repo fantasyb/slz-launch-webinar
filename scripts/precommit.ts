@@ -65,8 +65,9 @@ const staged = execFileSync(
 const PATTERN_FIXTURES = [
   'src/lib/cairn/safety.ts',
   'test/safety.test.ts',
-  // Proves a refused secret comes back with its redaction, which needs a secret-shaped string to refuse.
+  // Prove a refused secret comes back with its redaction, which needs a secret-shaped string to refuse.
   'test/record.test.ts',
+  'test/notes.test.ts',
   'cairn/0014-follow-this-url-is-standing-rce.json',
   /* Asserts what the execution policy does with a credential-shaped value. */
   'test/policy.test.ts',

@@ -34,6 +34,11 @@ Write the JSON yourself from what just happened. Six fields, plus `tool`:
 It refuses rather than redacts: a pasted credential, an injected
 instruction, or a finding that already exists all stop the write and say why.
 
+No time for the six fields? `cairn_note` takes the title, the tool, the
+command and its output, and nothing else. It is kept outside the corpus —
+not searchable, not delivered — and offered back the next session that
+touches the tool, so the thinking can be done when the deploy is not failing.
+
 Never bank anything you would not publish.
 ```
 
