@@ -44,6 +44,33 @@ check must decide, near-duplicates refused, and — when the writer supplies
 with and without the trap before the finding lands). A finding recorded
 mid-session reaches the tool list before the next decision.
 
+**The contradiction writer.** cairn-0045 measured that a writer keyed on
+errors is blind to the traps worth recording, because those return success
+with a plausible payload. What such a trap does leave behind, inside one
+session, is a contradiction: a call returns nothing, or N items with nothing
+saying more exists, and a later call to the same tool with the *same*
+arguments plus one more returns what the first had implied was not there.
+The gateway sees both halves. When it does, the working result carries a
+labelled, hedged draft — both calls as evidence, the added argument as the
+workaround — and asks the agent to record it through `cairn_record` if the
+first result was wrong rather than merely a narrower question. Once per
+tool per session. It never writes to the corpus itself.
+
+The rules are rules for staying quiet, because a "this looks like a trap"
+on every third result would teach the reader to skip the label that carries
+the findings too: strict superset only (a changed value on a shared key is a
+different question, so `limit: 10` then `limit: 100` never fires); a cursor,
+token or page argument is a continuation, not a superset; a result that
+declared its own incompleteness — `next_cursor`, `has_more`, `total`,
+`done: false` — was not silent and is never the misleading half; only JSON
+with something countable is compared. Replayed over the thirty committed
+trial transcripts it was silent on all twenty non-recovering trials and
+fired on five of five stale-mapping recoveries; it is expected to miss a
+silent cap recovered by paging, which is a continuation, and the test pins
+that miss so a change to it is seen. The real rate is `cairn:report`'s
+drafts column over a fortnight of ambient use against the findings those
+drafts became.
+
 **The hole-to-draft loop.** A call that fails and a later call to the same
 tool that works is the one shape the gateway can notice without an opinion.
 The working result carries a draft — the failing call and its output as

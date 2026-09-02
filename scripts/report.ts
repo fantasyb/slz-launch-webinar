@@ -71,7 +71,7 @@ for (const r of rows) {
   } else if (kind === 'error') {
     t.errors++;
     t.sessionsCalled.add(r.session ?? 'adhoc');
-  } else if (kind === 'draft') {
+  } else if (kind === 'draft' || kind === 'contradiction') {
     t.drafts++;
   }
 }
@@ -140,6 +140,7 @@ for (const t of tools) {
   );
 }
 console.log('\n  warned-in: sessions that were shown a finding for the tool / sessions that called it.');
+console.log('  drafts: offered on a result after a failure that later worked, or after a contradiction (an empty or capped success, then a superset that returned more).');
 if (unrecorded.length) {
   console.log('\n  FAILED WITH NOTHING RECORDED — the holes worth filling first:');
   for (const t of unrecorded) console.log(`    ${t.tool}  ${t.errors} error(s)`);

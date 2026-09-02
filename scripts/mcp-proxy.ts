@@ -75,6 +75,7 @@ import { observe } from '../src/lib/cairn/observe';
 import { recordSubmission } from '../src/lib/cairn/recordFinding';
 import { redactForLedger } from '../src/lib/cairn/safety';
 import { shapeOf, diffSurface, findingNames, type ToolShape, type SurfaceChange } from '../src/lib/cairn/toolsurface';
+import { summarise, detect, type CallSummary } from '../src/lib/cairn/contradiction';
 
 /* ------------------------------------------------------------------------ */
 /* Configuration                                                             */
@@ -435,11 +436,15 @@ interface SessionState {
   drafted: Set<string>;
   /** Per upstream, how many of its surface events this session has been told about. */
   surfaceSeen: Map<string, number>;
+  /** The last few successful calls per tool, for the contradiction writer. */
+  recent: Map<string, CallSummary[]>;
+  /** Tools for which a contradiction draft has already been offered this session. */
+  contradicted: Set<string>;
 }
 
 function newSession(id: string): SessionState {
   return {
-    id, introduced: new Set(), callsByTool: new Map(), shown: new Set(), nudged: new Set(), holes: new Map(), drafted: new Set(), surfaceSeen: new Map(),
+    id, introduced: new Set(), callsByTool: new Map(), shown: new Set(), nudged: new Set(), holes: new Map(), drafted: new Set(), surfaceSeen: new Map(), recent: new Map(), contradicted: new Set(),
   };
 }
 
@@ -592,6 +597,76 @@ function draftFor(session: SessionState, tool: string, args: Record<string, unkn
     (differed.length ? `; the arguments differed in: ${differed.join(', ')}.` : '.') +
     ' If that failure contradicted a reasonable expectation, record it now with cairn_record, ' +
     'filling in title, claim, expectation, reality and workaround, and absentWhen if something on the machine made it stop:\n' +
+    JSON.stringify(draft) +
+    `\n--- end ---`
+  );
+}
+
+/*
+ * THE CONTRADICTION WRITER -- cairn-0045's trigger, in the one place that can
+ * see both halves of it. The hole-to-draft loop above catches a call that
+ * failed and then worked; this catches the trap that never fails: a call
+ * that returned nothing, or N with nothing saying more, and a later call to
+ * the same tool with the same arguments plus one more that returned what the
+ * first had implied was not there. The rules for what counts, and the rules
+ * for staying quiet, are in src/lib/cairn/contradiction.ts.
+ *
+ * Nothing is written to the corpus. A draft with both calls as evidence goes
+ * to drafts/ and rides on the result, once per tool per session, labelled,
+ * hedged, and offered: the agent or a person records it through
+ * cairn_record or ignores it. A proxy that wrote findings on the strength of
+ * a diff would make the ledger something nobody vouched for.
+ */
+const RECENT_PER_TOOL = 8;
+function contradictionFor(session: SessionState, tool: string, args: Record<string, unknown>, ownText: string): string {
+  const history = session.recent.get(tool) ?? [];
+  const now = summarise(args, ownText);
+  const found = session.contradicted.has(tool) ? null : detect(history, now);
+  history.push(now);
+  if (history.length > RECENT_PER_TOOL) history.shift();
+  session.recent.set(tool, history);
+  if (!found) return '';
+  session.contradicted.add(tool);
+  const { earlier, later, added } = found;
+  const before = earlier.items === 0 ? 'nothing' : `${earlier.items} item(s), with nothing saying more existed`;
+  const draft = {
+    tool,
+    title: '',
+    claim: '',
+    expectation: '',
+    reality: '',
+    workaround: `Pass ${added.join(', ')} explicitly.`,
+    evidence: [
+      { command: `${tool} ${JSON.stringify(earlier.args)}`, output: earlier.text.slice(0, 2000), note: `returned ${before}` },
+      { command: `${tool} ${JSON.stringify(later.args)}`, output: later.text.slice(0, 2000), note: `returned ${later.items} item(s)` },
+    ],
+    check: {
+      command: `Call ${tool} without ${added.join(', ')} and confirm it returns ${earlier.items === 0 ? 'nothing' : `${earlier.items} item(s) with no sign of more`}; then with ${added.join(', ')} and confirm it returns more.`,
+      confirmedIf: 'the first call returns the smaller result with no indication that more exists, and the second returns more',
+      refutedIf: 'the first call returns the same as the second, or says that more exists',
+      absentWhen: '',
+    },
+  };
+  try {
+    const dir = homePath('drafts');
+    fs.mkdirSync(dir, { recursive: true });
+    const ignore = path.join(dir, '.gitignore');
+    if (!fs.existsSync(ignore)) fs.writeFileSync(ignore, '*\n');
+    const safe = redactForLedger(JSON.stringify(draft, null, 2)).text;
+    fs.writeFileSync(path.join(dir, `${session.id}-${tool.replace(/[^A-Za-z0-9_.-]+/g, '_')}-contradiction.json`), `${safe}\n`);
+  } catch (e) {
+    process.stderr.write(`cairn-proxy: could not write draft: ${(e as Error).message}\n`);
+  }
+  try {
+    observe(`${tool} [contradiction ${found.kind}]`, [], 'mcp-proxy:contradiction', { by: session.agent, session: session.id });
+  } catch { /* never fatal */ }
+  return (
+    `\n\n--- ${LABEL} ---\n` +
+    `Two calls to ${tool} in this session may contradict each other. Earlier, ${tool} ${JSON.stringify(earlier.args)} returned ${before}; ` +
+    `now, with ${added.join(', ')} added, it returned ${later.items} item(s). ` +
+    'If the first result was wrong rather than merely a different question -- a default that silently scoped, capped or missed -- ' +
+    'record it now with cairn_record, filling in title, claim, expectation and reality; a draft with both calls as evidence follows. ' +
+    'If the first was simply a narrower question, ignore this.\n' +
     JSON.stringify(draft) +
     `\n--- end ---`
   );
@@ -1258,6 +1333,7 @@ async function main() {
         if (isError) session.holes.set(req.params.name, { args, output: ownText, at: new Date().toISOString() });
         let note = annotate(session, req.params.name, about, isError, args);
         if (!isError) note += draftFor(session, req.params.name, args);
+        if (!isError && !degraded()) note += contradictionFor(session, req.params.name, args, ownText);
         /*
          * FIRST CONTACT. `instructions` is the right place for the index and
          * not every client honours it; a result is read by all of them. So the

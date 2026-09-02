@@ -847,3 +847,54 @@ test('degraded, the program index says nothing', async () => {
     assert.ok(!/Programs with a recorded trap/.test((init.result as { instructions?: string }).instructions ?? ''));
   } finally { await bad.close(); }
 });
+
+/* ------------------------------------------------------------------------ */
+/* The contradiction writer                                                  */
+/* ------------------------------------------------------------------------ */
+
+/**
+ * cairn-0045: a writer keyed on errors is blind to the traps worth
+ * recording. The gateway sees both halves of every call in a session, so it
+ * can see the shape those traps do leave: an empty success, then a superset
+ * of the arguments that returns rows. It offers a draft, once per tool, on
+ * the result -- and writes nothing to the corpus.
+ */
+test('an empty success followed by a superset that returns rows offers a draft, once, and writes no finding', async () => {
+  const home = corpus(false);
+  const s = new Session(home, ['--server', `node ${RECORDS}`]);
+  try {
+    await s.init();
+    /* Ordinary session first: a narrowing filter, a changed limit. Quiet. */
+    intactThenLabelled(await s.call('query_records', { object: 'Contact', limit: 5 }), (await s.call('query_records', { object: 'Contact', limit: 5 })).content[0].text!);
+    const narrowed = await s.call('query_records', { object: 'Contact', limit: 5, filter: { status: 'churned' } });
+    assert.ok(!texts(narrowed).some((x) => x.includes('may contradict')), 'a narrowing filter is a different question');
+    const bigger = await s.call('query_records', { object: 'Contact', limit: 50 });
+    assert.ok(!texts(bigger).some((x) => x.includes('may contradict')), 'a changed limit is a different question');
+
+    /* The stale mapping: nothing, then the same question through a fresh mapping. */
+    const empty = await s.call('query_records', { object: 'Case', filter: { status: 'open' } });
+    assert.ok(texts(empty)[0].includes('"records":[]'));
+    const fresh = await s.call('query_records', { object: 'Case', filter: { status: 'open' }, mapping_id: 'mp_cases_v2' });
+    intactThenLabelled(fresh, fresh.content[0].text!);
+    const note = texts(fresh).slice(1).join('\n');
+    assert.match(note, /Two calls to query_records in this session may contradict each other/);
+    assert.match(note, /returned nothing; now, with mapping_id added, it returned 40 item\(s\)/);
+    assert.match(note, /cairn_record/);
+    assert.match(note, /"tool":"query_records"/, 'the draft carries the trigger');
+
+    /* Once per tool. */
+    const again = await s.call('query_records', { object: 'Case', filter: { status: 'open', queue: 'Tier2' } });
+    const again2 = await s.call('query_records', { object: 'Case', filter: { status: 'open', queue: 'Tier2' }, mapping_id: 'mp_cases_v2' });
+    assert.ok(!texts(again).concat(texts(again2)).some((x) => x.includes('may contradict')), 'a second contradiction on the same tool is not a second draft');
+
+    /* Nothing in the corpus; a draft on disk; a ledger row. */
+    assert.equal(fs.readdirSync(path.join(home, 'cairn')).length, 0, 'the gateway wrote no finding');
+    const drafts = fs.readdirSync(path.join(home, 'drafts')).filter((f) => f.endsWith('-contradiction.json'));
+    assert.equal(drafts.length, 1);
+    const draft = JSON.parse(fs.readFileSync(path.join(home, 'drafts', drafts[0]), 'utf8'));
+    assert.equal(draft.evidence.length, 2);
+    assert.match(draft.evidence[0].note, /returned nothing/);
+    const ledger = fs.readdirSync(path.join(home, 'data', 'retrievals')).flatMap((f) => fs.readFileSync(path.join(home, 'data', 'retrievals', f), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l) as { source: string }));
+    assert.equal(ledger.filter((r) => r.source === 'mcp-proxy:contradiction').length, 1);
+  } finally { await s.close(); }
+});
