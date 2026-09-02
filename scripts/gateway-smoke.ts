@@ -59,6 +59,10 @@ const GATEWAY_TOOLS = ['cairn_find', 'cairn_record'];
 interface Probe {
   arm: string;
   tools: string[];
+  /* name -> the parts of the definition a client acts on, so a dropped or
+   * rewritten schema is visible. Names alone hid an outputSchema bug that
+   * turned a working tool into a failing one: see cairn-0048. */
+  defs: Record<string, string>;
   instructions: string;
   call: string | null;
   callError: string | null;
@@ -119,6 +123,12 @@ async function probe(arm: string, home: string | null): Promise<Probe> {
   const out: Probe = {
     arm,
     tools: listed.tools.map((t) => t.name).sort(),
+    defs: Object.fromEntries(
+      listed.tools.map((t) => [
+        t.name,
+        JSON.stringify({ inputSchema: t.inputSchema, outputSchema: t.outputSchema ?? null }),
+      ]),
+    ),
     instructions: client.getInstructions() ?? '',
     call,
     callError,
@@ -162,11 +172,19 @@ async function main() {
     seeded.instructions.startsWith(direct.instructions),
     'upstream instructions kept verbatim, and first',
   );
+  /*
+   * Schemas, not just names. A tool's outputSchema changes what its own
+   * client does with the result, and a relay that drops it -- or that acts on
+   * it itself -- breaks a tool that works without the gateway.
+   */
+  const changed = Object.keys(direct.defs).filter((n) => seeded.defs[n] !== direct.defs[n]);
+  must(changed.length === 0, 'input and output schemas survive unchanged', changed.join(', '));
   must(seeded.callError === null, `${CALL} did not error through the gateway`, seeded.callError ?? '');
   must(seeded.call === direct.call, `${CALL} returns identical content`);
 
   console.log('\n  DEGRADED — CAIRN_HOME wrong; the gateway must be undetectable');
   must(broken.tools.join() === direct.tools.join(), 'tool list identical to direct');
+  must(JSON.stringify(broken.defs) === JSON.stringify(direct.defs), 'tool definitions identical to direct');
   must(broken.instructions === direct.instructions, 'instructions identical to direct');
   must(broken.call === direct.call, `${CALL} returns identical content`);
   must(

@@ -132,3 +132,49 @@ test('no ledger row can be unbounded, whatever the caller passes', () => {
   assert.ok(got.len < 3000, `a 500KB query became ${got.len} chars`);
   assert.match(got.q, /\[truncated \d+ chars\]/, 'and says it was cut, rather than lying about its length');
 });
+
+/*
+ * The gateway must not apply the CLIENT's half of the tool contract.
+ *
+ * A tool that declares `outputSchema` and returns plain text is accepted by a
+ * client that has not listed it and rejected by one that has -- that is the
+ * SDK's rule, and it is the client's to apply. The proxy lists tools for
+ * routing, which armed the same validator inside `callTool`, so it rejected
+ * on the client's behalf and handed back an isError result the client never
+ * asked it to produce:
+ *
+ *     direct    { content: [{ type: 'text', text: 'two' }] }
+ *     gateway   isError, 'has an output schema but did not return structured
+ *               content'
+ *
+ * A working tool, broken by being proxied. The fixture is raw JSON-RPC on
+ * purpose: McpServer validates its own output, so an SDK-based fixture cannot
+ * reproduce this at all.
+ */
+test('a tool that declares an output schema behaves the same through the gateway', async () => {
+  const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
+  const { StdioClientTransport } = await import('@modelcontextprotocol/sdk/client/stdio.js');
+  const FIXTURE = path.join(process.cwd(), 'fixtures', 'mcp', 'output-schema.mjs');
+
+  async function call(viaGateway: boolean, listFirst: boolean): Promise<string> {
+    const spec = viaGateway
+      ? { command: 'node', args: [path.join(process.cwd(), 'bin', 'cairn-proxy.js'), '--server', `node ${FIXTURE}`] }
+      : { command: 'node', args: [FIXTURE] };
+    const client = new Client({ name: 'schema-probe', version: '0' }, { capabilities: {} });
+    await client.connect(new StdioClientTransport({ ...spec, env: { ...process.env, CAIRN_EVAL: '1' } as Record<string, string> }));
+    try {
+      if (listFirst) await client.listTools();
+      const r = await client.callTool({ name: 'strict_textonly', arguments: { id: 'x' } });
+      return `ok isError=${r.isError} ${JSON.stringify(r.content)}`;
+    } catch (e) {
+      return `threw ${(e as Error).message}`;
+    } finally {
+      await client.close();
+    }
+  }
+
+  for (const listFirst of [false, true]) {
+    const [direct, gateway] = [await call(false, listFirst), await call(true, listFirst)];
+    assert.equal(gateway, direct, `listTools=${listFirst}: the gateway changed the outcome`);
+  }
+});

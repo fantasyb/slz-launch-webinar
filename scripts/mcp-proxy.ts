@@ -44,6 +44,7 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import {
   CallToolRequestSchema,
+  CallToolResultSchema,
   CompleteRequestSchema,
   GetPromptRequestSchema,
   ListPromptsRequestSchema,
@@ -984,7 +985,37 @@ async function main() {
 
       let result: Awaited<ReturnType<Client['callTool']>>;
       try {
-        result = await owner.up.client!.callTool({ ...req.params, name: owner.raw }, undefined, FORWARD);
+        /*
+         * `request`, not `callTool`, and the difference is a tool that works
+         * without this gateway and fails with it.
+         *
+         * callTool applies the CLIENT's half of the output contract: if the
+         * tool declared an outputSchema, the SDK requires structuredContent
+         * back and throws when it is missing (client/index.js, "has an output
+         * schema but did not return structured content"). A relay must not
+         * make that check. It is not the caller -- the real client is -- and
+         * the check is only armed here because the proxy has listed the tools,
+         * which it does for routing, not on anyone's behalf.
+         *
+         * Measured against a server that declares a schema and returns text
+         * anyway, which is what a server not written on this SDK does:
+         *
+         *     direct    { content: [{ type: 'text', text: 'two' }] }
+         *     gateway   isError, 'MCP error -32600: Tool strict_textonly has
+         *               an output schema but did not return structured content'
+         *
+         * The upstream answered. The proxy threw the answer away and reported
+         * a failure the client never asked it to detect. The client's own SDK
+         * will apply whatever validation it wants to the result it is handed;
+         * a client on another SDK, or an older one, or one that never listed
+         * the tool, gets the working call it would have had. Forwarding the
+         * result unexamined is the whole job.
+         */
+        result = await owner.up.client!.request(
+          { method: 'tools/call', params: { ...req.params, name: owner.raw } },
+          CallToolResultSchema,
+          FORWARD,
+        );
       } catch (e) {
         /*
          * A transport failure mid-call is reported as the tool's error, not as
