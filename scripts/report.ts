@@ -29,7 +29,7 @@ const daysAt = argv.indexOf('--days');
 const DAYS = daysAt !== -1 ? Number(argv[daysAt + 1]) : Infinity;
 const since = Number.isFinite(DAYS) ? Date.now() - DAYS * 86_400_000 : 0;
 
-const SURFACES = ['connect-index', 'first-contact', 'description', 'argument', 'result', 'result-reminder'] as const;
+const SURFACES = ['connect-index', 'connect-program-index', 'first-contact', 'first-contact-program-index', 'description', 'argument', 'result', 'result-reminder'] as const;
 
 interface ToolRow {
   tool: string;

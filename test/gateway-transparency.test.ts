@@ -156,12 +156,21 @@ test('a tool that declares an output schema behaves the same through the gateway
   const { StdioClientTransport } = await import('@modelcontextprotocol/sdk/client/stdio.js');
   const FIXTURE = path.join(process.cwd(), 'fixtures', 'mcp', 'output-schema.mjs');
 
+  /*
+   * An empty corpus, so the comparison is of the relay and nothing else. With
+   * this repository as the corpus the first result legitimately carries the
+   * labelled index of program-triggered findings, which is delivery, not a
+   * changed outcome; the invariant for that is intactThenLabelled in
+   * proxy.test.ts.
+   */
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'cairn-schema-probe-'));
+  fs.mkdirSync(path.join(home, 'cairn'));
   async function call(viaGateway: boolean, listFirst: boolean): Promise<string> {
     const spec = viaGateway
       ? { command: 'node', args: [path.join(process.cwd(), 'bin', 'cairn-proxy.js'), '--server', `node ${FIXTURE}`] }
       : { command: 'node', args: [FIXTURE] };
     const client = new Client({ name: 'schema-probe', version: '0' }, { capabilities: {} });
-    await client.connect(new StdioClientTransport({ ...spec, env: { ...process.env, CAIRN_EVAL: '1' } as Record<string, string> }));
+    await client.connect(new StdioClientTransport({ ...spec, env: { ...process.env, CAIRN_EVAL: '1', CAIRN_HOME: home } as Record<string, string> }));
     try {
       if (listFirst) await client.listTools();
       const r = await client.callTool({ name: 'strict_textonly', arguments: { id: 'x' } });

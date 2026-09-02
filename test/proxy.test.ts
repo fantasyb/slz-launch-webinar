@@ -803,3 +803,47 @@ test('a cancelled call is cancelled upstream, not merely unanswered', async () =
     intactThenLabelled(await s.call('mcp__data360__unrelated'), 'ok');
   } finally { await s.close(); }
 });
+
+/* ------------------------------------------------------------------------ */
+/* The other half: findings reached through a program, not a tool           */
+/* ------------------------------------------------------------------------ */
+
+/**
+ * A finding whose trigger names a program has no tool for the gateway to
+ * intercept. It reaches the model on the one push surface that is not
+ * tool-specific -- the instructions at connect, and once on the first
+ * result for clients that ignore instructions -- labelled, capped, coarse:
+ * it names the program, not the moment.
+ */
+test('a finding triggered by a program, not a tool, is indexed at connect and on first contact', async () => {
+  const home = corpus(false);
+  bank(home, '0003-cli.json', 'cairn-0003', 'sf agent preview narrates the apex call instead of firing it when class access is missing', 'sf agent');
+  bank(home, '0004-tool.json', 'cairn-0004', 'query_records caps at fifty', 'mcp__data360__query_records', ['sf data']);
+  const s = single(home);
+  try {
+    const init = await s.init();
+    const instructions = (init.result as { instructions?: string }).instructions ?? '';
+    assert.match(instructions, /Programs with a recorded trap\. Coarse, on purpose/);
+    assert.match(instructions, /- `sf agent`: "sf agent preview narrates .*" \(cairn-0003\)/);
+    assert.ok(!/`sf data`/.test(instructions), 'a finding the tool index already carries is not repeated as a program');
+    assert.match(instructions, /Tools with a recorded trap[\s\S]*cairn-0004/);
+
+    const first = texts(await s.call('mcp__data360__unrelated'));
+    const block = first.find((x) => x.includes('cairn-0003'));
+    assert.ok(block, 'the first result carries it, for clients that ignore instructions');
+    assert.match(block!, /not from this tool/);
+    assert.match(block!, /`sf agent`/);
+    const second = texts(await s.call('mcp__data360__unrelated'));
+    assert.ok(!second.some((x) => x.includes('cairn-0003')), 'once');
+    assert.deepEqual((await s.tools()).map((t) => t.name).filter((n) => n.startsWith('mcp__')).sort(),
+      ['mcp__data360__failing', 'mcp__data360__query_records', 'mcp__data360__slow', 'mcp__data360__unrelated'], 'nothing withheld, nothing added');
+  } finally { await s.close(); }
+});
+
+test('degraded, the program index says nothing', async () => {
+  const bad = single(brokenHome());
+  try {
+    const init = await bad.init();
+    assert.ok(!/Programs with a recorded trap/.test((init.result as { instructions?: string }).instructions ?? ''));
+  } finally { await bad.close(); }
+});

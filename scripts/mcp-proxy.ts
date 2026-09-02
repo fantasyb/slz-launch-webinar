@@ -68,6 +68,7 @@ import { randomUUID } from 'crypto';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import { preflight, retrieve } from '../src/lib/cairn/retrieval';
+import { matchEnvironment } from '../src/lib/cairn/precondition';
 import { FindingSchema, type Finding } from '../src/lib/cairn/schema';
 import { homePath } from '../src/lib/cairn/home';
 import { observe } from '../src/lib/cairn/observe';
@@ -923,6 +924,64 @@ async function main() {
   }
 
   /**
+   * THE OTHER HALF OF WHAT PEOPLE WRITE DOWN.
+   *
+   * Of the trigger strings in this repository's own corpus, 37 of 37 name a
+   * program or a program and its subcommand -- `next build`, `playwright
+   * install`, `sf agent` -- and none name an MCP tool. A finding about
+   * platform behaviour reached through a CLI has no tool for the gateway to
+   * intercept: no description to annotate, no argument schema, no result of
+   * its own to ride back on. Until now it reached nobody who did not ask,
+   * and cairn-0035 is the measurement that agents do not ask.
+   *
+   * This is the one push surface that is not tool-specific: the
+   * instructions at connect, which the model reads before any decision in
+   * the session, Bash decisions included. It is coarse, session-wide, and
+   * before the decision; it names the program, not the moment. That is less
+   * than the four surfaces a tool-shaped finding gets, and it is honest
+   * about being less: one line per program, the finding's title, its id,
+   * and where to get the rest.
+   *
+   * A trigger counts as a program here when it has the shape programsIn()
+   * produces -- one word, or a word and a subcommand -- and names nothing
+   * any upstream offers. Findings the tool index already carries are not
+   * repeated. Preconditions are honoured the way preflight honours them: a
+   * finding whose precondition fails on this machine is noise, not caution.
+   * Same cap as the tool index, in corpus order; a session-wide index that
+   * grows without bound is the one that gets ignored.
+   */
+  const PROGRAM_TRIGGER = /^[a-z][a-z0-9._-]*(?: [a-z][a-z0-9-]+)?$/i;
+  function programIndex(session: SessionState, findings: Finding[], except: Set<string>, surface: string): string[] {
+    const toolNames = new Set<string>();
+    for (const up of upstreams) for (const t of up.surface ?? []) for (const n of namesFor(up.spec.name, t.name, expose(up, t.name))) toolNames.add(n.toLowerCase());
+    const byProgram = new Map<string, Finding[]>();
+    for (const f of findings) {
+      if (f.status !== 'active' || except.has(f.id)) continue;
+      if (f.precondition?.length && !matchEnvironment(f.precondition).matches) continue;
+      for (const raw of f.triggers ?? []) {
+        const t = raw.trim().toLowerCase();
+        if (!PROGRAM_TRIGGER.test(t) || t.startsWith('mcp__') || toolNames.has(t)) continue;
+        const list = byProgram.get(t) ?? [];
+        if (!list.some((x) => x.id === f.id)) list.push(f);
+        byProgram.set(t, list);
+        break; /* one line per finding; its first program-shaped trigger names it */
+      }
+    }
+    const lines: string[] = [];
+    for (const [program, fs] of [...byProgram.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+      const f = fs[0];
+      lines.push(`\`${program}\`: "${clip(f.title, 90)}" (${f.id})${fs.length > 1 ? ` +${fs.length - 1}` : ''}`);
+      served(session, f.id, program, surface);
+      if (lines.length >= INDEX_CAP) break;
+    }
+    return lines;
+  }
+  const PROGRAMS_HEADING =
+    'Programs with a recorded trap. Coarse, on purpose: this names the program, not the moment. ' +
+    'Before running one of these, cairn_find with the finding id hands over the whole finding:';
+  const idsIn = (lines: string[]) => new Set(lines.flatMap((l) => [...l.matchAll(/\((cairn-\d{4})\)/g)].map((m) => m[1])));
+
+  /**
    * Bring a dead upstream back, with backoff, for as long as the session
    * lasts. The first version tried once and latched: one failed restart and
    * every later call in the session errored, which in a day-long session
@@ -1016,6 +1075,7 @@ async function main() {
     const findings = localFindings().findings;
     const index: string[] = [];
     for (const up of upstreams) for (const line of await trapIndex(session, up, findings)) index.push(line);
+    const programs = programIndex(session, findings, idsIn(index), 'connect-program-index');
     const upstreamOwn = upstreams
       .filter((u) => u.instructions)
       .map((u) => (single ? u.instructions! : `## ${u.spec.name}\n${u.instructions!}`));
@@ -1045,7 +1105,8 @@ async function main() {
         'work it out, record it.' +
         (index.length
           ? `\n\nTools with a recorded trap, as of this session's start:\n${index.map((l) => `- ${l}`).join('\n')}`
-          : ''),
+          : '') +
+        (programs.length ? `\n\n${PROGRAMS_HEADING}\n${programs.map((l) => `- ${l}`).join('\n')}` : ''),
     ].join('\n\n');
   }
 
@@ -1206,9 +1267,13 @@ async function main() {
         if (!session.introduced.has(owner.up.spec.name)) {
           session.introduced.add(owner.up.spec.name);
           const index = await trapIndex(session, owner.up, findings, req.params.name);
-          if (index.length) {
-            note += `\n\n--- ${LABEL} ---\nOther tools from this server with a recorded trap:\n` +
-              index.map((l) => `- ${l}`).join('\n') + `\n--- end ---`;
+          /* The program index rides here too, once per session: a client that ignores instructions still reads a result. */
+          const programs = session.introduced.size === 1 ? programIndex(session, findings, idsIn(index), 'first-contact-program-index') : [];
+          if (index.length || programs.length) {
+            note += `\n\n--- ${LABEL} ---` +
+              (index.length ? `\nOther tools from this server with a recorded trap:\n${index.map((l) => `- ${l}`).join('\n')}` : '') +
+              (programs.length ? `\n${PROGRAMS_HEADING}\n${programs.map((l) => `- ${l}`).join('\n')}` : '') +
+              `\n--- end ---`;
           }
         }
         /*
