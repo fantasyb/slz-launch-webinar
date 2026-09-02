@@ -115,10 +115,27 @@ function shardFor(by: string): string {
  * Record one retrieval. Never throws: a corpus that fails to answer because it
  * could not write its diary is worse than one with an incomplete diary.
  */
+/**
+ * The longest query text any single row may carry.
+ *
+ * A backstop, not a policy: callers decide what to record, and this decides
+ * what a mistake can cost. The gateway used to write every forwarded tool
+ * call's full arguments here, and a bulk create of two thousand records
+ * produced a 474 KB single JSONL line -- in 28ms, so nothing about it felt
+ * wrong. In a committed, union-merged file. Whatever the caller intends, a
+ * ledger row is a measurement, and no measurement needs two thousand records
+ * of somebody's customer data to be countable.
+ */
+const MAX_QUERY_CHARS = 2000;
+
 export function record(r: RetrievalRecord): void {
   try {
+    const query =
+      r.query.length > MAX_QUERY_CHARS
+        ? `${r.query.slice(0, MAX_QUERY_CHARS)} [truncated ${r.query.length - MAX_QUERY_CHARS} chars]`
+        : r.query;
     fs.mkdirSync(ledgerDir(), { recursive: true });
-    fs.appendFileSync(shardFor(r.by), `${JSON.stringify(r)}\n`);
+    fs.appendFileSync(shardFor(r.by), `${JSON.stringify({ ...r, query })}\n`);
   } catch {
     /* deliberately silent */
   }

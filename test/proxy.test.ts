@@ -516,7 +516,8 @@ test('a failed call followed by a working one opens a draft on the result, once,
     assert.match(note, /differed in: filter, limit/, 'it names what changed');
     assert.match(note, /"tool":"query_records"/, 'the draft carries the trigger');
     assert.match(note, /cairn_record/, 'and says how to record it');
-    const drafts = fs.readdirSync(path.join(home, 'drafts'));
+    /* Dotfiles excluded: the directory writes its own .gitignore, so a CAIRN_HOME made by hand cannot commit drafts. */
+    const drafts = fs.readdirSync(path.join(home, 'drafts')).filter((f) => !f.startsWith('.'));
     assert.equal(drafts.length, 1, 'one draft file');
     const draft = JSON.parse(fs.readFileSync(path.join(home, 'drafts', drafts[0]), 'utf8'));
     assert.equal(draft.evidence.length, 2);

@@ -26,6 +26,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'fs';
 import path from 'path';
+import { execFileSync } from 'child_process';
+import os from 'os';
 
 const LIB = path.join(process.cwd(), 'src', 'lib', 'cairn');
 
@@ -83,4 +85,50 @@ test('a finding recorded through the gateway never has its check executed', asyn
   const proxy = fs.readFileSync(path.join(process.cwd(), 'scripts', 'mcp-proxy.ts'), 'utf8');
   assert.match(proxy, /recordSubmission\(args, \{ by: session\.agent, origin: 'agent' \}\)/, 'the gateway declares itself');
   assert.equal(typeof recordSubmission, 'function');
+});
+
+/*
+ * The ledger is committed. What the gateway writes into it is therefore a
+ * publishing decision, and it used to be "every argument of every forwarded
+ * call, in full".
+ */
+test('a forwarded call is recorded by name and argument SHAPE, not by value', () => {
+  const src = fs.readFileSync(path.join(process.cwd(), 'scripts', 'mcp-proxy.ts'), 'utf8');
+  assert.match(src, /function callRecord\(/, 'there is one place that decides this');
+  assert.ok(
+    !/observe\(`\$\{req\.params\.name\} \$\{JSON\.stringify\(args\)\}`/.test(src),
+    'the full-arguments form must not come back',
+  );
+  assert.match(src, /if \(process\.env\.CAIRN_RECORD_ARGS\) return/, 'values are opt-in, never the default');
+
+  /* And the draft directory excludes itself wherever it is created. */
+  assert.match(src, /fs\.writeFileSync\(ignore, '\*\\n'\)/, 'drafts/ carries its own .gitignore');
+});
+
+test('no ledger row can be unbounded, whatever the caller passes', () => {
+  /*
+   * In a CHILD process, because cairnHome() memoises on first use: setting
+   * CAIRN_HOME from inside a test file whose other tests have already resolved
+   * it does nothing, and the write lands in this repository's own committed
+   * ledger instead of the temp directory the test thinks it is using. Which is
+   * exactly what happened while writing this -- three junk rows in
+   * data/retrievals/, from a test asserting that writes are bounded.
+   */
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'cairn-ledger-cap-'));
+  fs.mkdirSync(path.join(home, 'cairn'));
+  const child = `
+    const { record, readLedger } = require('${path.join(process.cwd(), 'src', 'lib', 'cairn', 'ledger.ts')}');
+    record({ at: new Date().toISOString(), by: 'cap-test', session: 's',
+             query: 'x'.repeat(500000), returned: [], source: 'test', outcomes: {} });
+    const rows = readLedger().filter((r) => r.by === 'cap-test');
+    console.log(JSON.stringify({ n: rows.length, len: rows[0] && rows[0].query.length, q: rows[0] && rows[0].query.slice(-40) }));
+  `;
+  const out = execFileSync('npx', ['tsx', '-e', child], {
+    env: { ...process.env, CAIRN_HOME: home },
+    encoding: 'utf8',
+  });
+  const got = JSON.parse(out.trim().split('\n').pop()!) as { n: number; len: number; q: string };
+  assert.equal(got.n, 1, 'the row is still written');
+  assert.ok(got.len < 3000, `a 500KB query became ${got.len} chars`);
+  assert.match(got.q, /\[truncated \d+ chars\]/, 'and says it was cut, rather than lying about its length');
 });

@@ -563,6 +563,16 @@ function draftFor(session: SessionState, tool: string, args: Record<string, unkn
   try {
     const dir = homePath('drafts');
     fs.mkdirSync(dir, { recursive: true });
+    /*
+     * A draft holds the failing call's arguments and two thousand characters
+     * of its error output, which against a real service is the least
+     * sanitised text in the session. This repository gitignores drafts/; a
+     * CAIRN_HOME somebody made with mkdir does not, and that is the corpus a
+     * careful person creates precisely so this repository is not involved.
+     * So the directory carries its own exclusion, wherever it is.
+     */
+    const ignore = path.join(dir, '.gitignore');
+    if (!fs.existsSync(ignore)) fs.writeFileSync(ignore, '*\n');
     const safe = redactForLedger(JSON.stringify(draft, null, 2)).text;
     fs.writeFileSync(path.join(dir, `${session.id}-${tool.replace(/[^A-Za-z0-9_.-]+/g, '_')}.json`), `${safe}\n`);
   } catch (e) {
@@ -685,6 +695,37 @@ const GATEWAY_TOOLS: Tool[] = [
     },
   },
 ];
+
+/**
+ * What a forwarded call is written down as.
+ *
+ * ARGUMENT VALUES ARE OFF BY DEFAULT, and that is the difference between a
+ * usage ledger and a copy of somebody's database.
+ *
+ * The report needs to count calls per tool -- "warned in N of the M sessions
+ * that called it" needs the M -- and it reads the first whitespace-delimited
+ * token as the tool name. Nothing in it needs the values. But this used to
+ * write `JSON.stringify(args)` in full, into a file that is git-tracked,
+ * union-merged, and which USING.md tells people to `git add`. Against a
+ * fixture that is a query string. Against a real CRM it is SOQL, create and
+ * update payloads, and whole customer records -- names, phones, amounts, free
+ * text -- none of which redactForLedger removes, because it was built for
+ * tokens and ids.
+ *
+ * Key names come from the tool's own inputSchema, so they are shape rather
+ * than content, and they are what makes a hole in the corpus legible later:
+ * `query_records [args: filters, object]` says what was attempted without
+ * saying whose data it was attempted on.
+ *
+ * CAIRN_RECORD_ARGS=1 restores the values, for a fixture or a corpus of your
+ * own where that is the interesting part. It is opt-in because the safe
+ * default has to be the one you get by forgetting.
+ */
+function callRecord(name: string, args: Record<string, unknown>): string {
+  if (process.env.CAIRN_RECORD_ARGS) return `${name} ${JSON.stringify(args)}`;
+  const keys = Object.keys(args).sort();
+  return keys.length ? `${name} [args: ${keys.join(', ')}]` : name;
+}
 
 const textResult = (text: string, isError = false) => ({ isError, content: [{ type: 'text' as const, text }] });
 
@@ -969,7 +1010,7 @@ async function main() {
          * are written, because a query's arguments are the least sanitised
          * text an agent produces.
          */
-        observe(`${req.params.name} ${JSON.stringify(args)}`, [], isError ? 'mcp-proxy:error' : 'mcp-proxy:call', ctx);
+        observe(callRecord(req.params.name, args), [], isError ? 'mcp-proxy:error' : 'mcp-proxy:call', ctx);
         if (isError) session.holes.set(req.params.name, { args, output: ownText, at: new Date().toISOString() });
         let note = annotate(session, req.params.name, about, isError, args);
         if (!isError) note += draftFor(session, req.params.name, args);
