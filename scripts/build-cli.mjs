@@ -40,6 +40,8 @@ const ENTRIES = [
   ['scripts/record.ts', 'dist/cli/record.js'],
   // Any client that speaks MCP, with no integration work.
   ['scripts/mcp-server.ts', 'dist/cli/mcp-server.js'],
+  // Push without a client feature: a result is the one text a model always reads.
+  ['scripts/mcp-proxy.ts', 'dist/cli/mcp-proxy.js'],
 ];
 
 mkdirSync('dist/cli', { recursive: true });
