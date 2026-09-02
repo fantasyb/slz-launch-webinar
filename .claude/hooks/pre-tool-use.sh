@@ -37,5 +37,27 @@ OUT="$(cd "$ROOT" 2>/dev/null && timeout 10 node bin/cairn-find.js --preflight "
 # Silence is the common case and must stay silent: a hook that speaks on every
 # tool call is one the reader learns to skip, which is the failure the brief's
 # precision-over-recall design exists to avoid.
-printf '%s' "$OUT" | grep -q 'cairn-' || exit 0
-printf '%s\n' "$OUT"
+# A finding id at the start of a line, never the substring "cairn-" anywhere.
+# preflight echoes the command back in "nothing known about `...`", so a
+# command that merely MENTIONS cairn matched its own text and the hook spoke
+# when it had nothing -- which it did, live, on a heredoc containing the
+# string "cairn-holes-". Same false positive install.sh had, repeated here.
+printf '%s' "$OUT" | grep -qE '^[[:space:]]*!?[[:space:]]*cairn-[0-9]{4}' || exit 0
+
+# AS JSON, because plain stdout from this event reaches the debug log and not
+# the model. Claude Code adds plain-text stdout as context for exactly four
+# events -- UserPromptSubmit, UserPromptExpansion, SessionStart and
+# PostModelSwitch -- and PreToolUse is not one of them. The first version of
+# this hook printed the warning and exited 0, which looked perfect in a
+# terminal and delivered nothing to the agent: findings would have been banked
+# for weeks and never once come back.
+printf '%s' "$OUT" | node -e '
+let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{
+  process.stdout.write(JSON.stringify({
+    hookSpecificOutput:{
+      hookEventName:"PreToolUse",
+      permissionDecision:"allow",
+      additionalContext:"Recorded about the tool you are about to use:\n\n"+s.trim()
+    }
+  }));
+});'

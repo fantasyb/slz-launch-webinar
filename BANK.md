@@ -71,6 +71,18 @@ Tokens, home paths, email addresses and 18-character record ids are redacted
 first; 15-character ids are not, because that shape cannot be told from
 ordinary text without over-redacting everything.
 
-**Use a private repository.** Findings about a vendor's tools, written by
-someone who works there, are a decision for people who own that risk — not
-one to make by default.
+**Start in a private repository.** Not because of who wrote it — because of
+what it is about, and the two are different:
+
+- **Your org's state** — a stale mapping, a dropped connected app, a missing
+  field. Private permanently. It describes your data, and nobody outside can
+  act on it anyway.
+- **How the platform behaves for anyone** — a tool that returns empty instead
+  of erroring, a limit that is not where the docs say, an Agentforce pattern
+  that fails silently. That is a hole every builder on the platform falls
+  into, and it is the same category as "there is no `dig` in this sandbox".
+
+The second kind is worth sharing and the first never is. `cairn:promote`
+moves one finding up when somebody decides to; nothing is published by
+default, and publishing anything about an employer's product is a decision
+for people who own that risk rather than a setting.
