@@ -140,6 +140,24 @@ const SENSITIVE: Array<{ re: RegExp; pattern: string; reason: string }> = [
   // would strip a bearer token on request yet not block a commit containing
   // one. The two lists have to agree or the gate is weaker than the cleaner.
   { re: /\b(?:Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{12,}/i, pattern: 'auth-header', reason: 'an authorization header value' },
+  /*
+   * A Salesforce session id: the org id, a bang, then the session material.
+   * It is a bearer credential -- anyone holding it is logged in as that user
+   * until it expires -- and it is the single most likely secret to be pasted
+   * into a finding written while working through the Salesforce MCP tools,
+   * because it appears in ordinary error output.
+   *
+   * Prose is the case that matters and the case the other rules miss. Written
+   * as `access_token=...` it is already caught by credential-assignment; sat
+   * in a sentence it was caught by nothing, because the `!` splits it into
+   * runs too short for opaque-blob (40) to reach. Measured before adding
+   * this: "The session token was 00D...!AQEAQ..." passed the gate clean.
+   *
+   * The `!` is what makes this specific. A bare org id is a record id, not a
+   * credential, and deliberately not blocked here -- see the note in
+   * LEDGER_EXTRA for where those are handled.
+   */
+  { re: /\b00D[A-Za-z0-9]{12,15}![A-Za-z0-9._-]{20,}/, pattern: 'salesforce-session', reason: 'a Salesforce session id, which is a bearer credential' },
   { re: /\b[A-Za-z0-9._%+-]+@(?!example\.|test\.)[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/, pattern: 'email', reason: 'an email address' },
   // The value must look like a secret, not merely follow a suggestive keyword.
   // Matching on the keyword alone flags every type annotation in a typed
@@ -158,7 +176,7 @@ const SENSITIVE: Array<{ re: RegExp; pattern: string; reason: string }> = [
    * was there for.
    */
   { re: new RegExp(`(?<![A-Za-z0-9])(?:${CREDENTIAL_KEYWORDS})\\s*[:=]\\s*(?:([\"'])[^\"'\\n]{${QUOTED_MIN},}\\1|(?=[A-Za-z0-9+/=_-]*\\d)[A-Za-z0-9+/=_-]{8,})`, 'i'), pattern: 'credential-assignment', reason: 'a credential assignment' },
-  { re: /\/(?:home|Users)\/(?!user\b|runner\b|root\b|linuxbrew\b|Shared\b)[A-Za-z0-9._-]+/i, pattern: 'home-path', reason: 'a home directory naming a real user' },
+  { re: /\/(?:home|Users)\/(?!user\b|you\b|runner\b|root\b|linuxbrew\b|Shared\b)[A-Za-z0-9._-]+/i, pattern: 'home-path', reason: 'a home directory naming a real user' },
   { re: /\bhttps?:\/\/(?![^\s]*(?:example\.com|localhost))(?:[a-z0-9-]+\.)*[a-z0-9-]+\.(?:internal|corp|local|intranet|lan)\b/i, pattern: 'internal-host', reason: 'an internal hostname' },
   { re: /\b(?:10|192\.168|172\.(?:1[6-9]|2\d|3[01]))\.\d{1,3}\.\d{1,3}\b/, pattern: 'private-ip', reason: 'a private network address' },
   // Base64-looking only. Deliberately NOT pure hex: hashes, fingerprints and
@@ -166,7 +184,25 @@ const SENSITIVE: Array<{ re: RegExp; pattern: string; reason: string }> = [
   // blocked publishing this corpus's own signing fingerprint three times, and
   // a gate that fires on correct behaviour teaches people to pass --no-verify,
   // which costs more than the rule was ever worth.
-  { re: new RegExp(`\\b(?![0-9a-fA-F]+\\b)[A-Za-z0-9+/]{${OPAQUE_MIN},}={0,2}\\b`), pattern: 'opaque-blob', reason: 'a long base64-like string that may be encoded data' },
+  /*
+   * A DIGIT is required, and that is the whole difference between this rule
+   * being usable and being bypassed.
+   *
+   * `/` is in the base64 alphabet, so the run may span path separators -- and
+   * the first commit through this gate was refused because
+   * `modelcontextprotocol/sdk/server/streamableHttp` is forty-six characters
+   * of [A-Za-z/]. Every long import path, package name and URL in the
+   * repository is a hit. A gate that fires on correct behaviour is one people
+   * learn to pass --no-verify, which costs more than the rule was worth.
+   *
+   * Base64 of random bytes essentially always contains a digit: the odds of
+   * forty characters drawn from the alphabet landing entirely in the 52
+   * letters are about (52/64)^40, or two in ten thousand. Paths and camelCase
+   * identifiers made of English words routinely contain none. So the digit is
+   * what separates encoded data from a long name, and it costs almost nothing
+   * in recall.
+   */
+  { re: new RegExp(`\\b(?![0-9a-fA-F]+\\b)(?=[A-Za-z0-9+/]*\\d)[A-Za-z0-9+/]{${OPAQUE_MIN},}={0,2}\\b`), pattern: 'opaque-blob', reason: 'a long base64-like string that may be encoded data' },
 ];
 
 export function scanSensitive(text: string): Flag[] {
@@ -221,12 +257,13 @@ const REDACTIONS: Array<{ re: RegExp; pattern: string; to: string }> = [
   { re: /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*/g, pattern: 'private-key', to: '<redacted:private-key>' },
   { re: new RegExp(TOKEN_RE.source, 'g'), pattern: 'api-token', to: '<redacted:token>' },
   { re: /\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{12,}/gi, pattern: 'auth-header', to: '$1 <redacted:credential>' },
+  { re: /\b00D[A-Za-z0-9]{12,15}![A-Za-z0-9._-]{20,}/g, pattern: 'salesforce-session', to: '<redacted:salesforce-session>' },
   { re: new RegExp(`((?:${CREDENTIAL_KEYWORDS})\\s*[:=]\\s*)(?:([\"'])[^\"'\\n]{${QUOTED_MIN},}\\2|(?=[A-Za-z0-9+/=_-]*\\d)[A-Za-z0-9+/=_-]{8,})`, 'gi'), pattern: 'credential-assignment', to: '$1<redacted:credential>' },
   { re: /\b[A-Za-z0-9._%+-]+@(?!example\.|test\.)[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g, pattern: 'email', to: '<redacted:email>' },
   { re: /\b(https?:\/\/)(?:[a-z0-9-]+\.)*[a-z0-9-]+(\.(?:internal|corp|local|intranet|lan))\b/gi, pattern: 'internal-host', to: '$1<redacted:host>$2' },
-  { re: /\/(home|Users)\/(?!user\b|runner\b|root\b|linuxbrew\b|Shared\b)[A-Za-z0-9._-]+/gi, pattern: 'home-path', to: '/$1/<redacted:user>' },
+  { re: /\/(home|Users)\/(?!user\b|you\b|runner\b|root\b|linuxbrew\b|Shared\b)[A-Za-z0-9._-]+/gi, pattern: 'home-path', to: '/$1/<redacted:user>' },
   { re: /\b(?:10|192\.168|172\.(?:1[6-9]|2\d|3[01]))\.\d{1,3}\.\d{1,3}\.?\d{0,3}\b/g, pattern: 'private-ip', to: '<redacted:private-ip>' },
-  { re: new RegExp(`\\b(?![0-9a-fA-F]+\\b)[A-Za-z0-9+/]{${OPAQUE_MIN},}={0,2}\\b`, 'g'), pattern: 'opaque-blob', to: '<redacted:blob>' },
+  { re: new RegExp(`\\b(?![0-9a-fA-F]+\\b)(?=[A-Za-z0-9+/]*\\d)[A-Za-z0-9+/]{${OPAQUE_MIN},}={0,2}\\b`, 'g'), pattern: 'opaque-blob', to: '<redacted:blob>' },
 ];
 
 export function redact(text: string): { text: string; redactions: Redaction[] } {

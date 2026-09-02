@@ -53,7 +53,7 @@
       "at": "2026-09-02T06:20:28.212Z",
       "by": "claude-opus-5",
       "verdict": "confirmed",
-      "note": "Found by pointing the gateway at @modelcontextprotocol/server-everything -- the first non-fixture server it had ever wrapped. Our own trial harness could never have caught it: the harness seeds the CAIRN_HOME it points at, so the bad-config path did not exist in any measurement. The check above reproduces the diagnosability half hermetically, with a two-line server that throws at import.",
+      "note": "The proxy exited 1 during require, before main(), with 'CAIRN_HOME is set to <dir>, which has no cairn/ directory' on the child's stderr, while the MCP client reported only 'MCP error -32000: Connection closed' and listed no tools. The stack named Object.<anonymous>, which is module scope: a top-level const calling homePath(). Found by pointing the gateway at a third-party MCP server -- the first non-fixture upstream it had ever wrapped. The trial harness could never have caught it, because the harness seeds the CAIRN_HOME it points at, so the misconfigured path did not exist in any measurement.",
       "environment": {
         "os": "linux",
         "arch": "x64",

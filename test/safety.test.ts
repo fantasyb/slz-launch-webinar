@@ -195,3 +195,66 @@ test('ledger redaction leaves ordinary text alone', async () => {
     assert.equal(redactForLedger(q).text, q, `must not touch: ${q}`);
   }
 });
+
+/*
+ * The credential most likely to be pasted into a finding written through the
+ * Salesforce MCP tools, in the form it actually appears in: prose, not an
+ * assignment. Measured before the rule existed -- it passed every scanner in
+ * this file, because the `!` splits it into runs shorter than opaque-blob's
+ * forty characters and no keyword precedes it.
+ */
+test('a Salesforce session id is blocked in prose, and stripped', () => {
+  const prose = 'The call failed; the session token was 00D5f000000abcDEF!AQEAQFakeTokenForTestingOnly_xyz123.';
+  assert.ok(
+    scanSensitive(prose).some((f) => f.pattern === 'salesforce-session'),
+    'a session id is a bearer credential and must never reach git',
+  );
+  const cleaned = redact(prose).text;
+  assert.ok(!cleaned.includes('AQEAQFakeTokenForTestingOnly'), `scanner and redactor must agree: ${cleaned}`);
+});
+
+/*
+ * And the other direction, which matters just as much: a record id is not a
+ * credential. Blocking every finding that quotes one would fire on correct
+ * behaviour, and a gate that fires on correct behaviour teaches --no-verify.
+ * Record ids are handled bluntly in the ledger, where nobody reads the prose.
+ */
+test('a bare Salesforce record id is not treated as a secret', () => {
+  assert.equal(
+    scanSensitive('Contact 0035f00000AbCdEfGHI came back with zero rows').length,
+    0,
+    'a record id in a finding is evidence, not a leak; the ledger redacts it separately',
+  );
+});
+
+/*
+ * The first commit that ever passed through the wired gate was refused, twice,
+ * for things that were not secrets: a documentation placeholder and an import
+ * path. Both are recorded here, because a gate that fires on correct
+ * behaviour is one people learn to pass with --no-verify, and then it stops
+ * protecting anything at all.
+ */
+test('long identifiers and import paths are not mistaken for encoded data', () => {
+  for (const s of [
+    "import { X } from '@modelcontextprotocol/sdk/server/streamableHttp.js'",
+    'const someVeryLongCamelCaseIdentifierNameThatKeepsGoing = 1',
+    'see /home/you/cairn for the checkout',
+  ]) {
+    assert.equal(scanSensitive(s).length, 0, `should stay quiet: ${s}`);
+  }
+});
+
+/* And the digit requirement must not have cost the rule its job. */
+test('base64-looking data is still caught, and still stripped', () => {
+  for (const s of [
+    'blob: dGhpcyBpcyBhIHNlY3JldCB2YWx1ZSB3aXRoIGRpZ2l0czEyMzQ1Njc4OTA=',
+    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9abcdefghijklmnop',
+  ]) {
+    assert.ok(scanSensitive(s).some((f) => f.pattern === 'opaque-blob'), `should flag: ${s}`);
+    assert.ok(redact(s).text.includes('<redacted:blob>'), `should strip: ${s}`);
+  }
+  assert.ok(
+    scanSensitive('/home/jahern/work/notes.md').some((f) => f.pattern === 'home-path'),
+    'a real username is still a real username',
+  );
+});

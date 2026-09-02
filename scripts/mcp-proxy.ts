@@ -907,7 +907,13 @@ async function main() {
 
       /* ---- the gateway's own tools, unless an upstream owns the name ---- */
       if (!toolOwner.has(req.params.name) && req.params.name === 'cairn_record') {
-        const outcome = await recordSubmission(args, { by: session.agent });
+        /*
+         * origin: 'agent'. The caller is a model, and what it is recording
+         * came out of an upstream tool -- which means it can be written by
+         * anyone who can write into the system that tool reads. Its check is
+         * never executed here, whatever this machine's execution policy says.
+         */
+        const outcome = await recordSubmission(args, { by: session.agent, origin: 'agent' });
         try { observe(`cairn_record ${outcome.ok ? outcome.finding!.id : 'refused'}`, [], 'mcp-proxy:record', { by: session.agent, session: session.id }); } catch { /* never fatal */ }
         return textResult(outcome.message, !outcome.ok);
       }

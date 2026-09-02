@@ -37,6 +37,14 @@ cd ~/cairn && npm install && npm run cairn:build-cli
 That alone gives them everything recorded so far, and `cairn-sync` keeps it
 current. If they only ever read, they are done.
 
+`npm install` also points git at `.githooks`, which is what refuses a commit
+carrying a credential, failing tests, or a corpus that does not lint. It was
+not automatic until it was noticed that nothing ran it: the hook was written,
+the detector was tested, `core.hooksPath` was set on the one machine that
+wrote them, and every clone since had no gate at all while looking exactly
+like the machine that did. Verify with `git config core.hooksPath` — it
+should say `.githooks`; `npm run cairn:hooks` sets it by hand.
+
 ### To record their own findings as well
 
 ```bash

@@ -152,14 +152,33 @@ test('every corpus file is covered by the corpus license', () => {
  * was reachable only by someone who had never built anything, which is
  * everyone the tool is being handed to.
  */
-test('each launcher falls back to its own script, not to find', () => {
-  for (const name of ['find', 'brief', 'sync', 'record']) {
-    const src = fs.readFileSync(path.join(process.cwd(), 'bin', `cairn-${name}.js`), 'utf8');
-    const bundle = src.match(/'dist', 'cli', '([a-z]+)\.js'/)?.[1];
-    const fallback = src.match(/'scripts', '([a-z-]+)\.ts'/)?.[1];
-    assert.equal(bundle, name, `cairn-${name}.js requires the wrong bundle`);
-    assert.equal(fallback, name, `cairn-${name}.js falls back to ${fallback}.ts, not ${name}.ts`);
+test('each launcher launches its own target, and that target exists', () => {
+  /*
+   * The bundle name and the fallback script name used to be written out
+   * separately in every launcher, and two of them -- brief and sync -- both
+   * spawned find.ts. One name now, in one place, so they cannot disagree;
+   * this checks the name is right and that both files it implies are real,
+   * which the old pair of regexes could not.
+   */
+  const expected: Record<string, string> = {
+    'cairn-find.js': 'find',
+    'cairn-brief.js': 'brief',
+    'cairn-sync.js': 'sync',
+    'cairn-record.js': 'record',
+    'cairn-mcp.js': 'mcp-server',
+    'cairn-proxy.js': 'mcp-proxy',
+  };
+  for (const [launcher, target] of Object.entries(expected)) {
+    const src = fs.readFileSync(path.join(process.cwd(), 'bin', launcher), 'utf8');
+    const named = src.match(/launch\('([a-z-]+)'\)/)?.[1];
+    assert.equal(named, target, `${launcher} launches ${named}, not ${target}`);
+    assert.ok(
+      fs.existsSync(path.join(process.cwd(), 'scripts', `${target}.ts`)),
+      `${launcher} names scripts/${target}.ts, which does not exist`,
+    );
   }
+  const launchers = fs.readdirSync(path.join(process.cwd(), 'bin')).filter((f) => f.startsWith('cairn-'));
+  assert.deepEqual(launchers.sort(), Object.keys(expected).sort(), 'a new launcher was added without a target here');
 });
 
 /**

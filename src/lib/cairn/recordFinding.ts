@@ -53,7 +53,29 @@ function freshLocal(): Finding[] {
   return out;
 }
 
-export async function recordSubmission(raw: unknown, opts: { by?: string } = {}): Promise<RecordOutcome> {
+/**
+ * `origin` decides whether the workaround-delta gate may run this finding's
+ * check, and it is not the same question as the machine's execution policy.
+ *
+ * The gate runs `check.command` and `absentWhen` through /bin/sh. From the
+ * CLI that is a person, at a keyboard, recording something they just worked
+ * out: they wrote the command and they are present when it runs. Through the
+ * gateway's `cairn_record` tool it is a model, mid-session, and the text it
+ * is recording came from an upstream tool's output -- a Case description, a
+ * record field, anything a third party can write into a system the agent is
+ * reading. That is a shell reachable from data, and the only thing between
+ * them is a regex scanner whose own header says five of eight hand-written
+ * evasions get through.
+ *
+ * So the two are separated. Execution policy stays what it was, per machine,
+ * and gates the CLI. `origin: 'agent'` never executes, whatever the policy
+ * says, because there is no policy setting that makes "a model recording
+ * something it read from production data" a safe thing to run.
+ */
+export async function recordSubmission(
+  raw: unknown,
+  opts: { by?: string; origin?: 'human' | 'agent' } = {},
+): Promise<RecordOutcome> {
   const withBy = typeof raw === 'object' && raw !== null && opts.by && !(raw as Record<string, unknown>).by
     ? { ...(raw as Record<string, unknown>), by: opts.by }
     : raw;
@@ -112,7 +134,9 @@ export async function recordSubmission(raw: unknown, opts: { by?: string } = {})
   let gateNote = '';
   if (finding.check.absentWhen && !finding.check.manual) {
     const policy = executionPolicy();
-    if (policy.enabled && !policy.strict) {
+    if (opts.origin === 'agent') {
+      gateNote = '\nGate: not run — a finding recorded by an agent is never executed. See EXECUTION.md.';
+    } else if (policy.enabled && !policy.strict) {
       const verdict = await gate(finding);
       if (verdict.verdict === 'same-either-way') {
         return { ok: false, message: `Refused — the check does not distinguish the trap from its absence:\n  ${verdict.detail}\nNothing was written.` };

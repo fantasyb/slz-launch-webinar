@@ -14,6 +14,22 @@
 # Bypass:   git commit --no-verify   (say why in the message)
 set -e
 
+# FIRST, and before the slow checks. scripts/precommit.ts scans the STAGED
+# content for credentials and for dangerous commands inside the corpus, and it
+# is the last moment before a leak becomes permanent and public.
+#
+# It was written, tested, and then wired to nothing: this hook ran tests,
+# typecheck and corpus lint, and lint-corpus.ts calls scanExecutable but not
+# scanSensitive. So the one gate whose whole job was to stop a credential
+# entering git history was not in the path of a single commit. Found while
+# clearing out orphaned scripts -- `scripts/precommit.ts` was referenced by
+# nothing, which is what an unwired safety gate looks like from the outside.
+#
+# It runs before `npm test` so a leak is refused in a second rather than after
+# thirty-five, and because a gate people wait for is a gate people bypass.
+echo "pre-commit: staged content"
+npx tsx scripts/precommit.ts || exit 1
+
 echo "pre-commit: tests"
 npm test >/tmp/cairn-precommit.log 2>&1 || {
   echo "REFUSED — tests are red:"

@@ -57,3 +57,30 @@ test('no module in src/lib/cairn calls homePath() at import time', () => {
  * throw at the top of one is the correct report to a person who set the
  * variable wrong. The rule is about being imported, not about being strict.
  */
+
+/*
+ * The gateway's record door must not be a shell reachable from upstream data.
+ *
+ * The workaround-delta gate runs `check.command` and `absentWhen` through
+ * /bin/sh. That is a defensible thing to do for a person at a keyboard who
+ * just wrote the command. It is a different thing entirely for a model
+ * recording what it read out of a production tool's output, where the text
+ * can be written by anyone who can write into the system being read. Machine
+ * execution policy does not distinguish those two callers; `origin` does.
+ */
+test('a finding recorded through the gateway never has its check executed', async () => {
+  const { recordSubmission } = await import('../src/lib/cairn/recordFinding');
+  const src = fs.readFileSync(path.join(process.cwd(), 'src', 'lib', 'cairn', 'recordFinding.ts'), 'utf8');
+  assert.match(
+    src,
+    /if \(opts\.origin === 'agent'\) \{/,
+    'the agent branch must come before the policy branch, or policy can re-enable it',
+  );
+  const agentBranch = src.indexOf("opts.origin === 'agent'");
+  const policyBranch = src.indexOf('policy.enabled && !policy.strict');
+  assert.ok(agentBranch !== -1 && agentBranch < policyBranch, 'agent is checked first');
+
+  const proxy = fs.readFileSync(path.join(process.cwd(), 'scripts', 'mcp-proxy.ts'), 'utf8');
+  assert.match(proxy, /recordSubmission\(args, \{ by: session\.agent, origin: 'agent' \}\)/, 'the gateway declares itself');
+  assert.equal(typeof recordSubmission, 'function');
+});
