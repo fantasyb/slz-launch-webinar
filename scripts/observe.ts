@@ -20,7 +20,7 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { OVERLAY_DIR, loadFederated } from '../src/lib/cairn/federation';
+import { overlayDir, loadFederated } from '../src/lib/cairn/federation';
 import { signObservation, findingBodyHash } from '../src/lib/cairn/signing';
 import { loadKeys } from '../src/lib/cairn/keys';
 import { FindingSchema } from '../src/lib/cairn/schema';
@@ -114,7 +114,7 @@ if (isLocal) {
   );
   const signed = { ...observation, signature: { algorithm: 'ed25519', keyId, value } };
 
-  const dir = path.join(OVERLAY_DIR, upstream as string);
+  const dir = path.join(overlayDir(), upstream as string);
   fs.mkdirSync(dir, { recursive: true });
   const file = path.join(dir, `${findingId}.json`);
   const existing = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : [];

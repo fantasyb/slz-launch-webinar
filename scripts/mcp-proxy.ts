@@ -68,7 +68,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import { preflight, retrieve } from '../src/lib/cairn/retrieval';
 import { FindingSchema, type Finding } from '../src/lib/cairn/schema';
-import { homePath, cairnHome } from '../src/lib/cairn/home';
+import { homePath } from '../src/lib/cairn/home';
 import { observe } from '../src/lib/cairn/observe';
 import { recordSubmission } from '../src/lib/cairn/recordFinding';
 import { redactForLedger } from '../src/lib/cairn/safety';
@@ -147,8 +147,52 @@ function parseArgs(argv: string[]): UpstreamSpec[] {
  */
 let corpusMemo: { fingerprint: string; findings: Finding[] } = { fingerprint: '', findings: [] };
 
+/*
+ * THE PASSENGER MUST NOT CRASH THE VEHICLE.
+ *
+ * Everything below this line is Cairn's own business. The client's business
+ * is the upstream server, and it asked for that server -- the gateway is
+ * something it agreed to have in the middle, not something it wants to hear
+ * from when Cairn is misconfigured.
+ *
+ * The first run of this proxy against a server nobody here wrote died before
+ * main(): CAIRN_HOME pointed at a directory with no cairn/ in it, homePath()
+ * threw at require time, and the client's entire report was
+ *
+ *     McpError: MCP error -32000: Connection closed
+ *
+ * -- every tool the upstream offered, gone, with nothing in the message
+ * naming Cairn. Our own trial harness could never see it, because the
+ * harness seeds the corpus it points at.
+ *
+ * So the corpus is resolved through here, once, and a failure latches: the
+ * reason is written to stderr a single time and every annotation path
+ * afterwards is a no-op. A gateway that cannot annotate is a gateway that
+ * forwards, which is exactly what the client wanted in the first place.
+ */
+let degradedReason: string | null = null;
+function corpusDir(): string | null {
+  if (degradedReason) return null;
+  try {
+    return homePath('cairn');
+  } catch (e) {
+    degradedReason = (e as Error).message;
+    process.stderr.write(
+      `cairn-proxy: annotation disabled -- ${degradedReason}\n` +
+        'cairn-proxy: traffic is being forwarded untouched.\n',
+    );
+    return null;
+  }
+}
+
+/** Whether this process gave up on its corpus, and why. Reported, never thrown. */
+export function degraded(): string | null {
+  return degradedReason;
+}
+
 function corpusFingerprint(): string {
-  const dir = homePath('cairn');
+  const dir = corpusDir();
+  if (!dir) return '';
   try {
     return fs
       .readdirSync(dir)
@@ -168,7 +212,8 @@ function corpusFingerprint(): string {
 function localFindings(): { findings: Finding[]; changed: boolean } {
   const fingerprint = corpusFingerprint();
   if (fingerprint === corpusMemo.fingerprint) return { findings: corpusMemo.findings, changed: false };
-  const dir = homePath('cairn');
+  const dir = corpusDir();
+  if (!dir) return { findings: [], changed: false };
   const findings: Finding[] = [];
   try {
     for (const f of fs.readdirSync(dir).filter((x) => x.endsWith('.json')).sort()) {
@@ -800,10 +845,18 @@ async function main() {
     const findings = localFindings().findings;
     const index: string[] = [];
     for (const up of upstreams) for (const line of await trapIndex(session, up, findings)) index.push(line);
+    const upstreamOwn = upstreams
+      .filter((u) => u.instructions)
+      .map((u) => (single ? u.instructions! : `## ${u.spec.name}\n${u.instructions!}`));
+    /*
+     * Degraded: the upstreams' own instructions, and not a word of ours.
+     * Describing a ledger that is not there spends the model's context on a
+     * feature it cannot use, at the one moment it is deciding what this
+     * server is for.
+     */
+    if (degraded()) return upstreamOwn.join('\n\n');
     return [
-      ...upstreams
-        .filter((u) => u.instructions)
-        .map((u) => (single ? u.instructions! : `## ${u.spec.name}\n${u.instructions!}`)),
+      ...upstreamOwn,
       '## Cairn',
       'Tool descriptions and results may carry a block marked "' + LABEL + '". That block is from ' +
         'the ledger of recorded traps kept by whoever configured this gateway, not from the service; ' +
@@ -839,7 +892,14 @@ async function main() {
         return d;
       });
       const taken = new Set(described.map((t) => t.name));
-      return { tools: [...described, ...GATEWAY_TOOLS.filter((g) => !taken.has(g.name))] };
+      /*
+       * Degraded means there is no corpus to search or write to, so the
+       * gateway's own two tools are withdrawn rather than offered and made
+       * to fail. An advertised tool that cannot work costs a model a call
+       * and a wrong conclusion about why.
+       */
+      const own = degraded() ? [] : GATEWAY_TOOLS.filter((g) => !taken.has(g.name));
+      return { tools: [...described, ...own] };
     });
 
     server.setRequestHandler(CallToolRequestSchema, async (req) => {
@@ -1145,7 +1205,7 @@ async function main() {
     const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
     if (url.pathname === '/healthz') {
       res.writeHead(200, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ ok: true, sessions: transports.size, upstreams: upstreams.map((u) => ({ name: u.spec.name, alive: u.alive })), corpus: cairnHome() }));
+      res.end(JSON.stringify({ ok: true, sessions: transports.size, upstreams: upstreams.map((u) => ({ name: u.spec.name, alive: u.alive })), corpus: corpusDir() ?? null, degraded: degraded() }));
       return;
     }
     if (url.pathname !== '/mcp') {
@@ -1183,7 +1243,7 @@ async function main() {
   await new Promise<void>((resolve) => httpServer.listen(HTTP_PORT!, host, resolve));
   const addr = httpServer.address();
   const port = typeof addr === 'object' && addr ? addr.port : HTTP_PORT;
-  process.stderr.write(`cairn-proxy: listening on http://${host}:${port}/mcp (corpus ${cairnHome()})\n`);
+  process.stderr.write(`cairn-proxy: listening on http://${host}:${port}/mcp (corpus ${corpusDir() ?? 'none'})\n`);
 }
 
 main().catch((e) => {

@@ -73,13 +73,26 @@ export const FederationBundleSchema = z.object({
 });
 export type FederationBundle = z.infer<typeof FederationBundleSchema>;
 
-export const CONFIG_FILE = homePath('cairn.config.json');
-export const CACHE_DIR = homePath('.cairn-cache');
-export const OVERLAY_DIR = homePath('federation');
+/*
+ * Resolved on use, never at import.
+ *
+ * These were module-level consts, which meant that importing this file
+ * evaluated homePath() -- and homePath() throws when CAIRN_HOME points
+ * somewhere without a cairn/ directory. For a CLI that is the right
+ * behaviour: the user ran a command that cannot work. For a long-lived host
+ * that merely imports the library, it is fatal at require time, before any
+ * of its own code runs. The gateway died that way against a real upstream:
+ * the client saw "Connection closed" and lost every tool the server offered,
+ * because a Cairn environment variable was wrong. A passenger must not be
+ * able to crash the vehicle.
+ */
+export const configFile = () => homePath('cairn.config.json');
+export const cacheDir = () => homePath('.cairn-cache');
+export const overlayDir = () => homePath('federation');
 
 export function loadConfig(): Config {
-  if (!fs.existsSync(CONFIG_FILE)) return { origin: 'cairn.local', upstreams: [] }; // no config: still a placeholder, deliberately unsignable
-  return ConfigSchema.parse(JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')));
+  if (!fs.existsSync(configFile())) return { origin: 'cairn.local', upstreams: [] }; // no config: still a placeholder, deliberately unsignable
+  return ConfigSchema.parse(JSON.parse(fs.readFileSync(configFile(), 'utf8')));
 }
 
 /** Namespaced id: an upstream's cairn-0001 is not your cairn-0001. */
@@ -106,14 +119,14 @@ export interface FederatedFinding {
 }
 
 function readBundle(name: string): FederationBundle | null {
-  const file = path.join(CACHE_DIR, `${name}.json`);
+  const file = path.join(cacheDir(), `${name}.json`);
   if (!fs.existsSync(file)) return null;
   const parsed = FederationBundleSchema.safeParse(JSON.parse(fs.readFileSync(file, 'utf8')));
   return parsed.success ? parsed.data : null;
 }
 
 function readOverlay(upstream: string, findingId: string): Observation[] {
-  const file = path.join(OVERLAY_DIR, upstream, `${findingId}.json`);
+  const file = path.join(overlayDir(), upstream, `${findingId}.json`);
   if (!fs.existsSync(file)) return [];
   const parsed = z
     .array(ObservationSchema)

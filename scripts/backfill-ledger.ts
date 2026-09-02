@@ -21,7 +21,7 @@ import fs from 'fs';
 import path from 'path';
 import { loadCorpus } from '../src/lib/cairn/load';
 import { retrieve } from '../src/lib/cairn/retrieval';
-import { LEDGER_PATH, type Outcome, type RetrievalRecord } from '../src/lib/cairn/ledger';
+import { ledgerPath, type Outcome, type RetrievalRecord } from '../src/lib/cairn/ledger';
 import { longestVerbatimRun, VERBATIM_RUN_LIMIT } from '../src/lib/cairn/evalset';
 
 const corpus = loadCorpus();
@@ -156,12 +156,12 @@ fromTrials('/tmp/agent-trial-clock-claude-haiku-4-5.json', 'clock', 'claude-haik
 fromTrials('/tmp/agent-trial-staleness-claude-haiku-4-5.json', 'staleness', 'claude-haiku-4-5');
 fromHarvest('/tmp/harvest.json');
 
-fs.mkdirSync(path.dirname(LEDGER_PATH), { recursive: true });
-fs.writeFileSync(LEDGER_PATH, records.map((r) => JSON.stringify(r)).join('\n') + (records.length ? '\n' : ''));
+fs.mkdirSync(path.dirname(ledgerPath()), { recursive: true });
+fs.writeFileSync(ledgerPath(), records.map((r) => JSON.stringify(r)).join('\n') + (records.length ? '\n' : ''));
 
 const byOutcome = new Map<string, number>();
 for (const r of records) for (const o of Object.values(r.outcomes ?? {})) byOutcome.set(o, (byOutcome.get(o) ?? 0) + 1);
-console.log(`\n  ${records.length} retrievals -> ${LEDGER_PATH}`);
+console.log(`\n  ${records.length} retrievals -> ${ledgerPath()}`);
 console.log(`  ${excluded} excluded: their query is scored by a suite, so memory may not see them.`);
 for (const [o, n] of [...byOutcome].sort((a, b) => b[1] - a[1])) console.log(`    ${String(n).padStart(4)}  ${o}`);
 const models = new Set(records.map((r) => r.by));

@@ -555,7 +555,8 @@ export function clearIndexMemo(): void { /* WeakMap is per-array; nothing to cle
  * hundred thousand small files is a different scaling problem, and read back
  * as a map on a single parse.
  */
-const CACHE_DIR = homePath('.cairn-cache');
+/* A function, not a const: see the note on cacheDir() in federation.ts. */
+const CACHE_DIR = () => homePath('.cairn-cache');
 
 /*
  * One file per corpus, named by fingerprint.
@@ -599,7 +600,7 @@ let entryFileMemo: string | null = null;
 function entryFile(): string {
   if (!entryFileMemo) {
     entryFileMemo = path.join(
-      CACHE_DIR,
+      CACHE_DIR(),
       `${ENTRY_FILE_NAME}-v${CACHE_SCHEMA}-${indexerSignature()}.json`,
     );
   }
@@ -607,7 +608,7 @@ function entryFile(): string {
 }
 
 /** The assembled index, laid out flat. See columnar.ts for why. */
-const COLUMNAR_FILE = path.join(CACHE_DIR, `index-v${CACHE_SCHEMA}.bin`);
+const columnarFile = () => path.join(CACHE_DIR(), `index-v${CACHE_SCHEMA}.bin`);
 
 /**
  * What identifies a record for caching purposes.
@@ -787,7 +788,7 @@ function readEntryStore(): { at: number; entries: Record<string, CachedDoc> } {
 
 function writeEntryStore(entries: Record<string, CachedDoc>): void {
   try {
-    fs.mkdirSync(CACHE_DIR, { recursive: true });
+    fs.mkdirSync(CACHE_DIR(), { recursive: true });
     /*
      * Bounded, and bounded by DELETION of the oldest keys rather than by
      * refusing to write. An unbounded store grows with every edit any finding
@@ -833,7 +834,7 @@ export function buildIndex(findings: Finding[]): CorpusIndex {
    * the bytes are already in the shape the index needs.
    */
   const fingerprint = indexIdentity(findings);
-  const flat = readColumnar(COLUMNAR_FILE, fingerprint);
+  const flat = readColumnar(columnarFile(), fingerprint);
   if (flat && Date.now() - flat.builtAt < INDEX_TTL_MS) {
     const rebuilt = fromColumnar(flat, findings);
     indexCache.set(findings, rebuilt);
@@ -968,7 +969,7 @@ export function buildIndex(findings: Finding[]): CorpusIndex {
     byCommand, strongByTerm, weakByTerm,
     ...flatten(postings, bm25Postings),
   };
-  writeColumnar(COLUMNAR_FILE, toColumnar(index, fingerprint));
+  writeColumnar(columnarFile(), toColumnar(index, fingerprint));
   indexCache.set(findings, index);
   return index;
 }
@@ -3252,7 +3253,7 @@ export function rankerSignature(): string {
 
 function confusionFileFor(fingerprint: string): string {
   return path.join(
-    CACHE_DIR,
+    CACHE_DIR(),
     `confusions-v2-${fingerprint.slice(0, 16)}-${rankerSignature()}.json`,
   );
 }
@@ -3277,7 +3278,7 @@ function readConfusionCache(fingerprint: string): Map<string, string[]> | null {
 
 function writeConfusionCache(fingerprint: string, pairs: Map<string, string[]>): void {
   try {
-    fs.mkdirSync(CACHE_DIR, { recursive: true });
+    fs.mkdirSync(CACHE_DIR(), { recursive: true });
     const file = confusionFileFor(fingerprint);
     const tmp = `${file}.${process.pid}.tmp`;
     fs.writeFileSync(tmp, JSON.stringify({ fingerprint, pairs: [...pairs] }));
@@ -3298,10 +3299,10 @@ function writeConfusionCache(fingerprint: string, pairs: Map<string, string[]>):
      */
     const prefix = `confusions-v2-${fingerprint.slice(0, 16)}-`;
     const keep = path.basename(file);
-    for (const name of fs.readdirSync(CACHE_DIR)) {
+    for (const name of fs.readdirSync(CACHE_DIR())) {
       if (!name.startsWith(prefix) || name === keep) continue;
       try {
-        fs.unlinkSync(path.join(CACHE_DIR, name));
+        fs.unlinkSync(path.join(CACHE_DIR(), name));
       } catch {
         /* another process holds it, or already gone */
       }

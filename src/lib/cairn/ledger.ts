@@ -101,13 +101,14 @@ export interface RetrievalRecord {
  * The reader takes the union of every shard plus the historical single file,
  * so an older checkout keeps working and nothing has to be migrated to be read.
  */
-const LEDGER_DIR = homePath('data', 'retrievals');
-const LEGACY_LEDGER = homePath('data', 'retrievals.jsonl');
+/* Functions, not consts: see the note on cacheDir() in federation.ts. */
+const ledgerDir = () => homePath('data', 'retrievals');
+const legacyLedger = () => homePath('data', 'retrievals.jsonl');
 
 /** Filesystem-safe, and stable for the same author across runs. */
 function shardFor(by: string): string {
   const safe = by.toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'unknown';
-  return path.join(LEDGER_DIR, `${safe}.jsonl`);
+  return path.join(ledgerDir(), `${safe}.jsonl`);
 }
 
 /**
@@ -116,7 +117,7 @@ function shardFor(by: string): string {
  */
 export function record(r: RetrievalRecord): void {
   try {
-    fs.mkdirSync(LEDGER_DIR, { recursive: true });
+    fs.mkdirSync(ledgerDir(), { recursive: true });
     fs.appendFileSync(shardFor(r.by), `${JSON.stringify(r)}\n`);
   } catch {
     /* deliberately silent */
@@ -138,10 +139,10 @@ function readOne(file: string): RetrievalRecord[] {
 /** Every author's shard, plus the pre-shard file if it is still there. */
 export function readLedger(file?: string): RetrievalRecord[] {
   if (file) return readOne(file);
-  const out: RetrievalRecord[] = readOne(LEGACY_LEDGER);
+  const out: RetrievalRecord[] = readOne(legacyLedger());
   try {
-    for (const f of fs.readdirSync(LEDGER_DIR)) {
-      if (f.endsWith('.jsonl')) out.push(...readOne(path.join(LEDGER_DIR, f)));
+    for (const f of fs.readdirSync(ledgerDir())) {
+      if (f.endsWith('.jsonl')) out.push(...readOne(path.join(ledgerDir(), f)));
     }
   } catch {
     /* no shards yet */
@@ -149,4 +150,4 @@ export function readLedger(file?: string): RetrievalRecord[] {
   return out;
 }
 
-export const LEDGER_PATH = LEDGER_DIR;
+export const ledgerPath = ledgerDir;

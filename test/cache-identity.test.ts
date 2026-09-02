@@ -41,7 +41,9 @@ import os from 'os';
 import path from 'path';
 import { makeKey, keyMap, signedFinding, finding, env } from './helpers';
 
-/* Before any import that evaluates homePath(): CACHE_DIR is computed at load. */
+/* Set before anything reads the corpus. It no longer has to precede the imports
+ * -- cache paths are resolved on use now, not at load -- but this file wants its
+ * own cache directory regardless, so the ordering stays. */
 const HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'cairn-cache-identity-'));
 fs.mkdirSync(path.join(HOME, 'cairn'));
 process.env.CAIRN_HOME = HOME;

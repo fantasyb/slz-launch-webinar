@@ -15,7 +15,7 @@ import path from 'path';
 import {
   loadConfig,
   FederationBundleSchema,
-  CACHE_DIR,
+  cacheDir,
   type Upstream,
 } from '../src/lib/cairn/federation';
 import {
@@ -51,7 +51,7 @@ async function main() {
     process.exit(0);
   }
 
-  fs.mkdirSync(CACHE_DIR, { recursive: true });
+  fs.mkdirSync(cacheDir(), { recursive: true });
   let failures = 0;
 
   for (const up of config.upstreams) {
@@ -92,7 +92,7 @@ async function main() {
       }
 
       fs.writeFileSync(
-        path.join(CACHE_DIR, `${up.name}.json`),
+        path.join(cacheDir(), `${up.name}.json`),
         `${JSON.stringify(bundle, null, 2)}\n`,
       );
       console.log(

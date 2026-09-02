@@ -22,7 +22,8 @@ import { homePath } from './home';
  * drive. A finding nobody will merge is a finding nobody vouched for.
  */
 
-export const CORPUS_DIR = homePath('cairn');
+/* A function, not a const: see the note on cacheDir() in federation.ts. */
+export const corpusDir = () => homePath('cairn');
 
 export class CorpusError extends Error {
   constructor(
@@ -38,14 +39,14 @@ let cache: Finding[] | null = null;
 
 export function loadCorpus(): Finding[] {
   if (cache) return cache;
-  if (!fs.existsSync(CORPUS_DIR)) return (cache = []);
+  if (!fs.existsSync(corpusDir())) return (cache = []);
 
   const findings = fs
     // withFileTypes, so a subdirectory or a dangling symlink named `*.json`
     // is skipped rather than throwing a raw EISDIR/ENOENT straight past the
     // CorpusError wrapper -- and a symlink cannot pull content in from outside
     // the corpus directory.
-    .readdirSync(CORPUS_DIR, { withFileTypes: true })
+    .readdirSync(corpusDir(), { withFileTypes: true })
     .filter((d) => d.isFile() && d.name.endsWith('.json'))
     .map((d) => d.name)
     .sort()
@@ -56,7 +57,7 @@ export function loadCorpus(): Finding[] {
         // above escaped as raw errno rather than as a corpus diagnostic.
         // A BOM is stripped: JSON.parse rejects it, and a zero-byte file gets
         // a diagnostic naming the file rather than "Unexpected end of input".
-        const raw = fs.readFileSync(path.join(CORPUS_DIR, file), 'utf8').replace(/^\uFEFF/, '');
+        const raw = fs.readFileSync(path.join(corpusDir(), file), 'utf8').replace(/^\uFEFF/, '');
         if (raw.trim() === '') throw new Error('file is empty');
         parsed = JSON.parse(raw);
       } catch (e) {

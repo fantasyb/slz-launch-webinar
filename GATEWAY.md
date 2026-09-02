@@ -130,8 +130,42 @@ no type — and the handler tested for the boolean; fixed by coercing, and
 the harness's own detector had the same bug (`cairn-0044`). Both are inside
 what the smoke policy reserved and both are the corpus's kind of finding.
 
+## Before you point it at a server that matters
+
+    npm run cairn:gateway-smoke -- --server "npx -y @acme/their-mcp"
+
+No model, no key, no cost, about a minute. It connects three ways — straight
+to the upstream, through the gateway with an empty corpus, and through the
+gateway with `CAIRN_HOME` deliberately wrong — and asserts that the second
+adds nothing but the gateway's own two tools, and the third is
+indistinguishable from the first.
+
+That last arm exists because of what happened the first time this was
+pointed at a server nobody here wrote. `CAIRN_HOME` was set to a directory
+with no corpus in it; a module-level `const KEYS_DIR = homePath('keys')`
+threw during `require`, before `main()`; and the client's entire report was
+
+    McpError: MCP error -32000: Connection closed
+
+Thirteen working tools gone, with nothing in the message naming Cairn. The
+trial harness could not have caught it — the harness seeds the corpus it
+points at, so the misconfigured path did not exist in any measurement.
+Recorded as `cairn-0046`; the rule it left behind (no library module
+resolves the corpus at import time) is enforced by a test, and the gateway
+now forwards untouched, withdraws its own tools and says why on stderr when
+it cannot reach a corpus.
+
+A gateway is a passenger. Its worst failure is not being useless; it is
+being fatal to the thing it rides in.
+
 ## What is not proven here
 
 Anything hosted beyond one machine: the HTTP mode is tested with two
 clients on loopback, not with accounts, TLS or a network. The writer half
-outside this repository. A real MCP server. Any model but one.
+outside this repository. Any model but one.
+
+A real MCP server is now half-proven: the gateway is measured transparent
+to a third-party server (`@modelcontextprotocol/server-everything`) at the
+protocol level. Whether real tools carry the kind of trap that made the
+experiment work — a call that returns success with a misleading payload —
+is still unmeasured.

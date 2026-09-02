@@ -585,3 +585,57 @@ test('hosted over HTTP, two clients are two sessions: each gets its own first co
     child.stderr?.destroy();
   }
 });
+
+/* ------------------------------------------------------------------------ */
+/* Degraded: the passenger must not crash the vehicle                        */
+/* ------------------------------------------------------------------------ */
+
+/**
+ * A home that is not a corpus. This is the ordinary misconfiguration -- a
+ * CAIRN_HOME left over from a move, a checkout that was never made -- and it
+ * used to kill the proxy at require time, taking every upstream tool with it.
+ * The client cannot tell Cairn from the server it asked for, so what it sees
+ * is its own tools vanishing.
+ */
+function brokenHome(): string {
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'cairn-proxy-nohome-'));
+}
+
+test('a corpus it cannot reach costs the client nothing', async () => {
+  const good = single(corpus(true));
+  const bad = single(brokenHome());
+  try {
+    await good.init();
+    await bad.init();
+
+    /* Every upstream tool still there, and nothing of the gateway's own. */
+    const upstreamTools = (await good.tools()).map((t) => t.name).filter((n) => !n.startsWith('cairn_'));
+    const degradedTools = (await bad.tools()).map((t) => t.name);
+    assert.deepEqual(degradedTools.sort(), upstreamTools.sort(), 'the upstream list, unchanged');
+    assert.ok(!degradedTools.some((n) => n.startsWith('cairn_')), 'no tool is offered that cannot work');
+
+    /* And the result is the upstream's, with nothing appended to it. */
+    const r = await bad.call('query_records', { object: 'Contact' });
+    assert.equal(r.content.length, 1, `nothing may be appended when there is no corpus: ${JSON.stringify(r.content)}`);
+
+    assert.match(bad.stderr, /annotation disabled/, 'the operator is told once, where a client will not see it');
+    assert.ok(!/Connection closed/.test(bad.stderr), 'and the process is still alive');
+  } finally {
+    await good.close();
+    await bad.close();
+  }
+});
+
+test('a broken corpus does not put Cairn in the instructions', async () => {
+  const bad = single(brokenHome());
+  try {
+    const init = await bad.init();
+    const instructions = (init.result as { instructions?: string }).instructions ?? '';
+    assert.ok(
+      !/Cairn/.test(instructions),
+      `a ledger that is not there must not be described at connect: ${instructions.slice(0, 300)}`,
+    );
+  } finally {
+    await bad.close();
+  }
+});
