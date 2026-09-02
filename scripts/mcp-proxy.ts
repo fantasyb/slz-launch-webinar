@@ -73,6 +73,7 @@ import { homePath } from '../src/lib/cairn/home';
 import { observe } from '../src/lib/cairn/observe';
 import { recordSubmission } from '../src/lib/cairn/recordFinding';
 import { redactForLedger } from '../src/lib/cairn/safety';
+import { shapeOf, diffSurface, findingNames, type ToolShape, type SurfaceChange } from '../src/lib/cairn/toolsurface';
 
 /* ------------------------------------------------------------------------ */
 /* Configuration                                                             */
@@ -431,11 +432,13 @@ interface SessionState {
   holes: Map<string, { args: Record<string, unknown>; output: string; at: string }>;
   /** Tools for which a draft has already been opened this session. */
   drafted: Set<string>;
+  /** Per upstream, how many of its surface events this session has been told about. */
+  surfaceSeen: Map<string, number>;
 }
 
 function newSession(id: string): SessionState {
   return {
-    id, introduced: new Set(), callsByTool: new Map(), shown: new Set(), nudged: new Set(), holes: new Map(), drafted: new Set(),
+    id, introduced: new Set(), callsByTool: new Map(), shown: new Set(), nudged: new Set(), holes: new Map(), drafted: new Set(), surfaceSeen: new Map(),
   };
 }
 
@@ -605,6 +608,17 @@ interface Upstream {
   alive: boolean;
   lastError?: string;
   respawned: boolean;
+  /**
+   * What the server offered the last time it was asked, and every change
+   * since. The gateway is the one component that sits in front of a real
+   * server all day, so it is the one positioned to notice a tool appearing,
+   * vanishing, being renamed, re-annotated or re-shaped -- which is the
+   * moment a finding naming that tool starts to rot. Noticed, recorded and
+   * told to the model on the result surface; never acted on. A client asked
+   * for that server, not for this gateway's opinion of it.
+   */
+  surface: ToolShape[] | null;
+  surfaceEvents: Array<{ at: string; changes: SurfaceChange[] }>;
 }
 
 /** Lifted from the SDK's 60s: a long-running tool must not fail only because it was proxied. */
@@ -752,7 +766,7 @@ async function main() {
   /* Declared before the relay that reads it; assigned once the upstreams have said what they offer. */
   let capabilities: ServerCapabilities = {};
   const upstreams: Upstream[] = specs.map((spec) => ({
-    spec, client: null, caps: {}, alive: false, respawned: false,
+    spec, client: null, caps: {}, alive: false, respawned: false, surface: null, surfaceEvents: [],
   }));
   /* Every live server, so an upstream notification reaches every session. */
   const servers = new Set<Server>();
@@ -763,8 +777,53 @@ async function main() {
   const resourceOwner = new Map<string, Upstream>();
   const templateOwner = new Map<string, Upstream>();
 
+  /**
+   * NOTICE, RECORD, NEVER ENFORCE. Every complete look at an upstream's tool
+   * list passes through here. The first is the baseline; each later one is
+   * diffed against it, and a difference goes three places: stderr, where the
+   * operator sees it; the ledger, tagged `mcp-proxy:surface-<kind>` with the
+   * findings whose triggers name the tool, so `cairn:report` can list the
+   * knowledge that may have rotted; and the upstream's event log, from which
+   * each session is told once on its next result. Nothing here changes what
+   * is routed or offered.
+   */
+  function noteSurface(up: Upstream, tools: Tool[]): void {
+    const shapes = tools.map(shapeOf);
+    if (!up.surface) { up.surface = shapes; return; }
+    const changes = diffSurface(up.surface, shapes);
+    up.surface = shapes;
+    if (!changes.length) return;
+    up.surfaceEvents.push({ at: new Date().toISOString(), changes });
+    const findings = localFindings().findings;
+    for (const c of changes) {
+      process.stderr.write(`cairn-proxy: ${up.spec.name}: ${c.detail}\n`);
+      const named = findings.filter((f) => findingNames(f.triggers, c.tool, up.spec.name) || (c.to !== undefined && findingNames(f.triggers, c.to, up.spec.name)));
+      for (const f of named) process.stderr.write(`cairn-proxy:   ${f.id} names ${c.tool} in its triggers and may no longer apply\n`);
+      try {
+        observe(c.detail, named.map((f, i) => ({ finding: f, rank: i + 1, strength: 'strong' })) as never, `mcp-proxy:surface-${c.kind}`, { by: 'gateway', session: process.env.CAIRN_SESSION });
+      } catch { /* never fatal */ }
+    }
+  }
+
+  /** Re-read the whole list, every page, and note what moved. */
+  async function refreshSurface(up: Upstream): Promise<void> {
+    if (!up.alive || !up.client) return;
+    const tools: Tool[] = [];
+    let cursor: string | undefined;
+    try {
+      do {
+        const page = await up.client.listTools({ cursor }, FORWARD);
+        tools.push(...page.tools);
+        cursor = page.nextCursor;
+      } while (cursor);
+    } catch {
+      return; /* a list that cannot be read is not a change */
+    }
+    noteSurface(up, tools);
+  }
+
   const forwardNotification = (up: Upstream, method: string, params: unknown) => {
-    if (method === 'notifications/tools/list_changed') toolOwner.clear();
+    if (method === 'notifications/tools/list_changed') { toolOwner.clear(); void refreshSurface(up); }
     if (method === 'notifications/prompts/list_changed') promptOwner.clear();
     if (method === 'notifications/resources/list_changed') { resourceOwner.clear(); templateOwner.clear(); }
     for (const server of servers) {
@@ -789,6 +848,8 @@ async function main() {
       console.error(`cairn-proxy: upstream "${up.spec.name}" did not start: ${up.lastError}`);
     }
   }
+  /* The baseline: what each server offered at connect, so a later look has something to differ from. */
+  for (const up of upstreams) await refreshSurface(up);
 
   /*
    * THE PRE-DECISION INDEX. Warning "before the call" cannot happen between
@@ -862,6 +923,8 @@ async function main() {
     toolOwner.clear();
     const out: Tool[] = [];
     for (const up of alive()) {
+      const mine: Tool[] = [];
+      let complete = true;
       let cursor: string | undefined;
       do {
         let page;
@@ -869,15 +932,18 @@ async function main() {
           page = await up.client!.listTools({ cursor }, FORWARD);
         } catch (e) {
           up.lastError = (e as Error).message;
+          complete = false;
           break;
         }
         for (const t of page.tools) {
           const name = expose(up, t.name);
           toolOwner.set(name, { up, raw: t.name });
           out.push({ ...t, name });
+          mine.push(t);
         }
         cursor = page.nextCursor;
       } while (cursor);
+      if (complete) noteSurface(up, mine);
     }
     return out;
   }
@@ -919,6 +985,8 @@ async function main() {
   function buildServer(session: SessionState, instructions: string): Server {
     const server = new Server({ name: 'cairn-proxy', version: '0.3.0' }, { capabilities, instructions });
     servers.add(server);
+    /* A session is told about changes from its own start, not about history it never saw. */
+    for (const up of upstreams) session.surfaceSeen.set(up.spec.name, up.surfaceEvents.length);
 
     /* ---- tools ---------------------------------------------------------- */
 
@@ -1058,6 +1126,27 @@ async function main() {
             note += `\n\n--- ${LABEL} ---\nOther tools from this server with a recorded trap:\n` +
               index.map((l) => `- ${l}`).join('\n') + `\n--- end ---`;
           }
+        }
+        /*
+         * THE SURFACE MOVED. Once per change, on the next result from that
+         * server: what changed, and which findings name the tool that did.
+         * Withheld when degraded, because a gateway with no corpus must be
+         * indistinguishable from no gateway.
+         */
+        const events = owner.up.surfaceEvents;
+        const seen = session.surfaceSeen.get(owner.up.spec.name) ?? 0;
+        if (events.length > seen && !degraded()) {
+          session.surfaceSeen.set(owner.up.spec.name, events.length);
+          const fresh = events.slice(seen).flatMap((e) => e.changes);
+          const named = findings.filter((f) => fresh.some((c) => findingNames(f.triggers, c.tool, owner!.up.spec.name) || (c.to !== undefined && findingNames(f.triggers, c.to, owner!.up.spec.name))));
+          note +=
+            `\n\n--- ${LABEL} ---\nThis server's tools changed while this session was open:\n` +
+            fresh.map((c) => `- ${c.detail}`).join('\n') +
+            (named.length ? `\nFindings that name a changed tool, and may no longer apply as written: ${named.map((f) => `${f.id} (${f.title})`).join('; ')}` : '') +
+            `\n--- end ---`;
+          try {
+            observe(`${owner.up.spec.name} [surface told]`, named.map((f, i) => ({ finding: f, rank: i + 1, strength: 'strong' })) as never, 'mcp-proxy:told-surface', ctx);
+          } catch { /* never fatal */ }
         }
         if (note) {
           const content = Array.isArray(result.content) ? result.content : [];

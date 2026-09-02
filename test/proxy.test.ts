@@ -640,3 +640,78 @@ test('a broken corpus does not put Cairn in the instructions', async () => {
     await bad.close();
   }
 });
+
+/* ------------------------------------------------------------------------ */
+/* The tool surface moving under the corpus                                  */
+/* ------------------------------------------------------------------------ */
+
+const MUTABLE = path.join(REPO, 'fixtures', 'mcp', 'mutable.mjs');
+
+/**
+ * Real servers add, rename and re-annotate tools while a session is open,
+ * and the gateway is the one component positioned to see it. It notices,
+ * records, and tells the model once on the next result -- and withholds
+ * nothing: the new tool is listed, the renamed tool is routed, exactly as
+ * the server offers them. A client asked for that server, not for this
+ * gateway's opinion of it.
+ */
+test('a tool surface that changes mid-session is noticed, told once, recorded, and never enforced', async () => {
+  const home = corpus(false);
+  bank(home, '0001-q.json', 'cairn-0001', 'query_records caps at fifty rows silently', 'query_records', ['query_records limit']);
+  const phase = path.join(home, 'phase');
+  fs.writeFileSync(phase, 'base');
+  const s = new Session(home, ['--server', `node ${MUTABLE} --phase-file ${phase}`]);
+  try {
+    await s.init();
+    intactThenLabelled(await s.call('get_record', { object: 'Case', id: 'x' }), '{"status":"success","records":[]}');
+
+    fs.writeFileSync(phase, 'destructive');
+    const deadline = Date.now() + 8000;
+    while (Date.now() < deadline && !s.stderr.includes('delete_records appeared')) await new Promise((r) => setTimeout(r, 200));
+    assert.match(s.stderr, /delete_records appeared \(declared destructive/, 'noticed by itself, from the server\'s own notification');
+    assert.ok((await s.tools()).some((t) => t.name === 'delete_records'), 'the new tool is offered: nothing is withheld');
+
+    const told = await s.call('get_record', { object: 'Case', id: 'x' });
+    intactThenLabelled(told, '{"status":"success","records":[]}');
+    const note = texts(told).slice(1).join('\n');
+    assert.match(note, /tools changed while this session was open/);
+    assert.match(note, /delete_records appeared/);
+    const again = await s.call('get_record', { object: 'Case', id: 'x' });
+    assert.equal(again.content.length, 1, 'told once, not on every result');
+
+    fs.writeFileSync(phase, 'rename');
+    const deadline2 = Date.now() + 8000;
+    while (Date.now() < deadline2 && !s.stderr.includes('search_records')) await new Promise((r) => setTimeout(r, 200));
+    assert.match(s.stderr, /query_records → search_records/, 'a rename is a rename, not a loss and a gain');
+    assert.match(s.stderr, /cairn-0001 names query_records/, 'the finding that names the old name is pointed at');
+    const routed = await s.call('search_records', { object: 'Case' });
+    assert.equal(routed.isError, undefined, 'the renamed tool routes');
+    const note2 = texts(routed).slice(1).join('\n');
+    assert.match(note2, /query_records → search_records/);
+    assert.match(note2, /cairn-0001/, 'the model is told which finding may no longer apply as written');
+
+    const dir = path.join(home, 'data', 'retrievals');
+    const rows = fs.readdirSync(dir).flatMap((f) => fs.readFileSync(path.join(dir, f), 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l)));
+    const kinds = rows.filter((r) => r.source.startsWith('mcp-proxy:surface-')).map((r) => r.source);
+    assert.ok(kinds.includes('mcp-proxy:surface-appeared') && kinds.includes('mcp-proxy:surface-renamed'), `recorded for the report: ${kinds}`);
+    const renamedRow = rows.find((r) => r.source === 'mcp-proxy:surface-renamed');
+    assert.deepEqual(renamedRow.returned.map((h: { id: string }) => h.id), ['cairn-0001'], 'with the finding that names the tool');
+  } finally { await s.close(); }
+});
+
+test('degraded, a changed tool surface is noticed on stderr and nothing is appended', async () => {
+  const home = brokenHome();
+  const phase = path.join(home, 'phase');
+  fs.writeFileSync(phase, 'base');
+  const s = new Session(home, ['--server', `node ${MUTABLE} --phase-file ${phase}`]);
+  try {
+    await s.init();
+    await s.call('get_record', { object: 'Case', id: 'x' });
+    fs.writeFileSync(phase, 'destructive');
+    const deadline = Date.now() + 8000;
+    while (Date.now() < deadline && !s.stderr.includes('delete_records appeared')) await new Promise((r) => setTimeout(r, 200));
+    assert.match(s.stderr, /delete_records appeared/);
+    const r = await s.call('get_record', { object: 'Case', id: 'x' });
+    assert.equal(r.content.length, 1, 'a gateway with no corpus must be indistinguishable from no gateway');
+  } finally { await s.close(); }
+});

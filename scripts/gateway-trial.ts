@@ -63,6 +63,14 @@
  *     line by line before they touch disk, written under $CAIRN_HOME, and the
  *     directory carries its own .gitignore.
  *   - A stale dist/ bundle is refused, because it has hidden three fixes.
+ *   - The tool surface is verified continuously, not once. One connection
+ *     to the server stays open for the whole run; before every trial, and
+ *     at the end, the list is read again and diffed against the one the
+ *     tools were chosen from. A permitted tool that vanished, was renamed,
+ *     changed its annotations or its schema, or a tool that appeared -- any
+ *     of it stops the run and says so, and the record carries the surface
+ *     at start, at end, and every change between. A result measured
+ *     against a surface that moved underneath it is not a result.
  *
  * WHAT THE INSTRUMENT MUST NOT DO, each one checked rather than assumed:
  *
@@ -98,6 +106,7 @@ import { redactForLedger } from '../src/lib/cairn/safety';
 import { executionPolicy, policyPath } from '../src/lib/cairn/policy';
 import { FindingSchema } from '../src/lib/cairn/schema';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
+import { classify, diffSurface, shapeOf, type ToolShape, type SurfaceChange } from '../src/lib/cairn/toolsurface';
 
 const REPO = process.cwd();
 const PROXY_BIN = path.join(REPO, 'bin', 'cairn-proxy.js');
@@ -156,7 +165,6 @@ const TrialFileSchema = z.object({
 type TrialFile = z.infer<typeof TrialFileSchema>;
 type Scenario = z.infer<typeof ScenarioSchema>;
 
-const WRITE_LOOKING = /create|update|delete|upsert|execute|insert|remove|write|modify|destroy|drop|send|post|put|patch|deploy|run/i;
 
 /* ---- arguments ---------------------------------------------------------- */
 
@@ -186,45 +194,9 @@ interface ToolChoice {
   overridden?: string;
 }
 
-/**
- * The server's own statement first, the name only when it says nothing.
- *
- * `readOnlyHint: true` is the protocol's way of answering exactly this
- * question, so it is honoured -- except where the name reads as a write,
- * where the two facts are printed together and the operator decides.
- * `destructiveHint: true` or `readOnlyHint: false` is the server saying the
- * opposite, and a name that reads as a read does not rescue it. A tool with
- * no annotation is judged by its name, which is a guess, and the printed
- * reason says so. Every exclusion can be overruled by readOnlyDespiteName,
- * and the override is recorded beside the decision it overruled.
- */
+/** The rules live in src/lib/cairn/toolsurface.ts, shared with the gateway; this only lays them over the file. */
 function chooseTools(tools: Tool[], file: { allowedTools?: string[]; readOnlyDespiteName: Record<string, string> }): ToolChoice[] {
-  return tools.map((t) => {
-    const a = (t.annotations ?? null) as Annotations | null;
-    const override = file.readOnlyDespiteName[t.name];
-    const excluded = (reason: string): ToolChoice =>
-      override
-        ? { name: t.name, permitted: true, reason: `${reason}; overruled in readOnlyDespiteName`, annotations: a, overridden: override }
-        : { name: t.name, permitted: false, reason, annotations: a };
-    if (file.allowedTools && !file.allowedTools.includes(t.name)) {
-      return { name: t.name, permitted: false, reason: 'not in allowedTools', annotations: a };
-    }
-    if (a?.readOnlyHint === true) {
-      /*
-       * The declaration is honoured -- but a declared-read-only tool whose
-       * name reads as a write is the one case where trusting the server
-       * would be looser than the rule before discovery existed, which
-       * refused every write-looking name without a written reason. The
-       * stricter path is kept: the operator sees both facts and decides.
-       */
-      if (WRITE_LOOKING.test(t.name)) return excluded('declared read-only (readOnlyHint: true), but the name reads as a write');
-      return { name: t.name, permitted: true, reason: 'declared read-only (readOnlyHint: true)', annotations: a };
-    }
-    if (a?.destructiveHint === true) return excluded('declared destructive (destructiveHint: true)');
-    if (a?.readOnlyHint === false) return excluded('declared not read-only (readOnlyHint: false)');
-    if (WRITE_LOOKING.test(t.name)) return excluded('no annotation; name reads as a write');
-    return { name: t.name, permitted: true, reason: 'no annotation; name reads as a read', annotations: a };
-  });
+  return tools.map((t) => ({ name: t.name, annotations: (t.annotations ?? null) as Annotations | null, ...classify(t, { allowed: file.allowedTools, overrides: file.readOnlyDespiteName }) }));
 }
 
 function printChoices(choices: ToolChoice[]): void {
@@ -625,11 +597,92 @@ async function runTrial(sc: Scenario, arm: Arm, n: number, permitted: string[]):
   };
 }
 
-/* ---- the upstream, read before anything runs ----------------------------- */
+/* ---- the upstream, read before anything runs and re-read before every trial */
+
+/**
+ * One connection to the server, open for the whole run, so the list can be
+ * re-read cheaply and the server's own list_changed notification is seen.
+ * Each trial's Claude Code spawns its own copy of the server, so this one
+ * sees the same surface those do; what it cannot see is a server whose
+ * tool list differs per process, which nothing outside the server could.
+ */
+class Watcher {
+  private client: import('@modelcontextprotocol/sdk/client/index.js').Client | null = null;
+  private closed = false;
+  /** The server said its list changed, since the last look. */
+  changed = false;
+  shapes: ToolShape[] = [];
+  events: Array<{ at: string; when: string; changes: SurfaceChange[] }> = [];
+
+  constructor(private server: { command: string; args: string[]; env: Record<string, string> }) {}
+
+  private async open(): Promise<void> {
+    const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
+    const { StdioClientTransport } = await import('@modelcontextprotocol/sdk/client/stdio.js');
+    const { ToolListChangedNotificationSchema } = await import('@modelcontextprotocol/sdk/types.js');
+    const client = new Client({ name: 'cairn-gateway-trial', version: '0' }, { capabilities: {} });
+    const env = { ...(process.env as Record<string, string>), ...this.server.env };
+    delete env.CAIRN_HOME;
+    const transport = new StdioClientTransport({ command: this.server.command, args: this.server.args, env, stderr: 'pipe' });
+    client.setNotificationHandler(ToolListChangedNotificationSchema, () => { this.changed = true; });
+    await client.connect(transport);
+    const sdkOnClose = transport.onclose;
+    transport.onclose = () => { this.closed = true; sdkOnClose?.(); };
+    this.client = client;
+    this.closed = false;
+  }
+
+  private async list(): Promise<Tool[]> {
+    if (!this.client || this.closed) await this.open();
+    const tools: Tool[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await this.client!.listTools({ cursor });
+      tools.push(...page.tools);
+      cursor = page.nextCursor;
+    } while (cursor);
+    return tools;
+  }
+
+  /** First look: the surface the tools are chosen from. */
+  async connect(): Promise<Tool[]> {
+    let tools: Tool[];
+    try {
+      tools = await this.list();
+    } catch (e) {
+      refuse(`could not list the upstream's tools: ${(e as Error).message}`, `  Run it by hand and read stderr:  ${this.server.command} ${this.server.args.join(' ')}`);
+    }
+    this.shapes = tools.map(shapeOf);
+    return tools;
+  }
+
+  /** Look again, and say what moved since the tools were chosen. */
+  async check(when: string): Promise<SurfaceChange[]> {
+    let tools: Tool[];
+    try {
+      tools = await this.list();
+    } catch (e) {
+      return [{ kind: 'vanished', tool: '(server)', detail: `the server could not be listed ${when}: ${(e as Error).message}` }];
+    }
+    this.changed = false;
+    const now = tools.map(shapeOf);
+    const changes = diffSurface(this.shapes, now);
+    if (changes.length) {
+      this.events.push({ at: new Date().toISOString(), when, changes });
+      this.shapes = now;
+    }
+    return changes;
+  }
+
+  async close(): Promise<void> {
+    try { await this.client?.close(); } catch { /* gone already */ }
+  }
+}
+
 
 /** List the server's tools, decide per tool, and hold any allowedTools against what is there. */
-async function discover(): Promise<{ tools: string[]; choices: ToolChoice[]; permitted: string[] }> {
-  const tools = await listUpstreamTools(SERVER);
+async function discover(watcher: Watcher): Promise<{ tools: string[]; choices: ToolChoice[]; permitted: string[] }> {
+  const tools = await watcher.connect();
   const names = tools.map((t) => t.name);
   const missing = (T.allowedTools ?? []).filter((t) => !names.includes(t));
   if (missing.length) refuse(`allowedTools names tools the upstream does not offer: ${missing.join(', ')}`, `  It offers: ${names.join(', ')}`);
@@ -690,7 +743,9 @@ async function main() {
   if (REGRADE_AT !== -1) { regrade(path.resolve(argv[REGRADE_AT + 1])); return; }
 
   const seal = SEAL!;
-  const { tools: upstreamTools, choices, permitted } = await discover();
+  const watcher = new Watcher(SERVER);
+  const { tools: upstreamTools, choices, permitted } = await discover(watcher);
+  const surfaceAtStart = watcher.shapes;
   const corpus = corpusSummary();
   if (!corpus.findings.length) refuse(`${path.join(HOME, 'cairn')} has no active findings, so the gateway arm would equal empty`);
   const independent = !corpus.authors.includes(T.scenariosBy);
@@ -702,6 +757,7 @@ async function main() {
   ensureOutDir();
   const startedAt = new Date().toISOString();
   const trials: Trial[] = [];
+  let stopped: string | null = null;
   const save = () =>
     fs.writeFileSync(
       OUT,
@@ -720,6 +776,9 @@ async function main() {
           truth: Object.fromEntries(T.scenarios.map((s) => [s.name, s.truth])),
           bundleAt: new Date(bundleAt).toISOString(),
           transcripts: NO_TRANSCRIPTS ? 'not kept' : 'redacted line by line before writing',
+          /* The tool surface the tools were chosen from, every change seen during the run, and the surface at the end. */
+          surface: { atStart: surfaceAtStart, changes: watcher.events, atEnd: watcher.shapes },
+          stopped,
           trials,
         },
         null,
@@ -741,6 +800,22 @@ async function main() {
       /* Interleave arms within a trial index so a slow hour or a model
        * hiccup lands on every arm equally rather than on whichever ran last. */
       for (const arm of ARMS) {
+        /*
+         * The premise, re-read. A run whose tool surface moved underneath it
+         * is not a result, so the list is compared before every trial and
+         * any change stops the run with the record written so far.
+         */
+        const moved = await watcher.check(`before ${sc.name} ${arm} #${n}`);
+        if (moved.length) {
+          stopped = `tool surface changed before ${sc.name} ${arm} #${n}`;
+          save();
+          console.log(`\nSTOPPED — the server's tools changed under the run, before ${sc.name} ${arm} #${n}:\n`);
+          for (const c of moved) console.log(`  ${c.kind.padEnd(12)} ${c.detail}`);
+          console.log(`\n  ${trials.length} trial(s) are in ${OUT} with stopped set; nothing after this point was run.`);
+          console.log('  Re-read the list, update the findings and the forecast if they need it, seal again, and run again.\n');
+          await watcher.close();
+          process.exit(3);
+        }
         const t = await runTrial(sc, arm, n, permitted);
         trials.push(t);
         save();
@@ -753,6 +828,14 @@ async function main() {
         );
       }
     }
+  }
+
+  const movedAtEnd = await watcher.check('at end');
+  await watcher.close();
+  save();
+  if (movedAtEnd.length) {
+    console.log('\nWARNING — the server\'s tools changed after the last trial. The trials ran against the surface at start; the record carries both:\n');
+    for (const c of movedAtEnd) console.log(`  ${c.kind.padEnd(12)} ${c.detail}`);
   }
 
   console.log('\nSUMMARY (correct / trials, forecast in brackets)');

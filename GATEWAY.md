@@ -69,6 +69,53 @@ The report counts delivery. It cannot count traps avoided, because a
 success-shaped trap leaves no error; correctness needs a grader, and that is
 what the trial below is.
 
+## When the server's tools change under the corpus
+
+Servers change. A connector adds a tool in a release, renames one, tightens
+a schema, flips an annotation — and a finding whose `triggers` name the old
+tool, or whose workaround names an argument the schema no longer has, is
+knowledge rotting at exactly that moment. The gateway is the one component
+that sits in front of a real server all day, so it is the one positioned to
+see it.
+
+It takes the tool list at connect as a baseline, re-reads it on every
+`notifications/tools/list_changed` the server sends and on every listing a
+client asks for, and diffs. A difference goes three places:
+
+- **stderr**, where the operator sees it as it happens:
+  ```
+  cairn-proxy: salesforce: query_records → search_records (same schema and description)
+  cairn-proxy:   cairn-0001 names query_records in its triggers and may no longer apply
+  ```
+- **the ledger**, as `mcp-proxy:surface-<appeared|vanished|renamed|annotations|schema|description>`,
+  carrying the findings whose triggers name the tool. `npm run cairn:report`
+  lists every change and, under it, the findings to re-read before trusting
+  them.
+- **the model**, once per change, on the next result from that server, in
+  the same labelled block findings ride in:
+  ```
+  --- from your Cairn corpus, not from this tool ---
+  This server's tools changed while this session was open:
+  - query_records → search_records (same schema and description)
+  Findings that name a changed tool, and may no longer apply as written: cairn-0001 (…)
+  --- end ---
+  ```
+
+What it does not do, on purpose: withhold, rename or block anything. The
+new tool is listed, the renamed one routes, the re-annotated one is called
+exactly as the server now offers it. A client asked for that server, not
+for this gateway's opinion of it (cairn-0046); enforcement belongs in the
+trial, where a model runs unattended against production with nobody
+watching. A gateway with no corpus notices on stderr only and appends
+nothing, so it stays indistinguishable from no gateway.
+
+Deliberately left for later: touching the findings themselves. The gateway
+never writes an observation or retires a finding on the strength of a
+diff, because a rename does not falsify a claim and a schema change may
+not either — a person reads the report and decides. Drafting a finding
+from a surface change is likewise left: the change is finding-shaped, but
+the writer is the one who knows what it broke.
+
 ## What was proven, in the client people run
 
 `scripts/gateway-trial.ts` drives Claude Code itself (`claude -p`, real
@@ -368,6 +415,27 @@ the seal, every tool the server offered with the decision and reason for
 each, the exact prompts sent, the findings by id and author, and the
 authorship caveat. Transcripts sit beside it, redacted line
 by line before they were written; `--no-transcripts` keeps none.
+
+**The run stops if the server's tools change under it.** One connection to
+the server stays open for the whole run; before every trial, and once at
+the end, the tool list is read again and compared with the one the tools
+were chosen from. A tool that appeared, vanished, was renamed, changed its
+annotations or its schema stops the run:
+
+```
+STOPPED — the server's tools changed under the run, before count empty #1:
+
+  appeared     delete_records appeared (declared destructive (destructiveHint: true))
+
+  1 trial(s) are in ~/pilot/gateway-trials/smoke-….json with stopped set; nothing after this point was run.
+  Re-read the list, update the findings and the forecast if they need it, seal again, and run again.
+```
+
+The record carries the surface at start, every change seen, and the
+surface at the end, so a result is never quoted against a tool list that
+no longer existed. A change seen only by the final check is a warning, not
+a stop: the trials ran against the surface at start, and the record has
+both.
 
 When an arm fails: a `control` trial with `ERROR=claude exited 1` and a
 stderr tail naming the server means the upstream itself did not start —
