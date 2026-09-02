@@ -189,10 +189,14 @@ cell, same model, $0.86 in total, zero permission denials.
 
 The shape is the original's: control and empty identical and wrong on
 both scenarios, delivery 10 of 10 on the gateway arm, and the gateway arm
-changing route every time. The numbers moved within what n=5 allows — A is
-within two of the truth in five of five here against three of five before,
-with no seventy-six-call expedition this time, and B is five of five
-against four. Nothing in the harness change touches what the model sees;
+changing route every time. The forecast, copied from the original seal, was
+**wrong on A gateway**: 4 of 5 exact predicted, 1 of 5 observed, Brier
+0.520 — the model paged all three pages every time and miscounted 137 rows
+by one or two in four of them. An earlier version of this paragraph called
+that "within what n=5 allows"; it was a miss, and the scoring the harness
+now writes into every run record would have said so. B gateway came back
+5 of 5 against a forecast of 4. Nothing in the harness change touches what
+the model sees;
 the gateway build differs only by the callTool relay fix (`cairn-0048`)
 and the ledger no longer carrying argument values, neither of which
 reaches a result. "Within two" is no longer a column: the harness grades
