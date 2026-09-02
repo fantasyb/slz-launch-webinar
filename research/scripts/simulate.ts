@@ -71,10 +71,10 @@
  * duplicates were thinner than real findings, never outranked their originals,
  * and produced a reassuring degradation number that meant nothing.
  */
-import { loadCorpus } from '../src/lib/cairn/load';
-import { retrieve, buildIndex, docTerms, clearConfusionCache } from '../src/lib/cairn/retrieval';
-import { matchEnvironment } from '../src/lib/cairn/precondition';
-import type { Finding } from '../src/lib/cairn/schema';
+import { loadCorpus } from '../../src/lib/cairn/load';
+import { retrieve, buildIndex, docTerms, clearConfusionCache } from '../../src/lib/cairn/retrieval';
+import { matchEnvironment } from '../../src/lib/cairn/precondition';
+import type { Finding } from '../../src/lib/cairn/schema';
 
 const argv = process.argv.slice(2);
 const arg = (n: string, d: number) => {

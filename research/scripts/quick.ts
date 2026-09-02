@@ -34,9 +34,9 @@
  * for a real held-out set — the folds share a corpus — but it catches the
  * specific failure this project keeps walking into.
  */
-import { loadCorpus } from '../src/lib/cairn/load';
-import { retrieve } from '../src/lib/cairn/retrieval';
-import { heldOutCases, inSampleCases, type EvalCase } from '../src/lib/cairn/evalset';
+import { loadCorpus } from '../../src/lib/cairn/load';
+import { retrieve } from '../../src/lib/cairn/retrieval';
+import { heldOutCases, inSampleCases, type EvalCase } from '../../src/lib/cairn/evalset';
 
 const all = loadCorpus();
 const argv = process.argv.slice(2);

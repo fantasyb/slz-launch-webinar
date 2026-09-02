@@ -385,7 +385,7 @@ export default function CalibrationPage() {
             )}
             <pre className="evidence mt-3 rounded-md border border-rule bg-paper p-3 font-mono text-[12px] text-ink-soft">
 {`npm run cairn:panel -- seal     # solicit, seal, write the manifest
-git add cairn/ panel-runs/ && git commit && git push
+git add cairn/ research/panel-runs/ && git commit && git push
 npm run cairn:panel -- reveal   # after the checks have run`}
             </pre>
           </div>

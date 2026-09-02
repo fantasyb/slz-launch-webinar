@@ -303,7 +303,7 @@ Several models forecasting the same sealed claims is a neutral calibration
 ledger. Operators run it with:
 
     npm run cairn:panel -- seal      # solicit, seal, write the manifest
-    git add cairn/ panel-runs/ && git commit && git push
+    git add cairn/ research/panel-runs/ && git commit && git push
     npm run cairn:panel -- reveal    # after the checks have run
 
 Every provider is called identically — raw HTTP, same prompt, same parsing —

@@ -26,7 +26,7 @@ import { join } from 'path';
 import { SCENARIOS } from './agent-trial';
 
 /* In the repo. A fixture under a scratch path is a test only one machine can run. */
-const FIXTURE = join(process.cwd(), 'fixtures', 'ledger');
+const FIXTURE = join(process.cwd(), 'research', 'fixtures', 'ledger');
 
 const READ = `
 import { readdirSync, readFileSync } from 'fs';

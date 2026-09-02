@@ -34,8 +34,8 @@ import Anthropic from '@anthropic-ai/sdk';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { loadCorpus } from '../src/lib/cairn/load';
-import { heldOutCases } from '../src/lib/cairn/evalset';
+import { loadCorpus } from '../../src/lib/cairn/load';
+import { heldOutCases } from '../../src/lib/cairn/evalset';
 
 async function main() {
   const all = loadCorpus();

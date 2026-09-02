@@ -2,7 +2,7 @@
   "_comment": [
     "Queries an agent actually typed, with the task in front of it and no sight",
     "of this corpus. Harvested verbatim from the trial transcripts in",
-    "scripts/agent-trial.ts — none were written for evaluation.",
+    "research/scripts/agent-trial.ts — none were written for evaluation.",
     "",
     "WHY THIS EXISTS. Every other eval query in this project is an observation",
     "note, written by the same person who wrote the finding it is scored",
@@ -38,7 +38,7 @@
     "",
     "HARVEST 2026-09-01 added eleven distinct queries (thirteen with repeats) from",
     "four traps that had never been a scenario: cairn-0004, 0009, 0022, 0028.",
-    "Produced by npm run cairn:harvest over fixtures/harvest, labelled afterwards.",
+    "Produced by npm run cairn:harvest over research/fixtures/harvest, labelled afterwards.",
     "",
     "All eleven are answerable, and that is itself a finding about how agents ask.",
     "Each trial issued about ONE query, at the start, about the task in front of",

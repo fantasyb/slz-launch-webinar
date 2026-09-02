@@ -17,8 +17,8 @@
  * reported and neither is averaged into the other.
  */
 import fs from 'fs';
-import { loadCorpus } from '../src/lib/cairn/load';
-import { retrieve } from '../src/lib/cairn/retrieval';
+import { loadCorpus } from '../../src/lib/cairn/load';
+import { retrieve } from '../../src/lib/cairn/retrieval';
 
 /* This is a measurement, not usage: keep replays out of the ledger. */
 process.env.CAIRN_EVAL = '1';

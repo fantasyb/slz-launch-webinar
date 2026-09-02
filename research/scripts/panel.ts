@@ -23,16 +23,16 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { execSync } from 'child_process';
-import { FindingSchema, type Finding } from '../src/lib/cairn/schema';
-import { PanelConfigSchema, solicit, ask, type SolicitResult } from '../src/lib/cairn/panel';
-import { computeCommitment, generateNonce } from '../src/lib/cairn/commitment';
-import { derivedVerdict } from '../src/lib/cairn/decay';
-import { findingBodyHash } from '../src/lib/cairn/signing';
-import { writeJsonAtomic } from '../src/lib/cairn/atomic';
+import { FindingSchema, type Finding } from '../../src/lib/cairn/schema';
+import { PanelConfigSchema, solicit, ask, type SolicitResult } from '../../src/lib/cairn/panel';
+import { computeCommitment, generateNonce } from '../../src/lib/cairn/commitment';
+import { derivedVerdict } from '../../src/lib/cairn/decay';
+import { findingBodyHash } from '../../src/lib/cairn/signing';
+import { writeJsonAtomic } from '../../src/lib/cairn/atomic';
 
 const MODE = process.argv[2];
 const CORPUS = path.join(process.cwd(), 'cairn');
-const RUNS = path.join(process.cwd(), 'panel-runs');
+const RUNS = path.join(process.cwd(), 'research', 'panel-runs');
 const SECRETS = path.join(process.cwd(), '.cairn-secrets', 'panel');
 
 function loadFindings(): Array<{ file: string; finding: Finding }> {
@@ -46,7 +46,7 @@ function loadFindings(): Array<{ file: string; finding: Finding }> {
 }
 
 function loadConfig() {
-  const raw = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'panel.config.json'), 'utf8'));
+  const raw = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'research', 'panel.config.json'), 'utf8'));
   delete raw._comment;
   return PanelConfigSchema.parse(raw);
 }
@@ -193,9 +193,9 @@ async function seal() {
 
   const sealed = attempts.filter((a) => a.status === 'sealed').length;
   console.log(`\n${sealed} sealed, ${attempts.length - sealed} errored`);
-  console.log(`manifest  panel-runs/${runId}.json   batch ${batchHash.slice(0, 16)}`);
+  console.log(`manifest  research/panel-runs/${runId}.json   batch ${batchHash.slice(0, 16)}`);
   console.log('\nCOMMIT AND PUSH NOW, before running any check:\n');
-  console.log(`  git add cairn/ panel-runs/ && git commit -m "seal: ${runId}" && git push\n`);
+  console.log(`  git add cairn/ research/panel-runs/ && git commit -m "seal: ${runId}" && git push\n`);
   console.log('Then run the checks, then: npm run cairn:panel -- reveal');
 }
 

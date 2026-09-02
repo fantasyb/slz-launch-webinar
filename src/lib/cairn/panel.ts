@@ -159,7 +159,7 @@ export function parseForecast(text: string): Forecast {
   // Parse first, recover second. Running the fence strip over the whole reply
   // deleted backticks INSIDE string values, so a valid fence-free forecast
   // whose reasoning mentioned ```json was accepted with its reasoning silently
-  // altered -- and scripts/panel.ts then hashed the altered text into the
+  // altered -- and research/scripts/panel.ts then hashed the altered text into the
   // commitment. A wrongly-accepted modified value is worse than a rejection.
   const trimmed = text.trim();
   try {

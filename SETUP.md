@@ -159,7 +159,7 @@ identical from here.
 New findings arriving as commits in `~/cairn` from whoever is testing, and
 `data/retrievals/<agent>.jsonl` filling up with what was actually asked and
 what came back. That file is the only record this project has of its own
-delivery — every measurement in `quality-baseline.json` before it was one
+delivery — every measurement in `research/quality-baseline.json` before it was one
 author marking their own work.
 
 ## If it says something is wrong

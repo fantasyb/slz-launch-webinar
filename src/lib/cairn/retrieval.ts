@@ -280,7 +280,7 @@ function coreText(f: Finding): string {
      *
      * The cost is that evidence can no longer serve as an evaluation set.
      * `mechanism` and `appliesTo` stay unindexed for exactly that purpose:
-     * index what a query looks like, hold out what explains it. scripts/eval.ts
+     * index what a query looks like, hold out what explains it. research/scripts/eval.ts
      * depends on that split.
      */
     ...(f.evidence ?? []).flatMap((e) => [e.command ?? '', e.output ?? '']),

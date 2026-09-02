@@ -60,9 +60,9 @@
  * the instrument that says when -- far cheaper than taking the dependency and
  * finding out.
  */
-import { loadCorpus } from '../src/lib/cairn/load';
-import { buildIndex, tokenize, docTerms } from '../src/lib/cairn/retrieval';
-import { heldOutCases } from '../src/lib/cairn/evalset';
+import { loadCorpus } from '../../src/lib/cairn/load';
+import { buildIndex, tokenize, docTerms } from '../../src/lib/cairn/retrieval';
+import { heldOutCases } from '../../src/lib/cairn/evalset';
 
 const all = loadCorpus();
 const ix = buildIndex(all);

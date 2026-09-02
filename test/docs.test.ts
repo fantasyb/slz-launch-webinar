@@ -133,7 +133,7 @@ test('every corpus file is covered by the corpus license', () => {
   // nobody adds there is code-licensed by default, which is the wrong terms
   // and, worse, a silent change of terms.
   const corpus = fs.readFileSync(path.join(process.cwd(), 'LICENSE-CORPUS'), 'utf8');
-  const dirs = ['cairn/', 'panel-runs/'].filter((d) =>
+  const dirs = ['cairn/', 'research/panel-runs/'].filter((d) =>
     fs.existsSync(path.join(process.cwd(), d)),
   );
   for (const d of dirs) {

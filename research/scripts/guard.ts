@@ -10,7 +10,7 @@
  * P@5, and a relevance gate that could not fire at all. Every one of them
  * looked fine.
  *
- * So the measured numbers are committed to quality-baseline.json and this
+ * So the measured numbers are committed to research/quality-baseline.json and this
  * enforces them. It is the same discipline the corpus applies to its own
  * claims: a number nobody re-runs is an assumption.
  *
@@ -66,7 +66,7 @@ function assertBundleFresh(): void {
 }
 assertBundleFresh();
 
-const baseline: Baseline = JSON.parse(fs.readFileSync('quality-baseline.json', 'utf8'));
+const baseline: Baseline = JSON.parse(fs.readFileSync('research/quality-baseline.json', 'utf8'));
 
 const failures: string[] = [];
 const notes: string[] = [];
@@ -104,12 +104,12 @@ async function main() {
   console.log('='.repeat(66));
 
   const [evalOut, agentOut, lintOut, doctorOut, caseOut, fieldOut] = await Promise.all([
-    run('npx', ['tsx', 'scripts/eval.ts']),
-    run('npx', ['tsx', 'scripts/agent-eval.ts']),
+    run('npx', ['tsx', 'research/scripts/eval.ts']),
+    run('npx', ['tsx', 'research/scripts/agent-eval.ts']),
     run('npx', ['tsx', 'scripts/lint-corpus.ts']),
     run('npx', ['tsx', 'scripts/doctor.ts']),
-    run('npx', ['tsx', 'scripts/case-guard.ts']),
-    run('npx', ['tsx', 'scripts/field-eval.ts']),
+    run('npx', ['tsx', 'research/scripts/case-guard.ts']),
+    run('npx', ['tsx', 'research/scripts/field-eval.ts']),
   ]);
 
   // --- held-out retrieval accuracy ---
@@ -214,7 +214,7 @@ async function main() {
   for (const f of failures) console.log('  ' + f);
   console.log(
     '\nIf this change is a deliberate trade, say so in the commit message and move\n' +
-      'the floor in quality-baseline.json in the SAME commit. Lowering a floor to\n' +
+      'the floor in research/quality-baseline.json in the SAME commit. Lowering a floor to\n' +
       'make a build pass is how a measurement stops measuring anything.\n',
   );
   process.exitCode = 1;

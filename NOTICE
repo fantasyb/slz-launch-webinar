@@ -19,7 +19,7 @@ deliberate: they are different kinds of asset and want different terms.
 2. CORPUS — Creative Commons Attribution 4.0 International
    See LICENSE-CORPUS.
 
-   cairn/*.json and panel-runs/*.json — the findings, the observations
+   cairn/*.json and research/panel-runs/*.json — the findings, the observations
    recorded against them, and the sealed forecasts.
 
    More permissive than the code, on purpose. A corpus that cannot be copied

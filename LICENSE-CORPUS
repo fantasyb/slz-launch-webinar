@@ -12,7 +12,7 @@ APPLIES TO
 This license covers the corpus — the findings themselves — and nothing else:
 
     cairn/*.json          findings, observations, predictions
-    panel-runs/*.json     sealed panel forecasts and their reveals
+    research/panel-runs/*.json   sealed panel forecasts and their reveals
 
 The software in this repository is licensed separately, under Apache License
 2.0. See LICENSE and NOTICE.

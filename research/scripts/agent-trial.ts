@@ -43,18 +43,18 @@ import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } 
 import { tmpdir } from 'os';
 import { join } from 'path';
 import Anthropic from '@anthropic-ai/sdk';
-import { loadCorpus } from '../src/lib/cairn/load';
-import { retrieve } from '../src/lib/cairn/retrieval';
-import { brief } from '../src/lib/cairn/brief';
+import { loadCorpus } from '../../src/lib/cairn/load';
+import { retrieve } from '../../src/lib/cairn/retrieval';
+import { brief } from '../../src/lib/cairn/brief';
 
 /*
  * Fixtures live in the repository, not in a scratch directory belonging to one
  * sandbox. The harvest harness was fixed for this weeks-equivalent ago and this
  * one was left pointing at a path that exists on exactly one machine — so the
- * trial suite, which produced most of the numbers in quality-baseline.json,
+ * trial suite, which produced most of the numbers in research/quality-baseline.json,
  * could not be re-run by anybody else at all.
  */
-const SCRATCH = join(process.cwd(), 'fixtures', 'trials');
+const SCRATCH = join(process.cwd(), 'research', 'fixtures', 'trials');
 const TRIALS = 5;
 
 /*

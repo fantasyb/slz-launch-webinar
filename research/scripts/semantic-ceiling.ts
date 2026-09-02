@@ -33,9 +33,9 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
-import { loadCorpus } from '../src/lib/cairn/load';
-import { retrieve } from '../src/lib/cairn/retrieval';
-import { heldOutCases } from '../src/lib/cairn/evalset';
+import { loadCorpus } from '../../src/lib/cairn/load';
+import { retrieve } from '../../src/lib/cairn/retrieval';
+import { heldOutCases } from '../../src/lib/cairn/evalset';
 
 const all = loadCorpus();
 const byId = new Map(all.map((f) => [f.id, f]));

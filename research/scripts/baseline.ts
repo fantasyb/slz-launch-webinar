@@ -24,10 +24,10 @@
  * honest move is to delete it. That outcome is a real possibility and this
  * script exists to make it visible rather than avoidable.
  */
-import { loadCorpus } from '../src/lib/cairn/load';
-import { retrieve, tokenize } from '../src/lib/cairn/retrieval';
-import { heldOutCases } from '../src/lib/cairn/evalset';
-import type { Finding } from '../src/lib/cairn/schema';
+import { loadCorpus } from '../../src/lib/cairn/load';
+import { retrieve, tokenize } from '../../src/lib/cairn/retrieval';
+import { heldOutCases } from '../../src/lib/cairn/evalset';
+import type { Finding } from '../../src/lib/cairn/schema';
 
 const all = loadCorpus();
 

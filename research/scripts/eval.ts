@@ -57,9 +57,9 @@
  *  10. nine further attempts at the sibling residual, all reverted; see the
  *      block comment in retrieval.ts for why the family is closed.
  */
-import { loadCorpus } from '../src/lib/cairn/load';
-import { retrieve } from '../src/lib/cairn/retrieval';
-import { heldOutCases, inSampleCases } from '../src/lib/cairn/evalset';
+import { loadCorpus } from '../../src/lib/cairn/load';
+import { retrieve } from '../../src/lib/cairn/retrieval';
+import { heldOutCases, inSampleCases } from '../../src/lib/cairn/evalset';
 
 /* This is a measurement, not usage: keep replays out of the ledger. */
 process.env.CAIRN_EVAL = '1';

@@ -21,16 +21,16 @@ import { cpSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import Anthropic from '@anthropic-ai/sdk';
-import { loadCorpus } from '../src/lib/cairn/load';
-import { retrieve } from '../src/lib/cairn/retrieval';
-import { SubmissionSchema, normalise } from '../src/lib/cairn/submission';
-import { FindingSchema } from '../src/lib/cairn/schema';
-import { checkFlaws } from '../src/lib/cairn/checkquality';
-import { gate } from '../src/lib/cairn/gate';
+import { loadCorpus } from '../../src/lib/cairn/load';
+import { retrieve } from '../../src/lib/cairn/retrieval';
+import { SubmissionSchema, normalise } from '../../src/lib/cairn/submission';
+import { FindingSchema } from '../../src/lib/cairn/schema';
+import { checkFlaws } from '../../src/lib/cairn/checkquality';
+import { gate } from '../../src/lib/cairn/gate';
 
 /* In the repo, not a scratch directory: a harvest nobody else can run is a
  * number nobody else can dispute. */
-const SCRATCH = join(process.cwd(), 'fixtures', 'harvest');
+const SCRATCH = join(process.cwd(), 'research', 'fixtures', 'harvest');
 const TRIALS = 3;
 const corpus = loadCorpus();
 

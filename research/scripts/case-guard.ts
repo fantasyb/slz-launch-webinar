@@ -4,7 +4,7 @@
  *   npm run cairn:case-guard            compare against the recorded outcomes
  *   npm run cairn:case-guard -- --bless record the current outcomes as the baseline
  *
- * The aggregate floors in quality-baseline.json have now been lowered twice for
+ * The aggregate floors in research/quality-baseline.json have now been lowered twice for
  * the same reason: a finding was added, its own new case failed, and P@1 fell
  * because the denominator grew. Both times the note said the corpus changed and
  * not the ranker. Both times that was true -- and a floor that gets argued down
@@ -23,9 +23,9 @@
  */
 import { createHash } from 'crypto';
 import fs from 'fs';
-import { loadCorpus } from '../src/lib/cairn/load';
-import { retrieve } from '../src/lib/cairn/retrieval';
-import { heldOutCases } from '../src/lib/cairn/evalset';
+import { loadCorpus } from '../../src/lib/cairn/load';
+import { retrieve } from '../../src/lib/cairn/retrieval';
+import { heldOutCases } from '../../src/lib/cairn/evalset';
 
 const OUTCOMES = 'data/case-outcomes.json';
 

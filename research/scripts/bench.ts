@@ -16,9 +16,9 @@
 import { execFile } from 'child_process';
 import { existsSync } from 'fs';
 import { promisify } from 'util';
-import { loadCorpus } from '../src/lib/cairn/load';
-import { retrieve, buildIndex, associationStatus } from '../src/lib/cairn/retrieval';
-import { runCommand } from '../src/lib/cairn/confirm';
+import { loadCorpus } from '../../src/lib/cairn/load';
+import { retrieve, buildIndex, associationStatus } from '../../src/lib/cairn/retrieval';
+import { runCommand } from '../../src/lib/cairn/confirm';
 
 const exec = promisify(execFile);
 

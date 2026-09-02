@@ -110,7 +110,7 @@ anywhere, but the file is real and it is in git.
 ## What we are actually trying to find out
 
 Not whether retrieval ranks well; that is measured and the numbers are in
-`quality-baseline.json`. The open questions need other people:
+`research/quality-baseline.json`. The open questions need other people:
 
 1. **Does a second author's finding retrieve?** Everything here was written by
    one author in one session, so the vocabulary is internally consistent in a

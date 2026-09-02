@@ -21,7 +21,7 @@ jobs:
       - run: npm install --no-audit --no-fund
       - run: npm test
       - run: npx tsc --noEmit -p tsconfig.json
-      # Every floor in quality-baseline.json, plus the per-case regression
+      # Every floor in research/quality-baseline.json, plus the per-case regression
       # check. Non-zero exit fails the job, which is the entire point.
       - run: npm run cairn:guard
       # The graders are measuring instruments and two of them have been wrong.

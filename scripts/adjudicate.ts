@@ -62,7 +62,7 @@ function targets(): string[] {
 }
 
 function loadConfig() {
-  const raw = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'panel.config.json'), 'utf8'));
+  const raw = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'research', 'panel.config.json'), 'utf8'));
   delete raw._comment;
   return PanelConfigSchema.parse(raw);
 }

@@ -144,7 +144,7 @@ against a competitor's is marketing. Neutrality is the property that can't be re
 
 ```bash
 npm run cairn:panel -- seal      # solicit forecasts, seal them, write the manifest
-git add cairn/ panel-runs/ && git commit -m "seal: <runId>" && git push
+git add cairn/ research/panel-runs/ && git commit -m "seal: <runId>" && git push
 # ... run the checks ...
 npm run cairn:panel -- reveal
 ```
@@ -154,7 +154,7 @@ policy. Using one vendor's official SDK and raw HTTP for the rest would bake asy
 the arbiter. Structured output is requested in-prompt rather than through any provider's
 native JSON mode, for the same reason.
 
-Model ids live in `panel.config.json` and **must be verified against each provider's current
+Model ids live in `research/panel.config.json` and **must be verified against each provider's current
 docs before a run** — a stale id silently drops a panellist. `label` is the stable ledger
 identity; keep it constant across runs.
 
@@ -165,13 +165,13 @@ their own predictions — the operator is. That reintroduces the hole commit–r
 level up: solicit ten forecasts, run the checks, publish the six that tell a good story, and
 nobody can tell.
 
-So the seal phase writes `panel-runs/<runId>.json` naming **every (model, finding) pair
+So the seal phase writes `research/panel-runs/<runId>.json` naming **every (model, finding) pair
 attempted, including failures**, with a batch hash over all of it, committed before any check
 runs. A dropped forecast is then a visible hole in a published list rather than an absence
 nobody can see. The operator's discretion is removed rather than trusted — **being a neutral
 party is a property of the protocol, not of the person.**
 
-`panel-runs/panel-2026-08-30115824.json` is a real manifest from a smoke test with no API keys
+`research/panel-runs/panel-2026-08-30115824.json` is a real manifest from a smoke test with no API keys
 configured: 27 attempts, 0 sealed, 27 recorded as errors with reasons. That is what a run that
 produced nothing is supposed to look like.
 
@@ -372,7 +372,7 @@ Stated here rather than discovered later.
   a biased sample.
 - **No panel has run.** The forecasts that are scored were made by the author model about
   its own corpus, so the cross-model number this machinery exists to produce is still
-  zero. `panel-runs/*.json` shows every non-Anthropic provider failing on a missing API
+  zero. `research/panel-runs/*.json` shows every non-Anthropic provider failing on a missing API
   key. A calibration record of one model grading itself measures its consistency, not its
   calibration.
 
@@ -562,7 +562,7 @@ Two works, two licenses, because they are two different kinds of asset.
 | | License | Covers |
 |---|---|---|
 | **Software** | [Apache-2.0](LICENSE) | `src/`, `scripts/`, `test/`, config, docs |
-| **Corpus** | [CC-BY-4.0](LICENSE-CORPUS) | `cairn/*.json`, `panel-runs/*.json` |
+| **Corpus** | [CC-BY-4.0](LICENSE-CORPUS) | `cairn/*.json`, `research/panel-runs/*.json` |
 
 Apache rather than MIT for the express patent grant — the point of licensing this
 at all is that a team can adopt it without a legal review first, and the patent

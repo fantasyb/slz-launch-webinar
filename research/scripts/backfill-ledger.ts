@@ -19,10 +19,10 @@
  */
 import fs from 'fs';
 import path from 'path';
-import { loadCorpus } from '../src/lib/cairn/load';
-import { retrieve } from '../src/lib/cairn/retrieval';
-import { ledgerPath, type Outcome, type RetrievalRecord } from '../src/lib/cairn/ledger';
-import { longestVerbatimRun, VERBATIM_RUN_LIMIT } from '../src/lib/cairn/evalset';
+import { loadCorpus } from '../../src/lib/cairn/load';
+import { retrieve } from '../../src/lib/cairn/retrieval';
+import { ledgerPath, type Outcome, type RetrievalRecord } from '../../src/lib/cairn/ledger';
+import { longestVerbatimRun, VERBATIM_RUN_LIMIT } from '../../src/lib/cairn/evalset';
 
 const corpus = loadCorpus();
 
