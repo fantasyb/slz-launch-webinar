@@ -345,6 +345,8 @@ function describe(tool: Tool, about: About[], budgetLeft: number): Tool {
  * a long session; the reminder is what survives that.
  */
 const REMIND_EVERY = 10;
+/** Upstreams whose trap index has already been delivered on a result this session. */
+const introduced = new Set<string>();
 const callsByTool = new Map<string, number>();
 const shown = new Set<string>();
 const nudged = new Set<string>();
@@ -490,6 +492,39 @@ async function main() {
     }
   }
 
+  /*
+   * THE PRE-DECISION INDEX. Warning "before the call" cannot happen between
+   * the model's decision and the execution -- there is no model turn there,
+   * and any text put there is either a deferral or arrives with the result.
+   * Before the call therefore means before the DECISION, and the surfaces
+   * that precede a decision are the ones already in context: the instructions
+   * at connect, the tool definitions, and prior results. This index goes on
+   * all three: one line per tool with a recorded trap, so the model knows
+   * `delete_records` has one before it has ever reached for `delete_records`.
+   */
+  const INDEX_CAP = 8;
+  async function trapIndex(up: Upstream, findings: Finding[], except?: string): Promise<string[]> {
+    if (!up.alive || !up.client) return [];
+    let tools: Tool[];
+    try {
+      tools = (await up.client.listTools({}, FORWARD)).tools;
+    } catch {
+      return [];
+    }
+    const lines: string[] = [];
+    for (const t of tools) {
+      const name = expose(up, t.name);
+      if (name === except) continue;
+      const about = findingsAbout(up.spec.name, t.name, name, findings, propertyNames(t));
+      if (!about.length) continue;
+      const a = about[0];
+      const where = a.props.length ? ` (argument ${a.props[0]})` : '';
+      lines.push(`${name}${where}: "${clip(a.finding.title, 90)}" (${a.finding.id})${about.length > 1 ? ` +${about.length - 1}` : ''}`);
+      if (lines.length >= INDEX_CAP) break;
+    }
+    return lines;
+  }
+
   /** One attempt to bring a dead upstream back, then an honest error result. */
   async function ensure(up: Upstream): Promise<boolean> {
     if (up.alive && up.client) return true;
@@ -524,6 +559,11 @@ async function main() {
     ...(anyCap('completions') ? { completions: {} } : {}),
   };
 
+  const startupFindings = localFindings().findings;
+  const indexAtConnect: string[] = [];
+  for (const up of upstreams) {
+    for (const line of await trapIndex(up, startupFindings)) indexAtConnect.push(single ? line : `${line}`);
+  }
   const instructions = [
     ...upstreams
       .filter((u) => u.instructions)
@@ -532,7 +572,10 @@ async function main() {
     'Tool descriptions and results may carry a block marked "' + LABEL + '". That block is from ' +
       'the ledger of recorded traps kept by whoever configured this proxy, not from the service; ' +
       'judge whether it applies. When a call fails in a way that contradicted a reasonable ' +
-      'expectation, and you work it out, record it with cairn_record.',
+      'expectation, and you work it out, record it with cairn_record.' +
+      (indexAtConnect.length
+        ? `\n\nTools with a recorded trap, as of this session's start:\n${indexAtConnect.map((l) => `- ${l}`).join('\n')}`
+        : ''),
   ].join('\n\n');
 
   server = new Server({ name: 'cairn-proxy', version: '0.2.0' }, { capabilities, instructions });
@@ -612,7 +655,21 @@ async function main() {
       const about = findingsAbout(owner.up.spec.name, owner.raw, req.params.name, findings, Object.keys(args));
       const isError = result.isError === true;
       if (isError) observe(`${req.params.name} ${JSON.stringify(args)}`, [], 'mcp-proxy:error');
-      const note = annotate(req.params.name, about, isError, args);
+      let note = annotate(req.params.name, about, isError, args);
+      /*
+       * FIRST CONTACT. `instructions` is the right place for the index and
+       * not every client honours it; a result is read by all of them. So the
+       * first result from each upstream carries the index once, minus the tool
+       * just called (its own note is already here), and never again.
+       */
+      if (!introduced.has(owner.up.spec.name)) {
+        introduced.add(owner.up.spec.name);
+        const index = await trapIndex(owner.up, findings, req.params.name);
+        if (index.length) {
+          note += `\n\n--- ${LABEL} ---\nOther tools from this server with a recorded trap:\n` +
+            index.map((l) => `- ${l}`).join('\n') + `\n--- end ---`;
+        }
+      }
       if (note) {
         const content = Array.isArray(result.content) ? result.content : [];
         result.content = [...content, { type: 'text', text: note.replace(/^\n+/, '') }];

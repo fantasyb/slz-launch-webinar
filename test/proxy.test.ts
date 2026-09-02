@@ -144,6 +144,17 @@ class Session {
 }
 
 const texts = (r: { content: { text?: string }[] }) => r.content.map((c) => c.text ?? '');
+
+/**
+ * The invariant every annotation must satisfy: the tool's own content comes
+ * first and intact, and every block after it carries the sender label. This is
+ * what "untouched" means here -- not "nothing appended", because the index of
+ * a server's traps rides on its first result by design.
+ */
+function intactThenLabelled(r: { content: { type: string; text?: string }[] }, own: string): void {
+  assert.deepEqual(r.content[0], { type: 'text', text: own }, 'the tool\'s own content is first and intact');
+  for (const c of r.content.slice(1)) assert.match(c.text ?? '', /from your Cairn corpus, not from this tool/, 'every appended block is labelled');
+}
 const single = (home: string) => new Session(home, ['--server', `node ${FIXTURE}`]);
 
 test('a finding rides back on the result of the tool it is about', async () => {
@@ -170,7 +181,7 @@ test('a tool nothing is recorded about comes back untouched, and so does a corpu
   const s = single(home);
   try {
     await s.init();
-    assert.deepEqual((await s.call('mcp__data360__unrelated')).content, [{ type: 'text', text: 'ok' }]);
+    intactThenLabelled(await s.call('mcp__data360__unrelated'), 'ok');
     // The broken file must not silence the good one either.
     assert.ok(texts(await s.call('mcp__data360__query_records', { object: 'A' })).some((x) => x.includes('cairn-0001')));
   } finally { await s.close(); }
@@ -201,6 +212,33 @@ test('the tool description names the trap before any call is made', async () => 
     assert.match(q.description!, /not from this tool/);
     assert.match(q.description!, /^Query records/, 'the upstream\'s own description comes first, untouched');
     assert.equal(tools.find((t) => t.name === 'mcp__data360__unrelated')!.description, 'Something nothing is recorded about');
+  } finally { await s.close(); }
+});
+
+/**
+ * Before the call means before the DECISION. There is no model turn between
+ * a decision and its execution, so the surfaces that can warn first are the
+ * ones already in context: the instructions at connect, and prior results.
+ * The proof is a trap the agent hears about on a tool it has never called.
+ */
+test('a trap on a tool the agent has not called yet is announced at connect and on first contact', async () => {
+  const home = corpus(false);
+  bank(home, '0004-fail.json', 'cairn-0004', 'the failing tool reports a mapping error for any object with a space in its name', 'mcp__data360__failing');
+  const s = single(home);
+  try {
+    const init = await s.init();
+    const instructions = (init.result as { instructions?: string }).instructions ?? '';
+    assert.match(instructions, /mapping error for any object with a space/, 'the index is in the instructions at connect');
+
+    // First contact with this upstream is a call to a DIFFERENT tool.
+    const first = texts(await s.call('mcp__data360__unrelated'));
+    const index = first.find((x) => x.includes('cairn-0004'));
+    assert.ok(index, 'the first result from the upstream carries the index, for clients that ignore instructions');
+    assert.match(index!, /Other tools from this server/);
+    assert.match(index!, /not from this tool/);
+
+    const second = texts(await s.call('mcp__data360__unrelated'));
+    assert.ok(!second.some((x) => x.includes('cairn-0004')), 'the index is delivered once, not on every result');
   } finally { await s.close(); }
 });
 
@@ -395,6 +433,7 @@ test('a dead upstream is an error result, and it is respawned for the next call'
     assert.ok(fs.existsSync(marker), 'the fixture really did exit');
 
     const r2 = await s.call('mcp__data360__unrelated');
-    assert.deepEqual(r2.content, [{ type: 'text', text: 'ok' }], 'one respawn, then the call succeeds');
+    assert.ok(!r2.isError, 'one respawn, then the call succeeds');
+    intactThenLabelled(r2, 'ok');
   } finally { await s.close(); }
 });
