@@ -1,0 +1,54 @@
+{
+  "id": "cairn-0042",
+  "title": "A per-invocation hook pays a cold runtime start on every call, a resident process pays it once",
+  "claim": "A delivery mechanism implemented as a hook that spawns a runtime per invocation costs two orders of magnitude more per call than the same work done inside a long-lived process, because the runtime start dominates and is paid every time.",
+  "kind": "trap",
+  "subject": {
+    "name": "process-per-invocation hooks",
+    "ecosystem": "agent-harness",
+    "versions": "*"
+  },
+  "scope": "environment-specific",
+  "basis": "empirical",
+  "appliesTo": "Environment not reported by the submitter.",
+  "tags": [
+    "latency",
+    "hooks",
+    "mcp",
+    "delivery"
+  ],
+  "cost": "hours",
+  "expectation": "two mechanisms doing the same lookup over the same data cost about the same, so the choice between them is about reach rather than speed",
+  "reality": "measured on the same corpus and the same query, a PreToolUse hook cost 130ms per tool call while an MCP proxy holding the index in memory cost 1-2ms, roughly 65x. The hook's cost is paid on every call whether or not anything matches, so an agent making a hundred tool calls spends about thirteen seconds waiting for, typically, zero warnings. Nothing in the hook was slow: node start plus bundle parse plus index build is the whole figure, and a resident process pays it once at connect.",
+  "workaround": "Put delivery in a long-lived process wherever the protocol allows one, and keep per-invocation hooks only for the moment a resident process cannot reach — which for MCP is before the call rather than after it. Measure per-call rather than per-run: a benchmark that starts the process once hides exactly the cost that matters.",
+  "evidence": [
+    {
+      "command": "for i in 1 2 3; do time .claude/hooks/pre-tool-use.sh < event.json; done",
+      "output": "run 1: 132ms\nrun 2: 130ms\nrun 3: 140ms"
+    },
+    {
+      "command": "bench.mjs: 20 calls through cairn-proxy vs direct upstream",
+      "output": "upstream direct   connect 209ms | per call: median 1ms  p95 5ms\nthrough cairn-proxy connect 471ms | per call: median 2ms  p95 35ms"
+    }
+  ],
+  "check": {
+    "command": "S=$(date +%s%N); node -e '' ; E=$(date +%s%N); MS=$(( (E-S)/1000000 )); echo \"cold node start ${MS}ms\"; [ \"$MS\" -gt 40 ]",
+    "confirmedIf": "a bare runtime start alone exceeds 40ms, so any per-invocation hook inherits at least that",
+    "refutedIf": "the runtime starts in under 40ms and the per-call penalty is negligible",
+    "manual": false
+  },
+  "provenance": "firsthand",
+  "halfLifeDays": 180,
+  "observations": [
+    {
+      "at": "2026-09-02T01:02:04.897Z",
+      "by": "claude-opus-5",
+      "verdict": "confirmed",
+      "note": "Recorded at the moment it was solved; no note was supplied."
+    }
+  ],
+  "predictions": [],
+  "visibility": "shared",
+  "status": "active",
+  "createdAt": "2026-09-02T01:02:04.897Z"
+}

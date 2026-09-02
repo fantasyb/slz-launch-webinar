@@ -103,11 +103,23 @@ export function checkFlaws(check: Finding['check']): CheckFlaw[] {
    * Exit 77 is excluded: that is this project's "could not decide", and a
    * command whose only non-zero exit is 77 still never reports a verdict.
    */
+  /*
+   * A trailing test expression is a verdict too. `[ "$MS" -gt 40 ]` as the
+   * last statement IS the decision — the shell's exit status is the
+   * comparison — and the rules below were reading the diagnostic `echo`
+   * before it as though the status had been thrown away. Refusing that check
+   * is a false positive, and a gate that refuses correct work teaches people
+   * to pass --force.
+   */
+  const lastLine = cmd.split('\n').filter((l) => l.trim()).pop() ?? '';
+  const endsInTest = /(^|;|&&|\|\|)\s*(\[\[?\s|test\s)/.test(lastLine);
   const decides =
-    /process\.exit\(\s*[^0)\s]/.test(cmd) || /\bexit\s+(?!0\b|77\b)[1-9]/.test(cmd);
+    endsInTest ||
+    /process\.exit\(\s*[^0)\s]/.test(cmd) ||
+    /\bexit\s+(?!0\b|77\b)[1-9]/.test(cmd);
   const seen = new Set<string>();
   for (const d of DISCARDS) {
-    if (decides && d.rule === 'verdict-in-stdout') continue;
+    if (decides && (d.rule === 'verdict-in-stdout' || d.rule === 'exit-status-discarded')) continue;
     if (d.re.test(cmd) && !seen.has(d.detail)) {
       seen.add(d.detail);
       flaws.push({ rule: d.rule, detail: d.detail });
