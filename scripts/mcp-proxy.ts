@@ -294,6 +294,7 @@ function propertyNames(tool: Tool): string[] {
 
 function describe(tool: Tool, about: About[], budgetLeft: number): Tool {
   if (!about.length) return tool;
+  for (const a of about) served(a.finding.id, tool.name, a.props.length ? 'argument' : 'description');
   const out: Tool = { ...tool, inputSchema: { ...tool.inputSchema } };
   const props = (out.inputSchema as { properties?: Props }).properties;
 
@@ -351,6 +352,38 @@ const callsByTool = new Map<string, number>();
 const shown = new Set<string>();
 const nudged = new Set<string>();
 
+/**
+ * Write down what was actually delivered, and on which surface.
+ *
+ * Without this the product's only delivery path leaves no trace. The proxy
+ * observed errors and nothing else, so every annotation it put on a tool
+ * description, an argument schema or a result went to the model and vanished
+ * — and after a pilot the only thing that would ever have seen one is
+ * `test/proxy.test.ts`.
+ *
+ * That is the failure this repository already shipped once and fixed at
+ * d36bc81, where 240 of 273 ledger rows turned out to be the eval suite and
+ * `cairn:status` was reporting the test harness as adoption. The same mistake
+ * in a new costume: an instrument that records only what it was built to
+ * record, and a delivery mechanism nobody can audit afterwards.
+ *
+ * Tagged `mcp-proxy:*` and never `cli:find`, so served annotations can never
+ * be mistaken for somebody asking a question.
+ */
+function served(findingId: string, tool: string, surface: string): void {
+  try {
+    observe(`${tool} [${surface}]`, [{ finding: { id: findingId }, rank: 1, strength: 'strong' }] as never, `mcp-proxy:${surface}`);
+  } catch (e) {
+    /*
+     * Delivery must never fail because the ledger could not be written — but
+     * a silent catch here hid the fact that this function recorded nothing at
+     * all, which is the exact defect it was added to fix. Loud on stderr,
+     * which the client shows as server noise and never feeds to the model.
+     */
+    process.stderr.write(`cairn-proxy: could not record delivery: ${(e as Error).message}\n`);
+  }
+}
+
 function annotate(exposed: string, about: About[], isError: boolean, args: Record<string, unknown>): string {
   const calls = (callsByTool.get(exposed) ?? 0) + 1;
   callsByTool.set(exposed, calls);
@@ -363,8 +396,10 @@ function annotate(exposed: string, about: About[], isError: boolean, args: Recor
     if (!shown.has(key)) {
       shown.add(key);
       out += fullNote(f);
+      served(f.id, exposed, 'result');
     } else if (calls % REMIND_EVERY === 0) {
       out += reminderNote(f);
+      served(f.id, exposed, 'result-reminder');
     }
   }
   /*
@@ -520,6 +555,7 @@ async function main() {
       const a = about[0];
       const where = a.props.length ? ` (argument ${a.props[0]})` : '';
       lines.push(`${name}${where}: "${clip(a.finding.title, 90)}" (${a.finding.id})${about.length > 1 ? ` +${about.length - 1}` : ''}`);
+      served(a.finding.id, name, except === undefined ? 'connect-index' : 'first-contact');
       if (lines.length >= INDEX_CAP) break;
     }
     return lines;

@@ -32,6 +32,40 @@ interface Baseline {
   corpus: { maxLintErrors: number; maxCheckSeconds: number };
 }
 
+/*
+ * A stale bundle has now defeated two fixes in one evening.
+ *
+ * The suites spawn `node bin/cairn-find.js`, which runs dist/cli/find.js, so
+ * a change in src/ that has not been rebuilt is simply not being tested — and
+ * both times the symptom was the opposite of alarming: the source said the
+ * fix was in, and the behaviour said it was not. It hid --quiet, and it hid
+ * CAIRN_EVAL while the guard kept writing eval traffic into the usage ledger.
+ *
+ * So the guard refuses to grade a build it cannot vouch for.
+ */
+function assertBundleFresh(): void {
+  const bundle = 'dist/cli/find.js';
+  if (!fs.existsSync(bundle)) return; /* Not built at all: the launcher falls back to tsx. */
+  const built = fs.statSync(bundle).mtimeMs;
+  const newest = (dir: string): number =>
+    fs
+      .readdirSync(dir, { withFileTypes: true })
+      .reduce((m, d) => {
+        const p = `${dir}/${d.name}`;
+        return Math.max(m, d.isDirectory() ? newest(p) : fs.statSync(p).mtimeMs);
+      }, 0);
+  const src = Math.max(newest('src/lib/cairn'), newest('scripts'));
+  if (src > built) {
+    console.error(
+      '\nREFUSED — dist/cli/find.js is older than src/. The suites spawn the\n' +
+        'bundle, so this run would grade code that is not the code in the tree.\n' +
+        'Run: npm run cairn:build-cli\n',
+    );
+    process.exit(2);
+  }
+}
+assertBundleFresh();
+
 const baseline: Baseline = JSON.parse(fs.readFileSync('quality-baseline.json', 'utf8'));
 
 const failures: string[] = [];
