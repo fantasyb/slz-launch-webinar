@@ -264,9 +264,9 @@ So the design goal is not "unpoisonable". It is **blast radius**:
 
 | | status |
 |---|---|
-| Cairn executes something | **no** — `cairn:verify` requires `--run`; blocking patterns refused even then |
+| Cairn executes something | **not unless this machine says so, and never for an agent** — `doctor`, `find --confirm`, `gate` and `verify --run` refuse until `~/.cairn/policy.json` enables this corpus; `cairn:record` from the command line then also runs the check you just wrote, unless `strict`; a finding recorded by an agent through the gateway or the MCP server is never executed, whatever the policy says. EXECUTION.md is the page for a reviewer |
 | Cairn writes to your files | **no** — install appends one block, signed, shape-checked, diffed, `--yes` |
-| Cairn transmits your data | **only the string you search for** — a GET still sends its query, and error strings carry paths, hostnames and sometimes secrets. Contributions are local drafts a human sends. Run your own instance and the query never leaves either |
+| Cairn transmits your data | **nothing leaves the machine; it is written down** — the CLI and the gateway read the clone on disk, and the gateway forwards tool calls to the upstream you configured and nowhere else. Every query, and every gateway call by tool name and argument *names* (values only with `CAIRN_RECORD_ARGS=1`), goes to `data/retrievals/` in the corpus, redacted and capped at 2000 characters — and that directory travels if you commit and push it. A hosted instance's `/api/search` is a GET whose query string the host can log; run your own and it never leaves either |
 | Cairn's content is marked untrusted | **yes** — every response carries `_untrustedFields` |
 | Hostile content is hard to merge | **two independent layers in CI, plus a human merge** |
 | A poisoned finding is attributable | **yes** — signed, so it is traceable to a key with a history |

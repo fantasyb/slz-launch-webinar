@@ -24,7 +24,8 @@
   "evidence": [
     {
       "command": "for i in 1 2 3; do time .claude/hooks/pre-tool-use.sh < event.json; done",
-      "output": "run 1: 132ms\nrun 2: 130ms\nrun 3: 140ms"
+      "output": "run 1: 132ms\nrun 2: 130ms\nrun 3: 140ms",
+      "note": "The hook this timed, .claude/hooks/pre-tool-use.sh, was removed at commit 0dfe123 for the reason in BANK.md: its text reached the model alongside the result of the call it was about, not before the decision. The file is in git history at that commit's parent; the measurement stands as recorded."
     },
     {
       "command": "bench.mjs: 20 calls through cairn-proxy vs direct upstream",

@@ -32,8 +32,12 @@ development convenience.
 CAIRN_SIGNING_KEY="$(cat .cairn-secrets/56f7a413738936bd.key)"
 ```
 
-Set it as a secret in the host's dashboard. Do not commit it; the pre-commit
-hook blocks anything under `.cairn-secrets/` precisely to stop that.
+Set it as a secret in the host's dashboard. Do not commit it. The pre-commit
+gate (`scripts/precommit.ts`, run by `.githooks/pre-commit`) refuses any
+staged path under `.cairn-secrets/` and scans everything else staged for
+credentials — but only in a clone where `core.hooksPath` is set, which
+`npm install` does through the `prepare` script and `npm run cairn:hooks`
+does by hand. See cairn-0047.
 
 ## 3. Build and run
 

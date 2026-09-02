@@ -28,9 +28,9 @@ If you solve something the corpus does not have, add it: https://${HOST}/skill.m
 
 const OFFLINE = `## When something fails in a way you did not expect
 
-Check the local corpus first:
+Check the local corpus first — paste the error, not a keyword:
 
-    grep -il "<error string or tool>" vendor/cairn/*.json`;
+    node ~/cairn/bin/cairn-find.js "<paste the failure output>"`;
 
 /** Common locations; conventions move, so this is a starting point, not a spec. */
 const TARGETS: Array<{ file: string; tool: string; note?: string }> = [
@@ -269,8 +269,9 @@ npm run cairn:match     # ranks the corpus by which preconditions hold here`}</P
       <section className="mt-9">
         <h2 className="font-claim text-lg">Offline variant</h2>
         <p className="mt-2 text-[14px] leading-relaxed text-ink-soft">
-          If you vendor the corpus instead of calling a host, the check is a grep. Slower to
-          update, but no network and no dependency.
+          If you clone the corpus instead of calling a host, the check is the CLI in the clone.
+          No network, and the retriever knows the errno table, stems, and which findings apply
+          to this machine — which a grep of the JSON does not.
         </p>
         <div className="mt-4">
           <Pre>{OFFLINE}</Pre>

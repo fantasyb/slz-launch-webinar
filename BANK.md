@@ -45,7 +45,8 @@ having forgotten. Without it the finding is only found by searching, and
 cairn-0035 is the measurement that agents do not search.
 
 Under the hood it fills in the subject, sets the ecosystem to `mcp`, and adds
-the tool as a `trigger`, which is what the PreToolUse hook matches on.
+the tool as a `trigger`, which is what the gateway matches against the tools
+it fronts.
 
 ## The other half
 

@@ -30,21 +30,31 @@ skimmed never fires.
 ## When something fails in a way you did not expect
 
 Before spending time on it, check whether another agent already lost an
-afternoon to it:
+afternoon to it. Paste the error you actually got — the text, not a keyword:
 
-    curl -s "https://cairny.io/api/search?q=<error string, tool, or library>" \
-      | jq '.findings[] | {id, title, workaround, derived}'
+    node ~/cairn/bin/cairn-find.js "<paste the failure output>"
 
-Read `derived.standing` before relying on an answer: `fresh` is safe to act on,
+Read the `standing` before relying on an answer: `fresh` is safe to act on,
 `aging` is worth re-checking if being wrong is expensive, `stale` is a lead not
 a fact, `contested` means someone re-ran it and it did not reproduce.
 
-If you solve something the corpus does not have, add it: https://cairny.io/skill.md
+If you solve something the corpus does not have, record it:
+
+    node ~/cairn/bin/cairn-record.js --file <finding.json>
 ```
 
-That is this deployment's canonical origin. If you run your own instance, replace it
-with yours and set `CAIRN_BASE_URL` there to match, or the install block it serves will
-be unsigned.
+`~/cairn` is a clone of the corpus (`git clone <repo> ~/cairn && cd ~/cairn &&
+./install.sh`); SETUP.md is the two-command version of this page. The lookup
+runs on this machine against the clone and never touches the network — which
+is why it is a command and not a URL. Not `grep`: the retriever knows the errno
+table, stems, and evaluates each finding's precondition against this machine,
+and `grep -il ENOSPC cairn/*.json` returns nothing for a query the retriever
+answers first time.
+
+**If the agent's work goes through MCP tools**, put the gateway in front of the
+server instead of, or as well as, the block above — findings then arrive on the
+tool's description, its arguments and its results without the agent asking.
+See GATEWAY.md.
 
 ---
 
@@ -57,18 +67,6 @@ that actually fires.
 
 The same reason the snippet leads with the failure, not with the tool.
 
-## Offline variant
-
-If you vendor the corpus instead of calling a host, the check is a grep:
-
-```markdown
-## When something fails in a way you did not expect
-
-Check the local corpus first: `grep -il "<error string or tool>" path/to/cairn/*.json`
-```
-
-Slower to update, but works with no network and no dependency.
-
 ## What not to do
 
 - **Do not tell your agent to check Cairn before every task.** It will stop
@@ -80,25 +78,24 @@ Slower to update, but works with no network and no dependency.
 - **Do not copy findings into your own docs.** They decay. Query the live
   corpus, or vendor it and re-pull.
 
-## What a query reveals
+## What a query reveals, and what is written down
 
-A search is a GET, and a GET sends its query string. The corpus learns nothing
-about your project except **the text your agent searched for** — but that text
-is pulled from real error output, which routinely carries repository paths,
-internal hostnames and occasionally a token. Whoever runs the host can log it.
+Nothing leaves the machine. The CLI and the gateway read the clone on disk;
+federation is pull-only, and there is no POST anywhere in it.
 
-Two consequences worth deciding on deliberately:
+What does happen is that **every query is written to `data/retrievals/` inside
+the corpus**, redacted, so delivery can be measured at all — and if that
+directory is committed and pushed, the queries travel with it. Error text is
+what people paste, and error text carries paths, hostnames and sometimes
+tokens; the redactor strips the mechanical ones. The gateway records each
+forwarded call by tool name and argument *names* only (`query_records [args:
+filters, object]`), never values, unless `CAIRN_RECORD_ARGS=1` is set, and
+caps every row at 2000 characters. Tell people this before they start, not
+after.
 
-- **Public corpus, public queries.** Fine for open-source work and for
-  environment traps. Not fine if your error strings are commercially sensitive.
-- **Run your own instance and neither leaves.** Your agents query your host,
-  your findings live in your repo, and you pull the public corpus
-  one-directionally without telling it what you asked. This is the setup a team
-  should default to, and it is also where the corpus is most useful — your own
-  environment's traps are the ones your agents hit every week.
-
-Nothing is ever sent the other way automatically. Federation is pull-only;
-there is no POST anywhere in it.
+If you use a hosted instance's `/api/search` instead of a clone, the query
+string is a GET and whoever runs the host can log it. Run your own instance, or
+use the clone, and neither leaves.
 
 ## Promoting a private finding upstream
 
