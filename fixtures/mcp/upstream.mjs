@@ -25,6 +25,20 @@ const NAME = at !== -1 ? process.argv[at + 1] : 'fake-data360';
  */
 const cm = process.argv.indexOf('--crash-marker');
 const CRASH_MARKER = cm !== -1 ? process.argv[cm + 1] : null;
+/*
+ * --refuse-start-unless <file>: exit at once unless the file exists. Combined
+ * with --crash-marker this is an upstream that dies mid-call and then cannot
+ * be restarted until something on the machine changes -- the shape of a
+ * connector whose token expired and was refreshed a minute later.
+ */
+const rs = process.argv.indexOf('--refuse-start-unless');
+if (rs !== -1 && !fs.existsSync(process.argv[rs + 1])) {
+  process.stderr.write('upstream: refusing to start, marker absent\n');
+  process.exit(1);
+}
+/* --slow-marker <file>: the `slow` tool waits four seconds, or writes the file and returns early when the call is cancelled. */
+const sm = process.argv.indexOf('--slow-marker');
+const SLOW_MARKER = sm !== -1 ? process.argv[sm + 1] : null;
 
 const s = new McpServer(
   { name: NAME, version: '1.0.0' },
@@ -48,6 +62,19 @@ s.registerTool(
     }
     return { content: [{ type: 'text', text: 'ok' }] };
   },
+);
+s.registerTool(
+  'mcp__data360__slow',
+  { description: 'A tool that takes a while, and notices being cancelled', inputSchema: {} },
+  (_args, extra) =>
+    new Promise((resolve) => {
+      const done = setTimeout(() => resolve({ content: [{ type: 'text', text: 'finished' }] }), 4000);
+      extra?.signal?.addEventListener('abort', () => {
+        clearTimeout(done);
+        if (SLOW_MARKER) fs.writeFileSync(SLOW_MARKER, 'cancelled');
+        resolve({ content: [{ type: 'text', text: 'cancelled' }] });
+      });
+    }),
 );
 s.registerTool(
   'mcp__data360__failing',

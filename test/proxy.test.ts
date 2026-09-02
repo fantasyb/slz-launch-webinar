@@ -69,6 +69,8 @@ class Session {
   private buf = '';
   notifications: Msg[] = [];
   stderr = '';
+  /** Resolves with the exit code when the proxy process ends. */
+  exited: Promise<number | null>;
 
   constructor(home: string, args: string[]) {
     const env: Record<string, string | undefined> = { ...process.env, CAIRN_HOME: home };
@@ -81,6 +83,7 @@ class Session {
       env: env as NodeJS.ProcessEnv,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
+    this.exited = new Promise((r) => this.child.on('exit', (c) => r(c)));
     this.child.stderr!.on('data', (d) => { this.stderr += String(d); });
     this.child.stdout!.on('data', (d) => {
       this.buf += String(d);
@@ -108,6 +111,14 @@ class Session {
       const t = setTimeout(() => reject(new Error(`no reply to ${method} (id ${id}) in 20s\n${this.stderr}`)), 20_000);
       this.pending.set(id, (m) => { clearTimeout(t); resolve(m); });
     });
+  }
+
+  /** Send a request and return its id without waiting for a reply, for the calls that will be cancelled. */
+  fire(method: string, params: unknown = {}): number {
+    const id = this.next++;
+    this.pending.set(id, () => undefined);
+    this.child.stdin!.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`);
+    return id;
   }
 
   notify(method: string, params: unknown = {}): void {
@@ -713,5 +724,82 @@ test('degraded, a changed tool surface is noticed on stderr and nothing is appen
     assert.match(s.stderr, /delete_records appeared/);
     const r = await s.call('get_record', { object: 'Case', id: 'x' });
     assert.equal(r.content.length, 1, 'a gateway with no corpus must be indistinguishable from no gateway');
+  } finally { await s.close(); }
+});
+
+/* ------------------------------------------------------------------------ */
+/* Ambient, in front of a real connector all day                              */
+/* ------------------------------------------------------------------------ */
+
+/**
+ * An upstream that does not start is a failure the client would have seen on
+ * its own. Carrying on would present a connected server with the gateway's
+ * two tools and none of the upstream's -- an empty vehicle that looks full.
+ * The gateway exits instead, with the reason on stderr, which is exactly
+ * what no gateway would have done.
+ */
+test('an upstream that cannot start takes the gateway down with it, visibly, rather than serving an empty list', async () => {
+  const s = single(corpus());
+  const bad = new Session(corpus(), ['--server', 'node /nonexistent/never-a-server.mjs']);
+  try {
+    const code = await Promise.race([bad.exited, new Promise<number | null>((r) => setTimeout(() => r(-1), 15_000))]);
+    assert.equal(code, 1, `the proxy must exit, not serve; stderr:\n${bad.stderr}`);
+    assert.match(bad.stderr, /did not start/);
+    assert.match(bad.stderr, /exiting so the client sees the failure/);
+    /* And a working one is unaffected by the rule. */
+    await s.init();
+    assert.ok((await s.tools()).some((t) => t.name === 'mcp__data360__query_records'));
+  } finally { await s.close(); await bad.close(); }
+});
+
+/**
+ * A restart that fails must not be the last one tried. Day-long sessions sit
+ * in front of connectors whose tokens expire and are refreshed a minute
+ * later; the gateway retries with backoff for as long as the session lasts,
+ * and a call inside the wait says how long.
+ */
+test('a failed restart is retried with backoff, and the upstream comes back when it can', async () => {
+  const home = corpus();
+  const crash = path.join(home, 'crashed');
+  const allow = path.join(home, 'allow-restart');
+  fs.writeFileSync(allow, ''); /* present for the first start */
+  const s = new Session(home, ['--server', `node ${FIXTURE} --crash-marker ${crash} --refuse-start-unless ${allow}`]);
+  try {
+    await s.init();
+    fs.unlinkSync(allow); /* the restart will be refused until this is back */
+    const r1 = await s.call('mcp__data360__unrelated');
+    assert.equal(r1.isError, true, 'the fixture exits mid-call');
+    const r2 = await s.call('mcp__data360__unrelated');
+    assert.equal(r2.isError, true, 'the restart was refused');
+    assert.match(texts(r2).join(''), /not running .*restart will be retried in \d+s|did not restart/, texts(r2).join(''));
+    assert.match(s.stderr, /did not restart .*next attempt in 1s/);
+    fs.writeFileSync(allow, '');
+    await new Promise((r) => setTimeout(r, 1200));
+    const r3 = await s.call('mcp__data360__unrelated');
+    assert.ok(!r3.isError, `after the wait, the restart succeeds: ${texts(r3).join('')}`);
+    intactThenLabelled(r3, 'ok');
+    assert.match(s.stderr, /is back/);
+  } finally { await s.close(); }
+});
+
+/**
+ * The client's cancel reaches the upstream. Without it the proxy dropped the
+ * response and the upstream ran the call to completion -- a write the person
+ * cancelled, still written.
+ */
+test('a cancelled call is cancelled upstream, not merely unanswered', async () => {
+  const home = corpus();
+  const marker = path.join(home, 'slow-cancelled');
+  const s = new Session(home, ['--server', `node ${FIXTURE} --slow-marker ${marker}`]);
+  try {
+    await s.init();
+    const id = s.fire('tools/call', { name: 'mcp__data360__slow', arguments: {} });
+    await new Promise((r) => setTimeout(r, 300));
+    s.notify('notifications/cancelled', { requestId: id, reason: 'the person changed their mind' });
+    const deadline = Date.now() + 3000;
+    while (Date.now() < deadline && !fs.existsSync(marker)) await new Promise((r) => setTimeout(r, 100));
+    assert.ok(fs.existsSync(marker), 'the upstream\'s handler saw the abort within three seconds, not after its four-second run');
+    /* The session is still healthy afterwards. */
+    intactThenLabelled(await s.call('mcp__data360__unrelated'), 'ok');
   } finally { await s.close(); }
 });

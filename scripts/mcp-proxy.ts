@@ -607,7 +607,10 @@ interface Upstream {
   instructions?: string;
   alive: boolean;
   lastError?: string;
-  respawned: boolean;
+  /** Consecutive failed restarts, the earliest time the next may be tried, and the attempt in flight if any. */
+  respawnFailures: number;
+  nextRespawnAt: number;
+  respawning: Promise<boolean> | null;
   /**
    * What the server offered the last time it was asked, and every change
    * since. The gateway is the one component that sits in front of a real
@@ -766,7 +769,7 @@ async function main() {
   /* Declared before the relay that reads it; assigned once the upstreams have said what they offer. */
   let capabilities: ServerCapabilities = {};
   const upstreams: Upstream[] = specs.map((spec) => ({
-    spec, client: null, caps: {}, alive: false, respawned: false, surface: null, surfaceEvents: [],
+    spec, client: null, caps: {}, alive: false, respawnFailures: 0, nextRespawnAt: 0, respawning: null, surface: null, surfaceEvents: [],
   }));
   /* Every live server, so an upstream notification reaches every session. */
   const servers = new Set<Server>();
@@ -848,6 +851,40 @@ async function main() {
       console.error(`cairn-proxy: upstream "${up.spec.name}" did not start: ${up.lastError}`);
     }
   }
+  /*
+   * AN EMPTY VEHICLE THAT LOOKS FULL IS WORSE THAN ONE THAT VISIBLY FAILED.
+   *
+   * The first version logged a failed start and carried on, and the client
+   * saw a connected server offering cairn_find, cairn_record and nothing
+   * else -- fifty-three Salesforce tools gone, the connector green, and
+   * nothing anywhere saying why. An OAuth refresh hiccup at nine in the
+   * morning would have produced exactly that.
+   *
+   * cairn-0046 says the passenger must not crash the vehicle. This is the
+   * other case: the vehicle did not start, and the honest thing is to be
+   * indistinguishable from no gateway, which means failing the way the
+   * client would have seen the upstream fail on its own -- the process
+   * exits, the client marks the server failed, and its own reconnect
+   * applies. The reason is on stderr, which is where the client would have
+   * had to look without us too. One retry first, because the failure this
+   * is written for is transient.
+   */
+  for (const up of upstreams.filter((u) => !u.alive)) {
+    await new Promise((r) => setTimeout(r, 1000));
+    try {
+      await spawn(up, forwardNotification);
+      console.error(`cairn-proxy: upstream "${up.spec.name}" started on the second attempt`);
+    } catch (e) {
+      up.lastError = (e as Error).message;
+    }
+  }
+  if (!upstreams.some((u) => u.alive)) {
+    console.error(
+      `cairn-proxy: no upstream started (${upstreams.map((u) => `${u.spec.name}: ${u.lastError}`).join('; ')}).\n` +
+        'cairn-proxy: exiting so the client sees the failure it would have seen without the gateway.',
+    );
+    process.exit(1);
+  }
   /* The baseline: what each server offered at connect, so a later look has something to differ from. */
   for (const up of upstreams) await refreshSurface(up);
 
@@ -885,20 +922,44 @@ async function main() {
     return lines;
   }
 
-  /** One attempt to bring a dead upstream back, then an honest error result. */
+  /**
+   * Bring a dead upstream back, with backoff, for as long as the session
+   * lasts. The first version tried once and latched: one failed restart and
+   * every later call in the session errored, which in a day-long session
+   * in front of a real connector is a dead server until somebody notices.
+   * Now a failed restart waits 1s, 2s, 4s ... capped at 30s, before the next
+   * attempt; a call inside the wait gets an honest error naming the wait;
+   * concurrent calls during an attempt share it rather than each failing.
+   */
+  const RESPAWN_CAP_MS = 30_000;
   async function ensure(up: Upstream): Promise<boolean> {
     if (up.alive && up.client) return true;
-    if (up.respawned) return false;
-    up.respawned = true;
-    try {
-      await spawn(up, forwardNotification);
-      up.respawned = false;
-      return true;
-    } catch (e) {
-      up.lastError = (e as Error).message;
-      return false;
-    }
+    if (up.respawning) return up.respawning;
+    if (Date.now() < up.nextRespawnAt) return false;
+    up.respawning = (async () => {
+      try {
+        await spawn(up, forwardNotification);
+        up.respawnFailures = 0;
+        up.nextRespawnAt = 0;
+        process.stderr.write(`cairn-proxy: upstream "${up.spec.name}" is back\n`);
+        return true;
+      } catch (e) {
+        up.lastError = (e as Error).message;
+        up.respawnFailures++;
+        const wait = Math.min(RESPAWN_CAP_MS, 1000 * 2 ** (up.respawnFailures - 1));
+        up.nextRespawnAt = Date.now() + wait;
+        process.stderr.write(`cairn-proxy: upstream "${up.spec.name}" did not restart (${up.lastError}); next attempt in ${wait / 1000}s\n`);
+        return false;
+      } finally {
+        up.respawning = null;
+      }
+    })();
+    return up.respawning;
   }
+  const retryHint = (up: Upstream) => {
+    const wait = Math.max(0, Math.ceil((up.nextRespawnAt - Date.now()) / 1000));
+    return wait ? `; restart will be retried in ${wait}s` : '';
+  };
 
   const alive = () => upstreams.filter((u) => u.alive && u.client);
   const anyCap = (k: keyof ServerCapabilities) => upstreams.some((u) => u.caps[k]);
@@ -922,6 +983,8 @@ async function main() {
   async function allTools(): Promise<Tool[]> {
     toolOwner.clear();
     const out: Tool[] = [];
+    /* A listing is the moment a dead upstream is missed; try to bring it back first, within its backoff. */
+    for (const up of upstreams) if (!up.alive) await ensure(up);
     for (const up of alive()) {
       const mine: Tool[] = [];
       let complete = true;
@@ -956,6 +1019,15 @@ async function main() {
     const upstreamOwn = upstreams
       .filter((u) => u.instructions)
       .map((u) => (single ? u.instructions! : `## ${u.spec.name}\n${u.instructions!}`));
+    /*
+     * An upstream that did not start, when others did: its tools are absent
+     * and the client has to be told where they went. This is about the
+     * vehicle, not about Cairn, so it is said whether or not there is a
+     * corpus. (With a single upstream the process has already exited.)
+     */
+    for (const u of upstreams.filter((x) => !x.alive)) {
+      upstreamOwn.push(`## cairn-proxy\nUpstream "${u.spec.name}" did not start (${u.lastError ?? 'unknown'}). Its tools are absent from this list; a restart is attempted on each tools/list.`);
+    }
     /*
      * Degraded: the upstreams' own instructions, and not a word of ours.
      * Describing a ledger that is not there spends the model's context on a
@@ -1012,7 +1084,7 @@ async function main() {
       return { tools: [...described, ...own] };
     });
 
-    server.setRequestHandler(CallToolRequestSchema, async (req) => {
+    server.setRequestHandler(CallToolRequestSchema, async (req, extra) => {
       const args = (req.params.arguments ?? {}) as Record<string, unknown>;
 
       /* ---- the gateway's own tools, unless an upstream owns the name ---- */
@@ -1048,7 +1120,7 @@ async function main() {
         return textResult(`cairn-proxy: no upstream offers a tool named "${req.params.name}"`, true);
       }
       if (!(await ensure(owner.up))) {
-        return textResult(`cairn-proxy: upstream "${owner.up.spec.name}" is not running (${owner.up.lastError ?? 'unknown'})`, true);
+        return textResult(`cairn-proxy: upstream "${owner.up.spec.name}" is not running (${owner.up.lastError ?? 'unknown'})${retryHint(owner.up)}`, true);
       }
 
       let result: Awaited<ReturnType<Client['callTool']>>;
@@ -1079,12 +1151,24 @@ async function main() {
          * the tool, gets the working call it would have had. Forwarding the
          * result unexamined is the whole job.
          */
+        /*
+         * And the client's cancel travels with it. `extra.signal` aborts when
+         * the client sends notifications/cancelled; handed to the forwarded
+         * request, the SDK sends the same notification upstream and the
+         * tool's own handler can stop. Without it the proxy dropped the
+         * response and the upstream ran the call to completion -- a write
+         * the person cancelled, still written.
+         */
         result = await owner.up.client!.request(
           { method: 'tools/call', params: { ...req.params, name: owner.raw } },
           CallToolResultSchema,
-          FORWARD,
+          { ...FORWARD, signal: extra.signal },
         );
       } catch (e) {
+        if (extra.signal.aborted) {
+          try { observe(callRecord(req.params.name, args), [], 'mcp-proxy:cancelled', { by: session.agent, session: session.id }); } catch { /* never fatal */ }
+          return textResult(`cairn-proxy: call to "${req.params.name}" was cancelled by the client`, true);
+        }
         /*
          * A transport failure mid-call is reported as the tool's error, not as
          * the proxy's exception: the client gets a result it can read and act
@@ -1204,11 +1288,11 @@ async function main() {
         return withResources();
       }
 
-      server.setRequestHandler(ReadResourceRequestSchema, async (req) => {
+      server.setRequestHandler(ReadResourceRequestSchema, async (req, extra) => {
         let last: Error | null = null;
         for (const up of await ownerOf(req.params.uri)) {
           try {
-            return await up.client!.readResource(req.params, FORWARD);
+            return await up.client!.readResource(req.params, { ...FORWARD, signal: extra.signal });
           } catch (e) { last = e as Error; }
         }
         throw last ?? new Error(`no upstream serves ${req.params.uri}`);
@@ -1254,7 +1338,7 @@ async function main() {
         return { prompts };
       });
 
-      server.setRequestHandler(GetPromptRequestSchema, async (req) => {
+      server.setRequestHandler(GetPromptRequestSchema, async (req, extra) => {
         let owner = promptOwner.get(req.params.name);
         if (!owner) {
           /* Lists are fetched lazily; a client may ask for a prompt before listing. */
@@ -1267,7 +1351,7 @@ async function main() {
           owner = promptOwner.get(req.params.name);
         }
         if (!owner) throw new Error(`no upstream offers a prompt named "${req.params.name}"`);
-        return owner.up.client!.getPrompt({ ...req.params, name: owner.raw }, FORWARD);
+        return owner.up.client!.getPrompt({ ...req.params, name: owner.raw }, { ...FORWARD, signal: extra.signal });
       });
     }
 
