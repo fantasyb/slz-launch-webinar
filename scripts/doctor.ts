@@ -3,6 +3,7 @@
  *
  *   npm run cairn:doctor              # every applicable check, in parallel
  *   npm run cairn:doctor -- --all     # ignore preconditions, run everything runnable
+ *   npm run cairn:doctor -- --attest  # and write what it found as observations, by "doctor"
  *
  * Every other memory system answers "what did somebody write down about this".
  * This one can answer "which of these failures is happening to you right now",
@@ -37,6 +38,7 @@ import { checkFlaws } from '../src/lib/cairn/checkquality';
 
 const all = loadCorpus().filter((f) => f.status === 'active');
 const ignorePreconditions = process.argv.includes('--all');
+const ATTEST = process.argv.includes('--attest');
 
 const runnable = all.filter((f) => {
   if (f.check.manual) return false;
@@ -191,6 +193,28 @@ async function main() {
     for (const r of slow) {
       console.log(`  ${r.id}  ${(r.ms / 1000).toFixed(1)}s  ${byId.get(r.id)!.title.slice(0, 46)}`);
     }
+  }
+
+  /*
+   * --attest: write what the checks found, as observations, under the one
+   * identity a machine writes under. Confirmed where a check fired;
+   * inconclusive where it did not, because a trap absent on this machine is
+   * what environment-specific means and is not a refutation. This is how the
+   * runnable half of a corpus gets freshness that is real rather than a
+   * timer: put it on a schedule, and "verified by its check yesterday" stops
+   * being a phrase and becomes a fact the gateway can show.
+   */
+  if (ATTEST) {
+    const { attest } = await import('../src/lib/cairn/attest');
+    let written = 0;
+    for (const r of results) {
+      const verdict = fires.some((x) => x.id === r.id) ? 'confirmed' : quiet.some((x) => x.id === r.id) ? 'inconclusive' : null;
+      if (!verdict) continue;
+      const out = attest({ finding: r.id, verdict, note: `cairn:doctor: ${r.detail}`.slice(0, 4000) }, { by: 'doctor' });
+      if (out.ok) written++;
+      else console.log(`  could not attest ${r.id}: ${out.message.split('\n')[0]}`);
+    }
+    console.log(`\n${written} observation(s) written by doctor. Commit them; they are what "verified by its check" means.`);
   }
 
   if (suspicious.length) {

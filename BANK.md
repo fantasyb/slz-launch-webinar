@@ -34,6 +34,11 @@ Write the JSON yourself from what just happened. Six fields, plus `tool`:
 It refuses rather than redacts: a pasted credential, an injected
 instruction, or a finding that already exists all stop the write and say why.
 
+When a finding rode on a result and the call showed whether it still holds,
+say so: `cairn_observe {"finding":"cairn-0001","verdict":"confirmed"|"refuted","note":"…"}`.
+A finding nobody re-confirms decays into a lead; one that has stopped being
+true is worse than none, and you are the only observer who was there.
+
 No time for the six fields? `cairn_note` takes the title, the tool, the
 command and its output, and nothing else. It is kept outside the corpus —
 not searchable, not delivered — and offered back the next session that

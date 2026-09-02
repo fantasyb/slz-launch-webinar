@@ -24,6 +24,17 @@ let cache: Map<string, KeyRecord> | null = null;
  * whether it was valid. Federated verification is a different question and now
  * has to be asked explicitly.
  */
+/**
+ * Drop the cache and read `keys/` again. A gateway that runs for days sees a
+ * key installed after it started only through this, and `attest` calls it
+ * before signing so that the observation it writes verifies against the same
+ * map `standing` will read next.
+ */
+export function reloadKeys(): Map<string, KeyRecord> {
+  cache = null;
+  return loadKeys();
+}
+
 export function loadKeys(): Map<string, KeyRecord> {
   if (cache) return cache;
   const map = new Map<string, KeyRecord>();

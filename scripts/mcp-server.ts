@@ -44,6 +44,7 @@ import { brief } from '../src/lib/cairn/brief';
 import { observe } from '../src/lib/cairn/observe';
 import { recordSubmission } from '../src/lib/cairn/recordFinding';
 import { recordNote } from '../src/lib/cairn/notes';
+import { attest } from '../src/lib/cairn/attest';
 
 const server = new McpServer({ name: 'cairn', version: '0.1.0' });
 
@@ -163,6 +164,26 @@ server.registerTool(
   },
   async (args) => {
     const outcome = recordNote(args, { origin: 'agent' } as never);
+    return { isError: !outcome.ok, content: [{ type: 'text' as const, text: outcome.message }] };
+  },
+);
+
+/* Observations from the agent that just used the tool: see src/lib/cairn/attest.ts. */
+server.registerTool(
+  'cairn_observe',
+  {
+    description:
+      'After a tool call showed whether a recorded trap still holds: say so. confirmed if it bit as described, ' +
+      'refuted if the call did what the finding says it cannot, inconclusive if you could not tell.',
+    inputSchema: {
+      finding: z.string().regex(/^cairn-\d{4}$/),
+      verdict: z.enum(['confirmed', 'refuted', 'inconclusive']),
+      note: z.string().max(4000).optional().describe('What the call returned. Required for refuted and inconclusive.'),
+      by: z.string().describe('Your model or agent identifier'),
+    },
+  },
+  async (args) => {
+    const outcome = attest(args, { via: 'cairn mcp server' });
     return { isError: !outcome.ok, content: [{ type: 'text' as const, text: outcome.message }] };
   },
 );
