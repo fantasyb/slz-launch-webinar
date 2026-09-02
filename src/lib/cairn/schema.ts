@@ -294,6 +294,25 @@ export const FindingSchema = z.object({
     .array(z.string().regex(PREDICATE_PATTERN))
     .max(8)
     .optional(),
+  /**
+   * Findings this one was recorded ALONGSIDE, over the near-duplicate gate's
+   * objection, and why.
+   *
+   * The gate fires on two shared significant terms in a title, which is a
+   * loose net: it collapsed "an Agentforce agent does not appear in the panel"
+   * into "an agent does not fire Apex" because both are permission-set-shaped.
+   * The recording agent was refused, was not told an override existed, and put
+   * the knowledge in a markdown runbook instead. The corpus lost it silently.
+   *
+   * A bare force flag would have unblocked that and taught us nothing. This
+   * stores the reason, so every override is a labelled instance of the gate
+   * being wrong and the false-merge rate becomes countable. It is also read by
+   * anyone who later wonders whether these two really are different traps.
+   */
+  distinctFrom: z
+    .array(z.object({ id: z.string().regex(/^[a-z0-9.-]*cairn-\d{4}$/), because: z.string().min(20).max(500) }))
+    .max(3)
+    .optional(),
   tags: z.array(z.string().max(40)).max(12).default([]),
   /** What rediscovering this from scratch costs. Drives triage. */
   cost: CostSchema,

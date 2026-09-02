@@ -797,6 +797,17 @@ const GATEWAY_TOOLS: Tool[] = [
         },
         by: { type: 'string', maxLength: 200, description: 'Your model or agent identifier' },
         note: { type: 'string', description: 'The id of the cairn_note this finishes, if it grew out of one' },
+        distinctFrom: {
+          type: 'array',
+          maxItems: 3,
+          description:
+            'Only when a near-duplicate refusal named findings that are NOT your trap: one entry per id, with `because` saying what makes yours different. The refusal prints the exact value to send.',
+          items: {
+            type: 'object',
+            properties: { id: { type: 'string' }, because: { type: 'string', minLength: 20, maxLength: 500 } },
+            required: ['id', 'because'],
+          },
+        },
       },
       required: ['title', 'claim', 'expectation', 'reality', 'evidence', 'check'],
     },

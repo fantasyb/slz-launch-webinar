@@ -1,0 +1,68 @@
+{
+  "id": "cairn-0049",
+  "title": "A gate that refuses without a remedy the caller can reach deletes the thing it protects",
+  "claim": "A validation gate that refuses an action without naming a remedy the refused caller can actually invoke does not merely inconvenience that caller: it silently discards the work, because an agent's response to an unappealable refusal is to route around the tool rather than to argue with it.",
+  "kind": "trap",
+  "subject": {
+    "name": "validation gates in agent-facing tools",
+    "ecosystem": "design",
+    "versions": "*"
+  },
+  "scope": "universal",
+  "tags": [
+    "gates",
+    "refusals",
+    "agent-ergonomics",
+    "silent-loss",
+    "mcp"
+  ],
+  "cost": "hours",
+  "expectation": "A false positive in a duplicate or validation check costs a round trip: the caller is told no, disagrees, and overrides. The gate being occasionally wrong is a nuisance, not a loss.",
+  "reality": "The caller does not override, because it cannot see how. A refusal that names no remedy \u2014 or names one only reachable by a different caller, such as a CLI flag absent from the tool's schema \u2014 ends the attempt. The work goes somewhere unindexed (a scratch file, a runbook, a chat reply) and nothing anywhere records that a refusal happened or that it was wrong, so the gate's false-positive rate stays unmeasured and it survives.",
+  "mechanism": "An agent treats a tool's refusal as authoritative and moves on; it has no standing to argue and no channel to. So the cost of a false positive is not a retry, it is the whole contribution. The failure is invisible from inside the system because the only trace is in a transcript nobody re-reads.",
+  "workaround": "Two rules, both cheap. Every refusal names the remedy AND hands back the value that satisfies it \u2014 a truncation that fits, the exact override argument, the redacted form. And the remedy must be reachable by the caller being refused: if the tool schema does not expose it, it does not exist. Prefer an override that carries a REASON over a bare force flag, so each use is a labelled instance of the gate being wrong and the false-positive rate becomes countable. Where the costs are asymmetric \u2014 a false merge loses knowledge permanently, a false split makes a duplicate that lint already flags \u2014 tune the gate toward the recoverable failure.",
+  "evidence": [
+    {
+      "command": "cairn_record, through an MCP gateway, for a trap distinct from an existing finding",
+      "output": "Already recorded \u2014 add an observation to the existing finding instead:\n  cairn-0002  ...\n  cairn-0004  ...",
+      "note": "The near-duplicate gate fires on two shared significant terms in a title. 'an agent does not appear in the panel' and 'an agent does not fire Apex' are different traps that share 'agent' and 'permission'."
+    },
+    {
+      "command": "the recording agent's own next words",
+      "output": "Different symptom, arguably a false merge. I won't fight the tool over it \u2014 the corrected runbook already captures the full detail accurately, so the knowledge isn't lost.",
+      "note": "It was lost, from the corpus. The agent did not capitulate: recordFinding.ts appended the override hint only when origin === 'human', and `force` appeared nowhere in the gateway's cairn_record schema. It was refused, not told a door existed, and had none."
+    },
+    {
+      "command": "the same day, a different refusal in the same codebase",
+      "output": "Title too long. Trimming. / Still over 120. Shortening hard.",
+      "note": "Three round trips because the refusal said 'too long' without saying by how much. Same shape, smaller price \u2014 which is what made the expensive one legible."
+    }
+  ],
+  "check": {
+    "command": "D=$(mktemp -d) && cd \"$D\" && printf 'gate(){ echo \"Already recorded.\"; return 1; }\\ngate\\n' > g.sh && OUT=$(sh g.sh 2>&1); echo \"$OUT\"; echo \"$OUT\" | grep -qiE \"instead:|try|pass|--|override|force|to proceed\" && exit 1 || exit 0",
+    "confirmedIf": "exit 0: the refusal text names no way to proceed, so a caller that trusts it has nowhere to go",
+    "refutedIf": "exit 1: the refusal names a remedy",
+    "absentWhen": "every refusal in the tool names a remedy the refused caller's own schema exposes",
+    "manual": false
+  },
+  "provenance": "firsthand",
+  "halfLifeDays": 365,
+  "observations": [
+    {
+      "at": "2026-09-02T21:00:44.959Z",
+      "by": "claude-opus-5",
+      "verdict": "confirmed",
+      "note": "Watched live: an agent recording a distinct Agentforce trap was refused as a near-duplicate of two permission-set findings, said it would not fight the tool, and wrote the knowledge into a markdown runbook instead. The corpus lost it and logged nothing. Reading the code, the override existed only behind an origin === 'human' branch and was absent from the tool schema the agent was calling, so 'I won't fight the tool over it' was not a choice. Fixed here by making the override a schema field that carries its reason; the reason is what makes the gate's error rate countable, which it had never been.",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node v22.22.2",
+        "note": "MCP gateway in front of a production Salesforce connector"
+      }
+    }
+  ],
+  "status": "active",
+  "createdAt": "2026-09-02T21:00:44.959Z",
+  "triggers": [],
+  "visibility": "shared"
+}

@@ -187,13 +187,48 @@ export async function recordSubmission(
   } catch {
     /* no federation configured: local only */
   }
-  const dupes = opts.force ? [] : likelyDuplicates(data.title, [...local, ...upstream]);
+  /*
+   * THE REMEDY MUST BE REACHABLE BY THE CALLER BEING REFUSED.
+   *
+   * This gate fires on two shared significant terms between the new title and
+   * an existing finding's title, tags and subject -- a loose net. It collapsed
+   * "an Agentforce agent does not appear in the panel" into "an agent does not
+   * fire Apex", because both are permission-set-shaped. Different symptoms,
+   * one merge.
+   *
+   * What made that expensive was not the false positive. It was that the
+   * override existed only for the CLI: the message named `--force` when
+   * `origin === 'human'` and said nothing otherwise, and `force` was not in
+   * the gateway's cairn_record schema at all. So the agent was refused, was
+   * not told a door existed, and had no door. Its transcript reads "I won't
+   * fight the tool over it" and the finding went into a markdown runbook. The
+   * corpus lost it and recorded nothing about having done so.
+   *
+   * The costs here are not symmetric and the gate was tuned as if they were.
+   * A false merge loses a real finding permanently and invisibly. A false
+   * split makes a duplicate, which `cairn:lint` already warns about, which
+   * anyone can merge later, and which is visible the whole time.
+   *
+   * So: `distinctFrom` is a submission field, reachable by every caller, and
+   * it carries the reason rather than being a bare flag. Each use is a
+   * labelled instance of this gate being wrong, which is the only way its
+   * false-merge rate will ever be countable -- today it is unmeasured, which
+   * is how it survived to eat a finding.
+   */
+  const excused = new Set((data.distinctFrom ?? []).map((d) => d.id));
+  const dupes = opts.force
+    ? []
+    : likelyDuplicates(data.title, [...local, ...upstream]).filter((d) => !excused.has(d.id));
   if (dupes.length) {
     return {
       ok: false,
       message:
-        `Already recorded — add an observation to the existing finding instead:\n${dupes.map((d) => `  ${d.id}  ${d.title}`).join('\n')}` +
-        (opts.origin === 'human' ? '\nIf yours really is different, record it again with --force.' : ''),
+        `Already recorded — add an observation to the existing finding instead:\n${dupes.map((d) => `  ${d.id}  ${d.title}`).join('\n')}\n` +
+        'If yours is a genuinely different trap, say so and record it again — this is accepted:\n' +
+        `  "distinctFrom": [${dupes
+          .map((d) => `{"id": "${d.id}", "because": "<what makes yours a different trap>"}`)
+          .join(', ')}]` +
+        (opts.origin === 'human' ? '\nOr --force, which records it without saying why.' : ''),
     };
   }
 

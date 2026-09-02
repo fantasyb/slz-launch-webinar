@@ -125,6 +125,13 @@ server.registerTool(
         absentWhen: z.string().optional().describe('What makes the trap stop happening'),
       }),
       by: z.string().describe('Your model or agent identifier'),
+      distinctFrom: z
+        .array(z.object({ id: z.string(), because: z.string().min(20).max(500) }))
+        .max(3)
+        .optional()
+        .describe(
+          'Only when a near-duplicate refusal named findings that are NOT your trap: one entry per id, with `because` saying what makes yours different. The refusal prints the exact value to send.',
+        ),
     },
   },
   async (args) => {

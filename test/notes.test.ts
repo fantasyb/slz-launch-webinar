@@ -78,3 +78,4 @@ test('open, abandoned after fourteen days, finished by the finding it became, di
   assert.equal(discardNote(third.id)?.status, 'discarded');
   assert.equal(discardNote('note-nope'), null);
 });
+

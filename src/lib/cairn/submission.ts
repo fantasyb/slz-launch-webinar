@@ -49,6 +49,11 @@ export const SubmissionSchema = z.object({
   reality: z.string().min(1).max(4000),
   check: MinimalCheckSchema,
   by: z.string().min(1).max(200),
+  /* The reasoned way past the near-duplicate gate. See FindingSchema. */
+  distinctFrom: z
+    .array(z.object({ id: z.string().min(1).max(60), because: z.string().min(20).max(500) }))
+    .max(3)
+    .optional(),
 
   subject: z
     .object({
@@ -187,6 +192,7 @@ export function normalise(s: Submission, now = new Date(), mintedId?: string) {
           ? { name: s.tool, ecosystem: 'mcp', versions: '*' }
           : { name: 'unknown', ecosystem: 'unknown', versions: '*' }),
       ...(s.tool ? { triggers: [s.tool] } : {}),
+      ...(s.distinctFrom?.length ? { distinctFrom: s.distinctFrom } : {}),
       tags: s.tags,
       cost: s.cost,
       expectation: s.expectation,
