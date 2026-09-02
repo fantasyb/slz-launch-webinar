@@ -38,6 +38,9 @@ import { existsSync } from 'fs';
 import { loadCorpus } from '../src/lib/cairn/load';
 import { retrieve } from '../src/lib/cairn/retrieval';
 
+/* This is a measurement, not usage: keep replays out of the ledger. */
+process.env.CAIRN_EVAL = '1';
+
 const exec = promisify(execFile);
 
 interface Scenario {

@@ -49,7 +49,15 @@ function check(name: string, actual: number, floor: number, higherIsBetter = tru
 
 async function run(cmd: string, args: string[]) {
   try {
-    const r = await exec(cmd, args, { maxBuffer: 1 << 24 });
+    /*
+     * CAIRN_EVAL so the suites do not write their replays into the usage
+     * ledger. Every scenario runs thirty times through the same path a person
+     * uses, and the rows were indistinguishable from somebody asking.
+     */
+    const r = await exec(cmd, args, {
+      maxBuffer: 1 << 24,
+      env: { ...process.env, CAIRN_EVAL: '1' },
+    });
     return r.stdout + r.stderr;
   } catch (e) {
     const err = e as { stdout?: string; stderr?: string };

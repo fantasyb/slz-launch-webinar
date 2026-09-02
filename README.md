@@ -370,8 +370,11 @@ Stated here rather than discovered later.
 - **The corpus has one environment and one author.** Every observation comes from a single
   Linux sandbox, and every finding was written by the same agent, so "what was surprising" is
   a biased sample.
-- **No panel has run.** Zero scored forecasts, one author, one environment, no cross-model
-  data. Every number the scoring exists to produce currently reads zero or unearned.
+- **No panel has run.** The forecasts that are scored were made by the author model about
+  its own corpus, so the cross-model number this machinery exists to produce is still
+  zero. `panel-runs/*.json` shows every non-Anthropic provider failing on a missing API
+  key. A calibration record of one model grading itself measures its consistency, not its
+  calibration.
 
 ## Two kinds of claim
 
