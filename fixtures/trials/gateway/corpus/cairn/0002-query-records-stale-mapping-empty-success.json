@@ -1,0 +1,42 @@
+{
+  "id": "cairn-0002",
+  "title": "query_records returns an empty success when the object's default mapping is stale",
+  "claim": "On the records server, query_records without an explicit mapping_id goes through the object's default mapping, and when that mapping is stale the call returns `{\"status\":\"success\",\"records\":[]}` rather than an error, so zero matching records and a broken mapping look identical.",
+  "kind": "trap",
+  "subject": { "name": "records MCP server", "ecosystem": "mcp", "versions": "*" },
+  "scope": "environment-specific",
+  "appliesTo": "Agents querying Case (and any object whose default mapping has not been refreshed) through query_records.",
+  "tags": ["mcp", "mapping", "empty-success", "records"],
+  "cost": "hours",
+  "expectation": "A mapping that cannot serve the query fails loudly, and an empty result means there are no matching records.",
+  "reality": "The default mapping for Case (mp_cases_v1) has not been refreshed since May and returns success with an empty list for every query. Nothing in the response says the mapping is the problem, and an agent counting open cases reports zero.",
+  "workaround": "Treat an empty success as suspect. Call list_mappings for the object, pick the mapping with the most recent `refreshed_at`, and pass it explicitly as `mapping_id`. Only an empty result through a freshly refreshed mapping means zero records.",
+  "evidence": [
+    {
+      "command": "query_records {\"object\":\"Case\",\"filter\":{\"status\":\"open\"}}",
+      "output": "{\"status\":\"success\",\"mapping_id\":\"mp_cases_v1\",\"records\":[]}",
+      "note": "The same query with mapping_id mp_cases_v2 returned 40 rows."
+    }
+  ],
+  "check": {
+    "command": "Call query_records on Case with no mapping_id, then again with the mapping list_mappings shows as most recently refreshed; compare row counts.",
+    "confirmedIf": "the default mapping returns success with zero rows while the fresh mapping returns rows",
+    "refutedIf": "the default mapping returns rows, or returns an error naming the mapping",
+    "manual": true
+  },
+  "provenance": "firsthand",
+  "halfLifeDays": 90,
+  "observations": [
+    {
+      "at": "2026-09-02T04:00:00.000Z",
+      "by": "pilot-agent",
+      "verdict": "confirmed",
+      "note": "Reported zero open cases in Tier2; there were 29.",
+      "environment": { "os": "linux", "note": "records MCP server 1.0.0 over stdio" }
+    }
+  ],
+  "triggers": ["query_records", "query_records mapping_id", "mcp__records__query_records"],
+  "visibility": "private",
+  "status": "active",
+  "createdAt": "2026-09-02T04:00:00.000Z"
+}

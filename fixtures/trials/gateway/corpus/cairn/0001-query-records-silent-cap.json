@@ -1,0 +1,42 @@
+{
+  "id": "cairn-0001",
+  "title": "query_records returns at most 50 rows and gives no sign that more exist",
+  "claim": "query_records on the records server caps every response at 50 rows regardless of `limit`, and the response carries neither a total nor a next-page token, so a result of exactly 50 rows is indistinguishable from a complete result.",
+  "kind": "trap",
+  "subject": { "name": "records MCP server", "ecosystem": "mcp", "versions": "*" },
+  "scope": "environment-specific",
+  "appliesTo": "Agents querying the records MCP server through query_records.",
+  "tags": ["mcp", "pagination", "silent-cap", "records"],
+  "cost": "hours",
+  "expectation": "`limit` is honoured up to the documented 1000, and a truncated response says so with a total or a next-page token.",
+  "reality": "Any `limit` above 50 is silently reduced to 50. The response is `{\"status\":\"success\",\"records\":[...50 rows...]}` with no total, no cursor and no warning, so a count taken from it is wrong whenever the true number exceeds 50.",
+  "workaround": "Pass `include_paging: true` in the call — the server accepts it although the schema does not list it — and the response then carries `next_page_token` whenever more rows exist. Loop, passing each token back as `page_token`, until no token is returned. Never report a count from a response of exactly 50 rows.",
+  "evidence": [
+    {
+      "command": "query_records {\"object\":\"Contact\",\"filter\":{\"status\":\"churned\"},\"limit\":1000}",
+      "output": "{\"status\":\"success\",\"mapping_id\":\"mp_contacts_v1\",\"records\":[ ...exactly 50 rows... ]}",
+      "note": "Asked for 1000, got 50, no indication of truncation."
+    }
+  ],
+  "check": {
+    "command": "Call query_records with limit 1000 on an object known to hold more than 50 rows and count the rows returned.",
+    "confirmedIf": "exactly 50 rows come back with no next_page_token and no total",
+    "refutedIf": "more than 50 rows come back, or the response names a total or a token without include_paging",
+    "manual": true
+  },
+  "provenance": "firsthand",
+  "halfLifeDays": 90,
+  "observations": [
+    {
+      "at": "2026-09-02T04:00:00.000Z",
+      "by": "pilot-agent",
+      "verdict": "confirmed",
+      "note": "Counted 50 churned contacts, reported it, and was wrong by 87.",
+      "environment": { "os": "linux", "note": "records MCP server 1.0.0 over stdio" }
+    }
+  ],
+  "triggers": ["query_records", "query_records limit", "mcp__records__query_records"],
+  "visibility": "private",
+  "status": "active",
+  "createdAt": "2026-09-02T04:00:00.000Z"
+}
