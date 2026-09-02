@@ -72,7 +72,8 @@ what the trial below is.
 ## What was proven, in the client people run
 
 `scripts/gateway-trial.ts` drives Claude Code itself (`claude -p`, real
-stdio, its own deferred tool loading and permission model) against
+stdio, its own deferred tool loading and permission model). The run below
+used the first version of it, at `5126812`, which was bound to
 `fixtures/mcp/records.mjs`, a records API with two success-shaped traps:
 `query_records` caps at 50 rows and signals nothing (paging exists behind an
 undocumented flag), and Case's default mapping returns an empty success.
@@ -118,6 +119,38 @@ What that does and does not establish:
 - The findings were written by the author of the fixture. The sealed pilot
   at `ff3f878` is the test of whether anyone else writes them.
 - One model, one client, one fixture, n=5. Not a real server.
+- "Took the route" was a grader that knew the fixture's argument names. The
+  harness no longer has one: it grades the final answer and records
+  delivery beside it, nothing else.
+
+## The same experiment, through the harness that takes its inputs from outside
+
+Before the harness could be pointed at a real server it was re-run against
+the same fixture from a scenario file in a home outside this repository,
+sealed at commit `e0fc733` of that home, with the original forecast copied
+in and the per-tool allowlist the harness now demands. Five trials per
+cell, same model, $0.86 in total, zero permission denials.
+
+| cell | exact | note delivered | MCP calls | answers |
+|---|---|---|---|---|
+| A control | 0/5 | — | 1,1,1,1,1 | 50, 49, 51, 50, 50 |
+| A gateway, no findings | 0/5 | — | 1,1,2,1,1 | 50 ×5 |
+| **A gateway** | **1/5** | 5/5 | 4,4,4,4,5 | 138, 136, **137**, 136, 136 |
+| B control | 0/5 | — | 1,1,1,1,1 | 0 ×5 |
+| B gateway, no findings | 0/5 | — | 1,1,1,1,1 | 0 ×5 |
+| **B gateway** | **5/5** | 5/5 | 4,4,4,3,4 | 29 ×5 |
+
+The shape is the original's: control and empty identical and wrong on
+both scenarios, delivery 10 of 10 on the gateway arm, and the gateway arm
+changing route every time. The numbers moved within what n=5 allows — A is
+within two of the truth in five of five here against three of five before,
+with no seventy-six-call expedition this time, and B is five of five
+against four. Nothing in the harness change touches what the model sees;
+the gateway build differs only by the callTool relay fix (`cairn-0048`)
+and the ledger no longer carrying argument values, neither of which
+reaches a result. "Within two" is no longer a column: the harness grades
+the final answer against `truth` with the `tolerance` the scenario file
+sets, and this file set none.
 
 ## Repairs made between the seal and the run, stated rather than found
 
@@ -129,6 +162,174 @@ never reached the handler and the finding's workaround was impossible
 no type — and the handler tested for the boolean; fixed by coercing, and
 the harness's own detector had the same bug (`cairn-0044`). Both are inside
 what the smoke policy reserved and both are the corpus's kind of finding.
+
+## Running the trial against your server
+
+The harness now takes everything that varies from a file you write, and it
+refuses to start until the run is safe and the forecast is sealed. This is
+the order to do it in. Assume production credentials are loaded in the
+shell you are typing into: nothing here needs them anywhere else, and
+nothing here writes into this checkout.
+
+### 1. A home outside this repository
+
+```bash
+mkdir -p ~/pilot/cairn && cd ~/pilot && git init
+```
+
+`~/pilot` is `CAIRN_HOME` for the run: the findings the gateway arm delivers
+go in `~/pilot/cairn/`, the scenario file next to them, and the run record
+and transcripts under `~/pilot/gateway-trials/` (which writes its own
+`.gitignore`). The harness refuses a `CAIRN_HOME` that is unset or inside
+this checkout, and refuses if `~/.cairn/policy.json` enables execution for
+`~/pilot` — it should not, and by default it does not.
+
+### 2. The findings
+
+Write them with the gateway's own `cairn_record`, or by hand from the
+template in FORMAT.md, into `~/pilot/cairn/`. Each must name the tool in
+`triggers` exactly as the server offers it (`sf-query-org`, not
+`mcp__salesforce__sf-query-org`; the gateway matches both forms). A finding
+that says nothing about the tool being asked about will not be delivered,
+and the run will show it: `delivered 0`.
+
+### 3. The scenario file: `~/pilot/trial.json`
+
+```json
+{
+  "name": "salesforce-pilot",
+  "server": {
+    "name": "salesforce",
+    "command": "npx",
+    "args": ["-y", "@salesforce/mcp", "--orgs", "DEFAULT_TARGET_ORG", "--toolsets", "data"]
+  },
+  "allowedTools": ["sf-query-org", "sf-get-username"],
+  "scenariosBy": "your name",
+  "scenarios": [
+    {
+      "name": "A-open-tier2",
+      "prompt": "You have access to a Salesforce org through MCP tools. Question: how many Case records are Open in the Tier2 queue? Use the tools to find out. When you are done, reply with only a JSON object of the form {\"open_tier2\": <number>} and nothing else.",
+      "key": "open_tier2",
+      "truth": 29,
+      "tolerance": 0,
+      "forecast": { "control": 1, "empty": 1, "gateway": 4,
+                    "reasoning": "why you expect those counts out of five, specifically" }
+    }
+  ],
+  "model": "haiku",
+  "trials": 5
+}
+```
+
+Field by field, the ones that matter:
+
+- **`server`** — the same `command`/`args`/`env` your client's `mcp.json`
+  has for it. Put nothing secret in `env`; the process environment you run
+  from is inherited, and that is where the credentials stay. `name` is what
+  the client calls the server, so tools become `mcp__<name>__<tool>`.
+- **`allowedTools`** — the wire names of every tool the agent may call, and
+  nothing else is permitted. There is no server-wide permission any more;
+  the first harness granted `mcp__records`, which was every tool including
+  writes. Before running, the harness connects to the server itself, lists
+  its tools, and refuses a name it does not offer or a name that reads as a
+  write (`create`, `update`, `delete`, `upsert`, `execute`, `run`, …). A
+  read tool with an unlucky name goes in `"readOnlyDespiteName": { "<tool>":
+  "<why it cannot write>" }`. Not sure of the names? Put one wrong one in:
+  the refusal prints the server's whole list. On the proxy arms `cairn_find` is added for
+  you; `cairn_record` is never permitted, so a trial cannot be steered into
+  recording.
+- **`truth`** — the answer, obtained *some other way*: a report, a SOQL
+  `COUNT()` in Workbench or the Developer Console, a Data Loader export.
+  Never the tool the trial is about. A number or a string; `tolerance` lets
+  a numeric answer within ±n count.
+- **`prompt`** — must end by asking for `{"<key>": <answer>}` and nothing
+  else; that is what the grader reads. Say nothing about traps, findings or
+  Cairn in it.
+- **`forecast`** — how many of `trials` you expect correct, per arm, and
+  why. Written before the run, sealed by the commit in step 4, and printed
+  in brackets beside the result. `empty` is the gateway with no findings;
+  if you expect it to differ from `control`, say why, because if it does
+  the gateway number cannot be read.
+- **`scenariosBy`** — who chose the questions and truths. The record
+  compares it with who wrote the findings (`observations[].by`) and marks
+  the run `independent` only when they differ. If you wrote both, the
+  record says so in words, and so should anyone quoting the number.
+
+### 4. Seal it
+
+```bash
+cd ~/pilot && git add trial.json cairn/ && git commit -m "seal: gateway trial salesforce-pilot"
+```
+
+That commit is the seal. The harness refuses an uncommitted or modified
+scenario file and writes the commit hash into the run record. Do not edit
+the forecast after seeing a result; change it and it is a different run.
+
+### 5. Smoke, then run
+
+```bash
+cd ~/cairn
+npm run cairn:gateway-smoke -- --server "npx -y @salesforce/mcp --orgs DEFAULT_TARGET_ORG --toolsets data"
+CAIRN_HOME=~/pilot npm run cairn:gateway-trial -- ~/pilot/trial.json --smoke
+CAIRN_HOME=~/pilot npm run cairn:gateway-trial -- ~/pilot/trial.json
+```
+
+The smoke is no model and no cost, and proves the gateway is transparent to
+this server. `--smoke` on the trial is one trial per cell, reported as such
+and never scored against the forecast: it proves the prompt, the allowlist
+and the grader before you spend five. The full run is three arms × five
+trials per scenario, interleaved, two to twelve cents a trial on haiku and
+more when the agent goes on an expedition. Each line as it lands:
+
+```
+A-open-tier2     gateway  #1  CORRECT answer=29 truth=29  mcp=3 turns=6 $0.034 23s  delivered=1/0
+```
+
+`delivered=1/0` is tool results carrying the gateway's label, on the result
+surface and via ToolSearch. `DENIALS=1` on a gateway trial is usually the
+model reaching for `cairn_record`, which is refused by design; read the
+denial in the run record before trusting the trial, and a denial of a tool
+you meant to allow means the allowlist is wrong, not the model.
+
+### 6. Reading it
+
+```
+SUMMARY (correct / trials, forecast in brackets)
+  A-open-tier2     control 0/5 [1] (mcp avg 1.0)   empty 0/5 [1] delivered 0 (mcp avg 1.0)   gateway 4/5 [4] delivered 5 (mcp avg 3.2)
+```
+
+A good result: `empty` equals `control` within a trial (the proxy changed
+nothing), `delivered` is 5 on the gateway arm (the note reached the model
+every time), and `gateway` beats both. The run record is
+`~/pilot/gateway-trials/run-<stamp>-<name>-<model>.json`: every trial's
+answer, tool calls, cost, denials, delivery, the proxy's own ledger counts,
+the seal, the server's tool list, the allowlist, the findings by id and
+author, and the authorship caveat. Transcripts sit beside it, redacted line
+by line before they were written; `--no-transcripts` keeps none.
+
+When an arm fails: a `control` trial with `ERROR=claude exited 1` and a
+stderr tail naming the server means the upstream itself did not start —
+run its command by hand and read stderr. `delivered 0` on the gateway arm
+means no finding named the tool that was called; check `triggers`. `empty`
+differing from `control` means stop and read the transcripts before
+believing anything about the gateway arm. A trial killed at ten minutes is
+recorded with `no result event`.
+
+To recompute the transcript-derived fields of a run after a grader fix,
+without paying for it again:
+
+```bash
+CAIRN_HOME=~/pilot npm run cairn:gateway-trial -- --regrade ~/pilot/gateway-trials/run-<stamp>.json ~/pilot/trial.json
+```
+
+### What this run cannot tell you
+
+If you wrote the findings and the questions, the gateway number is delivery
+of a trap you planted: it says the note arrives and is acted on, not that
+the corpus would have caught something you did not already know. The
+cheapest way to buy the second claim is to have someone else write either
+half — the findings from their own week with the tool, or the questions and
+truths without seeing your findings — and put their name in `scenariosBy`.
 
 ## Before you point it at a server that matters
 
