@@ -128,7 +128,7 @@ What that does and does not establish:
 Before the harness could be pointed at a real server it was re-run against
 the same fixture from a scenario file in a home outside this repository,
 sealed at commit `e0fc733` of that home, with the original forecast copied
-in and the per-tool allowlist the harness now demands. Five trials per
+in and the per-tool permission the harness derives. Five trials per
 cell, same model, $0.86 in total, zero permission denials.
 
 | cell | exact | note delivered | MCP calls | answers |
@@ -165,9 +165,10 @@ what the smoke policy reserved and both are the corpus's kind of finding.
 
 ## Running the trial against your server
 
-The harness now takes everything that varies from a file you write, and it
-refuses to start until the run is safe and the forecast is sealed. This is
-the order to do it in. Assume production credentials are loaded in the
+The harness takes the questions, the answers and the forecast from a file
+you write, discovers everything else from the server itself, and refuses to
+start until the run is safe and the forecast is sealed. This is the order
+to do it in. Assume production credentials are loaded in the
 shell you are typing into: nothing here needs them anywhere else, and
 nothing here writes into this checkout.
 
@@ -189,71 +190,130 @@ this checkout, and refuses if `~/.cairn/policy.json` enables execution for
 Write them with the gateway's own `cairn_record`, or by hand from the
 template in FORMAT.md, into `~/pilot/cairn/`. Each must name the tool in
 `triggers` exactly as the server offers it (`sf-query-org`, not
-`mcp__salesforce__sf-query-org`; the gateway matches both forms). A finding
-that says nothing about the tool being asked about will not be delivered,
-and the run will show it: `delivered 0`.
+`mcp__salesforce__sf-query-org`; the gateway matches both forms). To see
+the names, ask the server rather than guessing:
+
+```bash
+cd ~/cairn && npm run cairn:gateway-trial -- --discover "npx -y @salesforce/mcp --orgs DEFAULT_TARGET_ORG --toolsets data"
+```
+
+That connects, lists the server's tools, and prints which ones a trial
+would let the agent call and why — no home, no seal, no model, no cost.
+Read it once now; the same list is printed at the top of every run.
 
 ### 3. The scenario file: `~/pilot/trial.json`
 
+The smallest file that works. You write the questions and their answers,
+the forecast, and your name; the tools are discovered, the reply format is
+added for you, everything else is defaulted.
+
 ```json
 {
-  "name": "salesforce-pilot",
-  "server": {
-    "name": "salesforce",
-    "command": "npx",
-    "args": ["-y", "@salesforce/mcp", "--orgs", "DEFAULT_TARGET_ORG", "--toolsets", "data"]
-  },
-  "allowedTools": ["sf-query-org", "sf-get-username"],
+  "name": "salesforce",
+  "server": "npx -y @salesforce/mcp --orgs DEFAULT_TARGET_ORG --toolsets data",
   "scenariosBy": "your name",
   "scenarios": [
     {
-      "name": "A-open-tier2",
-      "prompt": "You have access to a Salesforce org through MCP tools. Question: how many Case records are Open in the Tier2 queue? Use the tools to find out. When you are done, reply with only a JSON object of the form {\"open_tier2\": <number>} and nothing else.",
-      "key": "open_tier2",
+      "name": "open-tier2",
+      "prompt": "How many Case records are Open in the Tier2 queue?",
       "truth": 29,
-      "tolerance": 0,
       "forecast": { "control": 1, "empty": 1, "gateway": 4,
                     "reasoning": "why you expect those counts out of five, specifically" }
     }
-  ],
-  "model": "haiku",
-  "trials": 5
+  ]
 }
 ```
 
-Field by field, the ones that matter:
-
-- **`server`** — the same `command`/`args`/`env` your client's `mcp.json`
-  has for it. Put nothing secret in `env`; the process environment you run
-  from is inherited, and that is where the credentials stay. `name` is what
-  the client calls the server, so tools become `mcp__<name>__<tool>`.
-- **`allowedTools`** — the wire names of every tool the agent may call, and
-  nothing else is permitted. There is no server-wide permission any more;
-  the first harness granted `mcp__records`, which was every tool including
-  writes. Before running, the harness connects to the server itself, lists
-  its tools, and refuses a name it does not offer or a name that reads as a
-  write (`create`, `update`, `delete`, `upsert`, `execute`, `run`, …). A
-  read tool with an unlucky name goes in `"readOnlyDespiteName": { "<tool>":
-  "<why it cannot write>" }`. Not sure of the names? Put one wrong one in:
-  the refusal prints the server's whole list. On the proxy arms `cairn_find` is added for
-  you; `cairn_record` is never permitted, so a trial cannot be steered into
-  recording.
+- **`server`** — the command line your client runs for it, as one string.
+  Credentials come from the environment you run from; put none in the file.
+  The client's name for the server is the trial's `name`, so tools become
+  `mcp__salesforce__<tool>`.
+- **`prompt`** — the question, and nothing about traps, findings or Cairn.
+  The harness appends "use the tools available; reply with only
+  `{"answer": <answer>}`", and that is what the grader reads.
 - **`truth`** — the answer, obtained *some other way*: a report, a SOQL
   `COUNT()` in Workbench or the Developer Console, a Data Loader export.
-  Never the tool the trial is about. A number or a string; `tolerance` lets
-  a numeric answer within ±n count.
-- **`prompt`** — must end by asking for `{"<key>": <answer>}` and nothing
-  else; that is what the grader reads. Say nothing about traps, findings or
-  Cairn in it.
-- **`forecast`** — how many of `trials` you expect correct, per arm, and
-  why. Written before the run, sealed by the commit in step 4, and printed
-  in brackets beside the result. `empty` is the gateway with no findings;
-  if you expect it to differ from `control`, say why, because if it does
-  the gateway number cannot be read.
+  Never the tool the trial is about. A number or a string.
+- **`forecast`** — how many of five you expect correct, per arm, and why.
+  Written before the run, sealed by the commit in step 4, printed in
+  brackets beside the result. `empty` is the gateway with no findings; if
+  you expect it to differ from `control`, say why, because if it does the
+  gateway number cannot be read.
 - **`scenariosBy`** — who chose the questions and truths. The record
   compares it with who wrote the findings (`observations[].by`) and marks
   the run `independent` only when they differ. If you wrote both, the
   record says so in words, and so should anyone quoting the number.
+
+**Which tools the agent may call is decided by the harness, not typed by
+you.** It connects to the server, reads its tool list, and for each tool:
+a tool the server declares `readOnlyHint: true` is permitted, by
+declaration; one it declares `destructiveHint: true` or `readOnlyHint:
+false` is excluded, by declaration, whatever its name; one that declares
+nothing is judged by its name, and `create`, `update`, `delete`, `upsert`,
+`execute`, `run`, … are excluded. A tool declared read-only whose name
+nonetheless reads as a write is excluded too, with both facts printed, so
+that trusting a server never lets through something the name rule alone
+would have stopped. It prints the decision and the reason for every tool,
+like this:
+
+```
+  permit   sf-query-org        declared read-only (readOnlyHint: true)
+  permit   sf-get-username     no annotation; name reads as a read
+  exclude  sf-deploy-metadata  no annotation; name reads as a write
+  2 of 3 permitted. The agent can call nothing else.
+```
+
+Nothing that can write is ever handed to the unattended agent without a
+written acknowledgement. On the proxy arms the gateway's `cairn_find` is
+added; `cairn_record` never is, so a trial cannot be steered into
+recording.
+
+The full file, for reference — every field the minimal one left out, with
+its default:
+
+```json
+{
+  "name": "salesforce",
+  "server": {
+    "name": "salesforce",
+    "command": "npx",
+    "args": ["-y", "@salesforce/mcp", "--orgs", "DEFAULT_TARGET_ORG", "--toolsets", "data"],
+    "env": {}
+  },
+  "allowedTools": ["sf-query-org"],
+  "readOnlyDespiteName": { "sf-run-soql": "runs a SELECT through the query API and cannot write" },
+  "scenariosBy": "your name",
+  "scenarios": [
+    {
+      "name": "open-tier2",
+      "prompt": "How many Case records are Open in the Tier2 queue?",
+      "key": "answer",
+      "truth": 29,
+      "tolerance": 0,
+      "forecast": { "control": 1, "empty": 1, "gateway": 4, "reasoning": "…" }
+    }
+  ],
+  "model": "haiku",
+  "trials": 5,
+  "maxTurns": 40
+}
+```
+
+- **`server` as an object** — the same `command`/`args`/`env` your client's
+  `mcp.json` has, when the string form is not enough (an argument with a
+  space, a non-secret `env` setting). `name` is what the client calls it.
+- **`allowedTools`** — optional narrowing: only these wire names are even
+  considered. Discovery still decides whether each may be called; a listed
+  tool that reads as a write still needs `readOnlyDespiteName`. A name the
+  server does not offer is refused, and the refusal prints the real list.
+- **`readOnlyDespiteName`** — overrule an exclusion, by wire name, with the
+  reason written down. The reason is recorded beside the decision it
+  overruled. This is the only way an excluded tool reaches the agent.
+- **`key`** — the JSON key the agent replies with; `answer` unless your
+  prompt already asks for a specific shape (a prompt containing `{"` is
+  sent as written, and `key` must match it).
+- **`tolerance`** — for a numeric truth, an answer within ±n counts.
+- **`model`, `trials`, `maxTurns`** — `haiku`, 5 per cell, 40 turns.
 
 ### 4. Seal it
 
@@ -276,8 +336,8 @@ CAIRN_HOME=~/pilot npm run cairn:gateway-trial -- ~/pilot/trial.json
 
 The smoke is no model and no cost, and proves the gateway is transparent to
 this server. `--smoke` on the trial is one trial per cell, reported as such
-and never scored against the forecast: it proves the prompt, the allowlist
-and the grader before you spend five. The full run is three arms × five
+and never scored against the forecast: it proves the prompt, the tool
+selection and the grader before you spend five. The full run is three arms × five
 trials per scenario, interleaved, two to twelve cents a trial on haiku and
 more when the agent goes on an expedition. Each line as it lands:
 
@@ -288,8 +348,9 @@ A-open-tier2     gateway  #1  CORRECT answer=29 truth=29  mcp=3 turns=6 $0.034 2
 `delivered=1/0` is tool results carrying the gateway's label, on the result
 surface and via ToolSearch. `DENIALS=1` on a gateway trial is usually the
 model reaching for `cairn_record`, which is refused by design; read the
-denial in the run record before trusting the trial, and a denial of a tool
-you meant to allow means the allowlist is wrong, not the model.
+denial in the run record before trusting the trial; a denial of a tool the
+selection excluded means the agent wanted something it may not have, and
+`readOnlyDespiteName` is the only way to change that.
 
 ### 6. Reading it
 
@@ -303,8 +364,9 @@ nothing), `delivered` is 5 on the gateway arm (the note reached the model
 every time), and `gateway` beats both. The run record is
 `~/pilot/gateway-trials/run-<stamp>-<name>-<model>.json`: every trial's
 answer, tool calls, cost, denials, delivery, the proxy's own ledger counts,
-the seal, the server's tool list, the allowlist, the findings by id and
-author, and the authorship caveat. Transcripts sit beside it, redacted line
+the seal, every tool the server offered with the decision and reason for
+each, the exact prompts sent, the findings by id and author, and the
+authorship caveat. Transcripts sit beside it, redacted line
 by line before they were written; `--no-transcripts` keeps none.
 
 When an arm fails: a `control` trial with `ERROR=claude exited 1` and a

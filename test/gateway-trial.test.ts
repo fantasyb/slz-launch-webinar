@@ -23,7 +23,6 @@ function trialFile(dir: string, patch: Record<string, unknown> = {}): string {
     JSON.stringify({
       name: 't',
       server: { name: 'records', command: 'node', args: [path.join(REPO, 'fixtures', 'mcp', 'records.mjs')] },
-      allowedTools: ['query_records'],
       scenariosBy: 'someone',
       scenarios: [
         {
@@ -70,12 +69,29 @@ test('refuses when execution is enabled for that corpus', () => {
   assert.match(r.out, /execution is ENABLED/);
 });
 
-test('refuses a scenario file with no per-tool allowlist', () => {
-  const h = home();
-  const f = trialFile(h, { allowedTools: [] });
-  const r = run({ CAIRN_HOME: h, CAIRN_POLICY: path.join(h, 'none.json') }, f);
-  assert.equal(r.status, 2);
-  assert.match(r.out, /there is no server-wide permission/);
+/**
+ * The operator does not type tool names. The harness reads the server's own
+ * tools/list and decides per tool, from its annotations first and its name
+ * only when it declares nothing, and prints why for each.
+ */
+test('--discover honours the server\'s annotations first and the name only when it says nothing', () => {
+  const r = run({}, '--discover', `node ${path.join(REPO, 'fixtures', 'mcp', 'annotated.mjs')}`);
+  assert.equal(r.status, 0, r.out);
+  assert.match(r.out, /permit {3}lookup .*declared read-only/);
+  assert.match(r.out, /exclude {2}purge_cache .*declared destructive/, 'a read-looking name does not rescue a declared destructive tool');
+  assert.match(r.out, /exclude {2}sync_now .*declared not read-only/);
+  assert.match(r.out, /permit {3}list_things .*no annotation; name reads as a read/);
+  assert.match(r.out, /exclude {2}update_thing .*no annotation; name reads as a write/);
+  assert.match(r.out, /exclude {2}run_report .*declared read-only .*but the name reads as a write/, 'both facts shown; a person decides');
+  assert.match(r.out, /2 of 6 permitted/);
+});
+
+test('--discover judges an unannotated server by name alone, and says so', () => {
+  const r = run({}, '--discover', `node ${path.join(REPO, 'fixtures', 'mcp', 'records.mjs')}`);
+  assert.equal(r.status, 0, r.out);
+  assert.match(r.out, /5 of 5 permitted/);
+  assert.doesNotMatch(r.out, /declared/);
+  assert.match(r.out, /no annotation; name reads as a read/);
 });
 
 test('refuses to run a forecast that is not committed', () => {

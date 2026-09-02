@@ -1,6 +1,7 @@
 /**
  * cairn:gateway-trial — does an agent working THROUGH the gateway do better?
  *
+ *   npm run cairn:gateway-trial -- --discover "npx -y @acme/their-mcp"   # which tools it would permit, and why
  *   CAIRN_HOME=~/pilot npm run cairn:gateway-trial -- ~/pilot/trial.json
  *   CAIRN_HOME=~/pilot npm run cairn:gateway-trial -- ~/pilot/trial.json --smoke
  *   CAIRN_HOME=~/pilot npm run cairn:gateway-trial -- --regrade <run.json> ~/pilot/trial.json
@@ -31,13 +32,22 @@
  * assumes. Each refusal below is a thing that would have hurt on the first
  * real run, and each is checked before a single model call is made:
  *
- *   - No server-wide tool permission. The old harness passed
- *     `--allowedTools mcp__records`, which pre-approves every tool the
- *     server offers, writes included. The scenario file names each tool the
- *     agent may call; nothing else is permitted, and a name that reads as a
- *     write (create/update/delete/upsert/execute/...) is refused unless the
- *     operator states in the file why it is not one. The names are checked
- *     against the upstream's own tools/list before anything runs.
+ *   - No server-wide tool permission, and no tool names typed by a person.
+ *     The old harness passed `--allowedTools mcp__records`, which
+ *     pre-approves every tool the server offers, writes included; the
+ *     version after it made the operator type each tool's wire name into
+ *     the file, which made the person with production credentials loaded
+ *     the one guessing strings. Now the harness connects, reads the
+ *     server's own tools/list, and decides per tool, showing its work:
+ *     a tool declaring `readOnlyHint: true` is permitted by declaration; one
+ *     declaring `destructiveHint: true` or `readOnlyHint: false` is excluded
+ *     by declaration; one declaring nothing is judged by its name, and a
+ *     name that reads as a write (create/update/delete/upsert/execute/...)
+ *     is excluded. The operator reviews the printed list. `allowedTools`
+ *     narrows it further if wanted; `readOnlyDespiteName` overrules an
+ *     exclusion and has to say why. Nothing that can write reaches an
+ *     unattended model without a written acknowledgement, which is the same
+ *     invariant as before with the server's own statement added to it.
  *   - CAIRN_HOME must be set explicitly and resolve outside this repository.
  *     The corpus under test, the run record and the transcripts all live
  *     there; nothing from a run against a real server lands in a tracked
@@ -87,6 +97,7 @@ import { z } from 'zod';
 import { redactForLedger } from '../src/lib/cairn/safety';
 import { executionPolicy, policyPath } from '../src/lib/cairn/policy';
 import { FindingSchema } from '../src/lib/cairn/schema';
+import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 
 const REPO = process.cwd();
 const PROXY_BIN = path.join(REPO, 'bin', 'cairn-proxy.js');
@@ -107,9 +118,10 @@ const ForecastSchema = z.object({
 
 const ScenarioSchema = z.object({
   name: z.string().regex(/^[A-Za-z0-9._-]+$/, 'letters, digits, . _ - only: it becomes a filename'),
+  /** The question. The reply instruction is appended unless the prompt already gives one. */
   prompt: z.string().min(20),
   /** The key the agent is told to reply with: {"<key>": <answer>}. */
-  key: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/),
+  key: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/).default('answer'),
   /** Obtained OUTSIDE the agent — a count run by hand, a report, a query in another tool. */
   truth: z.union([z.number(), z.string()]),
   /** For numeric truth: |answer - truth| <= tolerance still counts. Default exact. */
@@ -127,11 +139,12 @@ const ServerSchema = z.object({
 });
 
 const TrialFileSchema = z.object({
-  name: z.string().regex(/^[A-Za-z0-9._-]+$/),
-  server: ServerSchema,
-  /** Wire names of the tools the agent may call. Nothing else is permitted. */
-  allowedTools: z.array(z.string().min(1)).min(1, 'name every tool the agent may call; there is no server-wide permission'),
-  /** A name that reads as a write, and why it is not one. Unlisted write-looking names are refused. */
+  name: z.string().regex(/^[A-Za-z0-9_-]+$/),
+  /** The command line, or the object your client's mcp.json has for it. A string gets the trial's name. */
+  server: z.union([z.string().min(1), ServerSchema]),
+  /** Optional narrowing: only these wire names are considered. Discovery still decides whether each may be called. */
+  allowedTools: z.array(z.string().min(1)).min(1).optional(),
+  /** Overrule an exclusion, by wire name, with the reason written down. */
   readOnlyDespiteName: z.record(z.string().min(10)).default({}),
   /** Who chose the questions and the truths. Compared with who wrote the findings. */
   scenariosBy: z.string().min(1),
@@ -148,10 +161,11 @@ const WRITE_LOOKING = /create|update|delete|upsert|execute|insert|remove|write|m
 /* ---- arguments ---------------------------------------------------------- */
 
 const argv = process.argv.slice(2);
+const DISCOVER_AT = argv.indexOf('--discover');
 const SMOKE = argv.includes('--smoke');
 const NO_TRANSCRIPTS = argv.includes('--no-transcripts');
 const REGRADE_AT = argv.indexOf('--regrade');
-const positional = argv.filter((a, i) => !a.startsWith('--') && argv[i - 1] !== '--regrade' && argv[i - 1] !== '--out');
+const positional = argv.filter((a, i) => !a.startsWith('--') && !['--regrade', '--out', '--discover'].includes(argv[i - 1]));
 const outAt = argv.indexOf('--out');
 
 function refuse(what: string, how = ''): never {
@@ -159,12 +173,118 @@ function refuse(what: string, how = ''): never {
   process.exit(2);
 }
 
+/* ---- what the server says about its tools, and what that decides -------- */
+
+type Annotations = NonNullable<Tool['annotations']>;
+interface ToolChoice {
+  name: string;
+  permitted: boolean;
+  /** One line a person reads: where the decision came from. */
+  reason: string;
+  annotations: Annotations | null;
+  /** Set when readOnlyDespiteName overruled an exclusion. */
+  overridden?: string;
+}
+
+/**
+ * The server's own statement first, the name only when it says nothing.
+ *
+ * `readOnlyHint: true` is the protocol's way of answering exactly this
+ * question, so it is honoured -- except where the name reads as a write,
+ * where the two facts are printed together and the operator decides.
+ * `destructiveHint: true` or `readOnlyHint: false` is the server saying the
+ * opposite, and a name that reads as a read does not rescue it. A tool with
+ * no annotation is judged by its name, which is a guess, and the printed
+ * reason says so. Every exclusion can be overruled by readOnlyDespiteName,
+ * and the override is recorded beside the decision it overruled.
+ */
+function chooseTools(tools: Tool[], file: { allowedTools?: string[]; readOnlyDespiteName: Record<string, string> }): ToolChoice[] {
+  return tools.map((t) => {
+    const a = (t.annotations ?? null) as Annotations | null;
+    const override = file.readOnlyDespiteName[t.name];
+    const excluded = (reason: string): ToolChoice =>
+      override
+        ? { name: t.name, permitted: true, reason: `${reason}; overruled in readOnlyDespiteName`, annotations: a, overridden: override }
+        : { name: t.name, permitted: false, reason, annotations: a };
+    if (file.allowedTools && !file.allowedTools.includes(t.name)) {
+      return { name: t.name, permitted: false, reason: 'not in allowedTools', annotations: a };
+    }
+    if (a?.readOnlyHint === true) {
+      /*
+       * The declaration is honoured -- but a declared-read-only tool whose
+       * name reads as a write is the one case where trusting the server
+       * would be looser than the rule before discovery existed, which
+       * refused every write-looking name without a written reason. The
+       * stricter path is kept: the operator sees both facts and decides.
+       */
+      if (WRITE_LOOKING.test(t.name)) return excluded('declared read-only (readOnlyHint: true), but the name reads as a write');
+      return { name: t.name, permitted: true, reason: 'declared read-only (readOnlyHint: true)', annotations: a };
+    }
+    if (a?.destructiveHint === true) return excluded('declared destructive (destructiveHint: true)');
+    if (a?.readOnlyHint === false) return excluded('declared not read-only (readOnlyHint: false)');
+    if (WRITE_LOOKING.test(t.name)) return excluded('no annotation; name reads as a write');
+    return { name: t.name, permitted: true, reason: 'no annotation; name reads as a read', annotations: a };
+  });
+}
+
+function printChoices(choices: ToolChoice[]): void {
+  const w = Math.max(8, ...choices.map((c) => c.name.length));
+  for (const c of choices) {
+    console.log(`  ${c.permitted ? 'permit ' : 'exclude'}  ${c.name.padEnd(w)}  ${c.reason}${c.overridden ? `: "${c.overridden}"` : ''}`);
+  }
+  const n = choices.filter((c) => c.permitted).length;
+  console.log(`  ${n} of ${choices.length} permitted. The agent can call nothing else.`);
+}
+
+/** Connect directly and read tools/list, every page. */
+async function listUpstreamTools(server: { command: string; args: string[]; env: Record<string, string> }): Promise<Tool[]> {
+  const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
+  const { StdioClientTransport } = await import('@modelcontextprotocol/sdk/client/stdio.js');
+  const client = new Client({ name: 'cairn-gateway-trial', version: '0' }, { capabilities: {} });
+  const env = { ...(process.env as Record<string, string>), ...server.env };
+  delete env.CAIRN_HOME;
+  const tools: Tool[] = [];
+  try {
+    await client.connect(new StdioClientTransport({ command: server.command, args: server.args, env, stderr: 'pipe' }));
+    let cursor: string | undefined;
+    do {
+      const page = await client.listTools({ cursor });
+      tools.push(...page.tools);
+      cursor = page.nextCursor;
+    } while (cursor);
+    await client.close();
+  } catch (e) {
+    refuse(`could not list the upstream's tools: ${(e as Error).message}`, `  Run it by hand and read stderr:  ${server.command} ${server.args.join(' ')}`);
+  }
+  return tools;
+}
+
+const splitCommand = (line: string) => {
+  const [command, ...args] = line.trim().split(/\s+/);
+  return { command, args, env: {} as Record<string, string> };
+};
+
+/* --discover: connect, decide, print, exit. No home, no seal, no model. */
+if (DISCOVER_AT !== -1) {
+  const line = argv[DISCOVER_AT + 1];
+  if (!line) refuse('--discover needs the server command', '  npm run cairn:gateway-trial -- --discover "npx -y @acme/their-mcp"');
+  const server = splitCommand(line);
+  listUpstreamTools(server).then((tools) => {
+    console.log(`\n${server.command} ${server.args.join(' ')} offers ${tools.length} tool(s). A trial would:\n`);
+    printChoices(chooseTools(tools, { readOnlyDespiteName: {} }));
+    console.log(
+      '\n  "permit" needs nothing from you. To overrule an "exclude", add to the scenario file:\n' +
+        '    "readOnlyDespiteName": { "<tool>": "<what it does, and why it cannot write>" }\n',
+    );
+  });
+} else {
 const trialFileArg = positional[0];
 if (!trialFileArg) {
   refuse(
     'no scenario file',
     '  usage: CAIRN_HOME=<corpus> npm run cairn:gateway-trial -- <trial.json> [--smoke] [--no-transcripts] [--out <dir>]\n' +
       '         CAIRN_HOME=<corpus> npm run cairn:gateway-trial -- --regrade <run.json> <trial.json>\n' +
+      '         npm run cairn:gateway-trial -- --discover "<server command>"\n' +
       '  The scenario file format is in GATEWAY.md under "Running the trial against your server".',
   );
 }
@@ -220,6 +340,14 @@ if (!parsedTrial.success) {
   );
 }
 const T: TrialFile = parsedTrial.data;
+const SERVER = typeof T.server === 'string' ? { name: T.name, ...splitCommand(T.server) } : T.server;
+/**
+ * The reply instruction is the harness's, not the operator's: the grader
+ * reads {"<key>": <answer>} and the operator should only have to write the
+ * question. A prompt that already asks for JSON is sent as written.
+ */
+const promptFor = (sc: Scenario) =>
+  sc.prompt.includes('{"') ? sc.prompt : `${sc.prompt.trim()}\n\nUse the tools available to find out. When you are done, reply with only a JSON object of the form {"${sc.key}": <answer>} and nothing else.`;
 /* The forecast is for the sealed run size; a --smoke reports one trial per cell and is never scored against it. */
 for (const sc of T.scenarios) {
   for (const arm of ARMS) {
@@ -295,8 +423,8 @@ if (inside(OUT_DIR, REPO)) refuse(`--out ${OUT_DIR} is inside this repository`, 
 const OUT = path.join(OUT_DIR, `${RUN_ID}.json`);
 const TRANSCRIPTS = path.join(OUT_DIR, RUN_ID);
 
-const serverToolName = (raw: string) => `mcp__${T.server.name}__${raw}`;
-const mcpPrefix = `mcp__${T.server.name}__`;
+const serverToolName = (raw: string) => `mcp__${SERVER.name}__${raw}`;
+const mcpPrefix = `mcp__${SERVER.name}__`;
 
 interface Trial {
   scenario: string;
@@ -389,7 +517,7 @@ function ensureOutDir(): void {
   if (!fs.existsSync(ignore)) fs.writeFileSync(ignore, '*\n');
 }
 
-async function runTrial(sc: Scenario, arm: Arm, n: number): Promise<Trial> {
+async function runTrial(sc: Scenario, arm: Arm, n: number, permitted: string[]): Promise<Trial> {
   const work = fs.mkdtempSync(path.join(os.tmpdir(), `cairn-gw-${arm}-`));
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'cairn-gw-home-'));
   fs.mkdirSync(path.join(home, 'cairn'));
@@ -398,20 +526,20 @@ async function runTrial(sc: Scenario, arm: Arm, n: number): Promise<Trial> {
       fs.copyFileSync(path.join(HOME, 'cairn', f), path.join(home, 'cairn', f));
     }
   }
-  const upstream = { command: T.server.command, args: T.server.args, env: T.server.env };
+  const upstream = { command: SERVER.command, args: SERVER.args, env: SERVER.env };
   const mcp =
     arm === 'control'
-      ? { mcpServers: { [T.server.name]: upstream } }
+      ? { mcpServers: { [SERVER.name]: upstream } }
       : {
           mcpServers: {
-            [T.server.name]: {
+            [SERVER.name]: {
               command: 'node',
               args: [PROXY_BIN, '--config', path.join(work, 'upstream.json')],
               env: { CAIRN_HOME: home, CAIRN_AGENT: `trial-${arm}`, CAIRN_SESSION: `trial-${sc.name}-${arm}-${n}` },
             },
           },
         };
-  if (arm !== 'control') fs.writeFileSync(path.join(work, 'upstream.json'), JSON.stringify({ mcpServers: { [T.server.name]: upstream } }));
+  if (arm !== 'control') fs.writeFileSync(path.join(work, 'upstream.json'), JSON.stringify({ mcpServers: { [SERVER.name]: upstream } }));
   const cfg = path.join(work, 'mcp.json');
   fs.writeFileSync(cfg, JSON.stringify(mcp));
   const sessionId = randomUUID();
@@ -426,11 +554,11 @@ async function runTrial(sc: Scenario, arm: Arm, n: number): Promise<Trial> {
    * temporary corpus and is permitted on the proxy arms; cairn_record is a
    * write and is not, so a trial cannot be steered into recording.
    */
-  const allowed = T.allowedTools.map(serverToolName);
+  const allowed = permitted.map(serverToolName);
   if (arm !== 'control') allowed.push(serverToolName('cairn_find'));
 
   const args = [
-    '-p', sc.prompt,
+    '-p', promptFor(sc),
     '--model', T.model,
     '--session-id', sessionId,
     '--no-session-persistence',
@@ -497,45 +625,23 @@ async function runTrial(sc: Scenario, arm: Arm, n: number): Promise<Trial> {
   };
 }
 
-/* ---- the upstream, checked before anything runs -------------------------- */
+/* ---- the upstream, read before anything runs ----------------------------- */
 
-/** Connect directly, list tools, and hold the allowlist against what is actually there. */
-async function verifyAllowlist(): Promise<string[]> {
-  const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
-  const { StdioClientTransport } = await import('@modelcontextprotocol/sdk/client/stdio.js');
-  const client = new Client({ name: 'cairn-gateway-trial', version: '0' }, { capabilities: {} });
-  const env = { ...(process.env as Record<string, string>), ...T.server.env };
-  delete env.CAIRN_HOME;
-  let names: string[];
-  try {
-    await client.connect(new StdioClientTransport({ command: T.server.command, args: T.server.args, env, stderr: 'pipe' }));
-    names = [];
-    let cursor: string | undefined;
-    do {
-      const page = await client.listTools({ cursor });
-      names.push(...page.tools.map((t) => t.name));
-      cursor = page.nextCursor;
-    } while (cursor);
-    await client.close();
-  } catch (e) {
-    refuse(`could not list the upstream's tools: ${(e as Error).message}`, `  Run it by hand and read stderr:  ${T.server.command} ${T.server.args.join(' ')}`);
+/** List the server's tools, decide per tool, and hold any allowedTools against what is there. */
+async function discover(): Promise<{ tools: string[]; choices: ToolChoice[]; permitted: string[] }> {
+  const tools = await listUpstreamTools(SERVER);
+  const names = tools.map((t) => t.name);
+  const missing = (T.allowedTools ?? []).filter((t) => !names.includes(t));
+  if (missing.length) refuse(`allowedTools names tools the upstream does not offer: ${missing.join(', ')}`, `  It offers: ${names.join(', ')}`);
+  const unknownOverride = Object.keys(T.readOnlyDespiteName).filter((t) => !names.includes(t));
+  if (unknownOverride.length) refuse(`readOnlyDespiteName names tools the upstream does not offer: ${unknownOverride.join(', ')}`, `  It offers: ${names.join(', ')}`);
+  const choices = chooseTools(tools, T);
+  const permitted = choices.filter((c) => c.permitted).map((c) => c.name);
+  if (!permitted.length) {
+    printChoices(choices);
+    refuse('discovery permitted no tools, so the agent could call nothing', '  readOnlyDespiteName overrules an exclusion, with a reason written down.');
   }
-  const missing = T.allowedTools.filter((t) => !names.includes(t));
-  if (missing.length) {
-    refuse(
-      `allowedTools names tools the upstream does not offer: ${missing.join(', ')}`,
-      `  It offers: ${names.join(', ')}`,
-    );
-  }
-  const writes = T.allowedTools.filter((t) => WRITE_LOOKING.test(t) && !T.readOnlyDespiteName[t]);
-  if (writes.length) {
-    refuse(
-      `allowedTools includes names that read as writes: ${writes.join(', ')}`,
-      '  A trial is read-only. If one of these really cannot change anything, say why in the file:\n' +
-        `    "readOnlyDespiteName": { "${writes[0]}": "<what it does, and why it cannot write>" }`,
-    );
-  }
-  return names;
+  return { tools: names, choices, permitted };
 }
 
 /** Who wrote the findings the gateway arm will deliver. */
@@ -584,7 +690,7 @@ async function main() {
   if (REGRADE_AT !== -1) { regrade(path.resolve(argv[REGRADE_AT + 1])); return; }
 
   const seal = SEAL!;
-  const upstreamTools = await verifyAllowlist();
+  const { tools: upstreamTools, choices, permitted } = await discover();
   const corpus = corpusSummary();
   if (!corpus.findings.length) refuse(`${path.join(HOME, 'cairn')} has no active findings, so the gateway arm would equal empty`);
   const independent = !corpus.authors.includes(T.scenariosBy);
@@ -603,8 +709,11 @@ async function main() {
         {
           runId: RUN_ID, smoke: SMOKE, model: T.model, trialsPerCell: TRIALS, startedAt,
           trialFile: TRIAL_FILE, seal,
-          server: { name: T.server.name, command: T.server.command, args: T.server.args, tools: upstreamTools },
-          allowedTools: T.allowedTools,
+          server: { name: SERVER.name, command: SERVER.command, args: SERVER.args, tools: upstreamTools },
+          /* Every tool the server offered, what was decided about it, and why. */
+          tools: choices,
+          permitted,
+          prompts: Object.fromEntries(T.scenarios.map((s) => [s.name, promptFor(s)])),
           corpus: { home: HOME, findings: corpus.findings },
           authorship: { scenariosBy: T.scenariosBy, findingsBy: corpus.authors, independent, caveat },
           forecast: Object.fromEntries(T.scenarios.map((s) => [s.name, s.forecast])),
@@ -619,7 +728,9 @@ async function main() {
     );
 
   console.log(`\nGATEWAY TRIAL ${RUN_ID}`);
-  console.log(`  upstream   ${T.server.command} ${T.server.args.join(' ')}  (${upstreamTools.length} tools, ${T.allowedTools.length} permitted)`);
+  console.log(`  upstream   ${SERVER.command} ${SERVER.args.join(' ')}  (${upstreamTools.length} tools)\n`);
+  printChoices(choices);
+  console.log('');
   console.log(`  corpus     ${HOME}  (${corpus.findings.length} active finding(s))`);
   console.log(`  seal       ${seal.commit.slice(0, 10)} at ${seal.committedAt}`);
   console.log(`  authorship ${caveat}`);
@@ -630,7 +741,7 @@ async function main() {
       /* Interleave arms within a trial index so a slow hour or a model
        * hiccup lands on every arm equally rather than on whichever ran last. */
       for (const arm of ARMS) {
-        const t = await runTrial(sc, arm, n);
+        const t = await runTrial(sc, arm, n, permitted);
         trials.push(t);
         save();
         console.log(
@@ -662,3 +773,4 @@ async function main() {
 }
 
 main().catch((e) => { console.error(e); process.exit(1); });
+}
