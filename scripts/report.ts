@@ -23,6 +23,9 @@
 import { readLedger, type RetrievalRecord } from '../src/lib/cairn/ledger';
 import { cairnHome } from '../src/lib/cairn/home';
 import { listNotes, ageDays, ABANDON_AFTER_DAYS } from '../src/lib/cairn/notes';
+import { loadCorpus } from '../src/lib/cairn/load';
+import { verification, REVERIFY_AFTER_DAYS } from '../src/lib/cairn/attest';
+import { tally as arcTally, arcsFile } from '../src/lib/cairn/arcs';
 
 const argv = process.argv.slice(2);
 const JSON_OUT = argv.includes('--json');
@@ -94,12 +97,36 @@ const surface = rows
 const rotting = new Map<string, Set<string>>();
 for (const c of surface) for (const id of c.findings) rotting.set(id, (rotting.get(id) ?? new Set()).add(c.what));
 
+/*
+ * Verification: what the corpus's standing actually rests on. A ledger whose
+ * every finding reads "fresh" because nothing has ever re-run is not fresh,
+ * it is new, and the consumer who said trust decay is existential also said
+ * the failure is quiet: it will not announce that it stopped trusting the
+ * corpus, it will start discounting entries. This is the number to watch.
+ */
+const corpusNow = new Date();
+const verified = loadCorpus().filter((f) => f.status === 'active').map((f) => ({ f, v: verification(f, corpusNow) }));
+const byStanding = { fresh: 0, aging: 0, stale: 0, contested: 0, retired: 0 } as Record<string, number>;
+const bySource = { machine: 0, attested: 0, none: 0 } as Record<string, number>;
+let manualChecks = 0;
+let dueForReverification = 0;
+let refutations = 0;
+for (const { v } of verified) {
+  byStanding[v.standing] = (byStanding[v.standing] ?? 0) + 1;
+  bySource[v.source]++;
+  if (!v.checkable) manualChecks++;
+  if (v.due) dueForReverification++;
+  refutations += v.refuted;
+}
+
 /* Notes: what was noticed and not yet finished, and what was noticed and never will be. Read from drafts/, never from cairn/. */
 let notes: ReturnType<typeof listNotes> = [];
 try { notes = listNotes(); } catch { /* no drafts directory is no notes */ }
 const openNotes = notes.filter((n) => n.state === 'open');
 const abandonedNotes = notes.filter((n) => n.state === 'abandoned');
 const finishedNotes = notes.filter((n) => n.state === 'finished');
+/* Arc tallies come from the per-machine arcs file, never the corpus. */
+const arcs = arcTally(30);
 
 if (JSON_OUT) {
   console.log(
@@ -120,6 +147,8 @@ if (JSON_OUT) {
           drafts: t.drafts,
         })),
         unrecordedFailures: unrecorded.map((t) => ({ tool: t.tool, errors: t.errors })),
+        verification: { findings: verified.length, byStanding, latestConfirmationBy: bySource, manualChecks, dueForReverification, refutations },
+        arcs,
         notes: { open: openNotes.map((n) => ({ id: n.note.id, tool: n.note.tool, title: n.note.title, at: n.note.at })), abandoned: abandonedNotes.length, finished: finishedNotes.length },
         surfaceChanges: surface,
         findingsNamingChangedTools: [...rotting].map(([id, what]) => ({ id, changes: [...what] })),
@@ -153,6 +182,29 @@ console.log('  drafts: offered on a result after a failure that later worked, or
 if (unrecorded.length) {
   console.log('\n  FAILED WITH NOTHING RECORDED — the holes worth filling first:');
   for (const t of unrecorded) console.log(`    ${t.tool}  ${t.errors} error(s)`);
+}
+if (verified.length) {
+  console.log(`\n  VERIFICATION — what the standing of ${verified.length} finding(s) rests on:`);
+  console.log(`    standing      fresh ${byStanding.fresh}  aging ${byStanding.aging}  stale ${byStanding.stale}  contested ${byStanding.contested}`);
+  console.log(`    confirmed by  a machine check ${bySource.machine}  a person or agent ${bySource.attested}  nobody ${bySource.none}`);
+  console.log(`    checks        ${verified.length - manualChecks} runnable (npm run cairn:doctor -- --attest)  ${manualChecks} manual (only whoever uses the tool can re-confirm)`);
+  console.log(`    refutations   ${refutations} on record` + (refutations === 0 && verified.length > 5 ? '  — the falsification machinery has never fired; read "fresh" accordingly' : ''));
+  if (dueForReverification) {
+    console.log(`    ${dueForReverification} not confirmed in ${REVERIFY_AFTER_DAYS} days or ever; the gateway asks whoever next uses the tool.`);
+  }
+}
+/* The Bash detector's calibration: what the person said about each arc it offered. */
+if (arcs.offered) {
+  const answered = arcs.bank + arcs.myMistake + arcs.notSurprising;
+  const pct = (n: number) => (answered ? `${Math.round((100 * n) / answered)}%` : '—');
+  console.log(`\n  FAIL-THEN-RECOVER ARCS — the Bash detector, calibrated by the answers (last 30 days, ${arcsFile()}):`);
+  console.log(`    offered ${arcs.offered}  banked ${arcs.bank} (${pct(arcs.bank)})  my mistake ${arcs.myMistake} (${pct(arcs.myMistake)})  not surprising ${arcs.notSurprising} (${pct(arcs.notSurprising)})  unanswered ${arcs.unanswered}`);
+  if (answered >= 5) {
+    const verdict = arcs.myMistake / answered > 0.6 ? 'mostly slips: the detector is firing on typos and should tighten'
+      : arcs.notSurprising / answered > 0.6 ? 'mostly expected failures: it is firing on ordinary work'
+        : arcs.bank / answered >= 0.2 ? 'a healthy share banked: it is aimed' : 'few banked; read the discards before trusting the aim';
+    console.log(`    ${verdict}.`);
+  }
 }
 if (openNotes.length || abandonedNotes.length) {
   console.log(`\n  NOTES — noticed, not yet findings (${openNotes.length} open, ${finishedNotes.length} finished, ${abandonedNotes.length} abandoned after ${ABANDON_AFTER_DAYS} days):`);

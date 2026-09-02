@@ -27,8 +27,14 @@ name a tool in `triggers` are the ones the gateway delivers.
 
 Four surfaces, all of which are in context when a decision is made:
 
-1. **At connect** — the server's instructions carry an index: one line per
-   tool with a recorded trap.
+1. **At connect** — the server's instructions say in three sentences what
+   this is (a ledger of tool behaviour: what breaks, where, what to do
+   instead) and what it is not (memory: no preferences, no project history,
+   no who-decided-what), then carry an index: one line per tool with a
+   recorded trap, with its standing word. The one advantage claimed is
+   conditional — an entry carries a check and a date, so *where the check
+   has been re-run* the agent can tell whether it is still true — because
+   most entries have not been re-run yet. Degraded, none of this is said.
 2. **On the tool definition** — a labelled line on the tool's description,
    or on the specific argument's schema description when the finding names
    one (`"query_records limit"`).
@@ -37,8 +43,9 @@ Four surfaces, all of which are in context when a decision is made:
 4. **On the result of the tool the finding is about** — the finding in full,
    once per tool per session, then a one-line reminder every ten calls.
 
-Three tools of its own: `cairn_find` (search the corpus), `cairn_note` (what
-you write when there is no time for a finding; see below) and `cairn_record`
+Four tools of its own: `cairn_find` (search the corpus), `cairn_note` (what
+you write when there is no time for a finding; see below), `cairn_observe`
+(say whether a served finding still held; see Freshness) and `cairn_record`
 (write to it, through the same gates as every other door: scanned, the
 check must decide, near-duplicates refused, and — when the writer supplies
 `absentWhen` and the machine's execution policy allows — the check is run
@@ -103,6 +110,51 @@ The draft is also written under `drafts/` in the corpus home so a session
 that ends without recording leaves the hole visible to a person. Once per
 tool per session.
 
+## Freshness, and why a standing that only ever reads "fresh" is worse than none
+
+"Trust decay is existential, everything else is polish" — the first
+consumer of this corpus, after a day of real work through it. And: "a stale
+ledger doesn't go silent, it goes actively wrong." A standing decays on a
+timer, and a timer knows nothing. Measured on the first real corpus: 49
+findings, 46% with a check no machine can run, 75 confirmations and zero
+refutations — the falsification machinery had never fired, and every
+finding read `fresh` for the reason a new car reads reliable.
+
+Three things make freshness real, and the surfaces show which one a finding
+has:
+
+- **Every surface carries the standing word** — `(cairn-0001, aging)` on
+  the description, the argument, the index — and the result carries what it
+  rests on: `STANDING: aging — attested by joey.ahern 20 days ago, not by a
+  check; check is manual: no machine can re-run it`. "Verified by its check
+  today" and "asserted once, never re-run" never read the same.
+- **`cairn_observe`**, on the gateway and the server: after a call showed
+  whether the trap held, the agent says so — `confirmed`, `refuted` (with
+  what the call returned), or `inconclusive`. For the manual half of a
+  corpus this is the *only* observer there will ever be, and the result
+  asks for it: always as one line, and insistently once a finding has gone
+  14 days without a confirmation. Unsigned by default, like a finding
+  recorded through `cairn_record` — and the scoring lets no unsigned line
+  veto a signed corpus, so an unsigned refutation is *shown* on the finding
+  (`1 refutation on record`) but does not move its standing. Give the
+  gateway a key — `npm run cairn:keygen -- "pilot-gateway"`, then
+  `CAIRN_KEY=<keyId>` in the client's entry for it — and its observations
+  are signed under that label; a signed refutation stands as `contested`
+  until confirmations from distinct signers outnumber it two to one. A key
+  is the operator saying "this gateway's observations are mine".
+- **`npm run cairn:doctor -- --attest`** for the runnable half: runs every
+  applicable check under the machine's policy and writes what it found as
+  observations by `doctor` — `confirmed` where a check fired,
+  `inconclusive` where it did not, never `refuted`, because absent on this
+  machine is what environment-specific means. Put it on a schedule; that is
+  what "verified by its check yesterday" means.
+
+`npm run cairn:report` has a VERIFICATION section: findings by standing, how
+many are confirmed by a machine, by a person, or by nobody, how many checks
+are manual, how many are due, and the refutation count — with the sentence
+"the falsification machinery has never fired; read fresh accordingly" until
+it has.
+
 ## What it writes down, and the report
 
 Every emission by surface, every forwarded call, every error, every draft
@@ -118,6 +170,64 @@ npm run cairn:report -- --days 30 --json
 The report counts delivery. It cannot count traps avoided, because a
 success-shaped trap leaves no error; correctness needs a grader, and that is
 what the trial below is.
+
+## Fail-then-recover on Bash: the detector half, for Claude Code
+
+The gateway sees MCP calls. The traps people actually lose afternoons to are
+reached through a CLI, and the consumer who said so also said where the
+signal is: not a failure — "too noisy, trains me to dismiss" — but the arc,
+a command failing and the same program later working. "The detector does
+the remembering; I do the judging." **Never let the machine write; never
+make the human remember.**
+
+`.claude/hooks/post-bash.sh` is that detector, as a Claude Code
+`PostToolUse` hook on `Bash`. It remembers a failing command and the tail
+of its output, keyed by program and subcommand (`sf agent`, the shape the
+corpus already triggers on); on a later success under the same key it puts
+one question in front of the agent, with both calls verbatim from the
+transcript:
+
+```
+--- from your Cairn hooks, not from the command ---
+Fail-then-recover detected on `sf agent`: it failed (Error: agent user lacks class access) and then worked. Trap worth banking, or your own slip? Answer with one call:
+- bank it:         cairn_note {"arc":"arc-3f9a12c0","title":"","tool":"sf agent","evidence":[…both calls…],"workaround":""}
+- my mistake:      cairn_note {"dismiss":"arc-3f9a12c0","as":"my-mistake"}       (a slip you made; not offered again for a week)
+- not surprising:  cairn_note {"dismiss":"arc-3f9a12c0","as":"not-surprising"}   (a failure you already understood; not offered again for ninety days)
+Nothing is recorded unless you answer; an unanswered offer is counted as one.
+--- end ---
+```
+
+Three answers, because a slip the agent made and a failure it already
+understood are different things: only one is an error, neither is a trap,
+and collapsing them loses the difference. **The three tallies are the
+detector's calibration.** Each offer and each answer is written to
+`~/.cairn/arcs.jsonl` — per person, per machine, beside the execution
+policy, outside any corpus — and `npm run cairn:report` shows the ratio: a
+preponderance of "my mistake" means it fires on slips and should tighten,
+of "not surprising" means it fires on ordinary work, a healthy share banked
+means it is aimed. The detector is built for recall — a fixed typo fires it
+— and the tap pays for the precision.
+
+A discard is remembered, or the same arc becomes the nag that gets muted:
+"my mistake" mutes that exact failing command for a week, because a slip
+rarely recurs identically; "not surprising" mutes it for ninety days,
+because an expected failure recurs every time, and three of those on one
+program mute the program; a banked arc is quiet for a month while its note
+is finished. Nothing is kept forever.
+
+Once per key per session; trivial programs (`cat`, `ls`, `grep`…) never
+fire. What it cannot do is force the answer — a hook is advisory in this
+client — and what it cannot see is a success that was not one; the Stop
+hook's session-end sweep (`cairn:unanswered`) lists the arcs that were put
+to you and not answered, the notes you left unfinished, and asks once about
+the quiet kind.
+
+To have it outside this repository, in `~/.claude/settings.json`:
+
+```json
+{ "hooks": { "PostToolUse": [ { "matcher": "Bash", "hooks": [ { "type": "command", "command": "~/cairn/.claude/hooks/post-bash.sh" } ] } ],
+             "Stop":        [ { "hooks": [ { "type": "command", "command": "~/cairn/.claude/hooks/stop.sh" } ] } ] } }
+```
 
 ## When the server's tools change under the corpus
 

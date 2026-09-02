@@ -72,8 +72,8 @@ class Session {
   /** Resolves with the exit code when the proxy process ends. */
   exited: Promise<number | null>;
 
-  constructor(home: string, args: string[]) {
-    const env: Record<string, string | undefined> = { ...process.env, CAIRN_HOME: home };
+  constructor(home: string, args: string[], extraEnv: Record<string, string> = {}) {
+    const env: Record<string, string | undefined> = { ...process.env, CAIRN_HOME: home, ...extraEnv };
     delete env.CAIRN_SESSION;
     delete env.CAIRN_AGENT;
     /* Cast: this project augments ProcessEnv with a required NODE_ENV, which
@@ -175,6 +175,8 @@ test('a finding rides back on the result of the tool it is about', async () => {
     const instructions = (init.result as { instructions?: string }).instructions ?? '';
     assert.match(instructions, /paginate with limit 50/, 'the upstream\'s own instructions must survive the proxy');
     assert.match(instructions, /from your Cairn corpus/, 'the connect-time floor for clients with no hooks');
+    assert.match(instructions, /ledger of tool behaviour: what breaks, where, and what to do instead\. It is not memory/, 'says what it is and what it is not');
+    assert.match(instructions, /where the check has been re-run, you can tell whether it is still true/, 'the advantage is conditional, not a promise');
 
     const r = await s.call('mcp__data360__query_records', { object: 'Account' });
     const t = texts(r);
@@ -844,7 +846,9 @@ test('degraded, the program index says nothing', async () => {
   const bad = single(brokenHome());
   try {
     const init = await bad.init();
-    assert.ok(!/Programs with a recorded trap/.test((init.result as { instructions?: string }).instructions ?? ''));
+    const instructions = (init.result as { instructions?: string }).instructions ?? '';
+    assert.ok(!/Programs with a recorded trap/.test(instructions));
+    assert.ok(!/ledger of tool behaviour|It is not memory/.test(instructions), 'degraded says nothing, not even what it would have been');
   } finally { await bad.close(); }
 });
 
@@ -967,4 +971,64 @@ test('a note is one call, unreachable through the gateway, offered back by a lat
     assert.equal(stored.findingId, 'cairn-0001');
     assert.equal(fs.readdirSync(path.join(home, 'cairn')).length, 1, 'and now, through cairn_record, the corpus has it');
   } finally { await later.close(); }
+});
+
+/* ------------------------------------------------------------------------ */
+/* Freshness on the surfaces, and the observation that keeps it real         */
+/* ------------------------------------------------------------------------ */
+
+test('a served finding says what its standing rests on and asks the agent to re-confirm; cairn_observe records the answer', async () => {
+  const home = corpus(false);
+  bank(home, '0001-old.json', 'cairn-0001', 'the query tool returns empty rather than erroring on a stale mapping', 'mcp__data360__query_records');
+  /* Make its one observation twenty days old, by a person, on a manual check. */
+  const file = path.join(home, 'cairn', '0001-old.json');
+  const f = JSON.parse(fs.readFileSync(file, 'utf8'));
+  f.observations = [{ by: 'joey.ahern', at: new Date(Date.now() - 20 * 86_400_000).toISOString(), verdict: 'confirmed', note: 'seen' }];
+  f.check = { command: 'Look at it by hand.', confirmedIf: 'x', refutedIf: 'y', manual: true };
+  fs.writeFileSync(file, JSON.stringify(f));
+  const s = single(home);
+  try {
+    await s.init('t-client');
+    const q = (await s.tools()).find((t) => t.name === 'mcp__data360__query_records')!;
+    assert.match(q.description!, /\(cairn-0001, (fresh|aging|stale)\)/, 'the standing word rides on the description');
+    const r = await s.call('mcp__data360__query_records', { object: 'A' });
+    const note = texts(r).find((x) => x.includes('cairn-0001'))!;
+    assert.match(note, /STANDING: (fresh|aging|stale) — attested by joey\.ahern 20 days ago, not by a check; check is manual: no machine can re-run it/);
+    assert.match(note, /Not re-confirmed in 20 days\. If this call showed the trap still holds — or that it no longer does — say so: cairn_observe/);
+
+    const bare = await s.call('cairn_observe', { finding: 'cairn-0001', verdict: 'refuted' });
+    assert.equal(bare.isError, true, 'a refutation needs a note');
+    const ok = await s.call('cairn_observe', { finding: 'cairn-0001', verdict: 'confirmed', note: 'returned zero rows again with the stale mapping' });
+    assert.ok(!ok.isError, texts(ok).join('\n'));
+    assert.match(texts(ok)[0], /Recorded confirmed on cairn-0001 by t-client; it now stands (fresh|aging)\. Unsigned, so it counts as one environment/);
+    const stored = JSON.parse(fs.readFileSync(file, 'utf8'));
+    assert.equal(stored.observations.length, 2);
+    assert.equal(stored.observations[1].by, 't-client');
+    assert.match(stored.observations[1].environment.note, /via cairn-proxy, client t-client/);
+    const ledger = fs.readdirSync(path.join(home, 'data', 'retrievals')).flatMap((x) => fs.readFileSync(path.join(home, 'data', 'retrievals', x), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l) as { source: string }));
+    assert.ok(ledger.some((row) => row.source === 'mcp-proxy:observe-confirmed'));
+  } finally { await s.close(); }
+});
+
+test('an arc the hook offered is answered through cairn_note: dismissed as a slip, or banked, and counted', async () => {
+  const home = corpus(false);
+  const arcsFile = path.join(home, 'arcs.jsonl');
+  const { arcId } = await import('../src/lib/cairn/arcs');
+  const failing = 'sf agent publish --nmae Demo';
+  const arc = arcId('sf agent', failing);
+  fs.writeFileSync(arcsFile, JSON.stringify({ at: new Date().toISOString(), arc, key: 'sf agent', failing, choice: 'offered' }) + '\n');
+  const s = new Session(home, ['--server', `node ${FIXTURE}`], { CAIRN_ARCS: arcsFile });
+  try {
+    await s.init();
+    const bad = await s.call('cairn_note', { dismiss: arc });
+    assert.equal(bad.isError, true, 'dismiss needs `as`');
+    const nope = await s.call('cairn_note', { dismiss: 'arc-00000000', as: 'my-mistake' });
+    assert.equal(nope.isError, true, 'only an offered arc can be answered');
+    const ok = await s.call('cairn_note', { dismiss: arc, as: 'my-mistake' });
+    assert.ok(!ok.isError, texts(ok)[0]);
+    assert.match(texts(ok)[0], /Dismissed arc-[0-9a-f]{8} as my-mistake; not offered again for a week/);
+    const rows = fs.readFileSync(arcsFile, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    assert.deepEqual(rows.map((r) => r.choice), ['offered', 'my-mistake']);
+    assert.equal(fs.readdirSync(path.join(home, 'cairn')).length, 0, 'a dismissal writes nothing anywhere else');
+  } finally { await s.close(); }
 });

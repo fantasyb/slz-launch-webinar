@@ -77,6 +77,9 @@ import { redactForLedger } from '../src/lib/cairn/safety';
 import { shapeOf, diffSurface, findingNames, type ToolShape, type SurfaceChange } from '../src/lib/cairn/toolsurface';
 import { summarise, detect, type CallSummary } from '../src/lib/cairn/contradiction';
 import { recordNote, discardNote, finishNotes, openNotesFor, ageDays } from '../src/lib/cairn/notes';
+import { attest, verification, verificationLine } from '../src/lib/cairn/attest';
+import { recordArc, readArcs } from '../src/lib/cairn/arcs';
+import { standing } from '../src/lib/cairn/decay';
 
 /* ------------------------------------------------------------------------ */
 /* Configuration                                                             */
@@ -313,12 +316,27 @@ const clip = (s: string, n: number) => {
  */
 const LABEL = 'from your Cairn corpus, not from this tool';
 
+/**
+ * A finding is a prior, and a prior is only as good as when it was last
+ * checked. So the note says what its standing rests on -- verified by a
+ * check, attested by someone, or never confirmed -- and whether a machine
+ * could re-run it at all, and it asks the one observer who can answer for
+ * the manual half: the agent that has just used the tool. "Trust decay is
+ * existential"; the alternative is a standing that reads fresh because the
+ * corpus is new, which is a new car looking reliable.
+ */
 function fullNote(f: Finding): string {
+  const v = verification(f);
+  const ask = v.due
+    ? `${v.lastConfirmedAt ? `Not re-confirmed in ${Math.floor(v.daysSinceConfirmed!)} days. ` : 'Never confirmed. '}If this call showed the trap still holds — or that it no longer does — say so: `
+    : 'If this call showed it no longer holds: ';
   return (
     `\n\n--- ${LABEL} ---\n` +
     `${f.id} — ${f.title}\n` +
+    `STANDING: ${verificationLine(f)}\n` +
     `WHAT HAPPENS: ${clip(f.reality, 400)}` +
     (f.workaround ? `\nINSTEAD: ${clip(f.workaround, 400)}` : '') +
+    `\n${ask}cairn_observe {"finding":"${f.id}","verdict":"confirmed"|"refuted","note":"what the call returned"}` +
     `\n--- end ---`
   );
 }
@@ -375,7 +393,7 @@ function describe(session: SessionState, tool: Tool, about: About[], budgetLeft:
     let placed = false;
     for (const prop of a.props) {
       if (!props?.[prop] || argumentNotes >= ARGUMENT_CAP) continue;
-      const line = `[${LABEL}: ${clip(a.finding.title, 110)} (${a.finding.id}). Details arrive on the result.]`;
+      const line = `[${LABEL}: ${clip(a.finding.title, 110)} (${a.finding.id}, ${standing(a.finding)}). Details arrive on the result.]`;
       const prev = props[prop].description ?? '';
       props[prop] = { ...props[prop], description: prev ? `${prev} ${line}` : line };
       argumentNotes++;
@@ -390,7 +408,7 @@ function describe(session: SessionState, tool: Tool, about: About[], budgetLeft:
     const n = onTool.length;
     const line =
       budgetLeft > 0
-        ? `[${LABEL}: ${n} recorded trap${n === 1 ? '' : 's'} — "${clip(onTool[0].finding.title, 110)}" (${onTool[0].finding.id}). Details arrive on the result.]`
+        ? `[${LABEL}: ${n} recorded trap${n === 1 ? '' : 's'} — "${clip(onTool[0].finding.title, 110)}" (${onTool[0].finding.id}, ${standing(onTool[0].finding)}). Details arrive on the result.]`
         : `[${LABEL}: ${n} recorded trap${n === 1 ? '' : 's'}. Details arrive on the result.]`;
     out.description = base ? `${base}\n\n${line}` : line;
   }
@@ -797,6 +815,7 @@ const GATEWAY_TOOLS: Tool[] = [
         },
         by: { type: 'string', maxLength: 200, description: 'Your model or agent identifier' },
         note: { type: 'string', description: 'The id of the cairn_note this finishes, if it grew out of one' },
+        arc: { type: 'string', pattern: '^arc-[0-9a-f]{8}$', description: 'When this records a fail-then-recover arc the Bash hook offered: its id, so the choice is counted' },
         distinctFrom: {
           type: 'array',
           maxItems: 3,
@@ -810,6 +829,32 @@ const GATEWAY_TOOLS: Tool[] = [
         },
       },
       required: ['title', 'claim', 'expectation', 'reality', 'evidence', 'check'],
+    },
+  },
+  /*
+   * FRESHNESS THAT IS REAL. A finding served on a result is a prior; the
+   * agent that just used the tool is the only observer who can say whether
+   * it held, and for the manual half of a corpus it is the only observer
+   * there will ever be. An observation is the format's own mechanism for
+   * that, made reachable here. Unsigned, so one line cannot veto a signed
+   * corpus; a refutation is shown as contested until confirmations from
+   * distinct signers outnumber it two to one.
+   */
+  {
+    name: 'cairn_observe',
+    description:
+      'After a tool call showed whether a recorded trap still holds: say so. "confirmed" if the trap bit as the ' +
+      'finding describes, "refuted" if the call did what the finding says it cannot, "inconclusive" if you could not ' +
+      'tell. This is what keeps a finding\'s standing honest; a finding nobody re-confirms decays into a lead, and one ' +
+      'that has stopped being true is worse than none.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        finding: { type: 'string', pattern: '^cairn-\\d{4}$', description: 'The finding id, as it appeared on the result' },
+        verdict: { type: 'string', enum: ['confirmed', 'refuted', 'inconclusive'] },
+        note: { type: 'string', maxLength: 4000, description: 'What the call returned. Required for refuted and inconclusive.' },
+      },
+      required: ['finding', 'verdict'],
     },
   },
   /*
@@ -838,7 +883,10 @@ const GATEWAY_TOOLS: Tool[] = [
         },
         workaround: { type: 'string', maxLength: 4000, description: 'What worked instead, if anything did' },
         by: { type: 'string', maxLength: 200, description: 'Your model or agent identifier' },
+        arc: { type: 'string', pattern: '^arc-[0-9a-f]{8}$', description: 'When banking a fail-then-recover arc the Bash hook offered: its id, so the choice is counted' },
         discard: { type: 'string', description: 'Instead of noting: the id of a note to drop' },
+        dismiss: { type: 'string', pattern: '^arc-[0-9a-f]{8}$', description: 'Instead of noting: the id of an offered arc to dismiss, with `as`' },
+        as: { type: 'string', enum: ['my-mistake', 'not-surprising'], description: 'Why the arc is not a trap: a slip you made, or a failure you already understood' },
       },
     },
   },
@@ -876,6 +924,22 @@ function callRecord(name: string, args: Record<string, unknown>): string {
 }
 
 const textResult = (text: string, isError = false) => ({ isError, content: [{ type: 'text' as const, text }] });
+
+/**
+ * The tap, counted. An arc the Bash hook offered is answered here -- banked
+ * through cairn_note or cairn_record, or dismissed as a slip or as expected
+ * -- and the answer goes beside the offer in ~/.cairn/arcs.jsonl, which is
+ * the detector's calibration. Only an offered arc can be answered.
+ */
+function countArc(arc: string, choice: 'bank' | 'my-mistake' | 'not-surprising', session: SessionState): boolean {
+  const offered = readArcs().find((r) => r.arc === arc && r.choice === 'offered');
+  if (!offered) return false;
+  try {
+    recordArc({ arc, key: offered.key, failing: offered.failing, choice, by: session.agent });
+    observe(`${offered.key} [arc ${choice}]`, [], `mcp-proxy:arc-${choice}`, { by: session.agent, session: session.id });
+  } catch { /* never fatal */ }
+  return true;
+}
 
 /* ------------------------------------------------------------------------ */
 /* Main                                                                      */
@@ -1045,7 +1109,7 @@ async function main() {
       if (!about.length) continue;
       const a = about[0];
       const where = a.props.length ? ` (argument ${a.props[0]})` : '';
-      lines.push(`${name}${where}: "${clip(a.finding.title, 90)}" (${a.finding.id})${about.length > 1 ? ` +${about.length - 1}` : ''}`);
+      lines.push(`${name}${where}: "${clip(a.finding.title, 90)}" (${a.finding.id}, ${standing(a.finding)})${about.length > 1 ? ` +${about.length - 1}` : ''}`);
       served(session, a.finding.id, name, except === undefined ? 'connect-index' : 'first-contact');
       if (lines.length >= INDEX_CAP) break;
     }
@@ -1108,7 +1172,8 @@ async function main() {
   const PROGRAMS_HEADING =
     'Programs with a recorded trap. Coarse, on purpose: this names the program, not the moment. ' +
     'Before running one of these, cairn_find with the finding id hands over the whole finding:';
-  const idsIn = (lines: string[]) => new Set(lines.flatMap((l) => [...l.matchAll(/\((cairn-\d{4})\)/g)].map((m) => m[1])));
+  /* Index lines read `(cairn-0004)` or `(cairn-0004, stale)`; the standing word must not hide the id from the dedupe. */
+  const idsIn = (lines: string[]) => new Set(lines.flatMap((l) => [...l.matchAll(/\((cairn-\d{4})(?:, [a-z]+)?\)/g)].map((m) => m[1])));
 
   /**
    * Bring a dead upstream back, with backoff, for as long as the session
@@ -1227,11 +1292,24 @@ async function main() {
     return [
       ...upstreamOwn,
       '## Cairn',
-      'Tool descriptions and results may carry a block marked "' + LABEL + '". That block is from ' +
-        'the ledger of recorded traps kept by whoever configured this gateway, not from the service; ' +
-        'judge whether it applies. This gateway also offers cairn_find, to search that ledger, and ' +
-        'cairn_record: when a call fails in a way that contradicted a reasonable expectation and you ' +
-        'work it out, record it.' +
+      /*
+       * What this is, and what it is not, in the model's first look at the
+       * server. A ledger of tool behaviour is easy to mistake for memory,
+       * and an agent that looks here for preferences or project history
+       * wastes its context and then distrusts what it does find. The
+       * advantage is stated conditionally -- a check and a date let you
+       * tell whether an entry is still true only once something has re-run
+       * the check -- because most entries have not been re-run yet, and the
+       * standing word says so.
+       */
+      'This is a ledger of tool behaviour: what breaks, where, and what to do instead. It is not memory: ' +
+        'no preferences, no project history, nothing about who decided what or why. Each entry carries a ' +
+        'check and a date, so, where the check has been re-run, you can tell whether it is still true, which ' +
+        'a private note cannot tell you; read the standing before relying on one. ' +
+        'Blocks marked "' + LABEL + '" on tool descriptions and results are from that ledger, kept by ' +
+        'whoever configured this gateway, not from the service; judge whether they apply. cairn_find searches ' +
+        'it; cairn_record adds to it when a call failed in a way that contradicted a reasonable expectation and ' +
+        'you worked it out; cairn_observe says whether a finding still held after a call.' +
         (index.length
           ? `\n\nTools with a recorded trap, as of this session's start:\n${index.map((l) => `- ${l}`).join('\n')}`
           : '') +
@@ -1285,8 +1363,9 @@ async function main() {
          * anyone who can write into the system that tool reads. Its check is
          * never executed here, whatever this machine's execution policy says.
          */
-        const { note: noteId, ...submission } = args as Record<string, unknown> & { note?: unknown };
+        const { note: noteId, arc: arcId, ...submission } = args as Record<string, unknown> & { note?: unknown; arc?: unknown };
         const outcome = await recordSubmission(submission, { by: session.agent, origin: 'agent' });
+        if (outcome.ok && typeof arcId === 'string') countArc(arcId, 'bank', session);
         try { observe(`cairn_record ${outcome.ok ? outcome.finding!.id : 'refused'}`, [], 'mcp-proxy:record', { by: session.agent, session: session.id }); } catch { /* never fatal */ }
         let closed = '';
         if (outcome.ok) {
@@ -1297,14 +1376,27 @@ async function main() {
         }
         return textResult(outcome.message + closed, !outcome.ok);
       }
+      if (!toolOwner.has(req.params.name) && req.params.name === 'cairn_observe') {
+        const outcome = attest(args, { by: session.agent ?? 'agent', via: `cairn-proxy, client ${session.agent ?? 'unknown'}`, keyId: process.env.CAIRN_KEY });
+        try { observe(`cairn_observe ${String(args.finding ?? '?')} ${outcome.ok ? String(args.verdict) : 'refused'}`, [], `mcp-proxy:observe-${outcome.ok ? String(args.verdict) : 'refused'}`, { by: session.agent, session: session.id }); } catch { /* never fatal */ }
+        return textResult(outcome.message, !outcome.ok);
+      }
       if (!toolOwner.has(req.params.name) && req.params.name === 'cairn_note') {
+        if (typeof args.dismiss === 'string') {
+          const as = args.as === 'my-mistake' || args.as === 'not-surprising' ? args.as : null;
+          if (!as) return textResult('dismiss needs `as`: "my-mistake" (a slip you made) or "not-surprising" (a failure you already understood).', true);
+          const counted = countArc(args.dismiss, as, session);
+          return textResult(counted ? `Dismissed ${args.dismiss} as ${as}; not offered again for ${as === 'my-mistake' ? 'a week' : 'ninety days'}.` : `No offered arc with id ${args.dismiss}.`, !counted);
+        }
         if (typeof args.discard === 'string') {
           const dropped = discardNote(args.discard);
           try { observe(`cairn_note discard ${args.discard}`, [], 'mcp-proxy:note-discarded', { by: session.agent, session: session.id }); } catch { /* never fatal */ }
           return textResult(dropped ? `Discarded ${dropped.id}.` : `No open note with id ${args.discard}.`, !dropped);
         }
-        const outcome = recordNote(args, { by: session.agent, session: session.id });
+        const { arc: arcId, ...noteArgs } = args as Record<string, unknown> & { arc?: unknown };
+        const outcome = recordNote(noteArgs, { by: session.agent, session: session.id });
         try { observe(`cairn_note ${outcome.ok ? outcome.note!.id : 'refused'}`, [], 'mcp-proxy:note', { by: session.agent, session: session.id }); } catch { /* never fatal */ }
+        if (outcome.ok && typeof arcId === 'string') countArc(arcId, 'bank', session);
         return textResult(outcome.message, !outcome.ok);
       }
       if (!toolOwner.has(req.params.name) && req.params.name === 'cairn_find') {
