@@ -141,13 +141,22 @@ export function serve(data = buildData()) {
       description:
         'Query records of an object through a mapping. Returns matching records. ' +
         'Use `filter` for equality conditions on fields, e.g. {"status": "active"}.',
-      inputSchema: {
-        object: z.string().describe('The object to query, e.g. Contact'),
-        filter: z.record(z.string()).optional().describe('Equality filter, field -> value'),
-        limit: z.number().int().optional().describe('Maximum rows to return (1-1000, default 100)'),
-        mapping_id: z.string().optional().describe("The mapping to query through. Defaults to the object's default mapping."),
-        page_token: z.string().optional().describe('Opaque token from a previous response to fetch the next page'),
-      },
+      /*
+       * A full zod object with passthrough, not a raw shape: the SDK wraps a
+       * shape in z.object(), which STRIPS unknown keys before the handler
+       * runs, so the undocumented `include_paging` never arrived and the
+       * finding's workaround was impossible. The first smoke run found it.
+       * Real servers accept what their docs do not list; this one now does.
+       */
+      inputSchema: z
+        .object({
+          object: z.string().describe('The object to query, e.g. Contact'),
+          filter: z.record(z.string()).optional().describe('Equality filter, field -> value'),
+          limit: z.number().int().optional().describe('Maximum rows to return (1-1000, default 100)'),
+          mapping_id: z.string().optional().describe("The mapping to query through. Defaults to the object's default mapping."),
+          page_token: z.string().optional().describe('Opaque token from a previous response to fetch the next page'),
+        })
+        .passthrough(),
     },
     async (args) => {
       const { object, filter, limit, mapping_id, page_token } = args;
@@ -175,7 +184,12 @@ export function serve(data = buildData()) {
       const page = out.slice(offset, offset + size);
       const body = { status: 'success', mapping_id: mapping, records: page };
       /* Paging exists, behind a flag the schema does not mention. */
-      if (args.include_paging === true && offset + size < out.length) {
+      /* Boolean or the string "true": an argument the schema does not list
+       * has no type, and the second smoke run showed the model sending the
+       * string. A server that only honoured the boolean would be a second
+       * trap stacked on the first, which is not the one being measured. */
+      const paging = args.include_paging === true || args.include_paging === 'true';
+      if (paging && offset + size < out.length) {
         body.next_page_token = Buffer.from(`off:${offset + size}`).toString('base64');
       }
       return json(body);

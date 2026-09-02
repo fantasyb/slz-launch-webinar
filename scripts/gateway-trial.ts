@@ -98,6 +98,8 @@ const MAX_TURNS = Number(opt('max-turns', '40'));
 const RUN_ID = `${SMOKE ? 'smoke' : 'run'}-${new Date().toISOString().replace(/[:.]/g, '').slice(0, 15)}-${MODEL}`;
 const OUT_DIR = path.join(REPO, 'data', 'gateway-trials');
 const OUT = path.join(OUT_DIR, `${RUN_ID}.json`);
+/* The client's own record of every trial, kept beside the summary so a number can be argued with. */
+const TRANSCRIPTS = path.join(OUT_DIR, RUN_ID);
 
 /* ---- stale bundle guard ------------------------------------------------- */
 
@@ -110,15 +112,20 @@ function newestMtime(dir: string): number {
   }
   return newest;
 }
-if (!fs.existsSync(BUNDLE)) {
-  console.error('refusing: dist/cli/mcp-proxy.js is not built. Run npm run cairn:build-cli first.');
-  process.exit(2);
-}
-const bundleAt = fs.statSync(BUNDLE).mtimeMs;
-const sourceAt = Math.max(newestMtime(path.join(REPO, 'src')), newestMtime(path.join(REPO, 'scripts')));
-if (sourceAt > bundleAt) {
-  console.error('refusing: dist/cli/mcp-proxy.js is older than the source. Run npm run cairn:build-cli first.');
-  process.exit(2);
+/* Only when trials will run. A regrade reads transcripts and spawns nothing. */
+const REGRADE_AT = argv.indexOf('--regrade');
+let bundleAt = 0;
+if (REGRADE_AT === -1) {
+  if (!fs.existsSync(BUNDLE)) {
+    console.error('refusing: dist/cli/mcp-proxy.js is not built. Run npm run cairn:build-cli first.');
+    process.exit(2);
+  }
+  bundleAt = fs.statSync(BUNDLE).mtimeMs;
+  const sourceAt = Math.max(newestMtime(path.join(REPO, 'src')), fs.statSync(path.join(REPO, 'scripts', 'mcp-proxy.ts')).mtimeMs);
+  if (sourceAt > bundleAt) {
+    console.error('refusing: dist/cli/mcp-proxy.js is older than the source. Run npm run cairn:build-cli first.');
+    process.exit(2);
+  }
 }
 
 /* ---- one trial ---------------------------------------------------------- */
@@ -131,6 +138,14 @@ interface Trial {
   answer: number | null;
   truth: number;
   correct: boolean;
+  /**
+   * Within two of the truth. SECONDARY, added after the smoke run and
+   * disclosed as such: the third A-gateway smoke paged all three pages
+   * (50+50+37) and reported 136, a model miscounting 137 JSON rows by eye
+   * because the task allows no code. Exact match stays the headline; this
+   * separates "took the wrong route" from "counted wrong on the right one".
+   */
+  nearMiss: boolean;
   turns: number;
   toolCalls: Record<string, number>;
   mcpCalls: number;
@@ -143,9 +158,98 @@ interface Trial {
   proxyLedger: Record<string, number>;
   usedIncludePaging: boolean;
   usedExplicitMapping: boolean;
+  /**
+   * Did the agent take the route the trap hides? Computed from the TOOL
+   * RESULTS in the client's transcript, not from the answer: for A, the
+   * number of distinct churned Contact ids it actually retrieved reaches the
+   * truth; for B, a query went through the fresh mapping and returned rows.
+   * Added after the smoke run, where a trial paged all three pages and
+   * summed them to 136 -- the trap avoided, the arithmetic wrong. "Gets the
+   * right answer" and "avoids the trap" are different claims and a reader
+   * needs both; the sealed forecast was written against `correct` alone.
+   */
+  route: boolean;
+  rowsRetrieved: number;
   resultText: string;
+  transcript: string;
   stderrTail: string;
   error?: string;
+}
+
+/** Everything the client's transcript can tell us about one trial. */
+function analyse(stdout: string, sc: Scenario, truthValue: number) {
+  const toolCalls: Record<string, number> = {};
+  let delivered = { onResult: 0, onToolSearch: 0 };
+  let usedIncludePaging = false;
+  let usedExplicitMapping = false;
+  let result: Record<string, unknown> | null = null;
+  const useIds = new Map<string, string>();
+  const seenIds = new Set<string>();
+  let freshMappingRows = 0;
+  for (const line of stdout.split('\n')) {
+    if (!line.trim()) continue;
+    let ev: { type?: string; message?: { content?: unknown[] }; [k: string]: unknown };
+    try { ev = JSON.parse(line); } catch { continue; }
+    if (ev.type === 'result') { result = ev; continue; }
+    const content = ev.message?.content;
+    if (!Array.isArray(content)) continue;
+    for (const block of content as Array<Record<string, unknown>>) {
+      if (block.type === 'tool_use') {
+        const name = String(block.name);
+        toolCalls[name] = (toolCalls[name] ?? 0) + 1;
+        useIds.set(String(block.id), name);
+        const input = (block.input ?? {}) as Record<string, unknown>;
+        if (name.endsWith('query_records')) {
+          /* Boolean or the string "true": an undocumented argument has no type,
+           * and the model sent the string. The server was fixed first and this
+           * detector reported "no" on a trial that followed the workaround. */
+          if (input.include_paging === true || input.include_paging === 'true') usedIncludePaging = true;
+          if (typeof input.mapping_id === 'string') usedExplicitMapping = true;
+        }
+      }
+      if (block.type === 'tool_result') {
+        const text = JSON.stringify(block.content ?? '');
+        /* The tool's own JSON is the first text block; the proxy's note, if any, follows a blank line. */
+        const own = Array.isArray(block.content) ? String((block.content as Array<{ text?: string }>)[0]?.text ?? '') : '';
+        try {
+          const body = JSON.parse(own.split('\n--- from your')[0]) as { mapping_id?: string; records?: Array<Record<string, unknown>> };
+          if (Array.isArray(body.records)) {
+            for (const r of body.records) {
+              if (sc.key === 'churned' && r.status === 'churned' && typeof r.id === 'string') seenIds.add(r.id);
+              if (sc.key === 'open_tier2' && r.status === 'open' && r.queue === 'Tier2' && typeof r.id === 'string') seenIds.add(r.id);
+            }
+            if (body.mapping_id === 'mp_cases_v2') freshMappingRows += body.records.length;
+          }
+        } catch { /* not a records result */ }
+        if (text.includes(LABEL)) {
+          const via = useIds.get(String(block.tool_use_id)) ?? '';
+          if (via === 'ToolSearch') delivered.onToolSearch++;
+          else delivered.onResult++;
+        }
+      }
+    }
+  }
+  const mcpCalls = Object.entries(toolCalls).filter(([k]) => k.startsWith('mcp__records__')).reduce((a, [, v]) => a + v, 0);
+
+  const resultText = String(result?.result ?? '');
+  let answer: number | null = null;
+  const m = resultText.match(/\{[^{}]*\}/g);
+  if (m) {
+    for (const cand of m.reverse()) {
+      try {
+        const j = JSON.parse(cand) as Record<string, unknown>;
+        if (typeof j[sc.key] === 'number') { answer = j[sc.key] as number; break; }
+      } catch { /* next */ }
+    }
+  }
+
+  return {
+    toolCalls, mcpCalls, delivered, usedIncludePaging, usedExplicitMapping, result, resultText, answer,
+    correct: answer === truthValue,
+    nearMiss: answer !== null && Math.abs(answer - truthValue) <= 2,
+    route: sc.key === 'churned' ? seenIds.size >= truthValue : freshMappingRows > 0,
+    rowsRetrieved: seenIds.size,
+  };
 }
 
 async function runTrial(sc: Scenario, arm: Arm, n: number, truthValue: number): Promise<Trial> {
@@ -202,55 +306,11 @@ async function runTrial(sc: Scenario, arm: Arm, n: number, truthValue: number): 
     child.on('close', (c) => { clearTimeout(timer); resolve({ stdout: out, stderr: err, code: c }); });
   });
   const durationMs = Date.now() - started;
+  fs.mkdirSync(TRANSCRIPTS, { recursive: true });
+  fs.writeFileSync(path.join(TRANSCRIPTS, `${sc.name}-${arm}-${n}.jsonl`), stdout);
+  if (stderr.trim()) fs.writeFileSync(path.join(TRANSCRIPTS, `${sc.name}-${arm}-${n}.stderr`), stderr);
 
-  const toolCalls: Record<string, number> = {};
-  let delivered = { onResult: 0, onToolSearch: 0 };
-  let usedIncludePaging = false;
-  let usedExplicitMapping = false;
-  let result: Record<string, unknown> | null = null;
-  const useIds = new Map<string, string>();
-  for (const line of stdout.split('\n')) {
-    if (!line.trim()) continue;
-    let ev: { type?: string; message?: { content?: unknown[] }; [k: string]: unknown };
-    try { ev = JSON.parse(line); } catch { continue; }
-    if (ev.type === 'result') { result = ev; continue; }
-    const content = ev.message?.content;
-    if (!Array.isArray(content)) continue;
-    for (const block of content as Array<Record<string, unknown>>) {
-      if (block.type === 'tool_use') {
-        const name = String(block.name);
-        toolCalls[name] = (toolCalls[name] ?? 0) + 1;
-        useIds.set(String(block.id), name);
-        const input = (block.input ?? {}) as Record<string, unknown>;
-        if (name.endsWith('query_records')) {
-          if (input.include_paging === true) usedIncludePaging = true;
-          if (typeof input.mapping_id === 'string') usedExplicitMapping = true;
-        }
-      }
-      if (block.type === 'tool_result') {
-        const text = JSON.stringify(block.content ?? '');
-        if (text.includes(LABEL)) {
-          const via = useIds.get(String(block.tool_use_id)) ?? '';
-          if (via === 'ToolSearch') delivered.onToolSearch++;
-          else delivered.onResult++;
-        }
-      }
-    }
-  }
-  const mcpCalls = Object.entries(toolCalls).filter(([k]) => k.startsWith('mcp__records__')).reduce((a, [, v]) => a + v, 0);
-
-  const resultText = String(result?.result ?? '');
-  let answer: number | null = null;
-  const m = resultText.match(/\{[^{}]*\}/g);
-  if (m) {
-    for (const cand of m.reverse()) {
-      try {
-        const j = JSON.parse(cand) as Record<string, unknown>;
-        if (typeof j[sc.key] === 'number') { answer = j[sc.key] as number; break; }
-      } catch { /* next */ }
-    }
-  }
-
+  const a = analyse(stdout, sc, truthValue);
   const proxyLedger: Record<string, number> = {};
   const ledgerDir = path.join(home, 'data', 'retrievals');
   if (fs.existsSync(ledgerDir)) {
@@ -270,22 +330,53 @@ async function runTrial(sc: Scenario, arm: Arm, n: number, truthValue: number): 
 
   return {
     scenario: sc.name, arm, trial: n, sessionId,
-    answer, truth: truthValue, correct: answer === truthValue,
-    turns: Number(result?.num_turns ?? 0),
-    toolCalls, mcpCalls,
-    costUsd: Number(result?.total_cost_usd ?? 0),
+    answer: a.answer, truth: truthValue, correct: a.correct,
+    nearMiss: a.nearMiss,
+    turns: Number(a.result?.num_turns ?? 0),
+    toolCalls: a.toolCalls, mcpCalls: a.mcpCalls,
+    costUsd: Number(a.result?.total_cost_usd ?? 0),
     durationMs,
-    denials: (result?.permission_denials as unknown[]) ?? [],
-    delivered, proxyLedger, usedIncludePaging, usedExplicitMapping,
-    resultText: resultText.slice(0, 400),
+    denials: (a.result?.permission_denials as unknown[]) ?? [],
+    delivered: a.delivered, proxyLedger, usedIncludePaging: a.usedIncludePaging, usedExplicitMapping: a.usedExplicitMapping,
+    route: a.route,
+    rowsRetrieved: a.rowsRetrieved,
+    resultText: a.resultText.slice(0, 400),
+    transcript: path.relative(REPO, path.join(TRANSCRIPTS, `${sc.name}-${arm}-${n}.jsonl`)),
     stderrTail: stderr.slice(-600),
-    error: code !== 0 ? `claude exited ${code}` : result ? undefined : 'no result event',
+    error: code !== 0 ? `claude exited ${code}` : a.result ? undefined : 'no result event',
   };
+}
+
+/* ---- regrade ------------------------------------------------------------ */
+
+/*
+ * Recompute the transcript-derived fields of an existing run without
+ * rerunning it. The transcripts were saved for exactly this: a grader can be
+ * wrong (two were, found by chasing an off-by-one) and the fix must apply to
+ * the trials already paid for, visibly, rather than by rerunning until the
+ * numbers look right. `correct` is unchanged by design -- it is what the seal
+ * predicted -- and every recomputed field is listed in `regraded`.
+ */
+function regrade(file: string): void {
+  const run = JSON.parse(fs.readFileSync(file, 'utf8')) as { trials: Trial[]; truth: Record<string, number>; regraded?: string[] };
+  const fields = ['usedIncludePaging', 'usedExplicitMapping', 'route', 'rowsRetrieved', 'nearMiss', 'delivered'];
+  for (const t of run.trials) {
+    const sc = SCENARIOS.find((x) => x.name === t.scenario)!;
+    if (!t.transcript) continue; /* the first smoke predates saved transcripts */
+    const transcript = path.join(REPO, t.transcript);
+    if (!fs.existsSync(transcript)) continue;
+    const a = analyse(fs.readFileSync(transcript, 'utf8'), sc, t.truth);
+    for (const f of fields) (t as unknown as Record<string, unknown>)[f] = (a as unknown as Record<string, unknown>)[f];
+  }
+  run.regraded = [...new Set([...(run.regraded ?? []), ...fields])];
+  fs.writeFileSync(file, `${JSON.stringify(run, null, 2)}\n`);
+  console.log(`regraded ${run.trials.length} trial(s) in ${path.relative(REPO, file)}: ${fields.join(', ')}`);
 }
 
 /* ---- main --------------------------------------------------------------- */
 
 async function main() {
+  if (REGRADE_AT !== -1) { regrade(path.resolve(argv[REGRADE_AT + 1])); return; }
   const records = await import(RECORDS);
   const truth = records.truth() as { churned: number; open_tier2: number };
   const scenarios = SCENARIOS.filter((s) => wantScenario === 'all' || s.name.startsWith(wantScenario));
@@ -307,7 +398,7 @@ async function main() {
         trials.push(t);
         save();
         console.log(
-          `  ${sc.name.padEnd(16)} ${arm.padEnd(8)} #${n}  ${t.correct ? 'CORRECT' : 'wrong  '}  answer=${t.answer ?? '-'} truth=${t.truth}` +
+          `  ${sc.name.padEnd(16)} ${arm.padEnd(8)} #${n}  ${t.correct ? 'CORRECT' : t.nearMiss ? 'near   ' : 'wrong  '} route=${t.route ? 'yes' : 'no '} answer=${t.answer ?? '-'} truth=${t.truth}` +
             `  mcp=${t.mcpCalls} turns=${t.turns} $${t.costUsd.toFixed(3)} ${(t.durationMs / 1000).toFixed(0)}s` +
             `  delivered=${t.delivered.onResult}/${t.delivered.onToolSearch}` +
             (t.denials.length ? `  DENIALS=${t.denials.length}` : '') +
@@ -322,8 +413,10 @@ async function main() {
     const row = arms.map((arm) => {
       const ts = trials.filter((t) => t.scenario === sc.name && t.arm === arm);
       const ok = ts.filter((t) => t.correct).length;
+      const near = ts.filter((t) => t.nearMiss).length;
+      const route = ts.filter((t) => t.route).length;
       const calls = ts.reduce((a, t) => a + t.mcpCalls, 0) / Math.max(1, ts.length);
-      return `${arm} ${ok}/${ts.length} (mcp calls avg ${calls.toFixed(1)})`;
+      return `${arm} exact ${ok}/${ts.length}, within-2 ${near}, route ${route} (mcp avg ${calls.toFixed(1)})`;
     });
     console.log(`  ${sc.name.padEnd(16)} ${row.join('   ')}`);
   }
