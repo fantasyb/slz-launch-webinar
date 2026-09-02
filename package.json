@@ -59,9 +59,11 @@
     "cairn:status": "tsx scripts/status.ts",
     "cairn:record": "tsx scripts/record.ts",
     "cairn:gate": "tsx scripts/gate.ts",
-    "cairn:unanswered": "tsx scripts/unanswered.ts"
+    "cairn:unanswered": "tsx scripts/unanswered.ts",
+    "cairn:mcp": "tsx scripts/mcp-server.ts"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "clsx": "^2.1.1",
     "lucide-react": "^0.472.0",
     "next": "15.5.12",

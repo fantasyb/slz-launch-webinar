@@ -38,6 +38,8 @@ const ENTRIES = [
   // cd'ing into the checkout and running an npm script, so a second user could
   // consult the corpus and never add to it.
   ['scripts/record.ts', 'dist/cli/record.js'],
+  // Any client that speaks MCP, with no integration work.
+  ['scripts/mcp-server.ts', 'dist/cli/mcp-server.js'],
 ];
 
 mkdirSync('dist/cli', { recursive: true });

@@ -56,6 +56,7 @@ import fs from 'fs';
 import path from 'path';
 import type { Finding } from './schema';
 import { homePath } from './home';
+import { DEFAULT_OBSERVATION_NOTE } from './submission';
 
 /** Generated queries, if any have been produced. See scripts/expand.ts. */
 function loadExpansions(): Record<string, string[]> {
@@ -136,13 +137,52 @@ export function longestVerbatimRun(q: string, doc: string): number {
  * demotes them, and scoring against them measures the ranker being punished
  * for correct behaviour.
  */
+/**
+ * Text that says nothing about the finding it is attached to.
+ *
+ * `heldOutCases` harvests observation notes as queries, on the reasoning that
+ * an attester describing what they saw writes in the words a searcher would
+ * use. That holds for a note somebody wrote. It fails completely for a
+ * DEFAULT note, which is identical across every finding that did not supply
+ * one -- an unanswerable query by construction, and a guaranteed miss.
+ *
+ * It matters because of what it does at scale rather than what it did once.
+ * The whole point of the record loop is that findings arrive continuously, so
+ * without this every banked finding adds one impossible case and the held-out
+ * scores decay linearly with adoption: the corpus getting used would look
+ * exactly like the ranker getting worse. One finding recorded today cost P@1
+ * 0.797 -> 0.787, P@5 0.905 -> 0.893 and MRR 0.850 -> 0.842, and displaced
+ * nothing -- the ranking of every existing case was unchanged.
+ *
+ * Detected by repetition rather than by a list of known strings, so a new
+ * default somebody adds later is caught without anyone remembering to.
+ */
+function boilerplate(all: Finding[]): Set<string> {
+  /*
+   * The submission default is excluded by name as well as by repetition,
+   * because the repetition rule cannot see it until the SECOND finding
+   * carries it — and the first one already cost P@1 0.797 -> 0.787.
+   */
+  const counts = new Map<string, number>([[DEFAULT_OBSERVATION_NOTE.toLowerCase(), 2]]);
+  for (const f of all) {
+    for (const o of f.observations) {
+      const t = (o.note ?? '').trim().toLowerCase();
+      if (t) counts.set(t, (counts.get(t) ?? 0) + 1);
+    }
+  }
+  return new Set([...counts].filter(([, n]) => n > 1).map(([t]) => t));
+}
+
 export function heldOutCases(all: Finding[]): EvalCase[] {
+  const shared = boilerplate(all);
   const cases: EvalCase[] = [];
   for (const f of all) {
     if (f.status === 'retired') continue;
     const doc = indexedText(f);
     const add = (raw: string | undefined, source: EvalCase['source']) => {
       const t = (raw ?? '').trim();
+      /* Attached to more than one finding, so it identifies none of them. */
+      if (shared.has(t.toLowerCase())) return;
       if (t.length <= 40) return;
       if (/cairn-\d{4}/i.test(t)) return;
       if (longestVerbatimRun(t, doc) >= VERBATIM_RUN_LIMIT) return;

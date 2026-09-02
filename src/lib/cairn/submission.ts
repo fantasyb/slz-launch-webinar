@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { EnvironmentSchema, VerdictSchema } from './schema';
 import { loadCorpus } from './load';
+import { defaultVisibility } from './visibility';
 import type { Finding } from './schema';
 
 /**
@@ -93,6 +94,15 @@ export const SubmissionSchema = z.object({
    * ecosystem, and a trigger.
    */
   tool: z.string().min(2).max(120).optional(),
+  /**
+   * Whether this one may be shared upstream. Omitted, it takes the corpus's
+   * default from cairn.config.json, which is itself private unless set.
+   *
+   * Asked at record time on purpose: the person writing it has just decided
+   * whether the thing they hit was about their org or about the platform, and
+   * that is the only moment anybody knows.
+   */
+  share: z.boolean().optional(),
   note: z.string().max(4000).optional(),
 });
 export type Submission = z.infer<typeof SubmissionSchema>;
@@ -115,6 +125,18 @@ export const ObservationSubmissionSchema = z.object({
  * submission path that defaults `manual` to false writes findings its own
  * linter refuses, which is what the record path did.
  */
+/**
+ * The note written when a submitter supplies none.
+ *
+ * Exported because the eval set must skip it. `heldOutCases` harvests
+ * observation notes as queries, on the sound reasoning that an attester
+ * describing what they saw writes in the words a searcher would use — which
+ * is true of a note a person wrote and false of one this file invented. As a
+ * query it identifies no finding and can only ever be a miss.
+ */
+export const DEFAULT_OBSERVATION_NOTE =
+  'Recorded at the moment it was solved; no note was supplied.';
+
 export function readsAsProse(command: string): boolean {
   const cmd = command.trim().replace(/^#[^\n]*\n/, '');
   return /^[A-Z]/.test(cmd) && !/^[A-Z][A-Z0-9_]*=/.test(cmd);
@@ -180,11 +202,12 @@ export function normalise(s: Submission, now = new Date(), mintedId?: string) {
           at,
           by: s.by,
           verdict: 'confirmed' as const,
-          note: s.note ?? 'Submitted via /api/submit from the environment where it was hit.',
+          note: s.note ?? DEFAULT_OBSERVATION_NOTE,
           ...(s.environment ? { environment: s.environment } : {}),
         },
       ],
       predictions: [],
+      visibility: (s.share ?? defaultVisibility() === 'shared') ? ('shared' as const) : ('private' as const),
       status: 'active' as const,
       createdAt: at,
     },

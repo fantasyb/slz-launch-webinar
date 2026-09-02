@@ -243,7 +243,17 @@ export function federationBundle(): {
     _untrustedFields: UNTRUSTED_FIELDS,
     origin: loadConfig().origin,
     generatedAt: new Date().toISOString(),
-    findings: loadCorpus(),
+    /*
+     * Shared findings only, and this is the enforcement rather than a
+     * reminder. A corpus holds two kinds of record written in the same
+     * sessions: one describing an organisation's own state, which nobody
+     * outside can act on and which must never leave, and one describing how a
+     * platform behaves for everyone, which is the whole point of publishing.
+     * Filtering here means a corpus can be published without anyone auditing
+     * it finding by finding, and that a mistake in the audit cannot leak
+     * anything.
+     */
+    findings: loadCorpus().filter((f) => f.visibility === 'shared'),
     // Only keys minted here. Re-publishing an upstream's keys would launder
     // its identities downstream as though we vouched for them.
     keys: [...loadKeys().values()].filter((k) => !k.origin),

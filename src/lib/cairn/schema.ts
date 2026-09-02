@@ -357,6 +357,21 @@ export const FindingSchema = z.object({
   /** Forecasts recorded before verification. See PredictionSchema. */
   predictions: z.array(PredictionSchema).default([]),
 
+  /**
+   * Whether this finding may leave the corpus it was written in.
+   *
+   * Two kinds of finding get written in the same session and must not be
+   * treated alike. "This mapping is stale in our org" describes one
+   * organisation's data and nobody outside can act on it. "This tool returns
+   * empty instead of erroring" is a hole every builder on that platform falls
+   * into, and is the same category as "there is no dig in this sandbox".
+   *
+   * Enforced rather than advised: `federationBundle` omits private findings,
+   * so a corpus can be published without anyone auditing it finding by
+   * finding. The default is private, because the failure mode of guessing the
+   * other way is publishing somebody's org data.
+   */
+  visibility: z.enum(['private', 'shared']).default('private'),
   status: z.enum(['active', 'retired']).default('active'),
   retiredReason: z.string().optional(),
 
