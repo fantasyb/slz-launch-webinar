@@ -160,10 +160,22 @@ test('a hole is no strong match, not an empty result', async () => {
   const { loadCorpus } = await import('../src/lib/cairn/load');
   const corpus = loadCorpus();
 
-  const hits = retrieve('data 360 mapping returns empty with a success status', corpus, { limit: 5 });
+  /*
+   * A subject this corpus will never cover, rather than one it does not
+   * cover YET.
+   *
+   * This used to ask about a Data 360 mapping returning success with zero
+   * rows, on the reasoning that nothing here knew about it. Then cairn-0045
+   * was recorded, describing exactly that shape, and the query started
+   * matching strongly — so the test failed because the corpus had LEARNED
+   * something, which is the one thing it must never punish. A test whose
+   * premise is the corpus's ignorance expires the moment the corpus is
+   * useful, and it expires by failing, which reads as a regression.
+   */
+  const hits = retrieve('the sourdough starter did not rise in a cold kitchen', corpus, { limit: 5 });
   assert.ok(hits.length > 0, 'the retriever returns weak matches for almost anything');
   assert.ok(
     hits.every((h) => h.strength === 'weak'),
-    'this corpus knows nothing about Data 360, so nothing should come back strong',
+    'nothing here is about baking, so nothing should come back strong',
   );
 });

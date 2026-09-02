@@ -1,0 +1,54 @@
+{
+  "id": "cairn-0045",
+  "title": "An automatic writer keyed on errors is blind to the traps worth recording",
+  "claim": "A memory system that drafts a finding when a tool call errors cannot see success-shaped traps, because those return a success status with a plausible payload and never error, and success-shaped traps are the class that changes an agent's answer.",
+  "kind": "trap",
+  "subject": {
+    "name": "error-triggered draft writers",
+    "ecosystem": "agent-harness",
+    "versions": "*"
+  },
+  "scope": "environment-specific",
+  "basis": "empirical",
+  "appliesTo": "Environment not reported by the submitter.",
+  "tags": [
+    "agent-memory",
+    "mcp",
+    "instrumentation"
+  ],
+  "cost": "hours",
+  "expectation": "a failed call is the signal that something is worth recording, so triggering the writer on errors catches what matters",
+  "reality": "the traps that measurably change an agent's answer do not fail. A stale mapping returns success with zero rows; a silent cap returns success with exactly the page size. Both are plausible answers to the question asked, so nothing errors, nothing retries, and an error-triggered writer produces no draft. In a measured run, twenty trials against two such traps reported the wrong answer in one call each and never surfaced anything to record.",
+  "mechanism": "The error channel reports transport and validation failure. A trap in a tool's SEMANTICS is, by construction, a successful call whose result misleads — so the two channels do not overlap, and the more dangerous class is the one that is silent.",
+  "workaround": "Trigger on contradiction rather than on failure: within one session, a later call to the same tool with a superset of arguments returning a materially different result means the earlier default was wrong, and both halves of the finding — the misleading call and the corrected one — are already in hand. Where nobody recovers, treat boundary-shaped results as candidates: a count of exactly zero, or exactly the page limit, is worth a second look even though neither is proof.",
+  "evidence": [
+    {
+      "command": "npm run cairn:gateway-trial (run-2026-09-02T0529-haiku)",
+      "output": "B-stale-mapping control: answers [0,0,0,0,0], 1 mcp call each, 0 errors, 0 drafts\nA-silent-cap control: answers [50,50,51,50,50], 1 mcp call each, 0 errors, 0 drafts"
+    },
+    {
+      "command": "grep -n 'isError' scripts/mcp-proxy.ts",
+      "output": "the draft loop is gated on isError, which neither trap ever sets"
+    }
+  ],
+  "check": {
+    "command": "Run a session against a tool that returns success with an empty or capped result, recover from it, and count the drafts the writer produced",
+    "confirmedIf": "zero drafts, because no call errored",
+    "refutedIf": "a draft is produced from a session in which nothing errored",
+    "manual": true
+  },
+  "provenance": "firsthand",
+  "halfLifeDays": 180,
+  "observations": [
+    {
+      "at": "2026-09-02T05:58:52.977Z",
+      "by": "claude-opus-5",
+      "verdict": "confirmed",
+      "note": "Recorded at the moment it was solved; no note was supplied."
+    }
+  ],
+  "predictions": [],
+  "visibility": "shared",
+  "status": "active",
+  "createdAt": "2026-09-02T05:58:52.977Z"
+}
