@@ -79,6 +79,20 @@ for (const r of rows) {
 const tools = [...byTool.values()].sort((a, b) => b.calls + b.errors - (a.calls + a.errors));
 const unrecorded = tools.filter((t) => t.errors > 0 && t.findings.size === 0);
 
+/*
+ * The tool surface moving under the corpus. The gateway records every change
+ * it notices -- a tool appearing, vanishing, renamed, re-annotated, its schema
+ * changed -- as `mcp-proxy:surface-<kind>`, with the findings whose triggers
+ * name that tool in `returned`. Those findings are the ones to re-read: a
+ * trigger naming a tool that is gone, or a workaround naming an argument the
+ * schema dropped, is knowledge rotting at the moment it can be seen.
+ */
+const surface = rows
+  .filter((r) => (r.source ?? '').startsWith('mcp-proxy:surface-'))
+  .map((r) => ({ at: r.at, kind: (r.source ?? '').slice('mcp-proxy:surface-'.length), what: r.query, findings: (r.returned ?? []).map((h) => h.id) }));
+const rotting = new Map<string, Set<string>>();
+for (const c of surface) for (const id of c.findings) rotting.set(id, (rotting.get(id) ?? new Set()).add(c.what));
+
 if (JSON_OUT) {
   console.log(
     JSON.stringify(
@@ -98,6 +112,8 @@ if (JSON_OUT) {
           drafts: t.drafts,
         })),
         unrecordedFailures: unrecorded.map((t) => ({ tool: t.tool, errors: t.errors })),
+        surfaceChanges: surface,
+        findingsNamingChangedTools: [...rotting].map(([id, what]) => ({ id, changes: [...what] })),
       },
       null,
       2,
@@ -127,6 +143,14 @@ console.log('\n  warned-in: sessions that were shown a finding for the tool / se
 if (unrecorded.length) {
   console.log('\n  FAILED WITH NOTHING RECORDED — the holes worth filling first:');
   for (const t of unrecorded) console.log(`    ${t.tool}  ${t.errors} error(s)`);
+}
+if (surface.length) {
+  console.log('\n  TOOL SURFACE CHANGED under the corpus — noticed by the gateway, never acted on:');
+  for (const c of surface) console.log(`    ${c.at.slice(0, 16)}  ${c.kind.padEnd(12)} ${c.what}`);
+  if (rotting.size) {
+    console.log('\n  FINDINGS NAMING A TOOL THAT CHANGED — re-read these before trusting them:');
+    for (const [id, what] of rotting) console.log(`    ${id}  ${[...what].join('; ')}`);
+  }
 }
 console.log(
   '\n  A success-shaped trap leaves no error, so calls that did not error are not\n' +
