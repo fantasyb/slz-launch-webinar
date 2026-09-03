@@ -20,11 +20,101 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import crypto from 'crypto';
 import { homePath } from '../src/lib/cairn/home';
 import { parseTranscript, detectCandidates, type Candidate } from '../src/lib/cairn/sleep';
 
 const argv = process.argv.slice(2);
 const PRINT = argv.includes('--print') || argv.includes('--dry-run');
+/* Two automatic modes, wired by cairn:install into ~/.claude/settings.json so
+ * nobody ever has to type the command — a command nobody types is a command
+ * that does not exist. --hook runs at SessionEnd (the offline consolidation
+ * pass, over the transcript that just closed); --surface runs at SessionStart
+ * (report the candidates a prior session left, so the loop closes). Both read
+ * Claude Code's hook JSON on stdin and MUST NOT fail the session: everything is
+ * wrapped, and they always exit 0 (cairn-0046 — a hook that throws at startup
+ * shows up as a broken session, not a broken hook). */
+const HOOK = argv.includes('--hook');
+const SURFACE = argv.includes('--surface');
+
+/** The corpus home for drafts: an explicit --home wins; else $CAIRN_HOME via homePath. */
+function draftsDir(): string | null {
+  const i = argv.indexOf('--home');
+  const explicit = i !== -1 && argv[i + 1] ? argv[i + 1] : undefined;
+  if (explicit) return path.join(explicit.startsWith('~') ? path.join(os.homedir(), explicit.slice(1)) : explicit, 'drafts');
+  try {
+    return homePath('drafts');
+  } catch {
+    return null;
+  }
+}
+
+/** Read Claude Code's hook payload from stdin. Returns {} on anything unusual. */
+function hookInput(): { transcript_path?: string; session_id?: string } {
+  try {
+    const raw = fs.readFileSync(0, 'utf8');
+    return raw.trim() ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+/** Write one candidate into drafts/ as a quarantined provisional. The filename
+ * carries a content hash so distinct candidates never collide (an earlier
+ * tool-plus-score scheme silently overwrote six Bash-4 candidates into one) and
+ * an identical one is idempotent — re-consolidating a transcript rewrites the
+ * same file rather than piling up duplicates. */
+function writeCandidate(dir: string, c: Candidate, source: string): void {
+  fs.mkdirSync(dir, { recursive: true });
+  const ignore = path.join(dir, '.gitignore');
+  if (!fs.existsSync(ignore)) fs.writeFileSync(ignore, '*\n');
+  const digest = crypto.createHash('sha256').update(`${c.tool}\0${c.expectation}\0${c.reality}\0${c.update}`).digest('hex').slice(0, 10);
+  const name = `sleep-${path.basename(source, '.jsonl')}-${c.tool.replace(/[^A-Za-z0-9_.-]+/g, '_')}-${c.surprisal}-${digest}.json`;
+  fs.writeFileSync(path.join(dir, name), JSON.stringify(draftFor(c, path.basename(source)), null, 2) + '\n');
+}
+
+/**
+ * SessionEnd: consolidate the transcript that just closed. Silent by design —
+ * this runs as the session ends, with nobody watching; it leaves candidates in
+ * drafts/ for the next session to surface. Never throws, always exits 0.
+ */
+function runHook(): void {
+  try {
+    const { transcript_path } = hookInput();
+    const dir = draftsDir();
+    if (!transcript_path || !dir || !fs.existsSync(transcript_path)) return;
+    const raw = fs.readFileSync(transcript_path, 'utf8');
+    const candidates = detectCandidates(parseTranscript(raw));
+    for (const c of candidates) writeCandidate(dir, c, transcript_path);
+    /* A one-line breadcrumb to stderr — visible in hook logs, never in context. */
+    if (candidates.length) process.stderr.write(`cairn:sleep consolidated ${candidates.length} candidate(s) into ${dir}\n`);
+  } catch {
+    /* a consolidation pass must never be the reason a session failed to end */
+  }
+  process.exit(0);
+}
+
+/**
+ * SessionStart: tell the fresh session what a prior one harvested, so the
+ * candidates do not sit unseen. stdout at SessionStart becomes context, so this
+ * is the one line that makes a blank agent reach for drafts. Never throws.
+ */
+function runSurface(): void {
+  try {
+    const dir = draftsDir();
+    if (!dir || !fs.existsSync(dir)) return;
+    const drafts = fs.readdirSync(dir).filter((n) => n.endsWith('.json'));
+    if (!drafts.length) return;
+    process.stdout.write(
+      `Cairn: ${drafts.length} consolidated candidate(s) from prior sessions are waiting in ${dir} — ` +
+        'surprise gaps harvested from earlier transcripts, not yet findings. If any names a real, ' +
+        'checkable trap, promote it with cairn_record (add a check); the rest decay unused.\n',
+    );
+  } catch {
+    /* surfacing is a convenience; never let it disrupt a session opening */
+  }
+  process.exit(0);
+}
 
 function latestTranscript(): string | null {
   const root = path.join(os.homedir(), '.claude', 'projects');
@@ -68,7 +158,12 @@ function draftFor(c: Candidate, source: string): Record<string, unknown> {
 }
 
 function main() {
-  const files = argv.filter((a) => !a.startsWith('--'));
+  if (HOOK) return runHook();
+  if (SURFACE) return runSurface();
+
+  const homeIdx = argv.indexOf('--home');
+  const homeValIdx = homeIdx !== -1 ? homeIdx + 1 : -1;
+  const files = argv.filter((a, i) => !a.startsWith('--') && i !== homeValIdx);
   if (argv.includes('--latest')) {
     const t = latestTranscript();
     if (!t) {
@@ -110,11 +205,7 @@ function main() {
       console.log(`    [${c.surprisal}] ${c.tool}  — ${c.reasons.join('; ')}`);
       if (c.update) console.log(`         update: ${c.update.replace(/\s+/g, ' ').slice(0, 100)}`);
       if (PRINT || !dir) continue;
-      fs.mkdirSync(dir, { recursive: true });
-      const ignore = path.join(dir, '.gitignore');
-      if (!fs.existsSync(ignore)) fs.writeFileSync(ignore, '*\n');
-      const name = `sleep-${path.basename(file, '.jsonl')}-${c.tool.replace(/[^A-Za-z0-9_.-]+/g, '_')}-${c.surprisal}.json`;
-      fs.writeFileSync(path.join(dir, name), JSON.stringify(draftFor(c, path.basename(file)), null, 2) + '\n');
+      writeCandidate(dir, c, file);
     }
   }
 

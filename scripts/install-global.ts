@@ -67,6 +67,7 @@ const expand = (p: string) => (p.startsWith('~') ? path.join(HOME, p.slice(1)) :
 /* The Cairn code checkout: two levels up from scripts/. */
 const REPO = path.resolve(__dirname, '..');
 const SERVER_BIN = path.join(REPO, 'bin', 'cairn-mcp.js');
+const SLEEP_BIN = path.join(REPO, 'bin', 'cairn-sleep.js');
 
 const MCP_NAME = 'cairn';
 const BEGIN = '<!-- cairn:begin (managed by `npm run cairn:install` — edits between these markers are overwritten) -->';
@@ -92,6 +93,10 @@ function block(): string {
     '  have the failing call and the fix.',
     '- Read a finding\'s standing before you rely on it: fresh is safe, aging is worth',
     '  re-checking, stale is a lead and not a fact.',
+    '- If a note at session start says consolidated candidates are waiting, they were',
+    '  harvested automatically from earlier transcripts and are not yet findings. Look',
+    '  only if one names a trap you can state a check for; promote that one with',
+    '  `cairn_record`. Ignoring them is fine — they decay unused.',
     END,
   ].join('\n');
 }
@@ -195,33 +200,39 @@ interface ClaudeConfig {
   mcpServers?: Record<string, unknown>;
   [k: string]: unknown;
 }
-function readConfig(file: string): ClaudeConfig {
+/*
+ * Refuse a file we cannot rewrite losslessly. We edit by JSON.parse ->
+ * stringify, and that silently truncates any integer past 2^53:
+ * 9007199254740993 becomes ...992. That is silent corruption of the user's
+ * most important config files, so we detect it and refuse rather than write
+ * the damaged version. String contents are blanked first so a big number
+ * inside a token (an id, a hash) does not trip it -- only bare JSON numbers
+ * count. False positives cost a refusal with a clear message, which is the
+ * safe direction. Shared by ~/.claude.json (the server) and ~/.claude/settings.json
+ * (the hooks): both are the user's, and both must be edited losslessly or not at all.
+ */
+function readJsonObject(file: string): Record<string, unknown> {
   if (!fs.existsSync(file)) return {};
   const raw = fs.readFileSync(file, 'utf8');
-  /*
-   * Refuse a file we cannot rewrite losslessly. We edit by JSON.parse ->
-   * stringify, and that silently truncates any integer past 2^53:
-   * 9007199254740993 becomes ...992. That is silent corruption of the user's
-   * most important config file, so we detect it and refuse rather than write
-   * the damaged version. String contents are blanked first so a big number
-   * inside a token (an id, a hash) does not trip it -- only bare JSON numbers
-   * count. False positives cost a refusal with a clear message, which is the
-   * safe direction.
-   */
   const bareNumbers = raw.replace(/"(?:\\.|[^"\\])*"/g, '""');
   if (/(?:^|[^\w.])\d{16,}(?![\w.])/.test(bareNumbers)) {
     throw new Error(
       `${file} contains a number too large to survive a JSON round-trip; refusing to rewrite it so it is not silently corrupted. ` +
-        'Add the "cairn" server entry by hand, or with `claude mcp add cairn --scope user -- node ' +
-        SERVER_BIN +
-        '`.',
+        'Edit it by hand, or move it aside and re-run.',
     );
   }
   try {
-    return JSON.parse(raw) as ClaudeConfig;
+    const v = JSON.parse(raw);
+    if (v === null || typeof v !== 'object' || Array.isArray(v)) {
+      throw new Error('top level is not a JSON object');
+    }
+    return v as Record<string, unknown>;
   } catch (err) {
     throw new Error(`${file} is not valid JSON (${(err as Error).message}); refusing to touch it. Fix or move it, then re-run.`);
   }
+}
+function readConfig(file: string): ClaudeConfig {
+  return readJsonObject(file) as ClaudeConfig;
 }
 function upsertServer(file: string, home: string): 'added' | 'updated' | 'unchanged' {
   const cfg = readConfig(file);
@@ -249,9 +260,90 @@ function removeServer(file: string): boolean {
   return true;
 }
 
+/* --- the automatic hooks in ~/.claude/settings.json ---------------------- */
+/*
+ * This is what makes sleep run at all. A `npm run cairn:sleep` nobody types is a
+ * feature that does not exist, so consolidation is wired to the session
+ * lifecycle: SessionEnd harvests the transcript that just closed, SessionStart
+ * reports what a prior session left. Both point at bin/cairn-sleep.js, which
+ * never throws and always exits 0 — a hook on the session-open/close path must
+ * not be able to break a session (cairn-0046).
+ *
+ * Ownership is by command substring: every group whose inner command names
+ * cairn-sleep.js is ours. Upsert removes ours and re-adds one fresh group per
+ * event (so a changed --home updates in place, never duplicates); uninstall
+ * removes ours and leaves every other hook untouched. We never read or rewrite
+ * a hook we did not write.
+ */
+interface HookEntry {
+  type?: string;
+  command?: string;
+  [k: string]: unknown;
+}
+interface HookGroup {
+  hooks?: HookEntry[];
+  [k: string]: unknown;
+}
+const HOOK_EVENTS: Array<{ event: string; flag: string }> = [
+  { event: 'SessionEnd', flag: '--hook' },
+  { event: 'SessionStart', flag: '--surface' },
+];
+const OURS = 'cairn-sleep.js';
+const isOurs = (g: HookGroup) => Array.isArray(g.hooks) && g.hooks.some((h) => typeof h.command === 'string' && h.command.includes(OURS));
+
+/** Strip every group we own from one event's array; returns the remainder. */
+function withoutOurs(groups: unknown): HookGroup[] {
+  return Array.isArray(groups) ? (groups as HookGroup[]).filter((g) => !isOurs(g)) : [];
+}
+
+function upsertHooks(file: string, home: string): 'added' | 'updated' | 'unchanged' {
+  const cfg = readJsonObject(file);
+  const hooks = (cfg.hooks && typeof cfg.hooks === 'object' && !Array.isArray(cfg.hooks) ? cfg.hooks : {}) as Record<string, unknown>;
+  const before = JSON.stringify(cfg.hooks ?? null);
+  const had = HOOK_EVENTS.some(({ event }) => Array.isArray(hooks[event]) && (hooks[event] as HookGroup[]).some(isOurs));
+
+  for (const { event, flag } of HOOK_EVENTS) {
+    const command = `node ${SLEEP_BIN} ${flag} --home ${home}`;
+    const kept = withoutOurs(hooks[event]);
+    kept.push({ hooks: [{ type: 'command', command }] });
+    hooks[event] = kept;
+  }
+  cfg.hooks = hooks;
+
+  if (JSON.stringify(cfg.hooks) === before) return 'unchanged';
+  if (!DRY) {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    backup(file);
+    fs.writeFileSync(file, JSON.stringify(cfg, null, 2) + '\n');
+  }
+  return had ? 'updated' : 'added';
+}
+
+function removeHooks(file: string): boolean {
+  if (!fs.existsSync(file)) return false;
+  const cfg = readJsonObject(file);
+  if (!cfg.hooks || typeof cfg.hooks !== 'object') return false;
+  const hooks = cfg.hooks as Record<string, unknown>;
+  let changed = false;
+  for (const { event } of HOOK_EVENTS) {
+    if (!Array.isArray(hooks[event])) continue;
+    const kept = withoutOurs(hooks[event]);
+    if (kept.length !== (hooks[event] as unknown[]).length) changed = true;
+    if (kept.length) hooks[event] = kept;
+    else delete hooks[event];
+  }
+  if (Object.keys(hooks).length === 0) delete cfg.hooks;
+  if (changed && !DRY) {
+    backup(file);
+    fs.writeFileSync(file, JSON.stringify(cfg, null, 2) + '\n');
+  }
+  return changed;
+}
+
 /* --- main ---------------------------------------------------------------- */
 function main() {
   const claudeJson = expand(opt('claude-json') ?? path.join(HOME, '.claude.json'));
+  const settingsJson = expand(opt('settings') ?? path.join(HOME, '.claude', 'settings.json'));
   /* Default target: the Claude Code global instruction file. Extra agent files
    * (an AGENTS.md, a Codex file) via repeated --instructions. */
   const instructionFiles = opts('instructions').map(expand);
@@ -264,6 +356,8 @@ function main() {
   if (UNINSTALL) {
     const s = removeServer(claudeJson);
     console.log(`  ${s ? 'removed' : 'absent '}  server "${MCP_NAME}" in ${claudeJson}`);
+    const h = removeHooks(settingsJson);
+    console.log(`  ${h ? 'removed' : 'absent '}  sleep hooks in ${settingsJson}`);
     for (const f of instructionFiles) {
       const r = removeBlock(f);
       console.log(`  ${r ? 'removed' : 'absent '}  Cairn block in ${f}`);
@@ -281,6 +375,8 @@ function main() {
   const s = upsertServer(claudeJson, home);
   console.log(`  ${s.padEnd(9)}  server "${MCP_NAME}" -> node ${SERVER_BIN}`);
   console.log(`             CAIRN_HOME=${home}`);
+  const h = upsertHooks(settingsJson, home);
+  console.log(`  ${h.padEnd(9)}  sleep hooks (SessionEnd + SessionStart) in ${settingsJson}`);
   for (const f of instructionFiles) {
     const r = upsertBlock(f);
     console.log(`  ${r.padEnd(9)}  Cairn block in ${f}`);
@@ -297,6 +393,9 @@ function main() {
   console.log('Cairn is now global:');
   console.log('  · cairn_find / cairn_brief / cairn_record are available in every session');
   console.log('  · every session\'s instructions tell it when to consult them');
+  console.log('  · sleep runs itself: every session\'s transcript is consolidated at its');
+  console.log('    end, and the candidates it harvests are surfaced at the next session\'s');
+  console.log('    start — nobody types a command, and nothing enters the corpus unchecked.');
   console.log('\nStill scoped, on purpose:');
   console.log('  · PUSH (unasked annotations on a tool\'s description and results) is active');
   console.log('    ONLY on servers wrapped by the gateway. This install wraps nothing.');

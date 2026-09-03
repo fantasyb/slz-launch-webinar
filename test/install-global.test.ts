@@ -24,17 +24,23 @@ function run(home: string, args: string[]): string {
   });
 }
 
-function fixture(): { home: string; claudeJson: string; claudeMd: string; corpus: string } {
+function fixture(): { home: string; claudeJson: string; claudeMd: string; settings: string; corpus: string } {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'cairn-install-'));
   fs.mkdirSync(path.join(home, '.claude'));
   const claudeJson = path.join(home, '.claude.json');
   const claudeMd = path.join(home, '.claude', 'CLAUDE.md');
+  const settings = path.join(home, '.claude', 'settings.json');
   fs.writeFileSync(
     claudeJson,
     JSON.stringify({ mcpServers: { 'sf-all': { command: 'npx', args: ['-y', 'x'] } }, keep: true }, null, 2),
   );
   fs.writeFileSync(claudeMd, '# my notes\n\nexisting.\n');
-  return { home, claudeJson, claudeMd, corpus: path.join(home, 'pilot') };
+  /* A pre-existing hook and an unrelated setting the install must not disturb. */
+  fs.writeFileSync(
+    settings,
+    JSON.stringify({ hooks: { SessionStart: [{ hooks: [{ type: 'command', command: 'echo mine' }] }] }, theme: 'dark' }, null, 2),
+  );
+  return { home, claudeJson, claudeMd, settings, corpus: path.join(home, 'pilot') };
 }
 
 test('install adds the server and the block, and preserves everything else', () => {
@@ -53,6 +59,43 @@ test('install adds the server and the block, and preserves everything else', () 
   assert.match(md, /this is not memory/, 'the block declares itself not-memory');
   assert.match(md, /cairn_find/, 'and names the tool to call');
   assert.ok(fs.existsSync(path.join(f.corpus, 'cairn')), 'the corpus dir is created');
+});
+
+test('install registers both sleep hooks and preserves existing ones', () => {
+  const f = fixture();
+  run(f.home, ['--home', f.corpus]);
+
+  const s = JSON.parse(fs.readFileSync(f.settings, 'utf8'));
+  const end = s.hooks.SessionEnd.map((g: { hooks: { command: string }[] }) => g.hooks[0].command);
+  const start = s.hooks.SessionStart.map((g: { hooks: { command: string }[] }) => g.hooks[0].command);
+  assert.ok(end.some((c: string) => c.includes('cairn-sleep.js') && c.includes('--hook')), 'SessionEnd runs the consolidation pass');
+  assert.ok(start.some((c: string) => c.includes('cairn-sleep.js') && c.includes('--surface')), 'SessionStart surfaces candidates');
+  assert.ok(end.every((c: string) => c.includes(f.corpus)), 'the hook carries the corpus home');
+  assert.ok(start.some((c: string) => c === 'echo mine'), 'the pre-existing hook survives');
+  assert.equal(s.theme, 'dark', 'unrelated settings survive');
+});
+
+test('install is idempotent on hooks: twice does not duplicate', () => {
+  const f = fixture();
+  run(f.home, ['--home', f.corpus]);
+  run(f.home, ['--home', f.corpus]);
+  const s = JSON.parse(fs.readFileSync(f.settings, 'utf8'));
+  const ours = (cmds: { hooks: { command: string }[] }[]) => cmds.filter((g) => g.hooks[0].command.includes('cairn-sleep.js')).length;
+  assert.equal(ours(s.hooks.SessionEnd), 1, 'exactly one SessionEnd group is ours');
+  assert.equal(ours(s.hooks.SessionStart), 1, 'exactly one SessionStart group is ours');
+  assert.equal(s.hooks.SessionStart.length, 2, 'and the pre-existing one is still there');
+  assert.match(run(f.home, ['--home', f.corpus]), /unchanged/, 'a third run reports unchanged');
+});
+
+test('uninstall removes exactly the sleep hooks it added', () => {
+  const f = fixture();
+  run(f.home, ['--home', f.corpus]);
+  run(f.home, ['--uninstall']);
+  const s = JSON.parse(fs.readFileSync(f.settings, 'utf8'));
+  assert.ok(!('SessionEnd' in s.hooks), 'the empty SessionEnd key is cleaned up');
+  assert.equal(s.hooks.SessionStart.length, 1, 'only the pre-existing hook remains');
+  assert.equal(s.hooks.SessionStart[0].hooks[0].command, 'echo mine', 'and it is untouched');
+  assert.equal(s.theme, 'dark', 'unrelated settings survive uninstall');
 });
 
 test('install is idempotent: twice is the same as once', () => {
