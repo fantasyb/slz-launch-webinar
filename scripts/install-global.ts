@@ -68,6 +68,7 @@ const expand = (p: string) => (p.startsWith('~') ? path.join(HOME, p.slice(1)) :
 const REPO = path.resolve(__dirname, '..');
 const SERVER_BIN = path.join(REPO, 'bin', 'cairn-mcp.js');
 const SLEEP_BIN = path.join(REPO, 'bin', 'cairn-sleep.js');
+const TRIGGER_BIN = path.join(REPO, 'bin', 'cairn-triage-trigger.js');
 
 const MCP_NAME = 'cairn';
 const BEGIN = '<!-- cairn:begin (managed by `npm run cairn:install` — edits between these markers are overwritten) -->';
@@ -284,12 +285,21 @@ interface HookGroup {
   hooks?: HookEntry[];
   [k: string]: unknown;
 }
-const HOOK_EVENTS: Array<{ event: string; flag: string }> = [
-  { event: 'SessionEnd', flag: '--hook' },
-  { event: 'SessionStart', flag: '--surface' },
-];
-const OURS = 'cairn-sleep.js';
-const isOurs = (g: HookGroup) => Array.isArray(g.hooks) && g.hooks.some((h) => typeof h.command === 'string' && h.command.includes(OURS));
+/* Every bin we own a hook for. Ownership is by command substring, so uninstall
+ * and re-upsert touch only groups whose inner command names one of these and
+ * leave every other hook the user has untouched. */
+const OUR_BINS = ['cairn-sleep.js', 'cairn-triage-trigger.js'];
+const isOurs = (g: HookGroup) =>
+  Array.isArray(g.hooks) && g.hooks.some((h) => typeof h.command === 'string' && OUR_BINS.some((b) => (h.command as string).includes(b)));
+
+/** The hooks we install: sleep at both ends, and the triage trigger at start. */
+function desiredHooks(home: string): Array<{ event: string; command: string }> {
+  return [
+    { event: 'SessionEnd', command: `node ${SLEEP_BIN} --hook --home ${home}` },
+    { event: 'SessionStart', command: `node ${SLEEP_BIN} --surface --home ${home}` },
+    { event: 'SessionStart', command: `node ${TRIGGER_BIN} --home ${home}` },
+  ];
+}
 
 /** Strip every group we own from one event's array; returns the remainder. */
 function withoutOurs(groups: unknown): HookGroup[] {
@@ -300,12 +310,19 @@ function upsertHooks(file: string, home: string): 'added' | 'updated' | 'unchang
   const cfg = readJsonObject(file);
   const hooks = (cfg.hooks && typeof cfg.hooks === 'object' && !Array.isArray(cfg.hooks) ? cfg.hooks : {}) as Record<string, unknown>;
   const before = JSON.stringify(cfg.hooks ?? null);
-  const had = HOOK_EVENTS.some(({ event }) => Array.isArray(hooks[event]) && (hooks[event] as HookGroup[]).some(isOurs));
+  const had = Object.values(hooks).some((arr) => Array.isArray(arr) && (arr as HookGroup[]).some(isOurs));
 
-  for (const { event, flag } of HOOK_EVENTS) {
-    const command = `node ${SLEEP_BIN} ${flag} --home ${home}`;
+  /* Group our desired hooks by event, strip any of ours already there, and append
+   * one fresh group per desired command — so a changed --home updates in place and
+   * two SessionStart hooks (surface + trigger) coexist without duplicating. */
+  const byEvent = new Map<string, string[]>();
+  for (const { event, command } of desiredHooks(home)) {
+    if (!byEvent.has(event)) byEvent.set(event, []);
+    byEvent.get(event)!.push(command);
+  }
+  for (const [event, commands] of byEvent) {
     const kept = withoutOurs(hooks[event]);
-    kept.push({ hooks: [{ type: 'command', command }] });
+    for (const command of commands) kept.push({ hooks: [{ type: 'command', command }] });
     hooks[event] = kept;
   }
   cfg.hooks = hooks;
@@ -325,7 +342,7 @@ function removeHooks(file: string): boolean {
   if (!cfg.hooks || typeof cfg.hooks !== 'object') return false;
   const hooks = cfg.hooks as Record<string, unknown>;
   let changed = false;
-  for (const { event } of HOOK_EVENTS) {
+  for (const event of Object.keys(hooks)) {
     if (!Array.isArray(hooks[event])) continue;
     const kept = withoutOurs(hooks[event]);
     if (kept.length !== (hooks[event] as unknown[]).length) changed = true;
@@ -376,7 +393,7 @@ function main() {
   console.log(`  ${s.padEnd(9)}  server "${MCP_NAME}" -> node ${SERVER_BIN}`);
   console.log(`             CAIRN_HOME=${home}`);
   const h = upsertHooks(settingsJson, home);
-  console.log(`  ${h.padEnd(9)}  sleep hooks (SessionEnd + SessionStart) in ${settingsJson}`);
+  console.log(`  ${h.padEnd(9)}  hooks (SessionEnd: harvest · SessionStart: surface + triage trigger) in ${settingsJson}`);
   for (const f of instructionFiles) {
     const r = upsertBlock(f);
     console.log(`  ${r.padEnd(9)}  Cairn block in ${f}`);
@@ -395,7 +412,12 @@ function main() {
   console.log('  · every session\'s instructions tell it when to consult them');
   console.log('  · sleep runs itself: every session\'s transcript is consolidated at its');
   console.log('    end, and the candidates it harvests are surfaced at the next session\'s');
-  console.log('    start — nobody types a command, and nothing enters the corpus unchecked.');
+  console.log('    start — nobody types a command.');
+  console.log('  · triage runs itself WHEN IT CAN: at session start, if execution is enabled');
+  console.log('    for this corpus and candidates wait, a triage agent is spawned in the');
+  console.log('    background to gate them on this live machine. Off by default (it runs');
+  console.log('    checks) — enable per-corpus in ~/.cairn/policy.json. Nothing enters the');
+  console.log('    corpus unchecked, and nothing waits forever (see cairn:triage).');
   console.log('\nStill scoped, on purpose:');
   console.log('  · PUSH (unasked annotations on a tool\'s description and results) is active');
   console.log('    ONLY on servers wrapped by the gateway. This install wraps nothing.');

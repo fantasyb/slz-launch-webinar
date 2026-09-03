@@ -46,6 +46,9 @@ const ENTRIES = [
   // is on the session-open and session-close path — the tsx boot it replaces was
   // paid on every single session.
   ['scripts/sleep.ts', 'dist/cli/sleep.js'],
+  // Also on the session-open path: it decides whether to spawn a triage agent
+  // and detaches, so the boot cost is the whole cost — pay node's, not tsx's.
+  ['scripts/triage-trigger.ts', 'dist/cli/triage-trigger.js'],
 ];
 
 mkdirSync('dist/cli', { recursive: true });

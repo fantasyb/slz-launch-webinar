@@ -70,6 +70,7 @@ test('install registers both sleep hooks and preserves existing ones', () => {
   const start = s.hooks.SessionStart.map((g: { hooks: { command: string }[] }) => g.hooks[0].command);
   assert.ok(end.some((c: string) => c.includes('cairn-sleep.js') && c.includes('--hook')), 'SessionEnd runs the consolidation pass');
   assert.ok(start.some((c: string) => c.includes('cairn-sleep.js') && c.includes('--surface')), 'SessionStart surfaces candidates');
+  assert.ok(start.some((c: string) => c.includes('cairn-triage-trigger.js')), 'SessionStart also fires the triage trigger');
   assert.ok(end.every((c: string) => c.includes(f.corpus)), 'the hook carries the corpus home');
   assert.ok(start.some((c: string) => c === 'echo mine'), 'the pre-existing hook survives');
   assert.equal(s.theme, 'dark', 'unrelated settings survive');
@@ -80,10 +81,11 @@ test('install is idempotent on hooks: twice does not duplicate', () => {
   run(f.home, ['--home', f.corpus]);
   run(f.home, ['--home', f.corpus]);
   const s = JSON.parse(fs.readFileSync(f.settings, 'utf8'));
-  const ours = (cmds: { hooks: { command: string }[] }[]) => cmds.filter((g) => g.hooks[0].command.includes('cairn-sleep.js')).length;
+  const ours = (cmds: { hooks: { command: string }[] }[]) =>
+    cmds.filter((g) => /cairn-sleep\.js|cairn-triage-trigger\.js/.test(g.hooks[0].command)).length;
   assert.equal(ours(s.hooks.SessionEnd), 1, 'exactly one SessionEnd group is ours');
-  assert.equal(ours(s.hooks.SessionStart), 1, 'exactly one SessionStart group is ours');
-  assert.equal(s.hooks.SessionStart.length, 2, 'and the pre-existing one is still there');
+  assert.equal(ours(s.hooks.SessionStart), 2, 'two SessionStart groups are ours: surface + trigger');
+  assert.equal(s.hooks.SessionStart.length, 3, 'and the pre-existing one is still there');
   assert.match(run(f.home, ['--home', f.corpus]), /unchanged/, 'a third run reports unchanged');
 });
 
