@@ -46,6 +46,7 @@ import os from 'os';
 import path from 'path';
 import { ensureIdentity } from '../src/lib/cairn/identity';
 import { loadKeys } from '../src/lib/cairn/keys';
+import { policyPath } from '../src/lib/cairn/policy';
 
 const argv = process.argv.slice(2);
 const has = (f: string) => argv.includes(f);
@@ -430,6 +431,29 @@ function main() {
     const id = ensureIdentity(author);
     console.log(`  ${id.created ? 'created  ' : 'present  '}  signing identity "${author}" -> key ${id.keyId}`);
     if (id.created) console.log(`             fingerprint ${id.fingerprint}`);
+  }
+
+  /* Execution stays OFF unless the installer explicitly asks. A check is shell
+   * from the corpus, so this is the one switch that must be a deliberate choice —
+   * but it is a flag, not a file you hand-edit, so 'install, that's it' still holds
+   * for turning triage on. The policy lives outside the corpus (policy.ts), keyed
+   * by this corpus path, and other corpora in the file are left untouched. */
+  if (has('--enable-execution')) {
+    const pf = policyPath();
+    if (DRY) {
+      console.log(`  would set   execution enabled for ${home} in ${pf}`);
+    } else {
+      let store: Record<string, unknown> = {};
+      try {
+        store = JSON.parse(fs.readFileSync(pf, 'utf8'));
+      } catch {
+        /* missing or malformed -> start clean; we only add our own key */
+      }
+      store[path.resolve(home)] = { enabled: true, note: `enabled at install ${new Date().toISOString()}` };
+      fs.mkdirSync(path.dirname(pf), { recursive: true });
+      fs.writeFileSync(pf, JSON.stringify(store, null, 2) + '\n');
+      console.log(`  enabled    execution for this corpus in ${pf}`);
+    }
   }
 
   const s = upsertServer(claudeJson, home);

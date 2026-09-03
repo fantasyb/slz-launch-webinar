@@ -116,6 +116,19 @@ test('install generates the machine a signing identity, once', () => {
   assert.equal(fs.readdirSync(path.join(f.corpus, 'keys')).filter((n) => n.endsWith('.json')).length, 1, 'still one key');
 });
 
+test('--enable-execution turns on triage for this corpus only, off by default', () => {
+  const f = fixture();
+  const policy = path.join(f.home, '.cairn', 'policy.json');
+
+  run(f.home, ['--home', f.corpus]); // no flag
+  assert.ok(!fs.existsSync(policy), 'execution stays off unless asked — no policy written');
+
+  run(f.home, ['--home', f.corpus, '--enable-execution']);
+  const store = JSON.parse(fs.readFileSync(policy, 'utf8'));
+  assert.equal(store[f.corpus].enabled, true, 'execution enabled for the installed corpus');
+  assert.equal(Object.keys(store).length, 1, 'and only that corpus');
+});
+
 test('install is idempotent: twice is the same as once', () => {
   const f = fixture();
   run(f.home, ['--home', f.corpus]);
