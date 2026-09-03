@@ -119,3 +119,29 @@ test('malformed ~/.claude.json is refused, not clobbered', () => {
   assert.ok(threw, 'refused');
   assert.equal(fs.readFileSync(f.claudeJson, 'utf8'), '{ not json', 'and left untouched');
 });
+
+test('a config with a too-large integer is refused, not silently corrupted', () => {
+  const f = fixture();
+  fs.writeFileSync(f.claudeJson, '{"numStartups":9007199254740993,"mcpServers":{}}');
+  let threw = false;
+  try {
+    run(f.home, ['--home', f.corpus]);
+  } catch {
+    threw = true;
+  }
+  assert.ok(threw, 'refused rather than round-tripping through JSON');
+  assert.match(fs.readFileSync(f.claudeJson, 'utf8'), /9007199254740993/, 'the number is untouched on disk');
+});
+
+test('malformed markers (an interrupted prior run) are refused, not duplicated', () => {
+  const f = fixture();
+  fs.writeFileSync(f.claudeMd, `# notes\n\n${'<!-- cairn:begin (managed by `npm run cairn:install` — edits between these markers are overwritten) -->'}\norphan junk\n`);
+  let threw = false;
+  try {
+    run(f.home, ['--home', f.corpus]);
+  } catch {
+    threw = true;
+  }
+  assert.ok(threw, 'refused a lone begin marker');
+  assert.equal((fs.readFileSync(f.claudeMd, 'utf8').match(/cairn:begin/g) ?? []).length, 1, 'no second block appended');
+});

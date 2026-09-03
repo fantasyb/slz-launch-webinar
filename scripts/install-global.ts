@@ -127,9 +127,34 @@ function backup(file: string): string | null {
 }
 
 /* --- the instruction block, in one or more files ------------------------- */
+/*
+ * One clean managed region, or none. A prior run interrupted mid-write can
+ * leave an orphan BEGIN with no END, or a duplicated pair; guessing where such
+ * a block ends risks deleting user content, so we refuse and let a human make
+ * it clean. Content integrity beats convenience on the user's own files.
+ */
+function assertCleanMarkers(text: string, file: string): void {
+  const begins = (text.match(new RegExp(escapeRe(BEGIN), 'g')) ?? []).length;
+  const ends = (text.match(new RegExp(escapeRe(END), 'g')) ?? []).length;
+  const b = text.indexOf(BEGIN);
+  const e = text.indexOf(END);
+  const clean = (begins === 0 && ends === 0) || (begins === 1 && ends === 1 && e > b);
+  if (!clean) {
+    throw new Error(
+      `${file} has malformed Cairn markers (${begins} begin, ${ends} end) — probably an interrupted earlier run. ` +
+        'Open it and leave exactly one `cairn:begin ... cairn:end` region or none, then re-run. ' +
+        'Refusing to guess where the block ends, because that risks deleting your content.',
+    );
+  }
+}
+function escapeRe(x: string): string {
+  return x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 function upsertBlock(file: string): 'added' | 'updated' | 'unchanged' {
   const body = block();
   const existing = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
+  assertCleanMarkers(existing, file);
   const b = existing.indexOf(BEGIN);
   const e = existing.indexOf(END);
 
@@ -153,6 +178,7 @@ function upsertBlock(file: string): 'added' | 'updated' | 'unchanged' {
 function removeBlock(file: string): boolean {
   if (!fs.existsSync(file)) return false;
   const existing = fs.readFileSync(file, 'utf8');
+  assertCleanMarkers(existing, file);
   const b = existing.indexOf(BEGIN);
   const e = existing.indexOf(END);
   if (b === -1 || e === -1 || e < b) return false;
@@ -171,8 +197,28 @@ interface ClaudeConfig {
 }
 function readConfig(file: string): ClaudeConfig {
   if (!fs.existsSync(file)) return {};
+  const raw = fs.readFileSync(file, 'utf8');
+  /*
+   * Refuse a file we cannot rewrite losslessly. We edit by JSON.parse ->
+   * stringify, and that silently truncates any integer past 2^53:
+   * 9007199254740993 becomes ...992. That is silent corruption of the user's
+   * most important config file, so we detect it and refuse rather than write
+   * the damaged version. String contents are blanked first so a big number
+   * inside a token (an id, a hash) does not trip it -- only bare JSON numbers
+   * count. False positives cost a refusal with a clear message, which is the
+   * safe direction.
+   */
+  const bareNumbers = raw.replace(/"(?:\\.|[^"\\])*"/g, '""');
+  if (/(?:^|[^\w.])\d{16,}(?![\w.])/.test(bareNumbers)) {
+    throw new Error(
+      `${file} contains a number too large to survive a JSON round-trip; refusing to rewrite it so it is not silently corrupted. ` +
+        'Add the "cairn" server entry by hand, or with `claude mcp add cairn --scope user -- node ' +
+        SERVER_BIN +
+        '`.',
+    );
+  }
   try {
-    return JSON.parse(fs.readFileSync(file, 'utf8')) as ClaudeConfig;
+    return JSON.parse(raw) as ClaudeConfig;
   } catch (err) {
     throw new Error(`${file} is not valid JSON (${(err as Error).message}); refusing to touch it. Fix or move it, then re-run.`);
   }
