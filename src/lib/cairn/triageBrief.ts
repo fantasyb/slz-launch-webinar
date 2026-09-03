@@ -26,13 +26,17 @@ function line(c: Candidate): string {
   ].join('\n');
 }
 
-export function triageBrief(home: string, pending: Candidate[]): string {
+export function triageBrief(home: string, pending: Candidate[], machineLabel?: string): string {
+  const author = machineLabel ?? '(this machine\'s key label — see keys/)';
   return `You are a Cairn triage agent. Your job is to turn harvested candidates into
 findings — or to reject them — using the one thing you have that an offline pass
 does not: a live machine you can run a check on.
 
 CORPUS HOME: ${home}
 Candidates live in ${home}/drafts/*.json. There are ${pending.length} pending.
+THIS MACHINE'S AUTHOR IDENTITY: ${author}. Record every finding with \`by\` set to
+exactly this label — it is this machine's signing identity, and only findings
+authored under it can sign themselves.
 
 WHAT A CANDIDATE IS. Each was scraped from a past session's transcript: the agent's
 own expectation before a tool call, what the tool actually returned, and the agent's
@@ -55,12 +59,17 @@ PROCESS, per candidate:
   b. Add \`check\` (command + absentWhen) to the candidate JSON, plus any precondition.
   c. Run: npm run cairn:triage    (it runs the one-machine gate and settles the verdict)
        - discriminates  -> it is admitted; then record it into the corpus with
-                           cairn_record (same check), so standing/provenance are correct.
+                           cairn_record (same check, by: ${author}), so standing/provenance
+                           are correct.
        - same-either-way/no-delta -> rejected. Your check did not discriminate; either
                            fix it or accept this is not a keepable finding.
        - not-live       -> the trap is not present on THIS machine. Leave it; it defers
                            for a session where it is live. Do NOT force it in.
   d. Record what you did and why in one line.
+
+FINALLY, after all recording: run \`npm run cairn:seal\`. It signs the findings you
+recorded under this machine's key and commits them locally — no push. This is what
+makes your work a signed, countable contribution rather than an unsigned draft.
 
 WHEN YOU FINISH, report: how many admitted, rejected, deferred, and the single most
 useful finding you admitted (or "none, and here is why"). Be honest about a low yield —

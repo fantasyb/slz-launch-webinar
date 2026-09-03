@@ -30,6 +30,7 @@ import { homePath, cairnHome } from '../src/lib/cairn/home';
 import { executionPolicy, policyPath } from '../src/lib/cairn/policy';
 import { gate } from '../src/lib/cairn/gate';
 import { pendingCandidates, hasCheck, settle, routeVerdict, yieldSummary } from '../src/lib/cairn/triage';
+import { sealAndCommit } from '../src/lib/cairn/autoseal';
 import type { Finding } from '../src/lib/cairn/schema';
 
 const argv = process.argv.slice(2);
@@ -114,6 +115,14 @@ async function main(): Promise<void> {
     );
   }
   reportYield(dir);
+
+  /* Behind the scenes: sign any of this machine's own findings and commit them
+   * locally, so admitted findings land in the corpus signed with nobody running
+   * sign or commit. Idempotent and safe when there is nothing to do. */
+  const sealed = sealAndCommit('cairn: triage admitted findings');
+  if (sealed.signed || sealed.committed) {
+    console.log(`  sealed: signed ${sealed.signed} as "${sealed.identity}"${sealed.committed ? ', committed' : ''}`);
+  }
   console.log();
 }
 

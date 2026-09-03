@@ -34,6 +34,7 @@ import { homePath, cairnHome } from '../src/lib/cairn/home';
 import { executionPolicy } from '../src/lib/cairn/policy';
 import { pendingCandidates } from '../src/lib/cairn/triage';
 import { triageBrief } from '../src/lib/cairn/triageBrief';
+import { machineIdentity } from '../src/lib/cairn/autoseal';
 
 const argv = process.argv.slice(2);
 const LOCK = '.triage.lock';
@@ -80,7 +81,7 @@ function main(): void {
     if (!takeLock(dir)) return; // a triage agent is already running
 
     const briefPath = path.join(dir, BRIEF);
-    fs.writeFileSync(briefPath, triageBrief(cairnHome(), pending));
+    fs.writeFileSync(briefPath, triageBrief(cairnHome(), pending, machineIdentity()?.label));
 
     /* The spawn is pluggable and detached. Default: a headless agent over the
      * brief. The brief file and CAIRN_HOME are the contract; the command is not. */

@@ -44,6 +44,7 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { execFileSync } from 'child_process';
 import { ensureIdentity } from '../src/lib/cairn/identity';
 import { loadKeys } from '../src/lib/cairn/keys';
 import { policyPath } from '../src/lib/cairn/policy';
@@ -411,6 +412,29 @@ function main() {
   if (!fs.existsSync(path.join(home, 'cairn'))) {
     if (!DRY) fs.mkdirSync(path.join(home, 'cairn'), { recursive: true });
     console.log(`  ${DRY ? 'would create' : 'created'}  corpus dir ${path.join(home, 'cairn')}`);
+  }
+
+  /* Make the corpus a git repo so admitted findings commit themselves (autoseal).
+   * Local only — nothing is ever pushed. .cairn-secrets (private keys) and drafts
+   * (the quarantine) are gitignored so they can never be committed. */
+  if (!DRY) {
+    let isRepo = false;
+    try {
+      execFileSync('git', ['-C', home, 'rev-parse', '--is-inside-work-tree'], { stdio: 'ignore' });
+      isRepo = true;
+    } catch {
+      /* not a repo yet */
+    }
+    if (!isRepo) {
+      try {
+        execFileSync('git', ['-C', home, 'init', '-q'], { stdio: 'ignore' });
+        const gi = path.join(home, '.gitignore');
+        if (!fs.existsSync(gi)) fs.writeFileSync(gi, '.cairn-secrets/\ndrafts/\nretrievals/\n');
+        console.log(`  git-init   corpus at ${home} (findings commit themselves; never pushed)`);
+      } catch {
+        /* git absent — seal will sign but skip committing; not fatal */
+      }
+    }
   }
 
   /* This machine's signing identity, generated here if it has none — so keygen is
