@@ -44,6 +44,8 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { ensureIdentity } from '../src/lib/cairn/identity';
+import { loadKeys } from '../src/lib/cairn/keys';
 
 const argv = process.argv.slice(2);
 const has = (f: string) => argv.includes(f);
@@ -63,6 +65,27 @@ function opts(name: string): string[] {
 
 const HOME = process.env.HOME || os.homedir();
 const expand = (p: string) => (p.startsWith('~') ? path.join(HOME, p.slice(1)) : path.resolve(p));
+
+/** A stable per-machine signer label when the caller does not pass --author.
+ * Sanitised to the key-label charset: 2-63 chars of lowercase [a-z0-9._-]. */
+function defaultLabel(): string {
+  let raw = 'cairn-agent';
+  try {
+    raw = `${os.userInfo().username}-${os.hostname()}`;
+  } catch {
+    try {
+      raw = os.hostname();
+    } catch {
+      /* keep the fallback */
+    }
+  }
+  const clean = raw
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, '-')
+    .replace(/^[-._]+|[-._]+$/g, '')
+    .slice(0, 63);
+  return clean.length >= 2 ? clean : 'cairn-agent';
+}
 
 /* The Cairn code checkout: two levels up from scripts/. */
 const REPO = path.resolve(__dirname, '..');
@@ -389,6 +412,26 @@ function main() {
     console.log(`  ${DRY ? 'would create' : 'created'}  corpus dir ${path.join(home, 'cairn')}`);
   }
 
+  /* This machine's signing identity, generated here if it has none — so keygen is
+   * never a separate step. The private half is born on this machine and stays in
+   * .cairn-secrets (cairn-0014). Every install is a distinct signer, which is
+   * exactly what makes a second machine's findings countably its own. */
+  process.env.CAIRN_HOME = home; // so identity/keys resolve to this corpus
+  const author = opt('author') || defaultLabel();
+  if (DRY) {
+    let has = false;
+    try {
+      has = [...loadKeys().values()].some((k) => k.label === author);
+    } catch {
+      /* no corpus yet (dry-run does not create it), so certainly no key */
+    }
+    console.log(`  ${has ? 'present  ' : 'would gen'}  signing identity "${author}"`);
+  } else {
+    const id = ensureIdentity(author);
+    console.log(`  ${id.created ? 'created  ' : 'present  '}  signing identity "${author}" -> key ${id.keyId}`);
+    if (id.created) console.log(`             fingerprint ${id.fingerprint}`);
+  }
+
   const s = upsertServer(claudeJson, home);
   console.log(`  ${s.padEnd(9)}  server "${MCP_NAME}" -> node ${SERVER_BIN}`);
   console.log(`             CAIRN_HOME=${home}`);
@@ -408,6 +451,8 @@ function main() {
 
   console.log('\n' + '='.repeat(60));
   console.log('Cairn is now global:');
+  console.log('  · this machine has its own signing identity — findings it records are');
+  console.log('    signed under its own key, so its contributions are countably its own');
   console.log('  · cairn_find / cairn_brief / cairn_record are available in every session');
   console.log('  · every session\'s instructions tell it when to consult them');
   console.log('  · sleep runs itself: every session\'s transcript is consolidated at its');

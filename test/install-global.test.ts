@@ -100,6 +100,22 @@ test('uninstall removes exactly the sleep hooks it added', () => {
   assert.equal(s.theme, 'dark', 'unrelated settings survive uninstall');
 });
 
+test('install generates the machine a signing identity, once', () => {
+  const f = fixture();
+  run(f.home, ['--home', f.corpus, '--author', 'joey.ahern']);
+
+  const keys = fs.readdirSync(path.join(f.corpus, 'keys')).filter((n) => n.endsWith('.json'));
+  assert.equal(keys.length, 1, 'a public key was generated and committed');
+  const rec = JSON.parse(fs.readFileSync(path.join(f.corpus, 'keys', keys[0]), 'utf8'));
+  assert.equal(rec.label, 'joey.ahern', 'under the given author label');
+  const secrets = fs.readdirSync(path.join(f.corpus, '.cairn-secrets')).filter((n) => n.endsWith('.key'));
+  assert.equal(secrets.length, 1, 'and the private half is kept in .cairn-secrets, never in keys/');
+
+  /* Idempotent: re-running does not mint a second identity under the same label. */
+  run(f.home, ['--home', f.corpus, '--author', 'joey.ahern']);
+  assert.equal(fs.readdirSync(path.join(f.corpus, 'keys')).filter((n) => n.endsWith('.json')).length, 1, 'still one key');
+});
+
 test('install is idempotent: twice is the same as once', () => {
   const f = fixture();
   run(f.home, ['--home', f.corpus]);
