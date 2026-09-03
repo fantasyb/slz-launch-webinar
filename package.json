@@ -23,7 +23,7 @@
     "cairn:federate": "tsx scripts/federate.ts",
     "cairn:observe": "tsx scripts/observe.ts",
     "cairn:panel": "tsx research/scripts/panel.ts",
-    "cairn:install": "tsx scripts/install.ts",
+    "cairn:install": "tsx scripts/install-global.ts",
     "cairn:draft": "tsx scripts/draft.ts",
     "cairn:hooks": "git config core.hooksPath .githooks && echo \"pre-commit hook enabled\"",
     "test": "tsx --test test/*.test.ts",
