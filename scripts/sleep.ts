@@ -65,60 +65,18 @@ function hookInput(): { transcript_path?: string; session_id?: string } {
  * an identical one is idempotent — re-consolidating a transcript rewrites the
  * same file rather than piling up duplicates. */
 function writeCandidate(dir: string, c: Candidate, source: string): void {
-  fs.mkdirSync(dir, { recursive: true });
-  const ignore = path.join(dir, '.gitignore');
-  if (!fs.existsSync(ignore)) fs.writeFileSync(ignore, '*\n');
+  ensureDrafts(dir);
   const digest = crypto.createHash('sha256').update(`${c.tool}\0${c.expectation}\0${c.reality}\0${c.update}`).digest('hex').slice(0, 10);
   const name = `sleep-${path.basename(source, '.jsonl')}-${c.tool.replace(/[^A-Za-z0-9_.-]+/g, '_')}-${c.surprisal}-${digest}.json`;
   fs.writeFileSync(path.join(dir, name), JSON.stringify(draftFor(c, path.basename(source)), null, 2) + '\n');
 }
 
-/**
- * SessionEnd: consolidate the transcript that just closed. Silent by design —
- * this runs as the session ends, with nobody watching; it leaves candidates in
- * drafts/ for the next session to surface. Never throws, always exits 0.
- */
-function runHook(): void {
-  try {
-    const { transcript_path } = hookInput();
-    const dir = draftsDir();
-    if (!transcript_path || !dir || !fs.existsSync(transcript_path)) return;
-    const raw = fs.readFileSync(transcript_path, 'utf8');
-    const candidates = detectCandidates(parseTranscript(raw));
-    for (const c of candidates) writeCandidate(dir, c, transcript_path);
-    /* A one-line breadcrumb to stderr — visible in hook logs, never in context. */
-    if (candidates.length) process.stderr.write(`cairn:sleep consolidated ${candidates.length} candidate(s) into ${dir}\n`);
-  } catch {
-    /* a consolidation pass must never be the reason a session failed to end */
-  }
-  process.exit(0);
-}
-
-/**
- * SessionStart: tell the fresh session what a prior one harvested, so the
- * candidates do not sit unseen. stdout at SessionStart becomes context, so this
- * is the one line that makes a blank agent reach for drafts. Never throws.
- */
-function runSurface(): void {
-  try {
-    const dir = draftsDir();
-    if (!dir || !fs.existsSync(dir)) return;
-    const drafts = fs.readdirSync(dir).filter((n) => n.endsWith('.json'));
-    if (!drafts.length) return;
-    process.stdout.write(
-      `Cairn: ${drafts.length} consolidated candidate(s) from prior sessions are waiting in ${dir} — ` +
-        'surprise gaps harvested from earlier transcripts, not yet findings. If any names a real, ' +
-        'checkable trap, promote it with cairn_record (add a check); the rest decay unused.\n',
-    );
-  } catch {
-    /* surfacing is a convenience; never let it disrupt a session opening */
-  }
-  process.exit(0);
-}
-
-function latestTranscript(): string | null {
+/** Every Claude Code transcript on disk, with its mtime. The transcript is
+ * written regardless of how a session died, so this is what makes catch-up
+ * possible: a Ctrl-C'd session that never fired SessionEnd still left its trace. */
+function allTranscripts(): Array<{ file: string; mtime: number }> {
   const root = path.join(os.homedir(), '.claude', 'projects');
-  let newest: { file: string; mtime: number } | null = null;
+  const out: Array<{ file: string; mtime: number }> = [];
   const walk = (dir: string) => {
     let entries: fs.Dirent[];
     try {
@@ -130,13 +88,128 @@ function latestTranscript(): string | null {
       const p = path.join(dir, e.name);
       if (e.isDirectory()) walk(p);
       else if (e.name.endsWith('.jsonl')) {
-        const m = fs.statSync(p).mtimeMs;
-        if (!newest || m > newest.mtime) newest = { file: p, mtime: m };
+        try {
+          out.push({ file: p, mtime: fs.statSync(p).mtimeMs });
+        } catch {
+          /* raced with a write; skip */
+        }
       }
     }
   };
   walk(root);
-  return newest ? (newest as { file: string }).file : null;
+  return out;
+}
+
+function latestTranscript(): string | null {
+  const all = allTranscripts();
+  return all.length ? all.reduce((a, b) => (b.mtime > a.mtime ? b : a)).file : null;
+}
+
+/** Ensure drafts/ exists and is self-ignoring, so nothing here is ever committed. */
+function ensureDrafts(dir: string): void {
+  fs.mkdirSync(dir, { recursive: true });
+  const ignore = path.join(dir, '.gitignore');
+  if (!fs.existsSync(ignore)) fs.writeFileSync(ignore, '*\n');
+}
+
+/* The consolidation watermark: the newest transcript mtime we have already
+ * harvested. It is what keeps SessionStart fast in the common case (a clean
+ * exit already consolidated its own transcript and advanced this) and what
+ * bounds the catch-up to only sessions that were actually missed. */
+const WATERMARK = '.consolidated';
+function readWatermark(dir: string): number | null {
+  try {
+    const v = Number(fs.readFileSync(path.join(dir, WATERMARK), 'utf8').trim());
+    return Number.isFinite(v) ? v : null;
+  } catch {
+    return null;
+  }
+}
+function writeWatermark(dir: string, ms: number): void {
+  try {
+    ensureDrafts(dir);
+    fs.writeFileSync(path.join(dir, WATERMARK), String(Math.floor(ms)) + '\n');
+  } catch {
+    /* the watermark is an optimisation; losing it costs a re-parse, never correctness */
+  }
+}
+
+/** Consolidate one transcript into drafts/. Idempotent by content hash. */
+function consolidateFile(dir: string, file: string): number {
+  try {
+    const candidates = detectCandidates(parseTranscript(fs.readFileSync(file, 'utf8')));
+    for (const c of candidates) writeCandidate(dir, c, file);
+    return candidates.length;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * SessionEnd: consolidate the transcript that just closed, immediately, while it
+ * is fresh, and advance the watermark so the next SessionStart need not re-parse
+ * it. Best-effort by nature — a Ctrl-C or a crash may skip it entirely, which is
+ * exactly why SessionStart also catches up. Never throws, always exits 0.
+ */
+function runHook(): void {
+  try {
+    const { transcript_path } = hookInput();
+    const dir = draftsDir();
+    if (!transcript_path || !dir || !fs.existsSync(transcript_path)) return;
+    const n = consolidateFile(dir, transcript_path);
+    try {
+      writeWatermark(dir, Math.max(readWatermark(dir) ?? 0, fs.statSync(transcript_path).mtimeMs));
+    } catch {
+      /* mtime unreadable; the next SessionStart re-parses this one, idempotently */
+    }
+    if (n) process.stderr.write(`cairn:sleep consolidated ${n} candidate(s) into ${dir}\n`);
+  } catch {
+    /* a consolidation pass must never be the reason a session failed to end */
+  }
+  process.exit(0);
+}
+
+/**
+ * SessionStart: FIRST catch up on any transcript newer than the watermark — the
+ * sessions a missed SessionEnd never consolidated — then report what is waiting.
+ * This is the crash-safety net: SessionEnd is best-effort, but every transcript
+ * is on disk, so the next session sweeps up whatever was skipped. stdout here
+ * becomes context, so the report is the line that points a blank agent at drafts.
+ *
+ * The current session's own transcript is excluded (it is mid-write and near
+ * empty; its own end or the next start will get it), and the very first run after
+ * install adopts "now" as the baseline rather than back-scanning a machine's
+ * whole transcript history at a latency-sensitive moment. Never throws.
+ */
+function runSurface(): void {
+  try {
+    const dir = draftsDir();
+    if (!dir) return;
+    const { transcript_path } = hookInput();
+    const prior = readWatermark(dir);
+    if (prior === null) {
+      writeWatermark(dir, Date.now());
+    } else {
+      let maxSeen = prior;
+      for (const { file, mtime } of allTranscripts()) {
+        if (mtime <= prior) continue;
+        if (transcript_path && path.resolve(file) === path.resolve(transcript_path)) continue;
+        consolidateFile(dir, file);
+        if (mtime > maxSeen) maxSeen = mtime;
+      }
+      if (maxSeen > prior) writeWatermark(dir, maxSeen);
+    }
+    const drafts = fs.existsSync(dir) ? fs.readdirSync(dir).filter((n) => n.endsWith('.json')) : [];
+    if (!drafts.length) return;
+    process.stdout.write(
+      `Cairn: ${drafts.length} consolidated candidate(s) from prior sessions are waiting in ${dir} — ` +
+        'surprise gaps harvested from earlier transcripts, not yet findings. If any names a real, ' +
+        'checkable trap, promote it with cairn_record (add a check); the rest decay unused.\n',
+    );
+  } catch {
+    /* surfacing is a convenience; never let it disrupt a session opening */
+  }
+  process.exit(0);
 }
 
 function draftFor(c: Candidate, source: string): Record<string, unknown> {
