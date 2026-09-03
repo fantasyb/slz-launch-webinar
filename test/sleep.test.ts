@@ -81,6 +81,22 @@ test('the structural contradiction signal does not fire on shell tools', () => {
   assert.deepEqual(detectCandidates(turns), [], 'a longer shell command is not a query contradiction');
 });
 
+test('a successful call followed by work-narration is not a model update', () => {
+  /* The firehose the real test exposed: on a build transcript every assistant
+   * turn is "Pushed / Done / Verified — actually ...", and the prose regex fired
+   * on all of it (652 of 704 candidates). A plain successful call with a normal
+   * payload gave the agent nothing to be surprised BY, so the prose after it is
+   * narration about the agent's own work, not a model of the tool changing. */
+  const turns = parseTranscript(
+    jsonl([
+      asst(call('f1', 'Bash', { command: 'git push' })),
+      user(result('f1', 'branch updated -> origin/main')),
+      asst(say('Pushed — 212 tests, guard passing. Actually it turns out the lint step was already green, instead of what I expected.')),
+    ]),
+  );
+  assert.deepEqual(detectCandidates(turns), [], 'update-words in work-narration after a plain success do not clear the gate');
+});
+
 test('empty-then-superset on a real query tool IS a contradiction', () => {
   const turns = parseTranscript(
     jsonl([

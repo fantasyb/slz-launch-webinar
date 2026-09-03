@@ -192,17 +192,30 @@ export function detectCandidates(turns: Turn[]): Candidate[] {
       }
     }
 
+    /* Surprise requires something to be surprised BY. A model update counts only
+     * when the result itself was notable — an error, an empty payload, or a
+     * violated stated expectation. Free-floating "actually / turns out" after a
+     * plain successful call is the agent narrating its own work, not its model of
+     * a tool changing. Measured on a real build transcript: without this gate,
+     * 652 of 704 candidates were commit narration ("Pushed", "Done", "Verified")
+     * that tripped the prose regex with nothing behind it. The two are
+     * linguistically identical in prose; they are NOT identical in what the tool
+     * returned, so we anchor the prose signal to the result, not to the words. */
+    const empty = looksEmpty(t.result.text);
+    const expected = hits(expectation, EXPECTATION);
+    const notable = t.result.isError || empty || expected;
+
     const reasons: string[] = [];
     let score = 0;
-    if (hits(update, UPDATE)) {
+    if (notable && hits(update, UPDATE)) {
       score += 3;
-      reasons.push('the agent revised its model of the tool after the result');
+      reasons.push('the agent revised its model of the tool after a notable result');
     }
     if (t.result.isError) {
       score += 1;
       reasons.push('the call errored');
     }
-    if (hits(expectation, EXPECTATION)) {
+    if (expected) {
       score += 1;
       reasons.push('the agent had stated an expectation before the call');
     }
