@@ -68,7 +68,8 @@
     "cairn:spec": "tsx scripts/spec.ts",
     "cairn:gateway-smoke": "tsx scripts/gateway-smoke.ts",
     "prepare": "git config core.hooksPath .githooks 2>/dev/null || true",
-    "cairn:sleep": "tsx scripts/sleep.ts"
+    "cairn:sleep": "tsx scripts/sleep.ts",
+    "cairn:triage": "tsx scripts/triage.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
