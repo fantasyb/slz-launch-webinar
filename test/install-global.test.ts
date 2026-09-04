@@ -71,6 +71,7 @@ test('wraps the user\'s stdio servers through the gateway, losslessly and revers
   const wrapped = cfg.mcpServers['sf-all'];
   assert.equal(wrapped.command, 'node', 'the entry now launches node');
   assert.match(wrapped.args[0], /bin\/cairn-proxy\.js$/, 'running the gateway proxy');
+  assert.ok(wrapped.args.includes('--no-cairn-tools'), 'suppressing the proxy\'s own tools (the standalone server already offers them)');
   assert.equal(wrapped.env.CAIRN_HOME, f.corpus, 'against the corpus home');
   /* The original is stashed verbatim where the proxy forwards to and uninstall restores from. */
   const stash = path.join(f.corpus, 'wrapped', 'sf-all.json');

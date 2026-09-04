@@ -339,7 +339,9 @@ function wrapServers(file: string, home: string): WrapSummary {
       /* The original, verbatim: the proxy forwards to it and uninstall restores from it. May carry credentials, so 0600. */
       fs.writeFileSync(wrappedFile, JSON.stringify({ mcpServers: { [name]: entry } }, null, 2) + '\n', { mode: 0o600 });
     }
-    servers[name] = { command: 'node', args: [PROXY_BIN, '--config', wrappedFile], env: { CAIRN_HOME: home } };
+    /* --no-cairn-tools: the standalone cairn server already offers the pull tools,
+     * so a wrapped server must not re-advertise them once per server. Push is unaffected. */
+    servers[name] = { command: 'node', args: [PROXY_BIN, '--config', wrappedFile, '--no-cairn-tools'], env: { CAIRN_HOME: home } };
     summary.wrapped.push(name);
     changed = true;
   }

@@ -107,6 +107,18 @@ function usage(): never {
 /** Port for the hosted mode, or null for stdio. */
 let HTTP_PORT: number | null = null;
 
+/*
+ * Withhold the gateway's OWN tools (cairn_find / cairn_record / cairn_observe /
+ * cairn_note) from this instance's tool list. When the proxy fronts a server
+ * ALONGSIDE a standalone cairn MCP server (the default install: one pull server
+ * plus every other server wrapped), those four tools would otherwise appear
+ * once per wrapped server on top of the standalone copy — N duplicates that
+ * cost context and teach nothing. With this flag the wrapped instance still
+ * forwards its upstream and still PUSHES findings onto results; it just does not
+ * re-advertise the pull tools that already exist once. Push is unaffected.
+ */
+const SUPPRESS_OWN_TOOLS = process.argv.includes('--no-cairn-tools');
+
 function parseArgs(argv: string[]): UpstreamSpec[] {
   const specs: UpstreamSpec[] = [];
   for (let i = 0; i < argv.length; i++) {
@@ -1375,7 +1387,7 @@ async function main() {
        * to fail. An advertised tool that cannot work costs a model a call
        * and a wrong conclusion about why.
        */
-      const own = degraded() ? [] : GATEWAY_TOOLS.filter((g) => !taken.has(g.name));
+      const own = degraded() || SUPPRESS_OWN_TOOLS ? [] : GATEWAY_TOOLS.filter((g) => !taken.has(g.name));
       return { tools: [...described, ...own] };
     });
 
