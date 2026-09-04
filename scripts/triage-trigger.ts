@@ -33,6 +33,7 @@ import { spawn, execSync } from 'child_process';
 import { homePath, cairnHome } from '../src/lib/cairn/home';
 import { executionPolicy } from '../src/lib/cairn/policy';
 import { pendingCandidates } from '../src/lib/cairn/triage';
+import { gateCandidates, DEFAULT_TRIAGE_THRESHOLD } from '../src/lib/cairn/triageScore';
 import { triageBrief } from '../src/lib/cairn/triageBrief';
 import { machineIdentity } from '../src/lib/cairn/autoseal';
 
@@ -121,6 +122,18 @@ function main(): void {
     if (!executionPolicy().enabled) return; // may not run checks here — nothing to do
     const pending = pendingCandidates(dir);
     if (!pending.length) return; // nothing to triage
+
+    /*
+     * The cheap gate (score-first cascade). Most of a deep backlog is noise or
+     * frontier-recoverable, and spending the expensive check-writer on all of it
+     * is the slow, costly path. Score each candidate for free first; only the
+     * ones that clear the bar reach the agent. Scores are cached in drafts/ so a
+     * re-run or a threshold change re-gates with no recompute; deferred ones are
+     * kept, never stamped as failed, and re-gated next time.
+     */
+    const threshold = Number(process.env.CAIRN_TRIAGE_THRESHOLD) || DEFAULT_TRIAGE_THRESHOLD;
+    const { escalate, deferred } = gateCandidates(dir, pending, threshold);
+    if (!escalate.length) return; // nothing clears the cheap gate — do not spend the expensive agent
     if (!takeLock(dir)) return; // a triage agent is already running
 
     /*
@@ -130,7 +143,7 @@ function main(): void {
      * session starts, which is exactly the cadence the trigger already runs on.
      */
     const MAX_PER_RUN = Number(process.env.CAIRN_TRIAGE_BATCH) || 10;
-    const batch = pending.slice(0, MAX_PER_RUN);
+    const batch = escalate.slice(0, MAX_PER_RUN);
     const briefPath = path.join(dir, BRIEF);
     fs.writeFileSync(briefPath, triageBrief(cairnHome(), batch, machineIdentity()?.label));
     const logPath = path.join(dir, LOG);
@@ -170,7 +183,10 @@ function main(): void {
       child.unref();
     }
     /* A quiet breadcrumb to stderr (hook logs), never to the session's context. */
-    process.stderr.write(`cairn:triage-trigger spawned a triage agent for ${batch.length} of ${pending.length} pending candidate(s)\n`);
+    process.stderr.write(
+      `cairn:triage-trigger spawned a triage agent for ${batch.length} of ${escalate.length} gated ` +
+        `(${pending.length} pending, ${deferred.length} deferred as low-signal)\n`,
+    );
   } catch {
     /* the trigger must never be the reason a session fails to open */
   }

@@ -108,7 +108,9 @@ export function pendingCandidates(draftsDir: string): Candidate[] {
   }
   const out: Candidate[] = [];
   for (const n of names) {
-    if (!n.endsWith('.json')) continue;
+    /* Skip Cairn's own bookkeeping (.triage-scores.json, .consolidated, …): a
+     * dotfile is never a candidate, only a *.json draft sleep wrote is. */
+    if (n.startsWith('.') || !n.endsWith('.json')) continue;
     const file = path.join(draftsDir, n);
     let stat: fs.Stats;
     try {
