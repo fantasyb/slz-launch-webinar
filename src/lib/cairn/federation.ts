@@ -11,6 +11,7 @@ import {
 } from './signing';
 import { loadKeys } from './keys';
 import { loadCorpus } from './load';
+import { loadProjectCorpus } from './mount';
 import { UNTRUSTED_NOTICE, UNTRUSTED_FIELDS } from './safety';
 import { homePath } from './home';
 
@@ -341,6 +342,28 @@ export function loadSearchable(): Searchable {
         keys: merged,
       };
       findings.push(entry);
+    }
+  }
+
+  /*
+   * Auto-mount: the project corpus for the current working directory, read live,
+   * alongside the machine corpus and any configured upstreams. No config — being
+   * inside the repo is the whole trigger. Namespaced by its own origin so its ids
+   * never collide with the primary's. Writes still go to the primary; this is a
+   * read source only.
+   */
+  const project = loadProjectCorpus();
+  if (project) {
+    const merged = new Map<string, KeyRecord>(project.keys);
+    for (const [id, rec] of localKeys) merged.set(id, rec);
+    for (const finding of project.findings) {
+      findings.push({
+        ...finding,
+        upstreamName: project.origin,
+        upstreamOrigin: project.origin,
+        displayId: federatedId(project.origin, finding.id),
+        keys: merged,
+      });
     }
   }
 
