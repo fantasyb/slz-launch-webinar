@@ -29,7 +29,7 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { spawn } from 'child_process';
+import { spawn, execSync } from 'child_process';
 import { homePath, cairnHome } from '../src/lib/cairn/home';
 import { executionPolicy } from '../src/lib/cairn/policy';
 import { pendingCandidates } from '../src/lib/cairn/triage';
@@ -71,6 +71,30 @@ function takeLock(dir: string): boolean {
   }
 }
 
+/**
+ * The claude binary, resolved to an absolute path so a hook whose PATH lacks
+ * ~/.local/bin (where the CLI often installs) still finds it — the reason the
+ * shell-based spawn produced an empty log and never ran. Override with
+ * CAIRN_CLAUDE_BIN; otherwise probe the common install locations, then PATH.
+ */
+function resolveClaudeBin(): string {
+  if (process.env.CAIRN_CLAUDE_BIN) return process.env.CAIRN_CLAUDE_BIN;
+  const cands = [
+    path.join(os.homedir(), '.local', 'bin', 'claude'),
+    '/opt/homebrew/bin/claude',
+    '/usr/local/bin/claude',
+    '/usr/bin/claude',
+  ];
+  for (const c of cands) {
+    try { if (fs.existsSync(c)) return c; } catch { /* ignore */ }
+  }
+  try {
+    const p = execSync('command -v claude', { encoding: 'utf8' }).trim();
+    if (p) return p;
+  } catch { /* not resolvable here; fall back to the name so the error surfaces to the log */ }
+  return 'claude';
+}
+
 /** The corpus this run is for: --home wins, else $CAIRN_HOME. Tilde-expanded, resolved. */
 function resolvedHome(): string | null {
   const i = argv.indexOf('--home');
@@ -99,23 +123,54 @@ function main(): void {
     if (!pending.length) return; // nothing to triage
     if (!takeLock(dir)) return; // a triage agent is already running
 
+    /*
+     * A bounded bite. Each candidate is a check written and RUN, one after
+     * another, so a 60-deep backlog in one brief is a very long, easily-stalled
+     * run. Take at most MAX_PER_RUN per fire; the queue drains over successive
+     * session starts, which is exactly the cadence the trigger already runs on.
+     */
+    const MAX_PER_RUN = Number(process.env.CAIRN_TRIAGE_BATCH) || 10;
+    const batch = pending.slice(0, MAX_PER_RUN);
     const briefPath = path.join(dir, BRIEF);
-    fs.writeFileSync(briefPath, triageBrief(cairnHome(), pending, machineIdentity()?.label));
+    fs.writeFileSync(briefPath, triageBrief(cairnHome(), batch, machineIdentity()?.label));
+    const logPath = path.join(dir, LOG);
 
-    /* The spawn is pluggable and detached. Default: a headless agent over the
-     * brief. The brief file and CAIRN_HOME are the contract; the command is not. */
-    const cmd =
-      process.env.CAIRN_TRIAGE_CMD ||
-      `claude -p "$(cat "$CAIRN_TRIAGE_BRIEF")" >> "${path.join(dir, LOG)}" 2>&1`;
-
-    const child = spawn('/bin/sh', ['-c', cmd], {
-      detached: true,
-      stdio: 'ignore',
-      env: { ...process.env, CAIRN_HOME: cairnHome(), CAIRN_TRIAGE_BRIEF: briefPath },
-    });
-    child.unref();
+    /*
+     * The spawn is detached. CAIRN_TRIAGE_CMD is the escape hatch (run through a
+     * shell, brief path + CAIRN_HOME in env). The DEFAULT spawns the claude
+     * binary directly — an absolute path (so a bare-PATH hook finds it), the
+     * brief on stdin (no ARG_MAX limit), output appended to the log, and any
+     * spawn failure written to the log rather than vanishing: an empty log used
+     * to be the only, silent, symptom of a spawn that never ran.
+     */
+    if (process.env.CAIRN_TRIAGE_CMD) {
+      const child = spawn('/bin/sh', ['-c', process.env.CAIRN_TRIAGE_CMD], {
+        detached: true,
+        stdio: 'ignore',
+        env: { ...process.env, CAIRN_HOME: cairnHome(), CAIRN_TRIAGE_BRIEF: briefPath },
+      });
+      child.on('error', (e) => { try { fs.appendFileSync(logPath, `cairn:triage spawn failed: ${(e as Error).message}\n`); } catch { /* last resort */ } });
+      child.unref();
+    } else {
+      const bin = resolveClaudeBin();
+      let logFd: number;
+      let briefFd: number;
+      try {
+        logFd = fs.openSync(logPath, 'a');
+        briefFd = fs.openSync(briefPath, 'r');
+      } catch {
+        return; // could not wire the agent's io; the lock goes stale and the next start retries
+      }
+      const child = spawn(bin, ['-p'], {
+        detached: true,
+        stdio: [briefFd, logFd, logFd],
+        env: { ...process.env, CAIRN_HOME: cairnHome() },
+      });
+      child.on('error', (e) => { try { fs.appendFileSync(logPath, `cairn:triage spawn failed for "${bin}": ${(e as Error).message}\n`); } catch { /* last resort */ } });
+      child.unref();
+    }
     /* A quiet breadcrumb to stderr (hook logs), never to the session's context. */
-    process.stderr.write(`cairn:triage-trigger spawned a triage agent for ${pending.length} candidate(s)\n`);
+    process.stderr.write(`cairn:triage-trigger spawned a triage agent for ${batch.length} of ${pending.length} pending candidate(s)\n`);
   } catch {
     /* the trigger must never be the reason a session fails to open */
   }

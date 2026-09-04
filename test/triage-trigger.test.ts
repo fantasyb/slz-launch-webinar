@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { execFileSync } from 'child_process';
+import { execFileSync, execSync } from 'child_process';
 import { triageBrief } from '../src/lib/cairn/triageBrief';
 
 const SCRIPT = path.join(process.cwd(), 'scripts', 'triage-trigger.ts');
@@ -72,6 +72,32 @@ test('it spawns from --home alone, with CAIRN_HOME unset (the installed hook sha
     try { execFileSync('sh', ['-c', 'sleep 0.05']); } catch { /* ignore */ }
   }
   assert.equal(fs.existsSync(w.marker), true, 'triage spawned from --home alone — the policy check aligned to the given corpus');
+});
+
+test('the default spawn runs the resolved claude binary and captures output to the log', () => {
+  /* No CAIRN_TRIAGE_CMD: exercises the direct-spawn path. A mock "claude" reads the
+   * brief on stdin and writes to stdout, which must land in drafts/.triage.log —
+   * the path that used to fail silently when the shell could not resolve claude. */
+  const w = world(true);
+  const mock = path.join(w.home, 'mock-claude.sh');
+  fs.writeFileSync(mock, '#!/bin/sh\ncat > /dev/null\necho "mock triage ran"\n', { mode: 0o755 });
+  const env: NodeJS.ProcessEnv = { ...process.env, CAIRN_HOME: w.home, CAIRN_POLICY: w.policy, CAIRN_CLAUDE_BIN: mock };
+  delete env.CAIRN_TRIAGE_CMD;
+  execFileSync('npx', ['tsx', SCRIPT], { encoding: 'utf8', env });
+  const log = path.join(w.drafts, '.triage.log');
+  const deadline = Date.now() + 4000;
+  while (Date.now() < deadline && !(fs.existsSync(log) && fs.readFileSync(log, 'utf8').includes('mock triage ran'))) {
+    try { execFileSync('sh', ['-c', 'sleep 0.05']); } catch { /* ignore */ }
+  }
+  assert.match(fs.readFileSync(log, 'utf8'), /mock triage ran/, 'agent output landed in .triage.log via the direct spawn');
+});
+
+test('a batch is bounded so a big backlog does not run as one giant brief', () => {
+  const w = world(true, 25);
+  const env: NodeJS.ProcessEnv = { ...process.env, CAIRN_HOME: w.home, CAIRN_POLICY: w.policy, CAIRN_TRIAGE_CMD: `printf ran > "${w.marker}"`, CAIRN_TRIAGE_BATCH: '10' };
+  /* The breadcrumb is on stderr; merge it so we can read it. */
+  const out = execSync(`npx tsx "${SCRIPT}" 2>&1`, { encoding: 'utf8', env });
+  assert.match(out, /10 of 25/, 'took a bounded batch of the backlog, not all 25 at once');
 });
 
 test('it does nothing when execution is off', () => {
