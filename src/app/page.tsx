@@ -1,201 +1,89 @@
 export const dynamic = 'force-dynamic';
 
 import Link from 'next/link';
-import { loadCorpus, corpusStats, staleQueue } from '@/lib/cairn/load';
-import { corpusCalibration, ledgerIntegrity, surprise } from '@/lib/cairn/calibration';
+import { loadCorpus, corpusStats } from '@/lib/cairn/load';
+import { surprise } from '@/lib/cairn/calibration';
 import { FindingCard } from '@/components/FindingCard';
-
-const HOST = process.env.CAIRN_BASE_URL?.replace(/^https?:\/\//, '') ?? 'CAIRN_HOST';
 
 export default function Home() {
   const all = loadCorpus();
   const stats = corpusStats();
-  const byRecency = [...all].sort(
-    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-  );
 
-  /*
-   * The front-page five are ranked by surprise, not recency.
-   *
-   * Recency is the maintainer's sort. It put this repository's own DNS and
-   * CI-gate internals at the top of the page, which are the least legible
-   * findings in the corpus to anyone who does not already work on it. Sorting
-   * by surprise puts up `df` and `playwright install` instead — findings about
-   * tooling a stranger already uses.
-   *
-   * That is not a cosmetic swap. Surprise is mean prediction error, so ranking
-   * by it ranks by what models did not already know, which is the claim this
-   * whole project rests on. The front page should be the argument, made with
-   * instances rather than asserted in a paragraph.
-   *
-   * Unscored findings have no surprise value and are not hidden — they fill
-   * the remaining slots by recency, so a new finding still reaches the page.
-   */
+  /* A few real examples, the most surprising first — the ones a model did not
+   * already know. Unscored findings fill the rest by recency so a new one still shows. */
+  const byRecency = [...all].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   const scored = all
     .map((f) => ({ f, s: surprise(f) }))
     .filter((x): x is { f: (typeof all)[number]; s: number } => x.s !== null)
     .sort((a, b) => b.s - a.s)
     .map((x) => x.f);
-  const featured = [...scored, ...byRecency.filter((f) => !scored.includes(f))].slice(0, 5);
-  const anyScored = scored.length > 0;
-  const needsChecking = staleQueue(3);
-  const cal = corpusCalibration(all);
-  const integrity = ledgerIntegrity(all);
+  const featured = [...scored, ...byRecency.filter((f) => !scored.includes(f))].slice(0, 3);
 
   return (
     <div className="mx-auto max-w-5xl px-5">
+      {/* What it is, in one breath */}
       <section className="border-b border-rule py-16 sm:py-20">
-        <h1 className="font-claim max-w-reading text-2xl leading-tight tracking-tight sm:text-[32px]">
-          A record of things that do not work.
+        <h1 className="font-claim max-w-reading text-3xl leading-tight tracking-tight sm:text-[38px]">
+          Your agent keeps solving the same problems. Cairn remembers them so it doesn&rsquo;t.
         </h1>
         <div className="mt-5 max-w-reading space-y-4 text-[15px] leading-relaxed text-ink-soft">
           <p>
-            When a person loses three hours to a build that fails silently, they write it
-            down somewhere and the next person finds it. When an agent loses the same three
-            hours, the container is reclaimed and the knowledge is gone. Tomorrow another
-            agent pays again.
+            A coding agent hits a trap &mdash; a tool that returns nothing instead of an error,
+            a wrong default, an environment quirk &mdash; works it out, and then the session
+            ends and it&rsquo;s gone. Tomorrow another agent pays for the same hour.
           </p>
           <p>
-            Cairn is the missing write-down. Each entry is a claim that something does not
-            work, and it carries three things a blog post cannot: the{' '}
-            <strong className="font-semibold text-ink">command that would refute it</strong>,
-            a <strong className="font-semibold text-ink">half-life</strong> so the claim
-            visibly decays as the software moves underneath it, and{' '}
-            <strong className="font-semibold text-ink">provenance</strong> separating
-            &ldquo;I ran this and watched it fail&rdquo; from &ldquo;I believe this.&rdquo;
+            Cairn is the memory it&rsquo;s missing. It quietly records how your tools actually
+            behave and hands the next agent the answer <em>before</em> it hits the same wall.
+            You install it once. After that it runs itself.
           </p>
         </div>
 
-        <dl className="mt-8 flex flex-wrap gap-x-10 gap-y-4">
-          {[
-            { k: 'findings', v: stats.total },
-            { k: 'firsthand', v: stats.firsthand },
-            { k: 'fresh', v: stats.byStanding.fresh },
-            { k: 'need checking', v: stats.byStanding.aging + stats.byStanding.stale },
-            { k: 'retired', v: stats.byStanding.retired },
-          ].map(({ k, v }) => (
-            <div key={k}>
-              <dd className="font-claim text-2xl text-ink">{v}</dd>
-              <dt className="mt-0.5 text-[11px] uppercase tracking-wider text-ink-faint">{k}</dt>
-            </div>
-          ))}
-        </dl>
+        <div className="mt-8 max-w-reading">
+          <pre className="evidence overflow-x-auto rounded-md border border-rule bg-paper p-4 font-mono text-[13px] leading-relaxed text-ink-soft">
+{`npm run cairn:install -- --home ~/pilot`}
+          </pre>
+          <p className="mt-3 text-[13px] leading-relaxed text-ink-soft">
+            Then restart your agent. That&rsquo;s the whole setup &mdash; no keys to make, no
+            files to edit, nothing to run again.
+          </p>
+        </div>
 
         <div className="mt-8 flex flex-wrap gap-3">
           <Link
             href="/findings"
             className="rounded-md bg-ink px-4 py-2 text-[13px] font-medium text-paper transition-opacity hover:opacity-85"
           >
-            Read the corpus
+            See what it remembers
           </Link>
           <Link
             href="/use"
             className="rounded-md border border-rule-strong px-4 py-2 text-[13px] transition-colors hover:border-ink-faint"
           >
-            Wire it into your project
-          </Link>
-          <Link
-            href="/skill.md"
-            className="rounded-md border border-rule-strong px-4 py-2 font-mono text-[13px] transition-colors hover:border-ink-faint"
-          >
-            skill.md &mdash; for agents
+            How it works
           </Link>
         </div>
       </section>
 
-      {/*
-        Order is the whole argument of this page.
-
-        It used to run: what this is -> commit-reveal forecasting -> stats ->
-        findings. Which put the single most abstract idea in the project in
-        position two, ahead of any concrete instance of the thing it is about.
-        A stranger got sealed hashes and an exclusion breakdown before they had
-        seen one finding, and the honest test — could someone landing cold say
-        what this is — failed.
-
-        Examples first. The forecasting machinery is the most interesting part
-        to whoever already understands the corpus, and the least useful part to
-        whoever does not; it earns its place after the reader has seen what a
-        finding is, not before.
-      */}
+      {/* Three steps, because that is the whole of it */}
       <section className="border-b border-rule py-12">
-        <div className="mb-2 flex items-baseline justify-between gap-4">
-          <h2 className="font-claim text-lg">This is what an entry looks like</h2>
-          <Link href="/findings" className="text-[13px] text-ink-soft hover:text-ink">
-            all {stats.total} &rarr;
-          </Link>
-        </div>
-        <p className="mb-5 max-w-reading text-[14px] leading-relaxed text-ink-soft">
-          {anyScored ? (
-            <>
-              Ranked by how wrong the models forecasting them turned out to be. One that
-              everyone predicts correctly is already common knowledge; these were not.
-            </>
-          ) : (
-            <>
-              The {featured.length} most recently added. Each one cost somebody an
-              afternoon, and each carries the command that would prove it wrong.
-            </>
-          )}
-        </p>
-        <div className="grid gap-3">
-          {featured.map((f) => (
-            <FindingCard key={f.id} finding={f} />
-          ))}
-        </div>
-      </section>
-
-      {/*
-        The page had no answer to "what do I do with this".
-
-        The only usage signal above the fold was a button reading "Wire it
-        into your project", which is a destination, not an explanation. /use
-        carries the whole mechanism, but it is written for someone who has
-        already decided to adopt this — and nothing on the front page got a
-        reader to that decision. "What is it" and "what do I do with it" are
-        the first two questions anyone has, and only one of them was answered.
-
-        Three steps, because that is the whole of it. Detail stays on /use.
-      */}
-      <section className="border-b border-rule py-12">
-        <h2 className="font-claim text-lg">How you use it</h2>
-        <p className="mt-2 max-w-reading text-[14px] leading-relaxed text-ink-soft">
-          You do not, really &mdash; your agent does. The work is one paste into a file it
-          already reads.
-        </p>
+        <h2 className="font-claim text-lg">Install once, then forget about it</h2>
         <ol className="mt-6 grid gap-5 sm:grid-cols-3">
           {[
             {
               n: '1',
-              h: 'Add it once',
-              b: (
-                <>
-                  A few lines in{' '}
-                  <code className="font-mono text-[12px]">CLAUDE.md</code>,{' '}
-                  <code className="font-mono text-[12px]">AGENTS.md</code>, or whichever
-                  instruction file your tool loads.
-                </>
-              ),
+              h: 'Install it',
+              b: 'One command puts it in every session and gives this machine its own identity. Restart, and you’re done.',
             },
             {
               n: '2',
-              h: 'It looks things up when stuck',
-              b: (
-                <>
-                  Not on every task &mdash; only when something fails in a way it did not
-                  expect. One read-only request. Nothing about your project is sent.
-                </>
-              ),
+              h: 'It learns while you work',
+              b: 'When your agent hits and solves a real trap, Cairn saves it in the background. Nothing to do, nothing to remember.',
             },
             {
               n: '3',
-              h: 'It writes back what it learns',
-              b: (
-                <>
-                  Solved something new? It drafts a finding locally, with secrets stripped,
-                  and you decide whether to push it.
-                </>
-              ),
+              h: 'It’s there next time',
+              b: 'The next session, in any project, gets the answer the moment it’s about to hit the same wall.',
             },
           ].map((step) => (
             <li key={step.n}>
@@ -205,95 +93,55 @@ export default function Home() {
             </li>
           ))}
         </ol>
-        <div className="mt-6 max-w-reading">
-          <pre className="evidence overflow-x-auto rounded-md border border-rule bg-paper p-4 font-mono text-[12px] leading-relaxed text-ink-soft">
-{`npm run cairn:install -- --into ../your-project --base https://${HOST}`}
-          </pre>
-          <p className="mt-3 text-[13px] leading-relaxed text-ink-soft">
-            It prints the diff and refuses to write without{' '}
-            <code className="font-mono text-[12px]">--yes</code>. Nothing executable is
-            added &mdash;{' '}
-            <Link href="/use" className="underline decoration-rule-strong underline-offset-2 hover:text-ink">
-              the whole mechanism, and why it is not &ldquo;fetch this URL and obey it&rdquo;
-            </Link>
-            .
-          </p>
-        </div>
       </section>
 
+      {/* Concrete examples — the argument made with instances, not adjectives */}
       <section className="border-b border-rule py-12">
-        {integrity.total > 0 && (
-          <div className="rounded-lg border border-rule bg-raised p-5">
-            <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-faint">
-              The part that cannot be scraped
-            </p>
-            <p className="mt-2 max-w-reading text-[14px] leading-relaxed text-ink-soft">
-              Before a check runs, a forecast is sealed: only a hash of it goes to git, and
-              the prior stays secret until after the result is known. A forecast edited to
-              match its outcome breaks its own hash. That yields something documentation
-              never contains &mdash; what a model believed, what was true, and an executable
-              arbiter between them, in an order anyone can verify against git history.
-            </p>
-            {/*
-              Three quantities that are easy to conflate and were: `verified`
-              is how many seals are hash-checkable, `scored` is how many count
-              toward calibration, and `excluded` is the difference.
-
-              The reasons are no longer written out in prose. Three times this
-              sentence listed reasons that did not account for the excluded
-              set — "4 excluded — 5 of them", then "5 excluded — 5 … 4 … 1",
-              then a correct total whose two stated reasons covered five of
-              nine, because `unanchored` and `legacy-encoding` are two of seven
-              ways to fail to score and the prose assumed they were all of
-              them. `integrity.exclusions` is a partition that sums to
-              total - scored by construction, so rendering it cannot
-              under-enumerate however the scoring rules change.
-            */}
-            <p className="mt-3 max-w-reading text-[13px] leading-relaxed text-ink-soft">
-              <strong className="font-semibold text-ink">{integrity.total}</strong>{' '}
-              forecasts recorded,{' '}
-              <strong className="font-semibold text-moss">{integrity.verified}</strong>{' '}
-              sealed and hash-verified,{' '}
-              <strong className="font-semibold text-moss">{integrity.scored}</strong>{' '}
-              scored,{' '}
-              <strong className="font-semibold text-ink-faint">
-                {integrity.total - integrity.scored}
-              </strong>{' '}
-              excluded, for these reasons:
-            </p>
-            {integrity.exclusions.length > 0 && (
-              <ul className="mt-3 max-w-reading space-y-1 text-[13px] leading-relaxed text-ink-faint">
-                {integrity.exclusions.map((e) => (
-                  <li key={e.reason}>
-                    <span className="font-mono font-semibold text-ink-soft">{e.count}</span>
-                    <span className="mx-2 text-rule-strong">&mdash;</span>
-                    {e.label}
-                  </li>
-                ))}
-              </ul>
-            )}
-            <p className="mt-3 text-[13px] leading-relaxed text-ink-soft">
-              <Link href="/calibration" className="underline decoration-rule-strong underline-offset-2 hover:text-ink">
-                See the ledger
-              </Link>
-              .
-            </p>
-          </div>
-        )}
-      </section>
-
-      <section className="py-12">
-        <h2 className="font-claim text-lg">Wants a second pair of eyes</h2>
-        <p className="mt-2 max-w-reading text-[14px] leading-relaxed text-ink-soft">
-          Re-checking only pays where the answer would change something, so these rank
-          highest on expensive-to-rediscover, cheap-to-re-test and currently uncertain.
-          Run one and open a pull request with what you saw.
+        <div className="mb-2 flex items-baseline justify-between gap-4">
+          <h2 className="font-claim text-lg">Real things it has caught</h2>
+          <Link href="/findings" className="text-[13px] text-ink-soft hover:text-ink">
+            all {stats.total} &rarr;
+          </Link>
+        </div>
+        <p className="mb-5 max-w-reading text-[14px] leading-relaxed text-ink-soft">
+          Each one cost somebody real time to figure out the first time. Each carries the exact
+          command that proves it&rsquo;s still true &mdash; so it can be re-checked, and quietly
+          retired when the software changes underneath it.
         </p>
-        <div className="mt-5 grid gap-3">
-          {needsChecking.map((f) => (
+        <div className="grid gap-3">
+          {featured.map((f) => (
             <FindingCard key={f.id} finding={f} />
           ))}
         </div>
+      </section>
+
+      {/* Where the knowledge lives — the trust model, said plainly */}
+      <section className="py-12">
+        <h2 className="font-claim text-lg">Your knowledge stays yours</h2>
+        <p className="mt-2 max-w-reading text-[14px] leading-relaxed text-ink-soft">
+          Cairn keeps what it learns in two places, and both belong to you.
+        </p>
+        <div className="mt-6 grid gap-5 sm:grid-cols-2">
+          <div>
+            <div className="text-[14px] font-semibold text-ink">On your machine</div>
+            <p className="mt-1.5 text-[13px] leading-relaxed text-ink-soft">
+              Traps about your tools and environment live on your computer and follow you across
+              every project you work in.
+            </p>
+          </div>
+          <div>
+            <div className="text-[14px] font-semibold text-ink">In your repos</div>
+            <p className="mt-1.5 text-[13px] leading-relaxed text-ink-soft">
+              Traps about a specific codebase live in that repo and travel with it &mdash; commit
+              them, and your teammates get them too, reviewed like any other change.
+            </p>
+          </div>
+        </div>
+        <p className="mt-6 max-w-reading text-[13px] leading-relaxed text-ink-soft">
+          It is never a shared public database. Nothing leaves your machine unless you commit it
+          to a repo you already trust &mdash; so the only people who ever see a finding are the
+          people you already share code with.
+        </p>
       </section>
     </div>
   );
