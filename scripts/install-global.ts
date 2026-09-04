@@ -46,6 +46,7 @@ import os from 'os';
 import path from 'path';
 import { execFileSync } from 'child_process';
 import { ensureIdentity } from '../src/lib/cairn/identity';
+import { ensureOrigin } from '../src/lib/cairn/corpusOrigin';
 import { loadKeys } from '../src/lib/cairn/keys';
 import { policyPath } from '../src/lib/cairn/policy';
 
@@ -455,6 +456,9 @@ function main() {
     const id = ensureIdentity(author);
     console.log(`  ${id.created ? 'created  ' : 'present  '}  signing identity "${author}" -> key ${id.keyId}`);
     if (id.created) console.log(`             fingerprint ${id.fingerprint}`);
+    /* A unique origin so this corpus's ids can never collide with another's. */
+    const o = ensureOrigin(home);
+    console.log(`  ${o.created ? 'created  ' : 'present  '}  corpus origin "${o.origin}"`);
   }
 
   /* Execution stays OFF unless the installer explicitly asks. A check is shell

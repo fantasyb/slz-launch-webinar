@@ -70,7 +70,8 @@
     "prepare": "git config core.hooksPath .githooks 2>/dev/null || true",
     "cairn:sleep": "tsx scripts/sleep.ts",
     "cairn:triage": "tsx scripts/triage.ts",
-    "cairn:seal": "tsx scripts/seal.ts"
+    "cairn:seal": "tsx scripts/seal.ts",
+    "cairn:project": "tsx scripts/project.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
