@@ -71,8 +71,27 @@ function takeLock(dir: string): boolean {
   }
 }
 
+/** The corpus this run is for: --home wins, else $CAIRN_HOME. Tilde-expanded, resolved. */
+function resolvedHome(): string | null {
+  const i = argv.indexOf('--home');
+  const raw = i !== -1 && argv[i + 1] ? argv[i + 1] : process.env.CAIRN_HOME;
+  if (!raw) return null;
+  return path.resolve(raw.startsWith('~') ? path.join(os.homedir(), raw.slice(1)) : raw);
+}
+
 function main(): void {
   try {
+    /*
+     * Make CAIRN_HOME agree with --home BEFORE any policy or home lookup. The
+     * hook is wired as `--home <corpus>` with no CAIRN_HOME, but executionPolicy()
+     * and cairnHome() read CAIRN_HOME — so without this the policy for the DEFAULT
+     * home was checked, not the corpus we were handed, and on any machine whose
+     * corpus is not the default the gate silently read "off" and triage never
+     * spawned. --home is authoritative for this run; align the env to it.
+     */
+    const home = resolvedHome();
+    if (home) process.env.CAIRN_HOME = home;
+
     const dir = draftsDir();
     if (!dir) return;
     if (!executionPolicy().enabled) return; // may not run checks here — nothing to do

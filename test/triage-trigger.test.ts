@@ -59,6 +59,21 @@ test('it spawns a triage agent when execution is on and candidates wait', () => 
   assert.ok(fs.existsSync(path.join(w.drafts, '.triage-brief.md')), 'and the brief was written for it');
 });
 
+test('it spawns from --home alone, with CAIRN_HOME unset (the installed hook shape)', () => {
+  /* The hook is wired as `--home <corpus>` with no CAIRN_HOME. executionPolicy()
+   * reads CAIRN_HOME, so before the fix the policy for the wrong corpus was checked
+   * and triage silently never fired on any machine whose corpus is not the default. */
+  const w = world(true);
+  const env: NodeJS.ProcessEnv = { ...process.env, CAIRN_POLICY: w.policy, CAIRN_TRIAGE_CMD: `printf ran > "${w.marker}"` };
+  delete env.CAIRN_HOME;
+  execFileSync('npx', ['tsx', SCRIPT, '--home', w.home], { encoding: 'utf8', env });
+  const deadline = Date.now() + 4000;
+  while (Date.now() < deadline && !fs.existsSync(w.marker)) {
+    try { execFileSync('sh', ['-c', 'sleep 0.05']); } catch { /* ignore */ }
+  }
+  assert.equal(fs.existsSync(w.marker), true, 'triage spawned from --home alone — the policy check aligned to the given corpus');
+});
+
 test('it does nothing when execution is off', () => {
   const w = world(false);
   assert.equal(fire(w), false, 'no agent spawned while checks may not run here');
