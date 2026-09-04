@@ -73,12 +73,38 @@ export interface BriefOptions {
 const MIN_EXPLAINED = 0.2;
 const DEFAULTS = { limit: 3, maxChars: 2400 } as const;
 
+/**
+ * How a matched finding is delivered.
+ *
+ *   full  the WHAT HAPPENS / INSTEAD block, spent unasked on every task.
+ *   hint  a single line naming the trap and how to expand it.
+ *
+ * The tier is the finding's own `cost` — what rediscovering it from scratch
+ * costs. Measured (records-opus gateway trial, frontier Opus): pushing the full
+ * block at a trap the model recovers from cheaply on its own COSTS more than it
+ * saves — the silent 50-cap (an expensive partition to work around) came in 25%
+ * cheaper with the full block, but the stale-mapping trap (a quick list-and-retry)
+ * came in 2x DEARER, because the block's overhead outweighed a discovery the
+ * model would have made anyway. So a full push is reserved for traps that are
+ * expensive to rediscover; a cheap one gets a hint the model can expand if it
+ * judges the task needs it. The hint is the anti-blocking guarantee: nothing
+ * relevant is ever withheld, only demoted from spent-unasked to one-call-away.
+ */
+export type Tier = 'full' | 'hint';
+
+/** cost is 'minutes' | 'hours' | 'days'; only 'minutes' is cheap enough to demote. */
+export function tierOf(cost: Finding['cost']): Tier {
+  return cost === 'minutes' ? 'hint' : 'full';
+}
+
 /** One line per finding, in the order the retriever ranked them. */
 export interface BriefEntry {
   id: string;
   title: string;
   reality: string;
   workaround?: string;
+  /** full = worth spending on every task; hint = named, expandable on request. */
+  tier: Tier;
 }
 
 /**
@@ -113,6 +139,7 @@ export function briefEntries(task: string, corpus: Finding[], opts: BriefOptions
       title: h.finding.title,
       reality: h.finding.reality,
       ...(h.finding.workaround ? { workaround: h.finding.workaround } : {}),
+      tier: tierOf(h.finding.cost),
     }));
 }
 
@@ -121,9 +148,17 @@ export function briefEntries(task: string, corpus: Finding[], opts: BriefOptions
  * nothing worth saying, which is most of the time.
  */
 export function brief(task: string, corpus: Finding[], opts: BriefOptions = {}): string {
-  const entries = briefEntries(task, corpus, opts);
+  return renderBrief(briefEntries(task, corpus, opts), opts.maxChars ?? DEFAULTS.maxChars);
+}
+
+/**
+ * Render already-selected entries to the text block, each within a shared
+ * character budget and dropped whole rather than truncated. Separated from
+ * retrieval so the delivery tiers can be exercised without the retriever's
+ * corpus-relative scoring in the way.
+ */
+export function renderBrief(entries: BriefEntry[], budget: number = DEFAULTS.maxChars): string {
   if (!entries.length) return '';
-  const budget = opts.maxChars ?? DEFAULTS.maxChars;
 
   const head =
     'Before you start: someone has already hit the following in this codebase or on this ' +
@@ -135,12 +170,17 @@ export function brief(task: string, corpus: Finding[], opts: BriefOptions = {}):
   for (const e of entries) {
     /*
      * Trimmed per entry rather than truncating the whole block, so a long
-     * first finding cannot silently swallow the two behind it.
+     * first finding cannot silently swallow the two behind it. A hint is a
+     * single line: the trap named, and the one call that expands it, so the
+     * reader spends a line here and the full account only if it chooses to.
      */
     const block =
-      `\n${e.id} — ${e.title}\n  WHAT HAPPENS: ${clip(e.reality, 420)}` +
-      (e.workaround ? `\n  INSTEAD: ${clip(e.workaround, 420)}` : '') +
-      '\n';
+      e.tier === 'full'
+        ? `\n${e.id} — ${e.title}\n  WHAT HAPPENS: ${clip(e.reality, 420)}` +
+          (e.workaround ? `\n  INSTEAD: ${clip(e.workaround, 420)}` : '') +
+          '\n'
+        : `\n${e.id} — ${e.title} — a known, cheap-to-work-around trap on this path; ` +
+          `call cairn_find("${e.id}") for the fix if the results look off.\n`;
     if (used + block.length > budget) break;
     lines.push(block);
     used += block.length;

@@ -76,6 +76,7 @@ import { recordSubmission } from '../src/lib/cairn/recordFinding';
 import { redactForLedger } from '../src/lib/cairn/safety';
 import { shapeOf, diffSurface, findingNames, type ToolShape, type SurfaceChange } from '../src/lib/cairn/toolsurface';
 import { summarise, detect, type CallSummary } from '../src/lib/cairn/contradiction';
+import { tierOf } from '../src/lib/cairn/brief';
 import { recordNote, discardNote, finishNotes, openNotesFor, ageDays } from '../src/lib/cairn/notes';
 import { attest, verification, verificationLine } from '../src/lib/cairn/attest';
 import { recordArc, readArcs } from '../src/lib/cairn/arcs';
@@ -326,6 +327,24 @@ const LABEL = 'from your Cairn corpus, not from this tool';
  * corpus is new, which is a new car looking reliable.
  */
 function fullNote(f: Finding): string {
+  /*
+   * The value tier. A finding cheap to rediscover (cost: minutes) is delivered
+   * as a hint, not the full block: measured on the records-opus gateway trial,
+   * pushing the full account at a trap the model recovers from on its own cost
+   * ~2x MORE than leaving it alone, because the block's overhead outweighed a
+   * discovery it would have made anyway. The hint names the trap and the one
+   * call that expands it, so the reader — not the gate — decides whether to
+   * spend the attention. Nothing is withheld; it is one call away. (tierOf +
+   * the full/hint split live in brief.ts, shared with session-start injection.)
+   */
+  if (tierOf(f.cost) === 'hint') {
+    return (
+      `\n\n--- ${LABEL} ---\n` +
+      `${f.id} — ${f.title} — a known, cheap-to-work-around trap on this tool; ` +
+      `call cairn_find {"query":"${f.id}"} for the fix if the result looks off.\n` +
+      `--- end ---`
+    );
+  }
   const v = verification(f);
   const ask = v.due
     ? `${v.lastConfirmedAt ? `Not re-confirmed in ${Math.floor(v.daysSinceConfirmed!)} days. ` : 'Never confirmed. '}If this call showed the trap still holds — or that it no longer does — say so: `
