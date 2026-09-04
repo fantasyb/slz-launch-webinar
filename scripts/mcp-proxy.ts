@@ -77,6 +77,7 @@ import { redactForLedger } from '../src/lib/cairn/safety';
 import { shapeOf, diffSurface, findingNames, type ToolShape, type SurfaceChange } from '../src/lib/cairn/toolsurface';
 import { summarise, detect, type CallSummary } from '../src/lib/cairn/contradiction';
 import { tierOf } from '../src/lib/cairn/brief';
+import { resonates } from '../src/lib/cairn/resonance';
 import { recordNote, discardNote, finishNotes, openNotesFor, ageDays } from '../src/lib/cairn/notes';
 import { attest, verification, verificationLine } from '../src/lib/cairn/attest';
 import { recordArc, readArcs } from '../src/lib/cairn/arcs';
@@ -525,7 +526,7 @@ function served(session: SessionState, findingId: string, tool: string, surface:
   }
 }
 
-function annotate(session: SessionState, exposed: string, about: About[], isError: boolean, args: Record<string, unknown>): string {
+function annotate(session: SessionState, exposed: string, about: About[], isError: boolean, args: Record<string, unknown>, resultText: string): string {
   const { callsByTool, shown, nudged } = session;
   const calls = (callsByTool.get(exposed) ?? 0) + 1;
   callsByTool.set(exposed, calls);
@@ -534,6 +535,14 @@ function annotate(session: SessionState, exposed: string, about: About[], isErro
     (a) => !a.props.length || a.props.some((p) => args[p] !== undefined && args[p] !== null && args[p] !== ''),
   );
   for (const { finding: f } of relevant) {
+    /*
+     * Resonance. A finding carrying a signature stays dormant until the live
+     * result shows the trap actually manifesting — so it costs nothing on the
+     * calls that did not hit it, and surfaces at the instant it does. A finding
+     * without a signature rings on its tool alone, as before. This gates both
+     * the first delivery and the reminder: the fork only sounds on its note.
+     */
+    if (!resonates(f, resultText)) continue;
     const key = `${exposed}|${f.id}`;
     if (!shown.has(key)) {
       shown.add(key);
@@ -1513,7 +1522,7 @@ async function main() {
          */
         observe(callRecord(req.params.name, args), [], isError ? 'mcp-proxy:error' : 'mcp-proxy:call', ctx);
         if (isError) session.holes.set(req.params.name, { args, output: ownText, at: new Date().toISOString() });
-        let note = annotate(session, req.params.name, about, isError, args);
+        let note = annotate(session, req.params.name, about, isError, args, ownText);
         if (!isError) note += draftFor(session, req.params.name, args);
         if (!isError && !degraded()) note += contradictionFor(session, req.params.name, args, ownText);
         /*

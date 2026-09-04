@@ -151,6 +151,11 @@
           },
           "maxItems": 12
         },
+        "signature": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300
+        },
         "evidence": {
           "type": "array",
           "items": {

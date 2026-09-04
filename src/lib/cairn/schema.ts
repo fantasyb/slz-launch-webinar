@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { PREDICATE_PATTERN } from './precondition';
+import { isValidSignature } from './resonance';
 
 /**
  * A Cairn finding is a claim about how some system actually behaves,
@@ -352,6 +353,25 @@ export const FindingSchema = z.object({
    * the signed finding. A future signature version should cover them.
    */
   triggers: z.array(z.string().min(2).max(120)).max(12).optional(),
+
+  /**
+   * Resonance. A trigger names the tool — the frequency band the finding
+   * listens on; a signature is the exact frequency: a regex over the serialized
+   * tool result that says the trap is manifesting *now*. With a signature the
+   * finding stays dormant — costing nothing — until a result matches, so a
+   * warning fires at the instant of need and never on the calls that did not
+   * hit the trap. Absent, the finding rings whenever its tool is used (legacy).
+   * Validated as a compilable pattern here so a signature that could never fire
+   * cannot be recorded. Not part of findingBodyHash, for the same reason
+   * triggers are not: editing it changes when the CONTENT surfaces, not what it
+   * claims.
+   */
+  signature: z
+    .string()
+    .min(1)
+    .max(300)
+    .refine((s) => isValidSignature(s), { message: 'signature must be a valid regular expression' })
+    .optional(),
 
   evidence: z.array(EvidenceSchema).default([]),
   check: CheckSchema,
