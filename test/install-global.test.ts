@@ -52,6 +52,7 @@ test('install adds the server and the block, and preserves everything else', () 
   assert.match(cfg.mcpServers.cairn.args[0], /bin\/cairn-mcp\.js$/);
   assert.equal(cfg.mcpServers.cairn.env.CAIRN_HOME, f.corpus, 'with the corpus home');
   assert.ok(cfg.mcpServers['sf-all'], 'the existing server survives');
+  assert.match(cfg.mcpServers['sf-all'].args.join(' '), /cairn-proxy\.js/, 'and is now routed through the gateway by default');
   assert.equal(cfg.keep, true, 'unrelated settings survive');
 
   const md = fs.readFileSync(f.claudeMd, 'utf8');
@@ -59,6 +60,63 @@ test('install adds the server and the block, and preserves everything else', () 
   assert.match(md, /this is not memory/, 'the block declares itself not-memory');
   assert.match(md, /cairn_find/, 'and names the tool to call');
   assert.ok(fs.existsSync(path.join(f.corpus, 'cairn')), 'the corpus dir is created');
+});
+
+test('wraps the user\'s stdio servers through the gateway, losslessly and reversibly', () => {
+  const f = fixture();
+  const original = JSON.parse(fs.readFileSync(f.claudeJson, 'utf8')).mcpServers['sf-all'];
+  run(f.home, ['--home', f.corpus]);
+
+  const cfg = JSON.parse(fs.readFileSync(f.claudeJson, 'utf8'));
+  const wrapped = cfg.mcpServers['sf-all'];
+  assert.equal(wrapped.command, 'node', 'the entry now launches node');
+  assert.match(wrapped.args[0], /bin\/cairn-proxy\.js$/, 'running the gateway proxy');
+  assert.equal(wrapped.env.CAIRN_HOME, f.corpus, 'against the corpus home');
+  /* The original is stashed verbatim where the proxy forwards to and uninstall restores from. */
+  const stash = path.join(f.corpus, 'wrapped', 'sf-all.json');
+  assert.ok(fs.existsSync(stash), 'the original is stashed');
+  assert.deepEqual(JSON.parse(fs.readFileSync(stash, 'utf8')).mcpServers['sf-all'], original, 'stash holds the original verbatim');
+  assert.equal(cfg.mcpServers.cairn.command, 'node', 'the pull server is still present alongside');
+});
+
+test('--no-wrap leaves other servers direct', () => {
+  const f = fixture();
+  run(f.home, ['--home', f.corpus, '--no-wrap']);
+  const cfg = JSON.parse(fs.readFileSync(f.claudeJson, 'utf8'));
+  assert.equal(cfg.mcpServers['sf-all'].command, 'npx', 'sf-all is untouched');
+  assert.ok(!fs.existsSync(path.join(f.corpus, 'wrapped')), 'nothing stashed');
+});
+
+test('uninstall restores every wrapped server exactly', () => {
+  const f = fixture();
+  const original = JSON.parse(fs.readFileSync(f.claudeJson, 'utf8')).mcpServers['sf-all'];
+  run(f.home, ['--home', f.corpus]);
+  assert.match(JSON.parse(fs.readFileSync(f.claudeJson, 'utf8')).mcpServers['sf-all'].args.join(' '), /cairn-proxy/, 'wrapped after install');
+  run(f.home, ['--home', f.corpus, '--uninstall']);
+  const cfg = JSON.parse(fs.readFileSync(f.claudeJson, 'utf8'));
+  assert.deepEqual(cfg.mcpServers['sf-all'], original, 'restored byte-for-byte');
+  assert.ok(!('cairn' in cfg.mcpServers), 'and the pull server is gone');
+});
+
+test('wrapping is idempotent: twice does not double-wrap', () => {
+  const f = fixture();
+  run(f.home, ['--home', f.corpus]);
+  const once = JSON.parse(fs.readFileSync(f.claudeJson, 'utf8')).mcpServers['sf-all'];
+  const out = run(f.home, ['--home', f.corpus]);
+  const twice = JSON.parse(fs.readFileSync(f.claudeJson, 'utf8')).mcpServers['sf-all'];
+  assert.deepEqual(twice, once, 'the second run leaves the wrapped entry unchanged');
+  assert.match(out, /already/, 'and says it is already routed');
+});
+
+test('does not wrap url/http servers (they cannot be stdio-wrapped)', () => {
+  const f = fixture();
+  const cfg0 = JSON.parse(fs.readFileSync(f.claudeJson, 'utf8'));
+  cfg0.mcpServers['remote'] = { url: 'https://example.test/mcp' };
+  fs.writeFileSync(f.claudeJson, JSON.stringify(cfg0, null, 2));
+  run(f.home, ['--home', f.corpus]);
+  const cfg = JSON.parse(fs.readFileSync(f.claudeJson, 'utf8'));
+  assert.deepEqual(cfg.mcpServers['remote'], { url: 'https://example.test/mcp' }, 'the url server is left as-is');
+  assert.match(cfg.mcpServers['sf-all'].args.join(' '), /cairn-proxy/, 'the stdio server is still wrapped');
 });
 
 test('install registers both sleep hooks and preserves existing ones', () => {

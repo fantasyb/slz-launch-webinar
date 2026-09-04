@@ -95,6 +95,7 @@ const REPO = path.resolve(__dirname, '..');
 const SERVER_BIN = path.join(REPO, 'bin', 'cairn-mcp.js');
 const SLEEP_BIN = path.join(REPO, 'bin', 'cairn-sleep.js');
 const TRIGGER_BIN = path.join(REPO, 'bin', 'cairn-triage-trigger.js');
+const PROXY_BIN = path.join(REPO, 'bin', 'cairn-proxy.js');
 
 const MCP_NAME = 'cairn';
 const BEGIN = '<!-- cairn:begin (managed by `npm run cairn:install` — edits between these markers are overwritten) -->';
@@ -287,6 +288,98 @@ function removeServer(file: string): boolean {
   return true;
 }
 
+/* --- wrapping the user's OTHER servers with the gateway ------------------- */
+/*
+ * The pull server above gives the agent tools it must CHOOSE to call, and the
+ * measured truth (cairn-0035) is that a weak reader never asks and even a
+ * strong one asks inconsistently. The value that arrives WITHOUT being asked
+ * for — a finding on the result at the moment of the trap — is the gateway
+ * proxy, and it only acts on servers routed through it. So an install that
+ * wraps nothing is an install that mostly does nothing on its own.
+ *
+ * This wraps each of the user's stdio MCP servers so its calls pass through
+ * cairn-proxy. It is safe to make default now for one specific reason: with
+ * resonance (a finding fires only when the live result matches its signature),
+ * a wrapped server that hits no trap pays no finding cost — the proxy is in the
+ * path but silent. The remaining cost is the proxy's own routing overhead,
+ * which is why --no-wrap exists and why every wrap is printed, never silent.
+ *
+ * The rewrite is lossless and reversible: the ORIGINAL server definition is
+ * written verbatim to <home>/wrapped/<name>.json (which is BOTH what the proxy
+ * forwards to and the exact source uninstall restores from), and the client
+ * entry becomes `cairn-proxy --config <that file>`. The client's key stays the
+ * server's own name, so its tools keep their `mcp__<name>__*` identity.
+ */
+interface ServerEntry {
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  [k: string]: unknown;
+}
+const isStdio = (e: ServerEntry) => typeof e.command === 'string' && e.command.length > 0;
+const isWrappedByUs = (e: ServerEntry) =>
+  e.command === 'node' && Array.isArray(e.args) && e.args.includes(PROXY_BIN);
+
+interface WrapSummary { wrapped: string[]; skipped: Array<{ name: string; why: string }>; already: string[] }
+
+function wrapServers(file: string, home: string): WrapSummary {
+  const cfg = readConfig(file);
+  const servers = (cfg.mcpServers ??= {}) as Record<string, ServerEntry>;
+  const wrappedDir = path.join(home, 'wrapped');
+  const summary: WrapSummary = { wrapped: [], skipped: [], already: [] };
+  let changed = false;
+  for (const name of Object.keys(servers)) {
+    if (name === MCP_NAME) continue; // never wrap our own pull server
+    const entry = servers[name];
+    if (isWrappedByUs(entry)) { summary.already.push(name); continue; }
+    if (!isStdio(entry)) { summary.skipped.push({ name, why: 'not a stdio server (url/http) — cannot be wrapped this way' }); continue; }
+    const wrappedFile = path.join(wrappedDir, `${name}.json`);
+    if (!DRY) {
+      fs.mkdirSync(wrappedDir, { recursive: true });
+      /* The original, verbatim: the proxy forwards to it and uninstall restores from it. May carry credentials, so 0600. */
+      fs.writeFileSync(wrappedFile, JSON.stringify({ mcpServers: { [name]: entry } }, null, 2) + '\n', { mode: 0o600 });
+    }
+    servers[name] = { command: 'node', args: [PROXY_BIN, '--config', wrappedFile], env: { CAIRN_HOME: home } };
+    summary.wrapped.push(name);
+    changed = true;
+  }
+  if (changed && !DRY) {
+    backup(file);
+    fs.writeFileSync(file, JSON.stringify(cfg, null, 2) + '\n');
+  }
+  return summary;
+}
+
+/** Restore every server this installer wrapped, from the original stashed in <home>/wrapped/<name>.json. */
+function unwrapServers(file: string): string[] {
+  const cfg = readConfig(file);
+  const servers = (cfg.mcpServers ?? {}) as Record<string, ServerEntry>;
+  const restored: string[] = [];
+  let changed = false;
+  for (const name of Object.keys(servers)) {
+    const entry = servers[name];
+    if (!isWrappedByUs(entry)) continue;
+    const i = (entry.args ?? []).indexOf('--config');
+    const wrappedFile = i !== -1 ? entry.args![i + 1] : undefined;
+    let original: ServerEntry | undefined;
+    if (wrappedFile && fs.existsSync(wrappedFile)) {
+      try {
+        original = (JSON.parse(fs.readFileSync(wrappedFile, 'utf8')) as { mcpServers?: Record<string, ServerEntry> }).mcpServers?.[name];
+      } catch { /* fall through to leaving it; better than guessing */ }
+    }
+    if (!original) { continue; } // cannot restore without the stash; leave it rather than delete the user's server
+    servers[name] = original;
+    restored.push(name);
+    changed = true;
+    if (!DRY && wrappedFile) { try { fs.rmSync(wrappedFile); } catch { /* best effort */ } }
+  }
+  if (changed && !DRY) {
+    backup(file);
+    fs.writeFileSync(file, JSON.stringify(cfg, null, 2) + '\n');
+  }
+  return restored;
+}
+
 /* --- the automatic hooks in ~/.claude/settings.json ---------------------- */
 /*
  * This is what makes sleep run at all. A `npm run cairn:sleep` nobody types is a
@@ -397,6 +490,8 @@ function main() {
   console.log('='.repeat(60));
 
   if (UNINSTALL) {
+    const unwrapped = unwrapServers(claudeJson);
+    console.log(`  ${unwrapped.length ? 'restored' : 'absent '}  gateway-wrapped servers${unwrapped.length ? `: ${unwrapped.join(', ')}` : ''}`);
     const s = removeServer(claudeJson);
     console.log(`  ${s ? 'removed' : 'absent '}  server "${MCP_NAME}" in ${claudeJson}`);
     const h = removeHooks(settingsJson);
@@ -489,6 +584,22 @@ function main() {
   console.log(`             CAIRN_HOME=${home}`);
   const h = upsertHooks(settingsJson, home);
   console.log(`  ${h.padEnd(9)}  hooks (SessionEnd: harvest · SessionStart: surface + triage trigger) in ${settingsJson}`);
+
+  /* Default-on: route the user's other stdio servers through the gateway so PUSH
+   * (unasked findings on tool results) actually happens. --no-wrap opts out.
+   * Silent per-call unless a finding resonates, and fully reversible on uninstall. */
+  if (!has('--no-wrap')) {
+    const w = wrapServers(claudeJson, home);
+    if (w.wrapped.length) console.log(`  ${DRY ? 'would wrap' : 'wrapped  '}  ${w.wrapped.length} server(s) through the gateway: ${w.wrapped.join(', ')}`);
+    for (const a of w.already) console.log(`  already    "${a}" already routed through the gateway`);
+    for (const sk of w.skipped) console.log(`  skipped    "${sk.name}" — ${sk.why}`);
+    if (!w.wrapped.length && !w.already.length && !w.skipped.length) {
+      console.log('  no wrap    no other MCP servers found to wrap — PUSH will begin the moment you add one');
+    }
+  } else {
+    console.log('  --no-wrap  left your other servers untouched — PUSH stays off until you wrap one (see GATEWAY.md)');
+  }
+
   for (const f of instructionFiles) {
     const r = upsertBlock(f);
     console.log(`  ${r.padEnd(9)}  Cairn block in ${f}`);
@@ -506,6 +617,9 @@ function main() {
   console.log('  · this machine has its own signing identity — findings it records are');
   console.log('    signed under its own key, so its contributions are countably its own');
   console.log('  · cairn_find / cairn_brief / cairn_record are available in every session');
+  console.log('  · PUSH is on: your other MCP servers are routed through the gateway, so a');
+  console.log('    finding surfaces on a tool result at the moment of the trap — unasked.');
+  console.log('    Resonance keeps it silent and near-free on every call that is not a trap.');
   console.log('  · every session\'s instructions tell it when to consult them');
   console.log('  · sleep runs itself: every session\'s transcript is consolidated at its');
   console.log('    end, and the candidates it harvests are surfaced at the next session\'s');
@@ -516,12 +630,12 @@ function main() {
   console.log('    checks) — enable per-corpus in ~/.cairn/policy.json. Nothing enters the');
   console.log('    corpus unchecked, and nothing waits forever (see cairn:triage).');
   console.log('\nStill scoped, on purpose:');
-  console.log('  · PUSH (unasked annotations on a tool\'s description and results) is active');
-  console.log('    ONLY on servers wrapped by the gateway. This install wraps nothing.');
-  console.log('    To extend push to a server, wrap it — see GATEWAY.md.');
+  console.log('  · Only stdio MCP servers are wrapped; url/http servers are left as-is (they');
+  console.log('    cannot be stdio-wrapped). Re-run install after adding a server to wrap it,');
+  console.log('    or pass --no-wrap to keep every server direct.');
   console.log('  · Pure Bash/CLI work with no MCP server is not covered here; that is the');
   console.log('    opt-in PostToolUse hook.');
-  console.log('\nUndo any time: npm run cairn:install -- --uninstall');
+  console.log('\nUndo any time: npm run cairn:install -- --uninstall  (restores every wrapped server)');
   console.log('Restart your Claude session for the new server to load.\n');
 }
 
