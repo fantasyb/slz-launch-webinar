@@ -1915,7 +1915,10 @@ export function retrieve(
    * correctly still hands an agent a list it will read from the top of and
    * believe is relevant.
    */
-  const cut = ranked.length ? ranked[0].score * 0.06 : 0;
+  // From the MAX score, not ranked[0]: ranked is in fused order, and the fused
+  // leader's typed score can sit below a lower-ranked hit's (that is the point of
+  // fusion), which made the cut lower than intended and admitted more tail.
+  const cut = ranked.length ? Math.max(...ranked.map((h) => h.score)) * 0.06 : 0;
   const relevant = opts.includeUnmatched ? ranked : ranked.filter((h) => h.score >= cut);
 
   /*
@@ -2129,6 +2132,15 @@ export function retrieve(
   }
   if (!opts.limit) return linked;
 
+  /*
+   * `linked` is in FUSED (RRF) order — the four-ranker fusion this file spends
+   * ~400 lines calibrating. Re-sorting the truncated slice by the typed `.score`
+   * threw that away, so a limited query returned a DIFFERENT order (and a
+   * different rank-1) than the unlimited one every measurement path uses. Keep
+   * the fused order: capture each hit's fused position and sort by it, so a
+   * pulled-in sibling sits at its own fused rank rather than the end.
+   */
+  const fusedRank = new Map(linked.map((h, i) => [h.finding.id, i]));
   const kept = linked.slice(0, opts.limit);
   const ids = new Set(kept.map((h) => h.finding.id));
   for (const h of kept) {
@@ -2140,8 +2152,7 @@ export function retrieve(
       kept.push(pulled);
     }
   }
-  // Re-sort, so a pulled-in sibling sits at its own rank rather than the end.
-  return kept.sort((a, b) => b.score - a.score);
+  return kept.sort((a, b) => (fusedRank.get(a.finding.id) ?? 0) - (fusedRank.get(b.finding.id) ?? 0));
 }
 
 /**
@@ -2253,10 +2264,11 @@ function linkSiblings(hits: Hit[]): Hit[] {
     for (let j = i + 1; j < window.length; j++) {
       const a = window[i];
       const b = window[j];
-      // Comparable: the weaker scores at least 60% of the stronger. Below
-      // that the ranking has expressed a real preference and should be left
-      // to express it.
-      if (a.score <= 0 || b.score / a.score < 0.6) continue;
+      // Comparable: the weaker scores at least 60% of the stronger. Symmetric
+      // (min/max), because in fused order `a` is not guaranteed to outscore `b`
+      // — `b.score / a.score` alone linked pairs it should not when a<b. Below
+      // 60% the ranking has expressed a real preference; leave it.
+      if (a.score <= 0 || b.score <= 0 || Math.min(a.score, b.score) / Math.max(a.score, b.score) < 0.6) continue;
       const sameSubject =
         isSameSubject(a.finding.subject.name, b.finding.subject.name);
       const sameTags = jaccard(tags[i], tags[j]) >= 0.5;
@@ -2945,7 +2957,7 @@ export function preflight(
     }
     if (!matched) continue;
     const applicability: Applicability =
-      opts.useLocalEnvironment === false || !f.precondition?.length
+      opts.useLocalEnvironment !== true || !f.precondition?.length
         ? 'unknown'
         : matchEnvironment(f.precondition).matches
           ? 'holds'
@@ -2981,16 +2993,26 @@ export function preflight(
  * nothing lost.
  */
 export function failingCommand(text: string): string | undefined {
-  // "/bin/sh: 1: dig: not found" — the missing program, not the shell.
-  const notFound = text.match(/\d+:\s*([a-z][a-z0-9_.-]{1,20}):\s*(?:command )?not found/i);
+  // "not found" in every shell's phrasing — the MISSING PROGRAM, not the shell:
+  //   dash: "/bin/sh: 1: dig: not found"   bash: "bash: dig: command not found"
+  //   sh:   "sh: dig: not found"
+  // Previously only the dash form (which needs the `\d+:`) matched, so bash/zsh
+  // fell through to `prefixed` and returned the shell name — flipping the
+  // correct finding to weak and silencing the brief on the commonest phrasing.
+  const notFound = text.match(/(?:^|\n)[^\n:]*:\s*(?:\d+:\s*)?([a-z][a-z0-9_.-]{1,20}):\s*(?:command )?not found/i);
   if (notFound) return notFound[1].toLowerCase();
+  //   zsh: "zsh: command not found: dig"
+  const zsh = text.match(/command not found:\s*([a-z][a-z0-9_.-]{1,20})/i);
+  if (zsh) return zsh[1].toLowerCase();
   // "curl: (56) ..." / "rg: regex parse error" — program at the head of a line.
   const prefixed = text.match(/(?:^|\n)\s*([a-z][a-z0-9_.-]{1,20}):\s/);
   if (!prefixed) return undefined;
   const c = prefixed[1].toLowerCase();
-  // Words that occupy the same position without being programs. `git` writes
-  // "error: pathspec ...", `node` writes "Error: Cannot find module".
-  return ['error', 'warning', 'warn', 'info', 'fatal', 'note', 'usage', 'debug'].includes(c)
+  // A finding id or version string ("cairn-0001:") is not a program.
+  if (/-\d{2,}$/.test(c)) return undefined;
+  // Words that occupy the same position without being programs: log levels, and
+  // the shells themselves ("bash: syntax error").
+  return ['error', 'warning', 'warn', 'info', 'fatal', 'note', 'usage', 'debug', 'sh', 'bash', 'zsh', 'dash', 'fish'].includes(c)
     ? undefined
     : c;
 }

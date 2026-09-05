@@ -19,6 +19,19 @@ import { coOccurrence, alsoSeenWith } from '../src/lib/cairn/graph';
 
 const corpus = loadCorpus();
 
+test('a limit keeps the fused ranking — rank 1 matches the unlimited query', () => {
+  // A limited query re-sorted by the typed score, discarding the RRF fusion the
+  // unlimited path uses, so measured P@1 differed from delivered P@1. Now the
+  // limited top must equal the unlimited top for every query.
+  for (const q of ['no space left on device', 'ENOSPC', 'playwright browsers already installed', 'git pathspec did not match']) {
+    const full = retrieve(q, corpus);
+    const limited = retrieve(q, corpus, { limit: 5 });
+    if (full.length && limited.length) {
+      assert.equal(limited[0].finding.id, full[0].finding.id, `rank 1 stable under limit for "${q}"`);
+    }
+  }
+});
+
 test('a natural-language error does not return the whole corpus', () => {
   const hits = retrieve('no space left on device', corpus);
   assert.ok(hits.length > 0, 'must return something');

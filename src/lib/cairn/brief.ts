@@ -181,7 +181,11 @@ export function renderBrief(entries: BriefEntry[], budget: number = DEFAULTS.max
           '\n'
         : `\n${e.id} — ${e.title} — a known, cheap-to-work-around trap on this path; ` +
           `call cairn_find("${e.id}") for the fix if the results look off.\n`;
-    if (used + block.length > budget) break;
+    // `continue`, not `break`: an entry that overflows the budget is dropped
+    // whole, but a smaller entry behind it can still fit — the comment above
+    // promises exactly this ("a long first finding cannot swallow the two
+    // behind it"), which `break` did not deliver.
+    if (used + block.length > budget) continue;
     lines.push(block);
     used += block.length;
   }
