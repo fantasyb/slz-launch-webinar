@@ -57,6 +57,17 @@ export interface GateResult {
  * a binary from PATH to satisfy a gate is a side effect on someone's machine,
  * and this refuses to be that.
  */
+/**
+ * A delta that does not remove the trap but sabotages the shell so the check
+ * exits non-zero for an unrelated reason — `exit 1`, `unset PATH`, `PATH=`,
+ * `set -e` — would make ANY always-zero check "discriminate", which is exactly
+ * the self-confirming check the gate exists to refuse. Such a delta is not a
+ * removal, so it is rejected rather than trusted.
+ */
+export function looksLikeSabotage(delta: string): boolean {
+  return /(^|\s|;|&|\|)exit\b|\bunset\s+PATH\b|(^|\s|;)PATH=|\bset\s+-e\b/.test(delta);
+}
+
 export function deltaPlan(f: Finding): string | null {
   const explicit = (f.check as { absentWhen?: string }).absentWhen;
   if (explicit && explicit.trim()) return explicit.trim();
@@ -148,7 +159,41 @@ export async function gate(f: Finding, timeoutMs = 20_000): Promise<GateResult> 
     };
   }
 
-  const absent = await run(`${delta}\n${f.check.command}`, timeoutMs);
+  if (looksLikeSabotage(delta)) {
+    return {
+      verdict: 'error',
+      detail: `\`${delta}\` sabotages the shell (exit/unset PATH/PATH=/set -e) rather than removing the trap; a non-zero exit from that is not discrimination`,
+      live,
+      absent: null,
+      delta,
+    };
+  }
+
+  /*
+   * Guard the delta's own failure: `{ delta } || exit 77` makes a delta that
+   * fails (a typo, a missing tool) report 77 = could-not-decide, instead of the
+   * delta's exit being read as the check discriminating. The check runs only if
+   * the trap-removal step itself succeeded.
+   */
+  const absent = await run(`{ ${delta}\n} || exit 77\n${f.check.command}`, timeoutMs);
+  if (absent === 77 || absent === null) {
+    return {
+      verdict: 'error',
+      detail: `applying \`${delta}\` failed or the check could not decide with it applied (exit ${absent}) — nothing was discriminated`,
+      live,
+      absent,
+      delta,
+    };
+  }
+  if (absent === 126 || absent === 127) {
+    return {
+      verdict: 'error',
+      detail: `after \`${delta}\` the check exited ${absent} (command/shell not runnable) — the delta broke the check rather than removing the trap`,
+      live,
+      absent,
+      delta,
+    };
+  }
   if (absent === 0) {
     return {
       verdict: 'same-either-way',

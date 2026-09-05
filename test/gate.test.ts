@@ -63,6 +63,24 @@ test('a check that tests the trap discriminates; one that prints does not', asyn
   }
 });
 
+test('a shell-sabotaging absentWhen is an error, never discrimination', async () => {
+  /* An always-zero check paired with a delta that just breaks the shell would
+   * otherwise "discriminate" — the exact self-confirming check the gate exists
+   * to catch. exit N, unset PATH, PATH=, set -e must all be refused. */
+  for (const delta of ['exit 1', 'unset PATH', 'PATH=/nonexistent', 'set -e; false']) {
+    const g = await gate(withCheck(`sab-${delta.replace(/\W+/g, '')}`, 'true', delta));
+    assert.equal(g.verdict, 'error', `${delta} -> ${g.verdict}: ${g.detail}`);
+  }
+});
+
+test('a delta that fails to apply is an error, not a discrimination', async () => {
+  /* The check exits 0 with the trap present; the delta is a command that does
+   * not exist, so trap-removal fails. That must be error (could not decide),
+   * not "discriminates". */
+  const g = await gate(withCheck('deltafail', 'true', 'this-command-does-not-exist-cairn'));
+  assert.equal(g.verdict, 'error', g.detail);
+});
+
 test('the delta is on this machine, so a check that reads only the repo is refused', async () => {
   const marker = path.join(os.tmpdir(), `cairn-inc-${process.pid}`);
   fs.writeFileSync(marker, 'present');
