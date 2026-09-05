@@ -111,7 +111,11 @@ try {
   // "unexpected end of file", which reads as the check failing rather than as
   // the harness mangling it. Multi-line commands, heredocs and trailing
   // comments all survive a real script file.
-  const scriptFile = path.join(os.tmpdir(), `cairn-check-${process.pid}.sh`);
+  // A private temp DIRECTORY (0700), not a predictable path in the shared tmpdir:
+  // `cairn-check-<pid>.sh` could be pre-created as a symlink by another user and
+  // then written-through and executed. mkdtemp gives an unguessable, owned dir.
+  const scriptDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cairn-check-'));
+  const scriptFile = path.join(scriptDir, 'check.sh');
   // `exec 2>&1` inside the script, since execFileSync returns stdout only and
   // the diagnostic that decides the verdict is very often on stderr. The old
   // subshell wrapper did this with `( ... ) 2>&1`; moving to a script file
@@ -132,7 +136,7 @@ try {
     });
   } finally {
     try {
-      fs.unlinkSync(scriptFile);
+      fs.rmSync(scriptDir, { recursive: true, force: true });
     } catch {
       /* best effort */
     }

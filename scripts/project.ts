@@ -57,7 +57,10 @@ function machineHome(): string | null {
 /** Copy every file from src/ into dst/, creating dst. Returns how many copied. */
 function copyDir(src: string, dst: string, mode?: number): number {
   if (!fs.existsSync(src)) return 0;
-  fs.mkdirSync(dst, { recursive: true, mode });
+  // A DIRECTORY needs its execute bit or it cannot be entered — passing a file
+  // mode like 0600 to mkdir made copyFileSync into it fail EACCES for any
+  // non-root user. Give the dir 0700; files get `mode`.
+  fs.mkdirSync(dst, { recursive: true, mode: mode ? 0o700 : undefined });
   let n = 0;
   for (const name of fs.readdirSync(src)) {
     const s = path.join(src, name);

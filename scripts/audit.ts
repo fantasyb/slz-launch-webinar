@@ -11,6 +11,12 @@
 import { execFileSync } from 'child_process';
 import { loadCorpus } from '../src/lib/cairn/load';
 import { allPredictions } from '../src/lib/cairn/calibration';
+import { cairnHome } from '../src/lib/cairn/home';
+
+// Every git call runs in the CORPUS repo (where the seals are committed), not
+// process.cwd() — with CAIRN_HOME pointing at a personal corpus, searching the
+// code repo's history found no seals and the ancestor check always failed.
+const GIT_CWD = { cwd: cairnHome() } as const;
 
 function firstCommitContaining(needle: string): string | null {
   try {
@@ -23,7 +29,7 @@ function firstCommitContaining(needle: string): string | null {
     const out = execFileSync(
       'git',
       ['log', '--format=%H', '--reverse', `-S${needle}`, '--', 'cairn/'],
-      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], ...GIT_CWD },
     ).trim();
     return out.split('\n')[0] || null;
   } catch {
@@ -33,7 +39,7 @@ function firstCommitContaining(needle: string): string | null {
 
 function isAncestor(a: string, b: string): boolean {
   try {
-    execFileSync('git', ['merge-base', '--is-ancestor', a, b], { stdio: 'ignore' });
+    execFileSync('git', ['merge-base', '--is-ancestor', a, b], { stdio: 'ignore', ...GIT_CWD });
     return true;
   } catch {
     return false;

@@ -105,12 +105,23 @@ async function main() {
    * does not demand. Refusing on warnings would make a first contribution
    * impossible for the reason we chose not to require.
    */
-  if (lint.status === 1) {
+  const myErrors = lintOut.split('\n').filter((l) => mine(l) && l.trim().startsWith('error'));
+  if (lint.error || lint.status === null) {
+    /* Lint could not RUN (npx missing, installRoot() null so the script path was
+     * wrong). Do NOT delete the finding — the earlier code unlinked it and printed
+     * an empty refusal list, losing the user's work for an infrastructure fault. */
+    console.error('\n  recorded, but corpus lint could not run to verify it:');
+    console.error(`    ${lint.error?.message ?? 'lint exited with no status'}`);
+    console.error('  Run `npm run cairn:lint` yourself before committing.\n');
+  } else if (lint.status === 1 && myErrors.length) {
     fs.unlinkSync(file);
     console.error('\n  refused — it does not pass corpus lint, so it could not be committed:\n');
-    for (const line of lintOut.split('\n').filter(mine)) console.error(`    ${line.trim()}`);
+    for (const line of myErrors) console.error(`    ${line.trim()}`);
     console.error('\n  Nothing was written. Fix those and record it again.\n');
     process.exit(1);
+  } else if (lint.status === 1) {
+    /* Errors exist ELSEWHERE in the corpus, not in this finding — keep it. */
+    console.error('\n  recorded. NOTE: corpus lint reports errors elsewhere (not in this finding); fix them before committing.\n');
   }
 
   const warned = lintOut.split('\n').filter((l) => mine(l) && l.trim().startsWith('warn'));

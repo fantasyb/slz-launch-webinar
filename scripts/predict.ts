@@ -17,6 +17,7 @@ import path from 'path';
 import { execSync } from 'child_process';
 import { FindingSchema } from '../src/lib/cairn/schema';
 import { computeCommitment, generateNonce } from '../src/lib/cairn/commitment';
+import { cairnHome } from '../src/lib/cairn/home';
 import { writeJsonAtomic } from '../src/lib/cairn/atomic';
 import { findingBodyHash } from '../src/lib/cairn/signing';
 import { homePath } from '../src/lib/cairn/home';
@@ -75,7 +76,10 @@ if (f.predictions.some((p) => p.by === agent)) {
   process.exit(2);
 }
 
-const anchor = execSync('git rev-parse HEAD', { encoding: 'utf8' }).trim();
+// In the CORPUS repo, not process.cwd(): with CAIRN_HOME pointing at a personal
+// corpus (the documented setup), anchoring to the code repo's HEAD made every
+// seal show as "not yet in committed history" forever.
+const anchor = execSync('git rev-parse HEAD', { encoding: 'utf8', cwd: cairnHome() }).trim();
 const nonce = generateNonce();
 const hash = computeCommitment({ findingId: f.id, by: agent, priorConfirmed: prior, reasoning, anchor, nonce });
 

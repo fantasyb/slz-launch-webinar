@@ -156,13 +156,20 @@ function main(): void {
      * spawn failure written to the log rather than vanishing: an empty log used
      * to be the only, silent, symptom of a spawn that never ran.
      */
+    /* On a spawn error, DROP THE LOCK so a failed spawn does not wedge the queue
+     * for STALE_MS. The 'error' event fires on nextTick, so the process must not
+     * exit synchronously before it (see the setImmediate exit below). */
+    const onSpawnError = (e: Error, ctx: string) => {
+      try { fs.appendFileSync(logPath, `cairn:triage spawn failed${ctx}: ${e.message}\n`); } catch { /* last resort */ }
+      try { fs.rmSync(path.join(dir, LOCK)); } catch { /* next start retries */ }
+    };
     if (process.env.CAIRN_TRIAGE_CMD) {
       const child = spawn('/bin/sh', ['-c', process.env.CAIRN_TRIAGE_CMD], {
         detached: true,
         stdio: 'ignore',
         env: { ...process.env, CAIRN_HOME: cairnHome(), CAIRN_TRIAGE_BRIEF: briefPath },
       });
-      child.on('error', (e) => { try { fs.appendFileSync(logPath, `cairn:triage spawn failed: ${(e as Error).message}\n`); } catch { /* last resort */ } });
+      child.on('error', (e) => onSpawnError(e as Error, ''));
       child.unref();
     } else {
       const bin = resolveClaudeBin();
@@ -179,8 +186,12 @@ function main(): void {
         stdio: [briefFd, logFd, logFd],
         env: { ...process.env, CAIRN_HOME: cairnHome() },
       });
-      child.on('error', (e) => { try { fs.appendFileSync(logPath, `cairn:triage spawn failed for "${bin}": ${(e as Error).message}\n`); } catch { /* last resort */ } });
+      child.on('error', (e) => onSpawnError(e as Error, ` for "${bin}"`));
       child.unref();
+      /* Close the PARENT's copies of the fds: the detached child has its own, and
+       * leaving them open here kept this process alive (defeating the fast exit)
+       * and masked the fd as the only handle. */
+      try { fs.closeSync(logFd); fs.closeSync(briefFd); } catch { /* already closed */ }
     }
     /* A quiet breadcrumb to stderr (hook logs), never to the session's context. */
     process.stderr.write(
@@ -190,7 +201,10 @@ function main(): void {
   } catch {
     /* the trigger must never be the reason a session fails to open */
   }
-  process.exit(0);
+  /* setImmediate, not a synchronous exit: a spawn 'error' is emitted on the
+   * nextTick queue, and exiting synchronously ran BEFORE it — so a failed spawn
+   * logged nothing and left the lock held. This lets the error handler run. */
+  setImmediate(() => process.exit(0));
 }
 
 main();

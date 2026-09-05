@@ -156,9 +156,20 @@ function resolveHome(): string {
 function backup(file: string): string | null {
   if (!fs.existsSync(file)) return null;
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-  const dest = `${file}.cairn-bak-${stamp}`;
-  fs.copyFileSync(file, dest);
-  return dest;
+  // Never overwrite an existing backup: uninstall writes ~/.claude.json twice
+  // back-to-back (measured 1-2ms apart), and a same-ms collision would replace
+  // the earlier backup — on install, the pristine pre-install copy. COPYFILE_EXCL
+  // + a counter keeps each backup.
+  let dest = `${file}.cairn-bak-${stamp}`;
+  for (let i = 1; ; i++) {
+    try {
+      fs.copyFileSync(file, dest, fs.constants.COPYFILE_EXCL);
+      return dest;
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'EEXIST' || i > 100) throw e;
+      dest = `${file}.cairn-bak-${stamp}-${i}`;
+    }
+  }
 }
 
 /* --- the instruction block, in one or more files ------------------------- */
@@ -245,7 +256,10 @@ function readJsonObject(file: string): Record<string, unknown> {
   if (!fs.existsSync(file)) return {};
   const raw = fs.readFileSync(file, 'utf8');
   const bareNumbers = raw.replace(/"(?:\\.|[^"\\])*"/g, '""');
-  if (/(?:^|[^\w.])\d{16,}(?![\w.])/.test(bareNumbers)) {
+  // Catch fractional/exponent forms too (9007199254740993.0, 12345678901234567e0),
+  // which also lose precision on a JSON round-trip; the old `(?![\w.])` deliberately
+  // stopped at a `.`/`e` and missed them.
+  if (/(?:^|[^\w.])\d{16,}(?:\.\d+)?(?:[eE][+-]?\d+)?/.test(bareNumbers)) {
     throw new Error(
       `${file} contains a number too large to survive a JSON round-trip; refusing to rewrite it so it is not silently corrupted. ` +
         'Edit it by hand, or move it aside and re-run.',
@@ -319,8 +333,12 @@ interface ServerEntry {
   [k: string]: unknown;
 }
 const isStdio = (e: ServerEntry) => typeof e.command === 'string' && e.command.length > 0;
+/* Ownership by BASENAME, not the exact PROXY_BIN path: a wrapper written by an
+ * earlier/moved/second checkout (a different absolute path) must still be
+ * recognised as ours, or it gets wrapped AGAIN and the stash is overwritten with
+ * the wrapper — destroying the user's original server definition. */
 const isWrappedByUs = (e: ServerEntry) =>
-  e.command === 'node' && Array.isArray(e.args) && e.args.includes(PROXY_BIN);
+  e.command === 'node' && Array.isArray(e.args) && e.args.some((a) => typeof a === 'string' && path.basename(a) === 'cairn-proxy.js');
 
 interface WrapSummary { wrapped: string[]; skipped: Array<{ name: string; why: string }>; already: string[] }
 
@@ -335,9 +353,20 @@ function wrapServers(file: string, home: string): WrapSummary {
     const entry = servers[name];
     if (isWrappedByUs(entry)) { summary.already.push(name); continue; }
     if (!isStdio(entry)) { summary.skipped.push({ name, why: 'not a stdio server (url/http) — cannot be wrapped this way' }); continue; }
+    if (name.includes('/') || name.includes('\\') || name.includes('..')) {
+      summary.skipped.push({ name, why: 'server name is not a safe filename — refusing to write its stash' });
+      continue;
+    }
     const wrappedFile = path.join(wrappedDir, `${name}.json`);
     if (!DRY) {
       fs.mkdirSync(wrappedDir, { recursive: true });
+      /* NEVER overwrite an existing stash: it holds the user's ORIGINAL server
+       * (the only copy uninstall can restore from). If one exists already and
+       * differs from what we would write, refuse rather than clobber it. */
+      if (fs.existsSync(wrappedFile)) {
+        summary.skipped.push({ name, why: `a stash already exists at ${wrappedFile}; refusing to overwrite it — remove it by hand if it is stale` });
+        continue;
+      }
       /* The original, verbatim: the proxy forwards to it and uninstall restores from it. May carry credentials, so 0600. */
       fs.writeFileSync(wrappedFile, JSON.stringify({ mcpServers: { [name]: entry } }, null, 2) + '\n', { mode: 0o600 });
     }
@@ -359,6 +388,7 @@ function unwrapServers(file: string): string[] {
   const cfg = readConfig(file);
   const servers = (cfg.mcpServers ?? {}) as Record<string, ServerEntry>;
   const restored: string[] = [];
+  const toDelete: string[] = [];
   let changed = false;
   for (const name of Object.keys(servers)) {
     const entry = servers[name];
@@ -375,11 +405,15 @@ function unwrapServers(file: string): string[] {
     servers[name] = original;
     restored.push(name);
     changed = true;
-    if (!DRY && wrappedFile) { try { fs.rmSync(wrappedFile); } catch { /* best effort */ } }
+    if (wrappedFile) toDelete.push(wrappedFile); // delete AFTER the config write succeeds — see below
   }
   if (changed && !DRY) {
     backup(file);
     fs.writeFileSync(file, JSON.stringify(cfg, null, 2) + '\n');
+    /* Only now that the restored config is safely on disk: if the write above
+     * had failed, deleting the stashes first would have left the config pointing
+     * at wrapper entries whose originals no longer exist. */
+    for (const wf of toDelete) { try { fs.rmSync(wf); } catch { /* best effort */ } }
   }
   return restored;
 }
@@ -412,21 +446,39 @@ interface HookGroup {
  * and re-upsert touch only groups whose inner command names one of these and
  * leave every other hook the user has untouched. */
 const OUR_BINS = ['cairn-sleep.js', 'cairn-triage-trigger.js'];
-const isOurs = (g: HookGroup) =>
-  Array.isArray(g.hooks) && g.hooks.some((h) => typeof h.command === 'string' && OUR_BINS.some((b) => (h.command as string).includes(b)));
+const ownedCommand = (h: HookEntry) => typeof h.command === 'string' && OUR_BINS.some((b) => (h.command as string).includes(b));
+const isOurs = (g: HookGroup) => Array.isArray(g.hooks) && g.hooks.some(ownedCommand);
+
+/** Single-quote a path for a shell command; a checkout under "~/Google Drive/…"
+ *  or a --home with a space otherwise ran `node /Users/you/Google` and broke every
+ *  session hook (and `$`/backticks in a path would expand). */
+const shq = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
 
 /** The hooks we install: sleep at both ends, and the triage trigger at start. */
 function desiredHooks(home: string): Array<{ event: string; command: string }> {
   return [
-    { event: 'SessionEnd', command: `node ${SLEEP_BIN} --hook --home ${home}` },
-    { event: 'SessionStart', command: `node ${SLEEP_BIN} --surface --home ${home}` },
-    { event: 'SessionStart', command: `node ${TRIGGER_BIN} --home ${home}` },
+    { event: 'SessionEnd', command: `node ${shq(SLEEP_BIN)} --hook --home ${shq(home)}` },
+    { event: 'SessionStart', command: `node ${shq(SLEEP_BIN)} --surface --home ${shq(home)}` },
+    { event: 'SessionStart', command: `node ${shq(TRIGGER_BIN)} --home ${shq(home)}` },
   ];
 }
 
-/** Strip every group we own from one event's array; returns the remainder. */
+/**
+ * Strip OUR hooks from one event's array — at the inner-hook level, not the
+ * whole group. Dropping a group because it contained one of ours also deleted
+ * any of the USER's hooks that happened to share the group; now we remove only
+ * our inner hooks and keep the group whenever the user's remain.
+ */
 function withoutOurs(groups: unknown): HookGroup[] {
-  return Array.isArray(groups) ? (groups as HookGroup[]).filter((g) => !isOurs(g)) : [];
+  if (!Array.isArray(groups)) return [];
+  const out: HookGroup[] = [];
+  for (const g of groups as HookGroup[]) {
+    if (!Array.isArray(g.hooks)) { out.push(g); continue; }
+    const kept = g.hooks.filter((h) => !ownedCommand(h));
+    if (kept.length === g.hooks.length) { out.push(g); continue; } // none of ours here
+    if (kept.length) out.push({ ...g, hooks: kept }); // keep the user's, drop ours; empty group is dropped
+  }
+  return out;
 }
 
 function upsertHooks(file: string, home: string): 'added' | 'updated' | 'unchanged' {
@@ -702,13 +754,22 @@ function main() {
       console.log(`  would set   execution enabled for ${home} in ${pf}`);
     } else {
       let store: Record<string, unknown> = {};
-      try {
-        store = JSON.parse(fs.readFileSync(pf, 'utf8'));
-      } catch {
-        /* missing or malformed -> start clean; we only add our own key */
+      let existed = false;
+      if (fs.existsSync(pf)) {
+        existed = true;
+        try {
+          const parsed = JSON.parse(fs.readFileSync(pf, 'utf8'));
+          if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('top level is not an object');
+          store = parsed as Record<string, unknown>;
+        } catch (e) {
+          // Do NOT silently overwrite: that would drop every OTHER corpus's
+          // policy (and their notes). Refuse and let a human fix the file.
+          throw new Error(`${pf} is not valid policy JSON (${(e as Error).message}); refusing to overwrite it. Fix or move it, then re-run --enable-execution.`);
+        }
       }
       store[path.resolve(home)] = { enabled: true, note: `enabled at install ${new Date().toISOString()}` };
       fs.mkdirSync(path.dirname(pf), { recursive: true });
+      if (existed) backup(pf);
       fs.writeFileSync(pf, JSON.stringify(store, null, 2) + '\n');
       console.log(`  enabled    execution for this corpus in ${pf}`);
     }

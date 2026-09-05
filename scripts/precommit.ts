@@ -18,9 +18,22 @@ import { scanSensitive, scanExecutable, redact } from '../src/lib/cairn/safety';
  * would train a contributor to pass --no-verify — the worst possible outcome
  * for a gate whose only job is to be trusted when it fires.
  */
-const CRYPTO_FIELDS = new Set(['value', 'hash', 'nonce', 'publicKey', 'anchor', 'keyId', 'signature']);
+/**
+ * Crypto fields are exempt only IN THEIR CRYPTO CONTEXT, keyed by parent — not
+ * by bare name anywhere. Skipping any `value`/`hash`/`nonce` at any depth let a
+ * secret-bearing export (a Postman/Vercel `{"key":"GITHUB_TOKEN","value":"ghp_…"}`,
+ * a PEM under `"value"`) pass the gate whose whole purpose is that scan.
+ * `keyId`/`publicKey` are identifiers/public material and are always safe.
+ */
+const ALWAYS_EXEMPT = new Set(['keyId', 'publicKey']);
+function isCryptoContext(key: string, parent?: string): boolean {
+  if (ALWAYS_EXEMPT.has(key)) return true;
+  if (key === 'value' && parent === 'signature') return true; // observation signature
+  if ((key === 'hash' || key === 'nonce' || key === 'anchor') && parent === 'commitment') return true; // prediction seal
+  return false;
+}
 
-/** Text a JSON file actually contributes, excluding crypto material. */
+/** Text a JSON file actually contributes, excluding crypto material in its proper context. */
 function proseOf(text: string): string {
   let parsed: unknown;
   try {
@@ -29,12 +42,12 @@ function proseOf(text: string): string {
     return text; // not JSON after all; scan it whole
   }
   const parts: string[] = [];
-  const walk = (v: unknown, key?: string) => {
-    if (key && CRYPTO_FIELDS.has(key)) return;
+  const walk = (v: unknown, key?: string, parent?: string) => {
+    if (key && isCryptoContext(key, parent)) return;
     if (typeof v === 'string') parts.push(v);
-    else if (Array.isArray(v)) v.forEach((x) => walk(x));
+    else if (Array.isArray(v)) v.forEach((x) => walk(x, undefined, key));
     else if (v && typeof v === 'object') {
-      for (const [k, x] of Object.entries(v)) walk(x, k);
+      for (const [k, x] of Object.entries(v)) walk(x, k, key);
     }
   };
   walk(parsed);
@@ -115,7 +128,9 @@ let blocked = 0;
 // gate built to keep private keys out of history had a hole shaped like the
 // private keys.
 for (const file of staged) {
-  if (file.startsWith('.cairn-secrets/') || file.startsWith('.cairn-secrets')) {
+  // A `.cairn-secrets` ANYWHERE in the path, not just at the root: cairn:project
+  // creates <repo>/.cairn/.cairn-secrets/, which a root-prefix check missed.
+  if (file.split('/').includes('.cairn-secrets') || file.startsWith('.cairn-secrets')) {
     console.error(`BLOCKED ${file}`);
     console.error('  .cairn-secrets holds private keys and unrevealed forecast preimages.');
     console.error('  Nothing in it may be committed. Unstage it: git restore --staged ' + file);
