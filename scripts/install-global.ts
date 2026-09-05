@@ -49,6 +49,7 @@ import { ensureIdentity } from '../src/lib/cairn/identity';
 import { ensureOrigin } from '../src/lib/cairn/corpusOrigin';
 import { loadKeys } from '../src/lib/cairn/keys';
 import { policyPath } from '../src/lib/cairn/policy';
+import { LAUNCHD_LABEL, plistPath, plistContent } from '../src/lib/cairn/launchd';
 
 const argv = process.argv.slice(2);
 const has = (f: string) => argv.includes(f);
@@ -96,6 +97,7 @@ const SERVER_BIN = path.join(REPO, 'bin', 'cairn-mcp.js');
 const SLEEP_BIN = path.join(REPO, 'bin', 'cairn-sleep.js');
 const TRIGGER_BIN = path.join(REPO, 'bin', 'cairn-triage-trigger.js');
 const PROXY_BIN = path.join(REPO, 'bin', 'cairn-proxy.js');
+const DAEMON_BIN = path.join(REPO, 'bin', 'cairn-daemon.js');
 
 const MCP_NAME = 'cairn';
 const BEGIN = '<!-- cairn:begin (managed by `npm run cairn:install` — edits between these markers are overwritten) -->';
@@ -478,6 +480,81 @@ function removeHooks(file: string): boolean {
   return changed;
 }
 
+/* --- the always-on daemon under launchd (macOS) -------------------------- */
+/*
+ * The hooks above make triage fire at session start — bursty, and dead the
+ * moment you stop opening sessions. The daemon drains the queue on a timer
+ * forever; on macOS launchd is what keeps it alive across logout and reboot
+ * without a terminal to babysit. This is best-effort and macOS-only: if
+ * launchctl is absent or refuses, the session-start trigger still works, so a
+ * failure here is reported, never fatal. Linux/other: run bin/cairn-daemon.js
+ * under your own service manager (systemd --user, nohup) — noted in the summary.
+ *
+ * The interval defaults to 300s; --daemon-interval overrides it. Logs land in
+ * the corpus's own drafts/ beside the triage log, so "is the daemon working"
+ * has one place to look.
+ */
+const DAEMON_INTERVAL_DEFAULT = 300;
+
+function daemonInterval(): number {
+  const raw = opt('daemon-interval');
+  const n = raw ? Number(raw) : DAEMON_INTERVAL_DEFAULT;
+  return Number.isFinite(n) && n >= 1 ? Math.floor(n) : DAEMON_INTERVAL_DEFAULT;
+}
+
+/** Resolve the node running this installer, so the plist launches the same one. */
+function nodeBin(): string {
+  return process.execPath || 'node';
+}
+
+function installDaemon(home: string): void {
+  if (process.platform !== 'darwin') {
+    console.log('  skipped    always-on daemon — launchd is macOS-only; run bin/cairn-daemon.js under your own');
+    console.log('             service manager (systemd --user, nohup) to drain the queue continuously');
+    return;
+  }
+  const plist = plistPath(HOME);
+  const logPath = path.join(home, 'drafts', 'daemon.log');
+  const interval = daemonInterval();
+  const content = plistContent({ nodeBin: nodeBin(), daemonBin: DAEMON_BIN, home, intervalSeconds: interval, logPath });
+  if (DRY) {
+    console.log(`  would load  launchd agent ${LAUNCHD_LABEL} (every ${interval}s) -> ${plist}`);
+    return;
+  }
+  try {
+    fs.mkdirSync(path.dirname(plist), { recursive: true });
+    fs.mkdirSync(path.join(home, 'drafts'), { recursive: true });
+    /* Reload cleanly: unload an old copy first so a changed --home/interval takes,
+     * then write and load. bootout/bootstrap is the modern form; fall back to the
+     * load/unload verbs on older macOS. Failures are swallowed — the write+load is
+     * the operation that matters and its own failure is reported below. */
+    try { execFileSync('launchctl', ['unload', plist], { stdio: 'ignore' }); } catch { /* not loaded yet */ }
+    fs.writeFileSync(plist, content);
+    execFileSync('launchctl', ['load', '-w', plist], { stdio: 'ignore' });
+    console.log(`  loaded     always-on daemon ${LAUNCHD_LABEL} — triage every ${interval}s, survives logout/reboot`);
+    console.log(`             plist ${plist}`);
+    console.log(`             log   ${logPath}`);
+  } catch (e) {
+    console.log(`  daemon     could not register the launchd agent (${(e as Error).message}).`);
+    console.log(`             The session-start trigger still runs. To retry: launchctl load -w ${plist}`);
+  }
+}
+
+function removeDaemon(): void {
+  const plist = plistPath(HOME);
+  if (process.platform !== 'darwin' || !fs.existsSync(plist)) {
+    console.log('  absent     always-on daemon (launchd agent)');
+    return;
+  }
+  if (DRY) {
+    console.log(`  would rm   launchd agent ${LAUNCHD_LABEL} -> ${plist}`);
+    return;
+  }
+  try { execFileSync('launchctl', ['unload', plist], { stdio: 'ignore' }); } catch { /* already unloaded */ }
+  try { fs.rmSync(plist); } catch { /* already gone */ }
+  console.log(`  removed    always-on daemon ${LAUNCHD_LABEL}`);
+}
+
 /* --- main ---------------------------------------------------------------- */
 function main() {
   const claudeJson = expand(opt('claude-json') ?? path.join(HOME, '.claude.json'));
@@ -498,6 +575,7 @@ function main() {
     console.log(`  ${s ? 'removed' : 'absent '}  server "${MCP_NAME}" in ${claudeJson}`);
     const h = removeHooks(settingsJson);
     console.log(`  ${h ? 'removed' : 'absent '}  sleep hooks in ${settingsJson}`);
+    removeDaemon();
     for (const f of instructionFiles) {
       const r = removeBlock(f);
       console.log(`  ${r ? 'removed' : 'absent '}  Cairn block in ${f}`);
@@ -587,6 +665,15 @@ function main() {
   const h = upsertHooks(settingsJson, home);
   console.log(`  ${h.padEnd(9)}  hooks (SessionEnd: harvest · SessionStart: surface + triage trigger) in ${settingsJson}`);
 
+  /* Always-on: the session-start trigger is bursty and stops when you do; the
+   * daemon drains the queue on a timer, forever. macOS registers it under
+   * launchd here; --no-daemon opts out. */
+  if (!has('--no-daemon')) {
+    installDaemon(home);
+  } else {
+    console.log('  --no-daemon left the always-on daemon unregistered — triage fires only at session start');
+  }
+
   /* Default-on: route the user's other stdio servers through the gateway so PUSH
    * (unasked findings on tool results) actually happens. --no-wrap opts out.
    * Silent per-call unless a finding resonates, and fully reversible on uninstall. */
@@ -631,6 +718,10 @@ function main() {
   console.log('    background to gate them on this live machine. Off by default (it runs');
   console.log('    checks) — enable per-corpus in ~/.cairn/policy.json. Nothing enters the');
   console.log('    corpus unchecked, and nothing waits forever (see cairn:triage).');
+  console.log('  · and it runs even when you do not: on macOS an always-on daemon drains the');
+  console.log('    queue on a timer under launchd (survives logout/reboot), so triage no');
+  console.log('    longer depends on you opening a session. Still gated by the same policy —');
+  console.log('    it does nothing until execution is enabled for this corpus.');
   console.log('\nStill scoped, on purpose:');
   console.log('  · Only stdio MCP servers are wrapped; url/http servers are left as-is (they');
   console.log('    cannot be stdio-wrapped). Re-run install after adding a server to wrap it,');

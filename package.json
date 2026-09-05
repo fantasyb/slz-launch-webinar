@@ -70,6 +70,7 @@
     "prepare": "git config core.hooksPath .githooks 2>/dev/null || true",
     "cairn:sleep": "tsx scripts/sleep.ts",
     "cairn:triage": "tsx scripts/triage.ts",
+    "cairn:daemon": "tsx scripts/daemon.ts",
     "cairn:seal": "tsx scripts/seal.ts",
     "cairn:project": "tsx scripts/project.ts"
   },

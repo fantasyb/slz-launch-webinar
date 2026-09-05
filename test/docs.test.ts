@@ -169,6 +169,7 @@ test('each launcher launches its own target, and that target exists', () => {
     'cairn-proxy.js': 'mcp-proxy',
     'cairn-sleep.js': 'sleep',
     'cairn-triage-trigger.js': 'triage-trigger',
+    'cairn-daemon.js': 'daemon',
   };
   for (const [launcher, target] of Object.entries(expected)) {
     const src = fs.readFileSync(path.join(process.cwd(), 'bin', launcher), 'utf8');

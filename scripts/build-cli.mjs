@@ -49,6 +49,9 @@ const ENTRIES = [
   // Also on the session-open path: it decides whether to spawn a triage agent
   // and detaches, so the boot cost is the whole cost — pay node's, not tsx's.
   ['scripts/triage-trigger.ts', 'dist/cli/triage-trigger.js'],
+  // The always-on daemon launchd runs 24/7. It runs unattended for days, so it
+  // must not depend on tsx being resolvable or on a warm transpile cache.
+  ['scripts/daemon.ts', 'dist/cli/daemon.js'],
 ];
 
 mkdirSync('dist/cli', { recursive: true });
