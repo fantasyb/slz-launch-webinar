@@ -542,8 +542,22 @@ the forecast after seeing a result; change it and it is a different run.
 cd ~/cairn
 npm run cairn:gateway-smoke -- --server "npx -y @salesforce/mcp --orgs DEFAULT_TARGET_ORG --toolsets data"
 CAIRN_HOME=~/pilot npm run cairn:gateway-trial -- ~/pilot/trial.json --smoke
-CAIRN_HOME=~/pilot npm run cairn:gateway-trial -- ~/pilot/trial.json
+CAIRN_HOME=~/pilot npm run cairn:gateway-trial -- ~/pilot/trial.json --gate
 ```
+
+**Use `--gate` on a real server.** The first run against a live org came back
+a null (`data/forecasts/2026-09-02-salesforce-pilot-null.md`): the trap did not
+bite the unaided agent that day, so control answered 9 of 10 and no gateway
+delta could exist — the run paid full price to learn nothing. `--gate` runs a
+control-only pilot per scenario first and measures the paid empty+gateway arms
+only where control actually fails (`--max-control-correct`, default 0.4: control
+must be wrong the majority of the time). On the fixture, where the trap always
+bites, control is 0/5 and every scenario proceeds; on a real org a scenario is
+measured only when its trap is live that day — which is exactly the condition
+under which the fixture runs showed the gateway win. A scenario whose control
+passes is recorded as non-discriminating and skipped, not scored as a null.
+
+Without `--gate` the run is the original three-arms-always behaviour, unchanged.
 
 The smoke is no model and no cost, and proves the gateway is transparent to
 this server. `--smoke` on the trial is one trial per cell, reported as such

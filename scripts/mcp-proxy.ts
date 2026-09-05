@@ -1930,7 +1930,19 @@ async function main() {
       const url = new URL(req.url ?? '/', 'http://localhost');
       if (url.pathname === '/healthz') {
         res.writeHead(200, { 'content-type': 'application/json' });
-        res.end(JSON.stringify({ ok: true, sessions: transports.size, upstreams: upstreams.map((u) => ({ name: u.spec.name, alive: u.alive })), corpus: corpusDir() ?? null, degraded: degraded() }));
+        res.end(JSON.stringify({
+          ok: true,
+          sessions: transports.size,
+          /* So an operator can confirm the hardening is live on the running host,
+           * not just in the source: idle sessions are reaped and long calls relay
+           * progress. idleEvictionMs is the window a dropped client is held before
+           * its transport and state are freed. */
+          idleEvictionMs: IDLE_MS,
+          relaysProgress: true,
+          upstreams: upstreams.map((u) => ({ name: u.spec.name, alive: u.alive })),
+          corpus: corpusDir() ?? null,
+          degraded: degraded(),
+        }));
         return;
       }
       if (url.pathname !== '/mcp') {

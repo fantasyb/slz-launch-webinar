@@ -3,8 +3,17 @@
  *
  *   npm run cairn:gateway-trial -- --discover "npx -y @acme/their-mcp"   # which tools it would permit, and why
  *   CAIRN_HOME=~/pilot npm run cairn:gateway-trial -- ~/pilot/trial.json
+ *   CAIRN_HOME=~/pilot npm run cairn:gateway-trial -- ~/pilot/trial.json --gate
  *   CAIRN_HOME=~/pilot npm run cairn:gateway-trial -- ~/pilot/trial.json --smoke
  *   CAIRN_HOME=~/pilot npm run cairn:gateway-trial -- --regrade <run.json> ~/pilot/trial.json
+ *
+ * --gate runs a control-only pilot first and measures a scenario's paid arms
+ * only if control actually fails there (the trap bites the unaided agent). It
+ * is the fix for the first real run's null: a scenario the control arm answers
+ * cannot show a gateway delta, so the run should not pay to learn that. Tune
+ * with --gate-trials N (pilot size, default = run size) and
+ * --max-control-correct F (most of the pilot that may be right and still
+ * measure, default 0.4).
  *
  * The client is Claude Code itself, in -p mode, over real stdio — not an SDK
  * loop written here. What reaches the model is what that client chose to
@@ -173,7 +182,21 @@ const DISCOVER_AT = argv.indexOf('--discover');
 const SMOKE = argv.includes('--smoke');
 const NO_TRANSCRIPTS = argv.includes('--no-transcripts');
 const REGRADE_AT = argv.indexOf('--regrade');
-const positional = argv.filter((a, i) => !a.startsWith('--') && !['--regrade', '--out', '--discover'].includes(argv[i - 1]));
+/*
+ * The discrimination gate. A run whose control arm already answers correctly
+ * cannot show a delta whatever the gateway delivers — cairn-0034 in general,
+ * and the first real run against a live server (data/forecasts/...-null.md)
+ * in fact: nine of ten unaided trials were right and the run measured nothing.
+ * With --gate, each scenario runs a control-only pilot first; only the ones
+ * whose control fails at least --max-control-correct of the time proceed to the
+ * paid empty+gateway arms. The rest are recorded as non-discriminating and
+ * skipped, so a run spends its budget only where a delta is even possible.
+ */
+const GATE = argv.includes('--gate');
+const gateTrialsAt = argv.indexOf('--gate-trials');
+const maxControlAt = argv.indexOf('--max-control-correct');
+const valueFlags = ['--regrade', '--out', '--discover', '--gate-trials', '--max-control-correct'];
+const positional = argv.filter((a, i) => !a.startsWith('--') && !valueFlags.includes(argv[i - 1]));
 const outAt = argv.indexOf('--out');
 
 function refuse(what: string, how = ''): never {
@@ -254,7 +277,8 @@ const trialFileArg = positional[0];
 if (!trialFileArg) {
   refuse(
     'no scenario file',
-    '  usage: CAIRN_HOME=<corpus> npm run cairn:gateway-trial -- <trial.json> [--smoke] [--no-transcripts] [--out <dir>]\n' +
+    '  usage: CAIRN_HOME=<corpus> npm run cairn:gateway-trial -- <trial.json> [--gate] [--smoke] [--no-transcripts] [--out <dir>]\n' +
+      '         --gate [--gate-trials N] [--max-control-correct F]: measure only scenarios whose control arm fails\n' +
       '         CAIRN_HOME=<corpus> npm run cairn:gateway-trial -- --regrade <run.json> <trial.json>\n' +
       '         npm run cairn:gateway-trial -- --discover "<server command>"\n' +
       '  The scenario file format is in GATEWAY.md under "Running the trial against your server".',
@@ -389,6 +413,27 @@ if (REGRADE_AT === -1) {
 /* ---- the run ------------------------------------------------------------ */
 
 const TRIALS = SMOKE ? 1 : T.trials;
+/*
+ * Gate settings, resolved once. GATE_TRIALS is how many control trials the
+ * pilot runs (default: the full run size, so the pilot is itself a real control
+ * arm); MAX_CONTROL_CORRECT is the most of them that may be right for the
+ * scenario to still be worth measuring — default 0.4, i.e. control must be
+ * wrong the majority of the time before a single paid gateway trial is run.
+ */
+const GATE_TRIALS = (() => {
+  if (!GATE) return 0;
+  const raw = gateTrialsAt !== -1 ? Number(argv[gateTrialsAt + 1]) : TRIALS;
+  if (!Number.isInteger(raw) || raw < 1 || raw > TRIALS) {
+    refuse(`--gate-trials must be an integer in 1..${TRIALS} (the run size)`, `  got ${argv[gateTrialsAt + 1] ?? '(missing)'}`);
+  }
+  return raw;
+})();
+const MAX_CONTROL_CORRECT = (() => {
+  if (!GATE) return 0;
+  const raw = maxControlAt !== -1 ? Number(argv[maxControlAt + 1]) : 0.4;
+  if (!(raw >= 0 && raw <= 1)) refuse('--max-control-correct must be a fraction in 0..1', `  got ${argv[maxControlAt + 1] ?? '(missing)'}`);
+  return raw;
+})();
 const RUN_ID = `${SMOKE ? 'smoke' : 'run'}-${new Date().toISOString().replace(/[:.]/g, '').slice(0, 15)}-${T.name}-${T.model}`;
 const OUT_DIR = outAt !== -1 ? path.resolve(argv[outAt + 1]) : path.join(HOME, 'gateway-trials');
 if (inside(OUT_DIR, REPO)) refuse(`--out ${OUT_DIR} is inside this repository`, '  Run records and transcripts stay outside the checkout.');
@@ -402,6 +447,10 @@ interface Trial {
   scenario: string;
   arm: Arm;
   trial: number;
+  /** 'gate' for a control-pilot trial run to decide whether the scenario can
+   * show a delta at all; absent for a measurement trial. Gate trials are
+   * recorded for transparency but never scored against the forecast. */
+  phase?: 'gate';
   sessionId: string;
   answer: number | string | null;
   truth: number | string;
@@ -752,7 +801,7 @@ function scoreForecast(trials: Trial[], scenarios: Scenario[]): { cells: CellSco
   const cells: CellScore[] = [];
   for (const sc of scenarios) {
     for (const arm of ARMS) {
-      const ts = trials.filter((t) => t.scenario === sc.name && t.arm === arm);
+      const ts = trials.filter((t) => t.scenario === sc.name && t.arm === arm && !t.phase);
       if (!ts.length) continue;
       const p = sc.forecast[arm] / T.trials;
       const brier = ts.reduce((a, t) => a + (p - (t.correct ? 1 : 0)) ** 2, 0) / ts.length;
@@ -788,6 +837,9 @@ async function main() {
   const startedAt = new Date().toISOString();
   const trials: Trial[] = [];
   let stopped: string | null = null;
+  interface GateResult { scenario: string; controlTrials: number; controlCorrect: number; rate: number; discriminating: boolean }
+  const gateResults: GateResult[] = [];
+  const measured: string[] = [];
   const save = () =>
     fs.writeFileSync(
       OUT,
@@ -809,6 +861,11 @@ async function main() {
           /* The tool surface the tools were chosen from, every change seen during the run, and the surface at the end. */
           surface: { atStart: surfaceAtStart, changes: watcher.events, atEnd: watcher.shapes },
           stopped,
+          /* The discrimination gate: which scenarios could show a delta at all,
+           * and which were skipped because control already answers them. */
+          gate: GATE
+            ? { enabled: true, gateTrials: GATE_TRIALS, maxControlCorrect: MAX_CONTROL_CORRECT, results: gateResults, measured }
+            : null,
           /* How wrong the sealed forecast was, per cell and overall. Written whether it was right or not. */
           forecastScore: SMOKE ? null : scoreForecast(trials, T.scenarios),
           trials,
@@ -827,37 +884,83 @@ async function main() {
   console.log(`  authorship ${caveat}`);
   console.log(`  model ${T.model}, ${TRIALS} per cell, writing ${path.relative(process.cwd(), OUT)}\n`);
 
-  for (const sc of T.scenarios) {
+  /*
+   * One trial, guarded and recorded, shared by the gate pilot and the
+   * measurement so both see the same surface check and write the same rows. The
+   * surface guard is the premise re-read: a run whose tool list moved underneath
+   * it is not a result, so any change stops the run with the record so far.
+   */
+  const runAndRecord = async (sc: Scenario, arm: Arm, n: number, phase?: 'gate'): Promise<Trial> => {
+    const label = `${sc.name} ${arm} #${n}${phase ? ' (gate)' : ''}`;
+    const moved = await watcher.check(`before ${label}`);
+    if (moved.length) {
+      stopped = `tool surface changed before ${label}`;
+      save();
+      console.log(`\nSTOPPED — the server's tools changed under the run, before ${label}:\n`);
+      for (const c of moved) console.log(`  ${c.kind.padEnd(12)} ${c.detail}`);
+      console.log(`\n  ${trials.length} trial(s) are in ${OUT} with stopped set; nothing after this point was run.`);
+      console.log('  Re-read the list, update the findings and the forecast if they need it, seal again, and run again.\n');
+      await watcher.close();
+      process.exit(3);
+    }
+    const t = await runTrial(sc, arm, n, permitted);
+    if (phase) t.phase = phase;
+    trials.push(t);
+    save();
+    console.log(
+      `  ${sc.name.padEnd(16)} ${(phase ? `${arm}~` : arm).padEnd(9)} #${n}  ${t.correct ? 'CORRECT' : 'wrong  '} answer=${t.answer ?? '-'} truth=${t.truth}` +
+        `  mcp=${t.mcpCalls} turns=${t.turns} $${t.costUsd.toFixed(3)} ${(t.durationMs / 1000).toFixed(0)}s` +
+        `  delivered=${t.delivered.onResult}/${t.delivered.onToolSearch}` +
+        (t.denials.length ? `  DENIALS=${t.denials.length}` : '') +
+        (t.error ? `  ERROR=${t.error}` : ''),
+    );
+    return t;
+  };
+
+  /*
+   * The discrimination gate. Run a control-only pilot per scenario and let only
+   * the scenarios whose control fails often enough through to the paid arms. A
+   * scenario the unaided agent answers cannot show a gateway delta, so measuring
+   * it spends budget to learn nothing — the lesson of the first real run.
+   */
+  let scenariosToMeasure = T.scenarios;
+  if (GATE) {
+    console.log(
+      `GATE — control-only pilot, ${GATE_TRIALS} trial(s) per scenario. A scenario proceeds to the paid empty+gateway arms\n` +
+        `       only if control is correct in at most ${(MAX_CONTROL_CORRECT * 100).toFixed(0)}% of them (the trap must bite the unaided agent here).\n`,
+    );
+    for (const sc of T.scenarios) {
+      let correct = 0;
+      for (let n = 1; n <= GATE_TRIALS; n++) {
+        const t = await runAndRecord(sc, 'control', n, 'gate');
+        if (t.correct) correct += 1;
+      }
+      const rate = correct / GATE_TRIALS;
+      const discriminating = rate <= MAX_CONTROL_CORRECT;
+      gateResults.push({ scenario: sc.name, controlTrials: GATE_TRIALS, controlCorrect: correct, rate, discriminating });
+      console.log(
+        `  ${sc.name.padEnd(16)} control ${correct}/${GATE_TRIALS} correct  ->  ` +
+          (discriminating ? 'DISCRIMINATING — will measure' : 'non-discriminating — SKIPPED (control already answers it)'),
+      );
+    }
+    scenariosToMeasure = T.scenarios.filter((sc) => gateResults.find((g) => g.scenario === sc.name)!.discriminating);
+    for (const sc of scenariosToMeasure) measured.push(sc.name);
+    save();
+    console.log('');
+    if (!scenariosToMeasure.length) {
+      console.log('  No scenario discriminates: on this box today, control answers every one of them.');
+      console.log('  A gateway delta cannot exist where the unaided agent already succeeds, so nothing is measured.');
+      console.log('  Write a scenario whose control arm fails — confirm the trap fires here first — or lower');
+      console.log('  --max-control-correct if a partial control failure is enough to measure against.\n');
+    }
+  }
+
+  for (const sc of scenariosToMeasure) {
     for (let n = 1; n <= TRIALS; n++) {
       /* Interleave arms within a trial index so a slow hour or a model
        * hiccup lands on every arm equally rather than on whichever ran last. */
       for (const arm of ARMS) {
-        /*
-         * The premise, re-read. A run whose tool surface moved underneath it
-         * is not a result, so the list is compared before every trial and
-         * any change stops the run with the record written so far.
-         */
-        const moved = await watcher.check(`before ${sc.name} ${arm} #${n}`);
-        if (moved.length) {
-          stopped = `tool surface changed before ${sc.name} ${arm} #${n}`;
-          save();
-          console.log(`\nSTOPPED — the server's tools changed under the run, before ${sc.name} ${arm} #${n}:\n`);
-          for (const c of moved) console.log(`  ${c.kind.padEnd(12)} ${c.detail}`);
-          console.log(`\n  ${trials.length} trial(s) are in ${OUT} with stopped set; nothing after this point was run.`);
-          console.log('  Re-read the list, update the findings and the forecast if they need it, seal again, and run again.\n');
-          await watcher.close();
-          process.exit(3);
-        }
-        const t = await runTrial(sc, arm, n, permitted);
-        trials.push(t);
-        save();
-        console.log(
-          `  ${sc.name.padEnd(16)} ${arm.padEnd(8)} #${n}  ${t.correct ? 'CORRECT' : 'wrong  '} answer=${t.answer ?? '-'} truth=${t.truth}` +
-            `  mcp=${t.mcpCalls} turns=${t.turns} $${t.costUsd.toFixed(3)} ${(t.durationMs / 1000).toFixed(0)}s` +
-            `  delivered=${t.delivered.onResult}/${t.delivered.onToolSearch}` +
-            (t.denials.length ? `  DENIALS=${t.denials.length}` : '') +
-            (t.error ? `  ERROR=${t.error}` : ''),
-        );
+        await runAndRecord(sc, arm, n);
       }
     }
   }
@@ -870,10 +973,20 @@ async function main() {
     for (const c of movedAtEnd) console.log(`  ${c.kind.padEnd(12)} ${c.detail}`);
   }
 
+  if (GATE) {
+    const kept = gateResults.filter((g) => g.discriminating).length;
+    console.log(`\nGATE OUTCOME — ${kept} of ${gateResults.length} scenario(s) discriminated and were measured; the rest were skipped as non-discriminating.`);
+    for (const g of gateResults) {
+      console.log(`  ${g.scenario.padEnd(16)} control ${g.controlCorrect}/${g.controlTrials} correct  ${g.discriminating ? 'measured' : 'skipped'}`);
+    }
+  }
+
   console.log('\nSUMMARY (correct / trials, forecast in brackets)');
-  for (const sc of T.scenarios) {
+  /* Measurement trials only: gate-pilot control trials are excluded so the
+   * counts read as the sealed run, not the run plus its pilot. */
+  for (const sc of scenariosToMeasure) {
     const row = ARMS.map((arm) => {
-      const ts = trials.filter((t) => t.scenario === sc.name && t.arm === arm);
+      const ts = trials.filter((t) => t.scenario === sc.name && t.arm === arm && !t.phase);
       const ok = ts.filter((t) => t.correct).length;
       const delivered = ts.filter((t) => t.delivered.onResult + t.delivered.onToolSearch > 0).length;
       const calls = ts.reduce((a, t) => a + t.mcpCalls, 0) / Math.max(1, ts.length);
@@ -881,6 +994,7 @@ async function main() {
     });
     console.log(`  ${sc.name.padEnd(16)} ${row.join('   ')}`);
   }
+  if (GATE && !scenariosToMeasure.length) console.log('  (nothing measured — every scenario was gated out)');
   if (!SMOKE) {
     const score = scoreForecast(trials, T.scenarios);
     console.log('\nFORECAST, scored (per-trial Brier; 0 is perfect, 0.25 is a coin, 1 is confidently wrong)');
