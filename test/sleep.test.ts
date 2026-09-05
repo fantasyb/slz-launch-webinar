@@ -110,3 +110,57 @@ test('empty-then-superset on a real query tool IS a contradiction', () => {
   assert.equal(c.length, 1, 'the silent-scope trap is caught even with no error and no prose');
   assert.match(c[0].reasons.join(' '), /returned empty; this superset returned rows/);
 });
+
+test('the agent\'s own built-in tools are not harvested (a Read is not a trap)', () => {
+  // A Read of a file containing "[]" reads as empty; a later Read of the same
+  // file with an offset is a structural superset. Before the built-in filter
+  // this was the single biggest source of false candidates on a coding session.
+  const turns = parseTranscript(
+    jsonl([
+      asst(call('r1', 'Read', { file_path: '/x.ts' })),
+      user(result('r1', 'const empty = [];')),
+      asst(call('r2', 'Read', { file_path: '/x.ts', offset: 40, limit: 20 })),
+      user(result('r2', 'line 40\nline 41\nline 42')),
+    ]),
+  );
+  assert.deepEqual(detectCandidates(turns), [], 'Read/Edit/Glob/Agent are the agent\'s hands, never an external trap');
+});
+
+test('an mcp__* tool with the same shape IS still harvested (gold is not dropped)', () => {
+  // The recall guard: the built-in filter must not swallow the real target.
+  // Identical structural trap to the Read case above, on an external MCP tool.
+  const turns = parseTranscript(
+    jsonl([
+      asst(call('m1', 'mcp__sf__query_records', { object: 'Case' })),
+      user(result('m1', '{"records":[]}')),
+      asst(call('m2', 'mcp__sf__query_records', { object: 'Case', org: 'prod' })),
+      user(result('m2', '{"records":[1,2,3]}')),
+    ]),
+  );
+  const c = detectCandidates(turns);
+  assert.equal(c.length, 1, 'an external MCP tool with a silent-scope trap is still caught');
+  assert.equal(c[0].tool, 'mcp__sf__query_records');
+});
+
+test('a call the harness denied or the user cancelled is not a trap', () => {
+  const turns = parseTranscript(
+    jsonl([
+      asst(say('I expect this to deploy.'), call('d1', 'mcp__sf__deploy', { path: 'force-app' })),
+      user(result('d1', 'The user doesn\'t want to proceed with this tool use. The tool use was rejected.', true)),
+      asst(say('Actually the deploy was blocked — turns out it needed approval.')),
+    ]),
+  );
+  assert.deepEqual(detectCandidates(turns), [], 'a harness/permission denial never reached the tool, so it is not the tool\'s behaviour');
+});
+
+test('a genuine shell permission-denied still harvests (not confused with a harness denial)', () => {
+  const turns = parseTranscript(
+    jsonl([
+      asst(say('I expect to read the file.'), call('s1', 'Bash', { command: 'cat /etc/shadow' })),
+      user(result('s1', 'cat: /etc/shadow: Permission denied', true)),
+      asst(say('Permission denied — actually it turns out this needs root, silently no output otherwise.')),
+    ]),
+  );
+  const c = detectCandidates(turns);
+  assert.equal(c.length, 1, 'a real shell permission trap is scoped away from the Claude Code permission phrasing and still harvests');
+});

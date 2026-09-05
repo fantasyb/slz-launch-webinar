@@ -177,6 +177,27 @@ export function detectCandidates(turns: Turn[]): Candidate[] {
    * widening a query. The model-update signal still fires everywhere; only this
    * structural one is scoped, because only this one is meaningless off-query. */
   const SHELL = /^(bash|shell|sh|exec|run|terminal|command)$/i;
+  /*
+   * The agent's own built-in tools are its hands, not an external surface whose
+   * behaviour is a trap worth banking for the next agent: Read returning a file,
+   * Edit writing one, a sub-Agent launching, AskUserQuestion being declined.
+   * Harvesting them turns any coding session into a firehose — measured on one
+   * real transcript, 119 of 197 candidates were Read/Edit/Agent/AskUserQuestion
+   * scaffolding, because a Read of any file containing "[]" reads as an "empty"
+   * result (looksEmpty) and a later Read of the same file with an offset is a
+   * structural superset of it. Cairn banks traps in EXTERNAL tools — mcp__*
+   * servers, shelled-out programs (Bash stays), the network (WebFetch/WebSearch
+   * stay) — so the known Claude Code built-ins are skipped by name. Unknown and
+   * mcp__* tools are always kept: a custom or MCP tool is exactly the target,
+   * and triage culls anything that slips through. A denylist, never an allowlist,
+   * so a tool nobody has heard of is investigated, not silently dropped.
+   */
+  const BUILTIN_SCAFFOLD = /^(Read|Write|Edit|MultiEdit|NotebookEdit|Glob|Grep|LS|TodoWrite|Task|Agent|ToolSearch|AskUserQuestion|ExitPlanMode|BashOutput|KillShell|KillBash|Skill|SlashCommand)$/;
+  /* Claude Code's own permission-system and cancellation messages. A call these
+   * describe never reached the tool, so the text is the harness talking, not the
+   * tool. Deliberately specific — "permission denied" alone is a real shell trap
+   * and must still harvest, so we match the Claude Code phrasings only. */
+  const HARNESS_DENIAL = /\b(denied by the Claude Code|Claude Code auto[- ]?monitor|the user doesn't want to proceed|user (?:rejected|declined|has denied)|requested permissions to use|Permission for this action was denied|Denied by user|tool use was rejected)\b/i;
   const NON_SEMANTIC = new Set(['description', 'timeout', 'run_in_background', 'reason', 'explanation']);
   const priorEmpty = new Map<string, Set<string>>(); // tool -> set of arg-key strings that returned "empty"
   const argKey = (input: Record<string, unknown>) =>
@@ -189,6 +210,16 @@ export function detectCandidates(turns: Turn[]): Candidate[] {
   for (let i = 0; i < turns.length; i++) {
     const t = turns[i];
     if (!t.tool || !t.result) continue;
+    // Skip the agent's own built-in tools — see BUILTIN_SCAFFOLD. Everything
+    // else (Bash, WebFetch/WebSearch, mcp__*, and any tool we do not recognise)
+    // is an external surface and is harvested normally.
+    if (BUILTIN_SCAFFOLD.test(t.tool.name)) continue;
+    // Skip harness artifacts: a call the PERMISSION system denied or the user
+    // cancelled never ran, so its result is not the tool's behaviour and cannot
+    // be a trap. Scoped to Claude Code's own permission phrasing so a genuine
+    // shell "permission denied" (a real environment trap — cf. cairn-0035)
+    // still harvests.
+    if (HARNESS_DENIAL.test(t.result.text)) continue;
 
     const expectation = i > 0 && turns[i - 1].role === 'assistant' && turns[i - 1].text ? turns[i - 1].text! : '';
     /* The next assistant prose after the result is the model update. */
