@@ -1275,7 +1275,12 @@ async function main() {
   };
 
   async function allTools(): Promise<Tool[]> {
-    toolOwner.clear();
+    /* Build ownership into a LOCAL map and swap it in synchronously at the end.
+     * Clearing the shared toolOwner up front and repopulating it across awaits
+     * (pagination) left it incomplete mid-listing, so a concurrent CallTool or a
+     * list_changed clearing it produced `toolOwner.get(name)!` === undefined and
+     * a TypeError — the client then saw the wrapped server as having no tools. */
+    const owners = new Map<string, { up: Upstream; raw: string }>();
     const out: Tool[] = [];
     /* A listing is the moment a dead upstream is missed; try to bring it back first, within its backoff. */
     for (const up of upstreams) if (!up.alive) await ensure(up);
@@ -1294,7 +1299,7 @@ async function main() {
         }
         for (const t of page.tools) {
           const name = expose(up, t.name);
-          toolOwner.set(name, { up, raw: t.name });
+          owners.set(name, { up, raw: t.name });
           out.push({ ...t, name });
           mine.push(t);
         }
@@ -1302,6 +1307,10 @@ async function main() {
       } while (cursor);
       if (complete) noteSurface(up, mine);
     }
+    // Atomic swap: no await between clear and repopulate, so no other task ever
+    // observes a partially-built toolOwner.
+    toolOwner.clear();
+    for (const [k, v] of owners) toolOwner.set(k, v);
     return out;
   }
 
