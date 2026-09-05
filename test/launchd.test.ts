@@ -49,6 +49,12 @@ test('it is well-formed and XML-escapes paths', () => {
   assert.ok(!/&(?!amp;|lt;|gt;|quot;)/.test(xml), 'no unescaped ampersands anywhere');
 });
 
+test('extra env (a PATH for launchd) is rendered alongside CAIRN_HOME', () => {
+  const xml = plistContent({ ...base, env: { PATH: '/opt/homebrew/bin:/usr/bin:/bin' } });
+  assert.match(xml, /<key>CAIRN_HOME<\/key>\s*<string>\/Users\/you\/pilot<\/string>/, 'CAIRN_HOME still present');
+  assert.match(xml, /<key>PATH<\/key>\s*<string>\/opt\/homebrew\/bin:\/usr\/bin:\/bin<\/string>/, 'PATH rendered so launchd can find node/npx/claude');
+});
+
 test('the plist lives at ~/Library/LaunchAgents and is named for the label', () => {
   const p = plistPath('/Users/you');
   assert.equal(p, `/Users/you/Library/LaunchAgents/${LAUNCHD_LABEL}.plist`);

@@ -32,6 +32,7 @@ const daysBack = opt('days');
 if (since) {
   const t = Date.parse(since);
   if (!Number.isNaN(t)) sinceMs = t;
+  else process.stderr.write(`cairn:impact: could not parse --since "${since}"; showing all recorded time.\n`);
 } else if (daysBack && Number(daysBack) > 0) {
   sinceMs = Date.now() - Number(daysBack) * 86_400_000;
 }

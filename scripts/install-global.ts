@@ -502,9 +502,58 @@ function daemonInterval(): number {
   return Number.isFinite(n) && n >= 1 ? Math.floor(n) : DAEMON_INTERVAL_DEFAULT;
 }
 
-/** Resolve the node running this installer, so the plist launches the same one. */
+/**
+ * The node the plist should launch. Prefer a STABLE symlink over process.execPath:
+ * libuv realpaths execPath on darwin, so a Homebrew node resolves to
+ * /opt/homebrew/Cellar/node/<version>/bin/node and an nvm node to a versioned
+ * path — both vanish on the next `brew upgrade`/nvm prune, and launchd then
+ * KeepAlive-thrashes a job it can no longer exec. The stable Homebrew/pkg
+ * symlinks survive version bumps; fall back to execPath only if neither exists.
+ */
 function nodeBin(): string {
+  for (const p of ['/opt/homebrew/bin/node', '/usr/local/bin/node']) {
+    try { if (fs.existsSync(p)) return p; } catch { /* ignore */ }
+  }
   return process.execPath || 'node';
+}
+
+/**
+ * launchd runs agents with PATH=/usr/bin:/bin:/usr/sbin:/sbin. The daemon spawns
+ * `node` (the trigger) and the trigger resolves `claude`; the launcher's fallback
+ * shells out to `npx`. Give the job a PATH that includes the real node dir and the
+ * usual Homebrew/local bins so none of those are ENOENT under launchd.
+ */
+function daemonPath(): string {
+  const dirs = [path.dirname(nodeBin()), '/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin', '/usr/sbin', '/sbin'];
+  return [...new Set(dirs)].join(':');
+}
+
+/**
+ * The daemon runs the bundled fast path (dist/cli). If the bundle is missing, the
+ * launcher falls back to `npx tsx`, which under launchd's bare PATH is ENOENT and
+ * KeepAlive-thrashes — so build the bundles before registering. Best-effort:
+ * a build failure is reported, and the daemon still runs (slower) once tsx is on
+ * PATH via daemonPath().
+ */
+function ensureDaemonBundle(): void {
+  const need = [path.join(REPO, 'dist', 'cli', 'daemon.js'), path.join(REPO, 'dist', 'cli', 'triage-trigger.js')];
+  if (need.every((p) => { try { return fs.existsSync(p); } catch { return false; } })) return;
+  try {
+    execFileSync('npm', ['run', 'cairn:build-cli'], { cwd: REPO, stdio: 'ignore' });
+    console.log('  built      dist bundles so the daemon runs the fast path (not tsx under launchd)');
+  } catch {
+    console.log('  warn       could not build dist bundles; run `npm run cairn:build-cli` so the daemon is not slow');
+  }
+}
+
+/** The --home a currently-installed plist points at, if any — so we can warn on a silent replace. */
+function plistHome(plist: string): string | null {
+  try {
+    const m = fs.readFileSync(plist, 'utf8').match(/<string>--home<\/string>\s*<string>([^<]*)<\/string>/);
+    return m ? m[1] : null;
+  } catch {
+    return null;
+  }
 }
 
 function installDaemon(home: string): void {
@@ -516,19 +565,25 @@ function installDaemon(home: string): void {
   const plist = plistPath(HOME);
   const logPath = path.join(home, 'drafts', 'daemon.log');
   const interval = daemonInterval();
-  const content = plistContent({ nodeBin: nodeBin(), daemonBin: DAEMON_BIN, home, intervalSeconds: interval, logPath });
+  const content = plistContent({ nodeBin: nodeBin(), daemonBin: DAEMON_BIN, home, intervalSeconds: interval, logPath, env: { PATH: daemonPath() } });
   if (DRY) {
     console.log(`  would load  launchd agent ${LAUNCHD_LABEL} (every ${interval}s) -> ${plist}`);
     return;
   }
+  /* One label per machine: warn rather than silently repoint a daemon set for another corpus. */
+  const prior = plistHome(plist);
+  if (prior && path.resolve(prior) !== path.resolve(home)) {
+    console.log(`  note       replacing the daemon previously registered for ${prior}`);
+  }
+  ensureDaemonBundle();
   try {
     fs.mkdirSync(path.dirname(plist), { recursive: true });
     fs.mkdirSync(path.join(home, 'drafts'), { recursive: true });
     /* Reload cleanly: unload an old copy first so a changed --home/interval takes,
-     * then write and load. bootout/bootstrap is the modern form; fall back to the
-     * load/unload verbs on older macOS. Failures are swallowed — the write+load is
-     * the operation that matters and its own failure is reported below. */
+     * then write and load. Failures are swallowed — the write+load is the
+     * operation that matters and its own failure is reported below. */
     try { execFileSync('launchctl', ['unload', plist], { stdio: 'ignore' }); } catch { /* not loaded yet */ }
+    if (fs.existsSync(plist)) backup(plist); // the header promises every write is backed up first
     fs.writeFileSync(plist, content);
     execFileSync('launchctl', ['load', '-w', plist], { stdio: 'ignore' });
     console.log(`  loaded     always-on daemon ${LAUNCHD_LABEL} — triage every ${interval}s, survives logout/reboot`);

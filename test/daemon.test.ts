@@ -43,16 +43,21 @@ test('it ticks repeatedly on the interval, then exits cleanly on SIGTERM', async
   const ticks = () => {
     try { return fs.readFileSync(marker, 'utf8').split('\n').filter(Boolean).length; } catch { return 0; }
   };
-  /* At least two ticks proves the loop runs on its own, not once. */
-  const ticked = await until(() => ticks() >= 2, 8000);
-  assert.ok(ticked, `daemon ticked at least twice on its own, saw ${ticks()}`);
+  try {
+    /* At least two ticks proves the loop runs on its own, not once. */
+    const ticked = await until(() => ticks() >= 2, 8000);
+    assert.ok(ticked, `daemon ticked at least twice on its own, saw ${ticks()}`);
 
-  child.kill('SIGTERM');
-  const stopped = await until(() => exitCode !== null || exitSignal !== null, 4000);
-  assert.ok(stopped, 'daemon exited after SIGTERM');
-  /* Clean exit(0), not killed by the signal: the handler ran and shut it down. */
-  assert.equal(exitSignal, null, 'exited on its own, not by the raw signal');
-  assert.equal(exitCode, 0, 'clean exit code so launchd does not treat it as a crash');
+    child.kill('SIGTERM');
+    const stopped = await until(() => exitCode !== null || exitSignal !== null, 4000);
+    assert.ok(stopped, 'daemon exited after SIGTERM');
+    /* Clean exit(0), not killed by the signal: the handler ran and shut it down. */
+    assert.equal(exitSignal, null, 'exited on its own, not by the raw signal');
+    assert.equal(exitCode, 0, 'clean exit code so launchd does not treat it as a crash');
+  } finally {
+    /* Never leak a live daemon on assertion failure — it would keep the runner alive. */
+    if (exitCode === null && exitSignal === null) child.kill('SIGKILL');
+  }
 });
 
 test('the first tick fires immediately, not only after one interval', async () => {

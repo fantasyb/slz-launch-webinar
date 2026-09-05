@@ -76,9 +76,23 @@ function launch(name) {
   }
 
   const { spawn } = require('child_process');
-  spawn('npx', ['tsx', source, ...process.argv.slice(2)], { stdio: 'inherit' }).on('exit', (c) =>
-    process.exit(c ?? 0),
-  );
+  const child = spawn('npx', ['tsx', source, ...process.argv.slice(2)], { stdio: 'inherit' });
+  /*
+   * An 'error' listener is not optional: without it a failed spawn (npx not on
+   * PATH — the norm under launchd, where PATH is just /usr/bin:/bin:/usr/sbin:/sbin)
+   * throws an UNHANDLED 'error' and crashes with a stack trace. Under a launchd
+   * KeepAlive job that becomes a 10-second respawn loop appending to the log
+   * forever. Turn it into a clean exit(1) with the fix, so the failure is legible
+   * and bounded rather than a crash loop.
+   */
+  child.on('error', (e) => {
+    process.stderr.write(
+      `cairn: could not run '${source}' via tsx (${e.message}).\n` +
+        '      Build the bundle so this fast path exists: npm run cairn:build-cli\n',
+    );
+    process.exit(1);
+  });
+  child.on('exit', (c) => process.exit(c ?? 0));
 }
 
 module.exports = { launch };

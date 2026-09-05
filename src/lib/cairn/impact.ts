@@ -90,6 +90,16 @@ const isPushFirst = (r: RetrievalRecord) => r.source === 'mcp-proxy:result';
 const isPushReminder = (r: RetrievalRecord) => r.source === 'mcp-proxy:result-reminder';
 
 /**
+ * The ASKED-FOR retrievals — a person or agent explicitly searched. Everything
+ * else the gateway writes (`mcp-proxy:description`, `:argument`, `:told-surface`,
+ * `:call`, …) is an unasked annotation or bookkeeping, NOT a pull, and must not
+ * be counted as "asked-for value that surfaced." An allowlist, not "anything
+ * that is not a result push" — the latter silently reported every per-tool
+ * annotation as a confident pull.
+ */
+const PULL_SOURCES = new Set(['cli:find', 'cli:brief', 'mcp:find', 'mcp:brief', 'mcp-proxy:find']);
+
+/**
  * The tool the injection actually fired on. The push ledger row writes the query
  * as `<tool> [result]`, which is the real live tool — preferred over the
  * finding's own `trigger`, which only names the tool the finding was authored
@@ -146,16 +156,25 @@ export function summarizeImpact(
         if (r.session) { row._sessions.add(r.session); sessionSet.add(r.session); }
         if (r.by) agentSet.add(r.by);
       }
-    } else if ((r.returned?.[0]?.strength) === 'strong') {
-      /* A pull (cairn_find / brief) that led with a confident finding. Asked-for value. */
+    } else if (PULL_SOURCES.has(r.source ?? '') && (r.returned?.[0]?.strength) === 'strong') {
+      /* An asked-for pull (find/brief) that led with a confident finding. */
       pullSurfaced++;
     }
   }
 
-  const fired: FiredFinding[] = [...per.values()].map((r) => ({
-    id: r.id, title: r.title, tool: r.tool, cost: r.cost,
-    firstDeliveries: r.firstDeliveries, reminders: r.reminders, sessions: r._sessions.size,
-  }));
+  /*
+   * Only findings that actually FIRST-delivered in this window are "fired". A
+   * reminder whose first delivery predates the window still creates a per-entry
+   * (the reminder path), but reporting it as a ×0 fire would make
+   * distinctFindings mean "findings that fired" for some rows and not others.
+   * Reminder totals stay in the aggregate counter; they just don't invent a fire.
+   */
+  const fired: FiredFinding[] = [...per.values()]
+    .filter((r) => r.firstDeliveries > 0)
+    .map((r) => ({
+      id: r.id, title: r.title, tool: r.tool, cost: r.cost,
+      firstDeliveries: r.firstDeliveries, reminders: r.reminders, sessions: r._sessions.size,
+    }));
 
   const isUnDerivable = (c: FiredFinding['cost']) => c === 'hours' || c === 'days';
   const unDerivableFires = fired.filter((f) => isUnDerivable(f.cost)).reduce((s, f) => s + f.firstDeliveries, 0);

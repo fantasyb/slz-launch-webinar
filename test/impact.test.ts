@@ -82,6 +82,32 @@ test('an unknown finding id still counts as a fire, defaulting to cheap', () => 
   assert.equal(s.fired[0].title, '(unknown finding)');
 });
 
+test('only asked-for pull sources count as pullSurfaced, not proxy annotations', () => {
+  const rows: RetrievalRecord[] = [
+    { at: '2026-09-01T10:00:00Z', by: 'a', query: 'q', returned: [{ id: 'cairn-0001', rank: 1, strength: 'strong' }], source: 'cli:find' },
+    { at: '2026-09-01T10:01:00Z', by: 'a', query: 'q', returned: [{ id: 'cairn-0001', rank: 1, strength: 'strong' }], source: 'mcp-proxy:find' },
+    /* An unasked per-tool annotation surface — must NOT be counted as a pull. */
+    { at: '2026-09-01T10:02:00Z', by: 'a', query: 'sf-all [description]', returned: [{ id: 'cairn-0001', rank: 1, strength: 'strong' }], source: 'mcp-proxy:description' },
+    { at: '2026-09-01T10:03:00Z', by: 'a', query: 'sf-all [told-surface]', returned: [{ id: 'cairn-0001', rank: 1, strength: 'strong' }], source: 'mcp-proxy:told-surface' },
+  ];
+  const s = summarizeImpact(rows, findings);
+  assert.equal(s.pullSurfaced, 2, 'cli:find and mcp-proxy:find count; description/told-surface do not');
+});
+
+test('a reminder whose first delivery is outside the window is not reported as a ×0 fire', () => {
+  const rows: RetrievalRecord[] = [
+    /* first delivery predates the window */
+    push('cairn-0001', 'sf-all', 's1', '2026-08-01T10:00:00Z'),
+    /* only a reminder falls inside it */
+    push('cairn-0001', 'sf-all', 's1', '2026-09-04T10:00:00Z', true),
+  ];
+  const s = summarizeImpact(rows, findings, { sinceMs: Date.parse('2026-09-01T00:00:00Z') });
+  assert.equal(s.pushFirstDeliveries, 0, 'no first delivery in the window');
+  assert.equal(s.pushReminders, 1, 'the reminder is still tallied');
+  assert.equal(s.distinctFindings, 0, 'and no ×0 fire is invented');
+  assert.equal(s.fired.length, 0);
+});
+
 test('humanMinutes reads like time', () => {
   assert.equal(humanMinutes(45), '45m');
   assert.equal(humanMinutes(90), '1h 30m');

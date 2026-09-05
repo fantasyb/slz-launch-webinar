@@ -29,6 +29,13 @@ export interface PlistOpts {
   intervalSeconds: number;
   /** Where the daemon's stdout/stderr are appended. */
   logPath: string;
+  /**
+   * Extra environment for the job. launchd runs agents with a bare
+   * PATH=/usr/bin:/bin:/usr/sbin:/sbin, so a Homebrew/nvm/pkg `node`, `npx`, or
+   * `claude` the daemon shells out to is ENOENT. The installer passes a PATH here
+   * that includes the real node dir; CAIRN_HOME is always set from `home`.
+   */
+  env?: Record<string, string>;
 }
 
 /** `~/Library/LaunchAgents/<label>.plist` — the per-user agent location launchd loads at login. */
@@ -49,6 +56,11 @@ const esc = (s: string) =>
 export function plistContent(o: PlistOpts): string {
   const args = [o.nodeBin, o.daemonBin, '--home', o.home, '--interval', String(o.intervalSeconds)];
   const argXml = args.map((a) => `    <string>${esc(a)}</string>`).join('\n');
+  /* CAIRN_HOME is always present; the installer's PATH (and anything else) merges on top. */
+  const envMap: Record<string, string> = { CAIRN_HOME: o.home, ...(o.env ?? {}) };
+  const envXml = Object.entries(envMap)
+    .map(([k, v]) => `    <key>${esc(k)}</key>\n    <string>${esc(v)}</string>`)
+    .join('\n');
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
     '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
@@ -62,8 +74,7 @@ export function plistContent(o: PlistOpts): string {
     '  </array>',
     '  <key>EnvironmentVariables</key>',
     '  <dict>',
-    '    <key>CAIRN_HOME</key>',
-    `    <string>${esc(o.home)}</string>`,
+    envXml,
     '  </dict>',
     '  <key>RunAtLoad</key>',
     '  <true/>',
