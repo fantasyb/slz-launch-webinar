@@ -78,6 +78,14 @@ function opts(name: string): string[] {
 const splitList = (xs: string[]) => new Set(xs.flatMap((x) => x.split(',').map((s) => s.trim()).filter(Boolean)));
 const WRAP_ONLY = splitList(opts('only'));
 const WRAP_EXCLUDE = splitList(opts('exclude'));
+/*
+ * A separate, explicit assertion — kept distinct from --only so blast-radius
+ * control never doubles as a security override. Naming a headerless HTTP server
+ * here says "I know this one needs no auth; wrap it anyway", the only way past
+ * the OAuth-safety skip. `--only sf-all,notion` used to silently wrap and break
+ * a headerless OAuth `notion`; now it does not.
+ */
+const WRAP_NO_AUTH = splitList(opts('http-no-auth'));
 
 const HOME = process.env.HOME || os.homedir();
 const expand = (p: string) => (p.startsWith('~') ? path.join(HOME, p.slice(1)) : path.resolve(p));
@@ -382,8 +390,8 @@ function wrapServers(file: string, home: string): WrapSummary {
     // An HTTP server with no token in its config likely uses OAuth login, which
     // the gateway can't carry yet; wrapping it would break it. Leave it direct
     // unless --only names it (the operator asserting it needs no auth).
-    if (isHttp(entry) && !isStdio(entry) && !httpHasAuth(entry) && !WRAP_ONLY.has(name)) {
-      summary.skipped.push({ name, why: 'http server with no auth header — may use OAuth login (not yet supported); left direct. Wrap it with --only ' + name + ' if it needs no auth.' });
+    if (isHttp(entry) && !isStdio(entry) && !httpHasAuth(entry) && !WRAP_NO_AUTH.has(name)) {
+      summary.skipped.push({ name, why: 'http server with no auth header — may use OAuth login (not yet supported); left direct. Wrap it with --http-no-auth ' + name + ' if it genuinely needs no auth.' });
       continue;
     }
     if (name.includes('/') || name.includes('\\') || name.includes('..')) {
@@ -744,11 +752,30 @@ function main() {
     if (!isRepo) {
       try {
         execFileSync('git', ['-C', home, 'init', '-q'], { stdio: 'ignore' });
-        const gi = path.join(home, '.gitignore');
-        if (!fs.existsSync(gi)) fs.writeFileSync(gi, '.cairn-secrets/\ndrafts/\nretrievals/\n');
         console.log(`  git-init   corpus at ${home} (findings commit themselves; never pushed)`);
       } catch {
         /* git absent — seal will sign but skip committing; not fatal */
+      }
+    }
+    /*
+     * Ensure the directories that hold SECRETS or scratch are gitignored — every
+     * time, not only on a fresh init, because a corpus that was already a repo
+     * would otherwise never gain the rule. `wrapped/` is the important addition:
+     * it stashes each wrapped server's ORIGINAL config verbatim, and an HTTP
+     * server is wrapped only when it carries an auth header, so a wrapped/ stash
+     * contains a bearer token by construction. Left un-ignored, one `git add -A`
+     * in the corpus (which findings commit into) would publish it.
+     */
+    if (!DRY) {
+      try {
+        const gi = path.join(home, '.gitignore');
+        const want = ['.cairn-secrets/', 'drafts/', 'retrievals/', 'wrapped/'];
+        const existing = fs.existsSync(gi) ? fs.readFileSync(gi, 'utf8') : '';
+        const lines = new Set(existing.split('\n').map((l) => l.trim()));
+        const missing = want.filter((w) => !lines.has(w));
+        if (missing.length) fs.writeFileSync(gi, (existing && !existing.endsWith('\n') ? existing + '\n' : existing) + missing.join('\n') + '\n');
+      } catch {
+        /* best-effort: a corpus without git just cannot leak by commit anyway */
       }
     }
   }
@@ -872,9 +899,9 @@ function main() {
   console.log('    longer depends on you opening a session. Still gated by the same policy —');
   console.log('    it does nothing until execution is enabled for this corpus.');
   console.log('\nStill scoped, on purpose:');
-  console.log('  · Only stdio MCP servers are wrapped; url/http servers are left as-is (they');
-  console.log('    cannot be stdio-wrapped). Re-run install after adding a server to wrap it,');
-  console.log('    or pass --no-wrap to keep every server direct.');
+  console.log('  · Stdio and HTTP (token-auth) MCP servers are wrapped; a headerless HTTP server');
+  console.log('    (likely OAuth) is left direct until --http-no-auth names it. Re-run install');
+  console.log('    after adding a server; --only/--exclude scope it, --no-wrap keeps all direct.');
   console.log('  · Pure Bash/CLI work with no MCP server is not covered here; that is the');
   console.log('    opt-in PostToolUse hook.');
   console.log('\nUndo any time: npm run cairn:install -- --uninstall  (restores every wrapped server)');

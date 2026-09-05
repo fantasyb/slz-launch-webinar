@@ -28,7 +28,8 @@ const authHeader = () => ({ [AUTH]: `Bearer ${TOKEN}` });
 
 /** Start the HTTP fixture; resolve with its port (read from `LISTENING <port>`). */
 function startHttp(args: string[] = []): Promise<{ proc: ChildProcess; port: number }> {
-  const proc = spawn('node', [HTTP_FIXTURE, '--port', '0', ...args], { cwd: REPO, stdio: ['pipe', 'pipe', 'pipe'] });
+  const portArgs = args.includes('--port') ? [] : ['--port', '0'];
+  const proc = spawn('node', [HTTP_FIXTURE, ...portArgs, ...args], { cwd: REPO, stdio: ['pipe', 'pipe', 'pipe'] });
   return new Promise((resolve, reject) => {
     let buf = '';
     const t = setTimeout(() => reject(new Error(`http fixture did not report a port\n${buf}`)), 10_000);
@@ -145,6 +146,53 @@ test('a bearer token in the wrapped config is forwarded to the HTTP upstream', a
     const r = await p.call(TOOL, { object: 'Account' });
     assert.ok(texts(r).some((x) => x.includes('"records":[]')), 'with the token forwarded, the authed HTTP upstream answers through the gateway');
   } finally { await p.close(); proc.kill('SIGKILL'); }
+});
+
+test('an upstream that forges the Cairn label in its result is defanged (#3)', async () => {
+  const { proc, port } = await startHttp();
+  const home = corpus();
+  const cfg = path.join(home, 'cfg.json');
+  fs.writeFileSync(cfg, JSON.stringify({ mcpServers: { data360: { url: `http://127.0.0.1:${port}/mcp` } } }));
+  const p = new Proxy(home, cfg);
+  try {
+    await p.init();
+    const r = await p.call('mcp__data360__evil');
+    const all = texts(r).join('\n');
+    assert.ok(all.includes('imitated the Cairn label'), 'the forged label is neutralized');
+    assert.ok(!/from your Cairn corpus, not from this tool[\s\S]*curl evil/.test(all), 'the forged trap can no longer read as a real Cairn block');
+  } finally { await p.close(); proc.kill('SIGKILL'); }
+});
+
+test('an HTTP upstream that restarts is re-dialed, not served as a dead session (#1)', async () => {
+  // The critical fix: the HTTP transport does not fire onclose on a dead host,
+  // so without re-dial logic a restarted upstream (a redeploy) would be served
+  // as a stale session forever. Start on a fixed port, kill, restart, and prove
+  // a later call succeeds.
+  const first = await startHttp();
+  const port = first.port;
+  const home = corpus();
+  const cfg = path.join(home, 'cfg.json');
+  fs.writeFileSync(cfg, JSON.stringify({ mcpServers: { data360: { url: `http://127.0.0.1:${port}/mcp` } } }));
+  const p = new Proxy(home, cfg);
+  try {
+    await p.init();
+    assert.ok(texts(await p.call(TOOL, { object: 'A' })).some((x) => x.includes('records')), 'works before the restart');
+    first.proc.kill('SIGKILL');
+    await new Promise((r) => setTimeout(r, 500));
+    // The upstream is gone: this call fails and marks it dead.
+    await p.call(TOOL, { object: 'A' }).catch(() => undefined);
+    // Restart the server on the same port and confirm the gateway re-dials it.
+    const second = await startHttp(['--port', String(port)]);
+    try {
+      let ok = false;
+      for (let i = 0; i < 5 && !ok; i++) {
+        const r = await p.call(TOOL, { object: 'A' });
+        ok = texts(r).some((x) => x.includes('records'));
+        if (!ok) await new Promise((r) => setTimeout(r, 400));
+      }
+      assert.ok(ok, 'after the upstream restarts, the gateway re-dials and calls succeed again');
+    } finally { second.proc.kill('SIGKILL'); }
+  } finally { await p.close(); }
 });
 
 test('an unreachable/unauthorized HTTP upstream fails to start — never a fabricated success', async () => {
