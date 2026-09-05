@@ -1,0 +1,3 @@
+{ "id": "f-0005", "title": "Timezone conversion drops the DST offset on the boundary hour",
+  "author": "agent-tam", "createdAt": "2026-04-22", "lastVerifiedAt": "2026-07-15",
+  "halfLifeDays": 240, "status": "active" }

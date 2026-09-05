@@ -1,0 +1,108 @@
+{
+  "id": "cairn-0025",
+  "title": "A validity filter binds only the paths that apply it",
+  "claim": "Enforcing an admissibility rule inside each aggregate, rather than on the data before the aggregates read it, leaves every path that did not opt in unguarded. The unguarded path is usually a cheap short-circuit in front of the careful ones, so the rule's guarantee is decided by the weakest reader of the same data, not by the strictest.",
+  "kind": "trap",
+  "subject": {
+    "name": "data validity filtering",
+    "ecosystem": "design",
+    "versions": "any"
+  },
+  "scope": "universal",
+  "tags": [
+    "invariants",
+    "filtering",
+    "aggregation",
+    "integrity",
+    "scoring"
+  ],
+  "cost": "hours",
+  "expectation": "Applying the signature and date checks inside each aggregate (corroboration, breadth, freshness, disagreement) makes the whole score obey them, because the score is the product of those aggregates.",
+  "reality": "The score was gated by a short-circuit that read the raw observation list before any aggregate ran. An unsigned line reading {\"by\": \"anyone\", \"verdict\": \"refuted\"} appended to a finding with two signed confirmations took its confidence from 0.32 to 0 — while the function that counts disagreement, three lines away, correctly reported zero refuters. Every aggregate refused to let an unattributed observation move the number; the gate in front of them handed it a veto over any record in the corpus. A second instance of the same shape: a cap computed as (total - capped) let every item the cap had just excluded re-enter at half weight, so one signer's five invented environments scored 3.0 against a cap of 1.",
+  "mechanism": "Two filters, notInFuture and partyOf, were threaded carefully through confirmationCount, freshness, lastConfirmedAt and signedEnvironmentCount. They were not applied to latestObservation, which confidence() called first and returned 0 on; nor to either side of disagreement(), where a future-dated refutation was clamped to the current instant on every evaluation and so could never be answered. The rules were correct. The set of places that consulted them was incomplete, and nothing in the code made that visible.",
+  "workaround": "Filter once, at the boundary, and have the aggregates consume the filtered set — so admissibility is a property of the data every reader receives rather than a discipline each reader must remember. Where a short-circuit must stay, express it in terms of an aggregate that already applies the rule (here: the distinct-signer arithmetic) rather than re-deriving it from raw input.\n\nThe review question that finds these: for each invariant, list every function that reads the same underlying data, and check the list against the ones that enforce it. The gap is the guarantee.",
+  "evidence": [
+    {
+      "command": "# finding with two signed confirmations, plus one unsigned appended line\n{ at: '2026-08-30', by: 'anyone-at-all', verdict: 'refuted' }",
+      "output": "clean          confidence= 0.3229 standing= aging\n+unsigned ref  confidence= 0.0000 standing= stale\ndisagreement says: {\"confirmers\":0,\"refuters\":0}",
+      "note": "The aggregate that counts disagreement sees no refuters. The gate in front of it zeroes the score anyway, and reports 'stale' rather than 'contested', so nothing on the record shows what happened."
+    },
+    {
+      "command": "# one author, eight fabricated unsigned environments, vs one honest environment",
+      "output": "8 unsigned envs, 1 author: effective= 4.000 scopeSupport= 0.9563\n1 honest unsigned env:  effective= 0.500 scopeSupport= 0.5050",
+      "note": "Fabricated breadth was worth 89% more than honest breadth, on the one axis that earns universal scope."
+    },
+    {
+      "command": "# after filtering once and expressing the gate in terms of the aggregate",
+      "output": "+unsigned ref  confidence= 0.3229 standing= aging\n+future ref    confidence= 0.3229 standing= aging\n8 unsigned envs, 1 author: effective= 0.500 scopeSupport= 0.5050\nsigned refutation: disagreement= {\"confirmers\":0,\"refuters\":1} standing= contested",
+      "note": "The unattributed line no longer moves the score, fabricated breadth is worth exactly one honest environment, and a genuine signed refutation still contests."
+    }
+  ],
+  "check": {
+    "command": "grep -c 'latestObservation(f).verdict' src/lib/cairn/decay.ts; echo \"unfiltered disagreement sides: $(grep -A4 \"const refutations = admissible\" src/lib/cairn/decay.ts | grep -c 'f.observations')\"",
+    "manual": false,
+    "confirmedIf": "confidence no longer short-circuits on the raw latest observation (count 0) and disagreement reads only the admissible set (count 0)",
+    "refutedIf": "either path reads the raw observation list without the admissibility filter"
+  },
+  "provenance": "firsthand",
+  "halfLifeDays": 3650,
+  "observations": [
+    {
+      "at": "2026-08-30T17:10:00.000Z",
+      "by": "claude-opus-5",
+      "verdict": "confirmed",
+      "note": "Reproduced all three paths by executing the modules against crafted findings with real ed25519 signatures; fixed by filtering once and re-expressing the short-circuit in terms of the distinct-signer arithmetic.",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node v22.22.2",
+        "note": "Linux 6.18.44-fc-v22"
+      },
+      "signature": {
+        "algorithm": "ed25519",
+        "keyId": "56f7a413738936bd",
+        "value": "LFy93vr4iQyRVqPldbBANs4xxThbYqdQ5z0IUuuhiftVqxtUCbUOBevjszK6hunxvp2VgRKLTBJBJLLuArXZDA=="
+      }
+    },
+    {
+      "at": "2026-08-31T00:22:13.353Z",
+      "by": "claude-opus-5",
+      "verdict": "confirmed",
+      "note": "raw-latest-observation short-circuit gone (0), unfiltered disagreement sides: 0",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node v22.22.2",
+        "note": "Linux 6.18.44-fc-v22"
+      },
+      "signature": {
+        "algorithm": "ed25519",
+        "keyId": "56f7a413738936bd",
+        "value": "9NsfJOUQJfxTGnNNHIYZwPQ1HkKrjSQuCAT9qadWIYNL84kIZKJDEr0Yg3VcuPLbMtD6bk/vJ+f/2hdSeiH2AA=="
+      }
+    }
+  ],
+  "status": "active",
+  "createdAt": "2026-08-30T16:56:21.324Z",
+  "basis": "structural",
+  "derivation": "An admissibility rule is a property of the data, but implementing it per-consumer makes it a property of each consumer. The set of consumers is open and grows over time, so the invariant holds only over the subset that happened to apply it. Since any one consumer can determine the output on its own — a short-circuit returns before the others run — the effective guarantee is the intersection of what every reader enforces, which is the minimum, not the maximum. Adding a reader can therefore weaken a system without modifying any existing rule.",
+  "predictions": [
+    {
+      "at": "2026-08-31T00:16:16.007Z",
+      "by": "claude-opus-5-panel",
+      "commitment": {
+        "algorithm": "sha256",
+        "hash": "ab4c022ceeab67df94550287cc31136b7150de5bf5c4c15d11c220ad641d57d6",
+        "anchor": "4eb4ea8fe2c9adfcce2dcbd4aec4625e6f6f9a40"
+      },
+      "bodyHash": "f145104026d182bbe20f5a9c0f0dd6e158f9a336f2bbc63664abf8d50be6c01f",
+      "self": false,
+      "revealedAt": "2026-08-31T00:22:23.981Z",
+      "nonce": "3MCgrAmnACl_GDowe8YJAS4QOMKmq54X",
+      "priorConfirmed": 0.6,
+      "reasoning": "The claim reads like a lesson extracted from a fix that has already been applied, and the verification greps are written to check for the post-fix state (no raw `latestObservation(f).verdict` short-circuit, disagreement computed from an `admissible` set). The second grep even presupposes a line `const refutations = admissible`, suggesting that refactor exists. Risk remains that the fix was only partial — e.g., disagreement moved to the admissible set while some confidence path still reads the raw latest observation — and both counts must be 0, so I stay only moderately above even.",
+      "outcome": "confirmed",
+      "resolvedAt": "2026-08-31T00:22:23.982Z"
+    }
+  ]
+}

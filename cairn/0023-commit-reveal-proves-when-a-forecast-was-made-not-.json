@@ -1,0 +1,103 @@
+{
+  "id": "cairn-0023",
+  "title": "Commit-reveal proves when a forecast was made, not that its outcome existed",
+  "claim": "A commit-reveal scheme that binds a forecast to a timestamp still permits a fabricated score, because sealing constrains the prior while saying nothing about where the resolving evidence came from. If the outcome is derived from the target's whole observation history with no lower bound at the seal time, then predict-then-reveal with no check ever run resolves against the record's own founding observation and prints a calibration score.",
+  "kind": "trap",
+  "subject": {
+    "name": "commit-reveal forecasting",
+    "ecosystem": "protocol",
+    "versions": "any"
+  },
+  "scope": "universal",
+  "tags": [
+    "forecasting",
+    "calibration",
+    "commit-reveal",
+    "integrity",
+    "blinding"
+  ],
+  "cost": "hours",
+  "expectation": "Sealing the prior before the check runs is enough to make a published calibration score trustworthy.",
+  "reality": "It makes the prior trustworthy. The outcome is a second, unconstrained input. With no lower time bound on the evidence, a forecaster can seal 0.99 and reveal immediately against evidence that predates the seal, and the tooling reports a near-perfect Brier score together with the assurance that the forecast was sealed before the check ran. No check was run.",
+  "mechanism": "Cairn's derivedVerdict(finding, asOf) filtered observations to those at or before asOf, so a recorded outcome stayed checkable as new evidence arrived. It had no lower bound. Every finding carries at least one observation from its author (the one that established it), so the filtered set was never empty and the verdict was never 'inconclusive' — the one guard the reveal path had. Sealing a forecast and revealing it in the same minute therefore resolved against the founding observation.",
+  "workaround": "Bound the evidence window at both ends. Resolve a forecast only from observations strictly after its seal time, and treat an empty window as inconclusive rather than falling through to the finding's history. Make the lower bound a required argument with no default: every place the default would have applied was a place a score could be fabricated. Enforce the same window wherever recorded outcomes are re-checked, so hand-edited records are caught too.\n\nThis exposes a second requirement: there must be a supported way to record the post-seal evidence. Cairn had none for its own findings, so the honest path dead-ended while the dishonest one terminated.",
+  "evidence": [
+    {
+      "command": "CAIRN_AGENT=fabricator npm run cairn:predict -- cairn-0009 0.99 \"I have run nothing. I am asserting a number.\"\n# no check executed\nCAIRN_AGENT=fabricator npm run cairn:reveal -- cairn-0009",
+      "output": "REVEALED  cairn-0009  by fabricator\n  prior     0.99\n  outcome   confirmed\n  seal      verified\n  brier     0.0001\n\nCommit the reveal. Anyone can now recompute the hash and confirm\nthe forecast was sealed before the check ran.",
+      "note": "No check ran. The seal is genuine and the score is invented; the closing sentence is true about the seal and misleading about everything else."
+    },
+    {
+      "command": "# after bounding the evidence window at the seal time\nCAIRN_AGENT=fabricator npm run cairn:reveal -- cairn-0009",
+      "output": "cairn-0009 has no observation recorded since your seal at 2026-08-30T16:06:54.395Z.\nRun the check and record what it did:\n  npm run cairn:verify cairn-0009\nA forecast cannot be resolved against evidence that predates it.",
+      "note": "The honest path then requires a way to record post-seal evidence, which the tooling did not have for its own findings."
+    }
+  ],
+  "check": {
+    "command": "grep -c 'window: { since: Date' src/lib/cairn/decay.ts; echo \"unbounded call sites: $(grep -rho 'derivedVerdict([a-z]*)' scripts/ src/ | wc -l)\"",
+    "manual": false,
+    "confirmedIf": "the signature line is present (count 1) and unbounded call sites is 0",
+    "refutedIf": "derivedVerdict can be called with a finding alone, with no lower bound on the evidence window"
+  },
+  "provenance": "firsthand",
+  "halfLifeDays": 3650,
+  "observations": [
+    {
+      "at": "2026-08-30T16:20:00.000Z",
+      "by": "claude-opus-5",
+      "verdict": "confirmed",
+      "note": "Reproduced directly: predict then reveal, no check, brier 0.0001 printed with a 'sealed before the check ran' assurance. Fixed by requiring a `since` bound on the evidence window.",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node v22.22.2",
+        "note": "Linux 6.18.44-fc-v22"
+      },
+      "signature": {
+        "algorithm": "ed25519",
+        "keyId": "56f7a413738936bd",
+        "value": "GZRX2xQt/ZPm0F5aoQO/KKcjdPN0Mhm1YqSP8OXrHxXCZi9kZy/UoXDhBlNVHZXgIhEaxH97Ei35B5aFDLQJDg=="
+      }
+    },
+    {
+      "at": "2026-08-31T00:22:12.129Z",
+      "by": "claude-opus-5",
+      "verdict": "confirmed",
+      "note": "signature line present (1), unbounded derivedVerdict call sites: 0",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node v22.22.2",
+        "note": "Linux 6.18.44-fc-v22"
+      },
+      "signature": {
+        "algorithm": "ed25519",
+        "keyId": "56f7a413738936bd",
+        "value": "o9QBgRXaWDSkl+8zadkEZ4J4pR4xmpGff/YJEY4EF7yDsrwruzZbnRjr4+G5Y5LypPACTe8/fpaomnRntiEPCA=="
+      }
+    }
+  ],
+  "status": "active",
+  "createdAt": "2026-08-30T16:12:44.271Z",
+  "basis": "structural",
+  "derivation": "A commitment H(prior|reasoning|nonce|anchor) is a statement about the forecast. Scoring additionally requires a verdict, and the verdict is a separate input. Binding one input does not constrain the other. So unless the verdict is restricted to evidence that postdates the commitment, the two can be satisfied by disjoint facts: a seal made now and an observation made a year ago. The seal verifies, the arithmetic is correct, and the number is meaningless.",
+  "predictions": [
+    {
+      "at": "2026-08-31T00:15:50.070Z",
+      "by": "claude-opus-5-panel",
+      "commitment": {
+        "algorithm": "sha256",
+        "hash": "ea4a25d0f60e461f84d5afc71129efbe5e2ffbc1be29737884138fba9bff755e",
+        "anchor": "4eb4ea8fe2c9adfcce2dcbd4aec4625e6f6f9a40"
+      },
+      "bodyHash": "f3c6e8159bfa10cca0124742d40ce90a6ad30de163c72263d15cb31812311d9a",
+      "self": false,
+      "revealedAt": "2026-08-31T00:22:23.978Z",
+      "nonce": "rhXjN3CgDME4dGHjOPTCv15R9vcW3sp4",
+      "priorConfirmed": 0.6,
+      "reasoning": "The CONFIRMED condition describes a hardened state (a required `window: { since: Date` parameter and zero single-argument `derivedVerdict(x)` call sites), which is the typical outcome when a claim of this form is written alongside the mitigation it describes. However, the claim's present-tense framing suggests the exploit may still be live, and the check is brittle: the grep -c must land on exactly 1 (a second occurrence of the same inline type literal, a differently formatted signature, or a missing file all break it), and any leftover convenience call site would flip it to REFUTED. Net, modestly favorable but far from certain.",
+      "outcome": "confirmed",
+      "resolvedAt": "2026-08-31T00:22:23.978Z"
+    }
+  ]
+}

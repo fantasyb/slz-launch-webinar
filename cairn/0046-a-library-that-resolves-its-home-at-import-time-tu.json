@@ -1,0 +1,69 @@
+{
+  "id": "cairn-0046",
+  "title": "A library that resolves its home at import time turns a wrong env var into 'Connection closed'",
+  "claim": "An MCP stdio server that throws while its modules are being loaded is reported to the client as nothing but 'MCP error -32000: Connection closed'; the thrown message goes to the child's stderr, which the client does not surface.",
+  "kind": "trap",
+  "subject": {
+    "name": "@modelcontextprotocol/sdk stdio transport",
+    "ecosystem": "npm",
+    "versions": ">=1.0.0"
+  },
+  "scope": "environment-specific",
+  "appliesTo": "any MCP client speaking stdio to a server process, when the server fails before writing its first JSON-RPC message",
+  "tags": [
+    "mcp",
+    "stdio",
+    "startup",
+    "diagnosability",
+    "configuration"
+  ],
+  "cost": "hours",
+  "expectation": "A server that cannot start says why. The client is spawning the process, so a failure to initialise will surface the reason the way any failed child process does.",
+  "reality": "The client observes only EOF on stdout and reports 'MCP error -32000: Connection closed'. There is no field in the protocol for a startup failure, because no message was ever sent. The cause is on the child's stderr, which most clients discard, and the error the user reads names neither the failing module nor the variable that was wrong.",
+  "mechanism": "JSON-RPC over stdio begins at the first line the server writes. A throw during module evaluation exits before that, so from the transport's side the only observable event is the pipe closing. Everything the process said on the way down went to a stream the client is not obliged to keep.",
+  "workaround": "Two halves. Diagnosing: run the server's own command by hand in a terminal and read stderr -- that is where the real error is, and it is one command away. Preventing: in any code an MCP server imports, never resolve an environment-dependent path at module scope. `const DIR = homePath('keys')` runs during require and throws where the host has no stack to catch it on; make it `const dir = () => homePath('keys')` and the same failure becomes catchable at the point of use, which lets the server degrade instead of dying.",
+  "evidence": [
+    {
+      "command": "node bin/cairn-proxy.js --server \"npx -y @modelcontextprotocol/server-everything\"  # with CAIRN_HOME pointing at a directory with no cairn/ in it",
+      "output": "McpError: MCP error -32000: Connection closed",
+      "note": "What the client reported. Thirteen working upstream tools became unreachable, and the message names neither Cairn nor the variable."
+    },
+    {
+      "command": "the same run, reading the child's stderr instead",
+      "output": "Error: CAIRN_HOME is set to /tmp/cairn-smoke-G4BPBd, which has no cairn/ directory. Point it at a corpus checkout, or unset it.\n    at cairnHome (dist/cli/mcp-proxy.js:27988:13)\n    at homePath (dist/cli/mcp-proxy.js:27999:36)\n    at Object.<anonymous> (dist/cli/mcp-proxy.js:28003:16)",
+      "note": "Object.<anonymous> is module scope: src/lib/cairn/keys.ts line 10, `export const KEYS_DIR = homePath('keys')`. Eight such consts existed across five library files; one wrong variable in any of them was fatal to every tool behind the gateway."
+    },
+    {
+      "command": "npm run cairn:gateway-smoke",
+      "output": "PASS -- the gateway is transparent to this server. (13 tools direct, 13 through the gateway degraded, identical instructions, identical call bytes)",
+      "note": "After the paths were made lazy and the proxy taught to forward untouched when it cannot reach its corpus."
+    }
+  ],
+  "check": {
+    "command": "printf 'throw new Error(\"CAIRN_HOME is set to /nope, which has no corpus directory\");\\n' > /tmp/cairn-import-throw.mjs && node -e 'const {Client}=require(\"@modelcontextprotocol/sdk/client/index.js\");const {StdioClientTransport}=require(\"@modelcontextprotocol/sdk/client/stdio.js\");(async()=>{const c=new Client({name:\"probe\",version:\"0\"},{capabilities:{}});let msg=\"\";try{await c.connect(new StdioClientTransport({command:\"node\",args:[\"/tmp/cairn-import-throw.mjs\"]}));}catch(e){msg=String(e.message||e);}console.log(\"client saw:\",msg||\"(connected)\");process.exit(msg.includes(\"Connection closed\")&&!msg.includes(\"no corpus directory\")?0:1);})()'",
+    "confirmedIf": "exit 0: the client's error says 'Connection closed' and carries no trace of the message the server actually threw",
+    "refutedIf": "exit 1: the client either connected, or was given the underlying error text",
+    "absentWhen": "an MCP client that captures the child's stderr and includes it in the connection error, or a transport that is not stdio",
+    "manual": false
+  },
+  "provenance": "firsthand",
+  "halfLifeDays": 365,
+  "observations": [
+    {
+      "at": "2026-09-02T06:20:28.212Z",
+      "by": "claude-opus-5",
+      "verdict": "confirmed",
+      "note": "The proxy exited 1 during require, before main(), with 'CAIRN_HOME is set to <dir>, which has no cairn/ directory' on the child's stderr, while the MCP client reported only 'MCP error -32000: Connection closed' and listed no tools. The stack named Object.<anonymous>, which is module scope: a top-level const calling homePath(). Found by pointing the gateway at a third-party MCP server -- the first non-fixture upstream it had ever wrapped. The trial harness could never have caught it, because the harness seeds the CAIRN_HOME it points at, so the misconfigured path did not exist in any measurement.",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node v22.22.2",
+        "note": "@modelcontextprotocol/sdk 1.x, stdio transport"
+      }
+    }
+  ],
+  "status": "active",
+  "createdAt": "2026-09-02T06:20:28.212Z",
+  "triggers": [],
+  "visibility": "shared"
+}

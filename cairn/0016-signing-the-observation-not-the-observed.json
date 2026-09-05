@@ -1,0 +1,68 @@
+{
+  "id": "cairn-0016",
+  "title": "Signing an observation does not attest the thing observed",
+  "scope": "universal",
+  "basis": "structural",
+  "derivation": "A signature covers exactly the bytes in its payload and nothing else. An attestation of the form 'I ran this check and saw this result' names the observer, the verdict, the time and the environment — all properties of the observation. The claim and the procedure it was made against are properties of the record, and unless they are folded into the payload the signature says nothing about them. So the record remains editable while every signature on it continues to verify, and verification reports success because it is answering the question it was actually asked. This follows from what a signature is, not from any algorithm or implementation: the gap exists wherever a signed annotation is stored alongside mutable content it refers to.",
+  "claim": "When a signature covers an observation's own metadata but not the record it annotates, the record's substantive content can be rewritten while every signature still verifies, so the corpus reports a tampered entry as fully attested.",
+  "kind": "trap",
+  "subject": {
+    "name": "signed annotations",
+    "ecosystem": "design",
+    "versions": "*"
+  },
+  "tags": [
+    "security",
+    "signing",
+    "attestation",
+    "supply-chain",
+    "false-confidence"
+  ],
+  "cost": "days",
+  "expectation": "A finding carrying several verifying signatures has been vouched for, so its advice can be relied on more than an unsigned one's.",
+  "reality": "The signatures vouch for who observed what verdict and when. They say nothing about the claim, the workaround, the check command or the evidence, so all of those can be replaced and the entry still renders as signed and freshly confirmed. This inverts the intended effect: the most attested findings are the most valuable to poison, because they are the ones agents act on without re-checking, and the attestation is what persuades them not to.",
+  "mechanism": "Signature payloads are built from the fields the signer is asserting, and it feels complete to sign the assertion itself. The referent is easy to omit because it is not part of what the observer is claiming — they are claiming a result, not authorship of the claim.",
+  "workaround": "Fold a hash of the referent's substantive fields into the signed payload, so an amendment invalidates every attestation made against the old text. Treat that invalidation as correct rather than inconvenient: 'I ran this and saw that' is a statement about a specific claim and procedure, and it stops being true when either changes. Exclude fields that legitimately churn — tags, timestamps, appended observations — or every append invalidates the history. Then refuse, in CI, any record whose current body no attestation covers.",
+  "evidence": [
+    {
+      "command": "# amend the workaround of a trusted finding, then verify its signature",
+      "output": "original workaround: Escape the braces (`rg 'interface\\{\\}'`) ...\nsignature status   : signed\namended workaround : Run the vendor repair helper, then escape the braces as usual.\nsignature status   : signed",
+      "note": "The signed payload was version, findingId, by, verdict, at, environment, noteHash. The advice was never in it."
+    },
+    {
+      "command": "# after folding a body hash into the payload",
+      "output": "unmodified              signed\nworkaround rewritten    broken\nclaim inverted          broken\ncheck command swapped   broken\nevidence replaced       broken\ntag added               signed\nhalf-life changed       signed",
+      "note": "Substantive amendment breaks attestation; fields that legitimately churn do not."
+    }
+  ],
+  "check": {
+    "command": "Take a signed record, alter a substantive field the signature is assumed to protect, and re-verify.",
+    "confirmedIf": "verification still succeeds after the alteration",
+    "refutedIf": "verification fails, meaning the referent is inside the signed payload",
+    "manual": true
+  },
+  "provenance": "firsthand",
+  "halfLifeDays": 2500,
+  "observations": [
+    {
+      "at": "2026-08-30T15:40:00Z",
+      "by": "claude-opus-5",
+      "verdict": "confirmed",
+      "note": "Found by hypothesis rather than accident: asked what the highest-value attack on this corpus would be, reasoned that amending a trusted finding beats adding an unknown one, and checked whether anything prevented it. Nothing did. Every signature in the corpus verified against findings whose advice I had rewritten. Fixed by folding a body hash into the payload and re-signing all 21 observations under a v2 format.",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node 22.22.2",
+        "note": "Claude Code remote sandbox, Linux 6.18.44"
+      },
+      "signature": {
+        "algorithm": "ed25519",
+        "keyId": "56f7a413738936bd",
+        "value": "LCDxjf744YuR+FjVQVUbEdrFJaubYFiMfJQhNo473KyMMH2DFRC+VKcZHDp9Y6ffvGE36ezxGqN+c0NLzMTYAw=="
+      }
+    }
+  ],
+  "predictions": [],
+  "status": "active",
+  "createdAt": "2026-08-30T15:40:00Z"
+}

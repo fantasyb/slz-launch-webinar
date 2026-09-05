@@ -1,0 +1,136 @@
+{
+  "origin": "demo-peer.example (SYNTHETIC FIXTURE)",
+  "generatedAt": "2026-08-30T15:02:05.623Z",
+  "findings": [
+    {
+      "id": "cairn-0001",
+      "title": "BSD sed -i requires an explicit backup suffix",
+      "claim": "On macOS, `sed -i` without an argument consumes the next token as the backup suffix, so `sed -i s/a/b/ file` silently treats the expression as the suffix and fails, unlike GNU sed where -i takes no argument.",
+      "kind": "trap",
+      "subject": {
+        "name": "sed",
+        "ecosystem": "shell",
+        "versions": "BSD"
+      },
+      "scope": "environment-specific",
+      "appliesTo": "macOS and other BSD userlands, where sed is not GNU sed.",
+      "tags": [
+        "macos",
+        "bsd",
+        "sed",
+        "portability"
+      ],
+      "cost": "minutes",
+      "expectation": "A script using `sed -i` that works on Linux CI works on a developer laptop.",
+      "reality": "BSD sed reads the next token as the backup suffix. The script fails, or worse, edits the wrong path. Scripts written on Linux break only on macOS, and vice versa.",
+      "mechanism": "BSD sed defines -i as taking a mandatory extension argument; GNU sed defines it as optional.",
+      "workaround": "Use `sed -i '' -e expr file` on BSD and `sed -i -e expr file` on GNU, or avoid in-place editing in portable scripts entirely.",
+      "halfLifeDays": 2000,
+      "evidence": [
+        {
+          "command": "# synthetic fixture — no command was run",
+          "output": "(fixture)",
+          "note": "This bundle exists to exercise the merge path, not to assert anything."
+        }
+      ],
+      "check": {
+        "command": "uname -s",
+        "confirmedIf": "the platform matches appliesTo and the described behaviour reproduces",
+        "refutedIf": "the behaviour does not reproduce on a matching platform",
+        "manual": true
+      },
+      "provenance": "firsthand",
+      "predictions": [],
+      "status": "active",
+      "createdAt": "2026-08-28T10:00:00Z",
+      "observations": [
+        {
+          "at": "2026-08-28T10:00:00Z",
+          "by": "peer-agent-demo",
+          "verdict": "confirmed",
+          "note": "SYNTHETIC FIXTURE observation, generated to demonstrate federation. Not a real measurement.",
+          "environment": {
+            "os": "darwin",
+            "arch": "arm64",
+            "runtime": "node 22.x",
+            "note": "SYNTHETIC FIXTURE — not a real machine"
+          },
+          "signature": {
+            "algorithm": "ed25519",
+            "keyId": "8a992e4e86f3ed1e",
+            "value": "T25FHRlUy1KWS4stSaXH3Q8vI/C8KpQbv05re7zh5GE8dTBeQy+jL/Tg2rnH3NDbSQdP/HqJnQHSLvnYLzziBg=="
+          }
+        }
+      ]
+    },
+    {
+      "id": "cairn-0002",
+      "title": "Case-insensitive filesystems make two distinct git paths collide",
+      "claim": "On a default macOS volume the filesystem is case-insensitive, so a repository containing both Foo.ts and foo.ts checks out only one of them and reports the other as deleted.",
+      "kind": "limitation",
+      "subject": {
+        "name": "git",
+        "ecosystem": "shell",
+        "versions": "*"
+      },
+      "scope": "environment-specific",
+      "appliesTo": "Default APFS and HFS+ volumes on macOS, and Windows NTFS by default.",
+      "tags": [
+        "macos",
+        "filesystem",
+        "git",
+        "case-sensitivity"
+      ],
+      "cost": "hours",
+      "expectation": "A clean clone of a repository produces a clean working tree.",
+      "reality": "git status reports a deletion nobody made, and the deletion reappears after every checkout. Committing the apparent fix deletes the file for contributors on case-sensitive systems.",
+      "mechanism": "Git tracks paths as bytes; the filesystem folds case. Two index entries map to one directory entry.",
+      "workaround": "Rename one path so the pair no longer collides, or work from a case-sensitive volume. Never resolve it by committing the phantom deletion.",
+      "halfLifeDays": 3000,
+      "evidence": [
+        {
+          "command": "# synthetic fixture — no command was run",
+          "output": "(fixture)",
+          "note": "This bundle exists to exercise the merge path, not to assert anything."
+        }
+      ],
+      "check": {
+        "command": "uname -s",
+        "confirmedIf": "the platform matches appliesTo and the described behaviour reproduces",
+        "refutedIf": "the behaviour does not reproduce on a matching platform",
+        "manual": true
+      },
+      "provenance": "firsthand",
+      "predictions": [],
+      "status": "active",
+      "createdAt": "2026-08-28T10:00:00Z",
+      "observations": [
+        {
+          "at": "2026-08-28T10:00:00Z",
+          "by": "peer-agent-demo",
+          "verdict": "confirmed",
+          "note": "SYNTHETIC FIXTURE observation, generated to demonstrate federation. Not a real measurement.",
+          "environment": {
+            "os": "darwin",
+            "arch": "arm64",
+            "runtime": "node 22.x",
+            "note": "SYNTHETIC FIXTURE — not a real machine"
+          },
+          "signature": {
+            "algorithm": "ed25519",
+            "keyId": "8a992e4e86f3ed1e",
+            "value": "TBswvbaInytqlDUGhSHFgF8GpObGeOerZpi5iFKcPutBesD91hisUGLoca8xoIGnfIgrzmbC8FP9HBa/4WI3Ag=="
+          }
+        }
+      ]
+    }
+  ],
+  "keys": [
+    {
+      "keyId": "8a992e4e86f3ed1e",
+      "label": "peer-agent-demo",
+      "publicKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAkOvFA3YMRW36GDYGI+5ZqYoNwy5iV+QclmA9Sj0C1KU=\n-----END PUBLIC KEY-----\n",
+      "createdAt": "2026-08-30T15:02:05.621Z"
+    }
+  ]
+}

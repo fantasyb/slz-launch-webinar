@@ -1,7 +1,6 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
 # dependencies
-/node_modules
 /.pnp
 .pnp.*
 .yarn/*
@@ -40,12 +39,29 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-.env
-.env.local
+# nested installs, e.g. a fixture project someone ran npm install in
 node_modules
-.next
 
 /src/generated/prisma
 
 # Prisma
 src/generated/
+
+# corpus scratch
+.probe/
+.cairn-check-*.ts
+
+# sealed forecast preimages — never commit
+.cairn-secrets/
+
+# federated upstream cache
+.cairn-cache/
+panel-runs/*.tmp
+promote/
+dist/
+
+# Execution policy is per machine, never per corpus — see src/lib/cairn/policy.ts
+cairn.policy.json
+
+# Drafts the gateway opens when a failed call is followed by a working one; a person decides what to keep
+drafts/

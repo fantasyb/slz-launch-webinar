@@ -1,0 +1,84 @@
+{
+  "id": "cairn-0035",
+  "title": "A corpus reached only by asking is not reached by an agent that does not ask",
+  "claim": "Retrieval quality places an upper bound on what a corpus delivers, not a lower one: an agent that never issues a query gets nothing from a perfect index, and whether it issues one is a property of the model rather than of the corpus.",
+  "kind": "limitation",
+  "subject": {
+    "name": "cairn",
+    "ecosystem": "design",
+    "versions": "*"
+  },
+  "scope": "environment-specific",
+  "appliesTo": "A retrieval corpus exposed to a coding agent as a tool it may choose to call.",
+  "tags": [
+    "retrieval",
+    "corpus",
+    "agent",
+    "tool-use",
+    "delivery",
+    "negative-result"
+  ],
+  "cost": "hours",
+  "expectation": "Improving what the corpus returns improves what agents do with it. A weaker model, having more to gain, will lean on a reference tool at least as often as a stronger one.",
+  "reality": "The weaker model did not call the tool at all. Five trials, the same task and the same tool description on which the stronger model queried unprompted on its opening move in five of five, produced zero queries and the identical wrong answer the no-tool arm produced. Retrieval was not consulted, so its accuracy was irrelevant; the corpus scored exactly as it would have scored if it had been empty.",
+  "mechanism": "A pull interface delivers nothing until something pulls. Reaching for a reference before failing is a disposition -- recognising that a task has a shape you might not know everything about -- and it is not uniform across models, so it is not a property the corpus can fix from its own side. Both of this project's delivery paths need something the weak reader does not supply: pull retrieval needs the agent to ask, and preflight needs a command to match against. A trap entered through a design decision rather than through running something falls through the gap between them.",
+  "workaround": "Do not measure a corpus only by what it returns when queried; measure how often it is queried at all, per model, and treat a zero there as a delivery failure rather than a retrieval success. Closing it needs a push path that does not depend on the reader's disposition and does not depend on a command either -- the existing preflight triggers on programs, which covers traps entered by running something and not traps entered by writing something. Until such a path exists, a corpus consumed by a weaker model should be injected rather than offered: put the relevant findings in front of it as context, not behind a tool call it has to think to make.",
+  "evidence": [
+    {
+      "command": "npx tsx scripts/agent-trial.ts staleness --model=claude-haiku-4-5",
+      "output": "staleness [claude-haiku-4-5] — control 0/5   with cairn 0/5\ncairn arm — askedCairn: false, false, false, false, false\ntotal CAIRN tool calls across all 5 trials: 0",
+      "note": "The same scenario on claude-opus-5 scored control 0/5 and with cairn 5/5, and every one of those five queried the corpus on its second tool call, before writing any code."
+    },
+    {
+      "command": "node bin/cairn-find.js --preflight \"cat > rank.mjs\"",
+      "output": "nothing known about `cat > rank.mjs`.",
+      "note": "The push path does not cover it either. Preflight matches on programs in a command, and this trap is entered by writing a function rather than by running anything, so neither delivery mechanism reaches a reader who does not ask."
+    },
+    {
+      "command": "npx tsx scripts/agent-trial.ts clock --model=claude-haiku-4-5",
+      "output": "clock [claude-haiku-4-5] — control 0/5   pull 0/5   brief 4/5",
+      "note": "Three arms, one model, one corpus, one finding. PULL offered cairn-0005 as a tool and scored identically to no tool at all, with zero queries across five trials. BRIEF put the same 1032 characters in front of the agent before it started and it scored 4/5. The difference is not what the corpus contains or how well it ranks -- it is whether delivery waits to be asked."
+    }
+  ],
+  "check": {
+    "command": "Run a two-arm trial on any recorded trap with a second, weaker model, and count tool invocations rather than only scoring the deliverable.",
+    "confirmedIf": "the weaker model issues materially fewer corpus queries than the stronger one on the same task, and its scores are unchanged by the tool's presence",
+    "refutedIf": "query rate is comparable across models, or the weaker model queries more",
+    "manual": true
+  },
+  "provenance": "firsthand",
+  "halfLifeDays": 90,
+  "observations": [
+    {
+      "at": "2026-09-01T13:44:03.298Z",
+      "by": "claude-opus-5",
+      "verdict": "confirmed",
+      "note": "Found while checking whether a measured 5/5 result held on a second model, with a forecast sealed and committed before the run reported. The forecast predicted 3/5 for the corpus arm and named two ways it could go wrong: vaguer queries returning a worse corpus, or a retrieved finding the model could not connect to its input. Both were wrong, because neither was reached -- the tool was never called. The sealed decision rule said a double zero means the criterion in cairn-0034 needs a further condition about acting on what comes back; that rule fired but landed one step too far downstream. Two models, one corpus, one scenario, so the size of the effect is not established -- only that it exists and that measuring retrieval accuracy would never have shown it.",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node v22.22.2",
+        "note": "claude-haiku-4-5 against claude-opus-5, Messages API, identical bash and cairn_search tool definitions; thinking configured per model since adaptive is rejected on 4.5."
+      }
+    },
+    {
+      "at": "2026-09-01T14:20:00.000Z",
+      "by": "claude-opus-5",
+      "verdict": "confirmed",
+      "note": "Appended after building the push path this finding argued for. The separation is clean and it isolates delivery from retrieval: identical model, identical corpus, identical finding, and the only variable is whether it was offered or handed over. Worth recording alongside it: this is cairn-0005, which claude-opus-5 solved 3/5 out of 3 unaided in an earlier scenario because force-dynamic is in the Next.js documentation. claude-haiku-4-5 failed it 5 times in 5 unaided. So 'absent from the model's training', the first of cairn-0034's two routes, is not a property of the finding at all -- it is a property of the finding and the reader together, and a corpus serving several models cannot answer it once.",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node v22.22.2",
+        "note": "claude-haiku-4-5, Messages API, brief injected as the system prompt; gate strong + explained >= 0.5."
+      }
+    }
+  ],
+  "status": "active",
+  "createdAt": "2026-09-01T13:44:03.298Z",
+  "triggers": [
+    "measure a corpus only by what it returns when queried",
+    "exposed to a coding agent as a tool it may choose to call",
+    "trap entered through a design decision rather than through running something"
+  ]
+}

@@ -2,81 +2,106 @@
 @tailwind components;
 @tailwind utilities;
 
-@layer base {
-  :root {
-    --background: 240 6% 4%;
-    --foreground: 0 0% 93%;
-    --card: 240 5% 7%;
-    --card-foreground: 0 0% 93%;
-    --popover: 240 5% 7%;
-    --popover-foreground: 0 0% 93%;
-    --primary: 250 89% 67%;
-    --primary-foreground: 0 0% 100%;
-    --secondary: 240 4% 14%;
-    --secondary-foreground: 0 0% 80%;
-    --muted: 240 4% 14%;
-    --muted-foreground: 240 3% 50%;
-    --accent: 250 89% 67%;
-    --accent-foreground: 0 0% 100%;
-    --destructive: 0 72% 51%;
-    --destructive-foreground: 0 0% 100%;
-    --border: 240 4% 16%;
-    --input: 240 4% 16%;
-    --ring: 250 89% 67%;
-    --radius: 0.5rem;
+/*
+  Palette: weathered stone and lichen. A finding is an assertion about the
+  world, so claims are set in serif and evidence in mono; UI chrome stays
+  out of the way in sans.
+*/
+:root {
+  --paper: #f7f5f1;
+  --paper-raised: #ffffff;
+  --ink: #1c1917;
+  --ink-soft: #57534e;
+  --ink-faint: #8a827c;
+  --rule: #e2ddd5;
+  --rule-strong: #cfc8be;
+
+  --moss: #3f6b5c;
+  --moss-soft: #e8f0ec;
+  --ochre: #966c22;
+  --ochre-soft: #f7efdc;
+  --rust: #9c4a2f;
+  --rust-soft: #f8eae5;
+  --slate: #4a5568;
+  --slate-soft: #edeff2;
+
+  --shadow: 0 1px 2px rgba(28, 25, 23, 0.05), 0 4px 12px rgba(28, 25, 23, 0.04);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --paper: #15140f;
+    --paper-raised: #1d1c16;
+    --ink: #efebe3;
+    --ink-soft: #b0a99c;
+    --ink-faint: #7b7468;
+    --rule: #2c2a22;
+    --rule-strong: #403d32;
+
+    --moss: #7cb69f;
+    --moss-soft: #17261f;
+    --ochre: #d2a54e;
+    --ochre-soft: #2a2113;
+    --rust: #d2795a;
+    --rust-soft: #2b1a14;
+    --slate: #9aa6b8;
+    --slate-soft: #1c2029;
+
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 4px 12px rgba(0, 0, 0, 0.3);
   }
-
-  * {
-    @apply border-border;
-  }
-
-  body {
-    @apply bg-background text-foreground antialiased;
-    font-family: 'Inter', system-ui, -apple-system, sans-serif;
-  }
 }
 
-/* Scrollbar */
-::-webkit-scrollbar {
-  width: 6px;
-}
-::-webkit-scrollbar-track {
-  background: hsl(240 6% 4%);
-}
-::-webkit-scrollbar-thumb {
-  background: hsl(240 4% 20%);
-  border-radius: 3px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: hsl(240 4% 30%);
+:root[data-theme='dark'] {
+  --paper: #15140f;
+  --paper-raised: #1d1c16;
+  --ink: #efebe3;
+  --ink-soft: #b0a99c;
+  --ink-faint: #7b7468;
+  --rule: #2c2a22;
+  --rule-strong: #403d32;
+
+  --moss: #7cb69f;
+  --moss-soft: #17261f;
+  --ochre: #d2a54e;
+  --ochre-soft: #2a2113;
+  --rust: #d2795a;
+  --rust-soft: #2b1a14;
+  --slate: #9aa6b8;
+  --slate-soft: #1c2029;
+
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 4px 12px rgba(0, 0, 0, 0.3);
 }
 
-/* Status indicator pulse */
-@keyframes pulse-online {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
-}
-.status-online {
-  animation: pulse-online 2s ease-in-out infinite;
+html {
+  color-scheme: light dark;
 }
 
-/* Live feed scroll */
-@keyframes scroll-up {
-  from { transform: translateY(0); }
-  to { transform: translateY(-50%); }
-}
-.live-feed-scroll {
-  animation: scroll-up 60s linear infinite;
-}
-.live-feed-scroll:hover {
-  animation-play-state: paused;
+body {
+  background: var(--paper);
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings: 'kern' 1;
 }
 
-/* Flash animation for new ticker items */
-@keyframes flash {
-  0% { background-color: rgba(99, 102, 241, 0.08); }
-  100% { background-color: transparent; }
+.font-claim {
+  font-family: ui-serif, Georgia, 'Iowan Old Style', 'Times New Roman', serif;
 }
-.animate-flash {
-  animation: flash 1s ease-out;
+
+/* Evidence blocks scroll on their own; the page never scrolls sideways. */
+.evidence {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.rule-hairline {
+  border-color: var(--rule);
+}
+
+a {
+  color: inherit;
+}
+
+::selection {
+  background: var(--moss);
+  color: var(--paper);
 }

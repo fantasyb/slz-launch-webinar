@@ -1,0 +1,67 @@
+{
+  "id": "cairn-0037",
+  "title": "A ledger that records findings about itself competes with its own subject matter",
+  "claim": "Records that share the corpus's own framing vocabulary compete with its subject-matter records for queries phrased in that vocabulary, and the cost of that competition is invisible in the case count — but its direction is not predictable from a record's subject, so it has to be measured in both directions rather than reasoned about.",
+  "kind": "limitation",
+  "subject": {
+    "name": "cairn",
+    "ecosystem": "design",
+    "versions": "*"
+  },
+  "scope": "environment-specific",
+  "appliesTo": "A retrieval corpus that accumulates records about its own construction alongside records about the tools it is used with.",
+  "tags": [
+    "retrieval",
+    "corpus",
+    "self-reference",
+    "vocabulary",
+    "eval",
+    "measurement"
+  ],
+  "cost": "hours",
+  "expectation": "A new record competes with its neighbours in proportion to how much subject matter it shares with them, so a record about an unrelated area costs the rest of the corpus almost nothing.",
+  "reality": "Removing the two records whose subject is the corpus cost 1.2 points of P@1 and the same in delivery, while accounting for one held-out case between them, so the movement is competition and not a harder denominator. They also took first place from the record a task was actually about, and cost two individually tracked cases when the second arrived. What does NOT follow, and what the first draft of this record asserted before it was checked, is that each such record degrades the corpus: adding a THIRD one — this one — raised P@1 from 0.829 to 0.845 and delivery from 0.843 to 0.859. Both removing two and adding one moved the same metric the same way.",
+  "mechanism": "Words like finding, record, corpus, query, agent and verify are the frame a ledger uses to describe every entry it holds, so they sit at low weight almost everywhere. A record whose SUBJECT is the ledger uses them at content density instead, accumulating across many weak terms what a real match earns from a few distinctive ones. That explains the competition. It does not predict the sign: a new record in that vocabulary both steals queries from subject-matter records and absorbs queries that were already being misrouted to its neighbours, and which effect dominates depends on what it is nearest to, not on what it is about.",
+  "workaround": "Score with and without the records whose subject is the corpus, and keep that difference visible wherever quality floors are recorded, so a drop caused by the ledger discussing itself is never mistaken for the retriever getting worse. Do not reason about the sign — measure it, in both directions, because subject does not predict it. Do not suppress such records either; they are usually the load-bearing ones. Note finally that an eval whose queries are observation notes is written in the same framing vocabulary and therefore amplifies the whole effect; task text from outside the project contains almost none of it, and the same records stay quiet against ordinary engineering work.",
+  "evidence": [
+    {
+      "command": "score the held-out set with and without the two records whose subject is the corpus",
+      "output": "as committed (36 findings)     n=70  P@1 0.829  delivery 0.843\nwithout the two meta-findings  n=69  P@1 0.841  delivery 0.855\nthe two contribute 1 of the held-out cases",
+      "note": "Found while deciding whether to lower a quality floor for the third time in one session. The floors were the symptom; this was the cause, and an average could not have shown the difference."
+    },
+    {
+      "command": "npx tsx scripts/eval.ts, with this record added to the corpus",
+      "output": "HELDOUT n=71 p1=0.8451 mrr=0.8785\nDELIVERY 61/71 (0.859)",
+      "note": "Against 0.829 and 0.843 without it. The record asserting that these records cost retrieval quality improved retrieval quality when added, which is why the claim above is about competition and measurement rather than about degradation."
+    }
+  ],
+  "check": {
+    "command": "Re-score the held-out suite with every record whose subject is the corpus itself excluded, and compare P@1 and delivery against the full corpus.",
+    "confirmedIf": "removing them raises P@1 by materially more than their share of the case count would explain",
+    "refutedIf": "the numbers move by no more than the change in denominator",
+    "manual": true
+  },
+  "provenance": "firsthand",
+  "halfLifeDays": 120,
+  "observations": [
+    {
+      "at": "2026-09-01T14:14:43.125Z",
+      "by": "claude-opus-5",
+      "verdict": "confirmed",
+      "note": "This record is an instance of what it describes and it contradicted its own first draft, which is why the claim is narrower than the one I set out to write. The draft said records like this degrade retrieval for everything else; adding it raised P@1 by 1.6 points. The removal measurement and the addition measurement are both real and they point opposite ways, so the honest content is that the competition exists and its sign has to be measured. It was tempting to keep the original wording, because the record's arrival is what lifted the numbers back over their floors — which is precisely the reason not to let that decide it. The limit on all of it: one corpus of thirty-seven records, and an eval whose queries share the vocabulary in question.",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node v22.22.2",
+        "note": "36-finding corpus, 70 held-out cases derived from observation notes and prediction reasoning."
+      }
+    }
+  ],
+  "status": "active",
+  "createdAt": "2026-09-01T14:14:43.125Z",
+  "triggers": [
+    "records about the corpus itself",
+    "score with and without",
+    "a drop caused by the ledger discussing itself"
+  ]
+}

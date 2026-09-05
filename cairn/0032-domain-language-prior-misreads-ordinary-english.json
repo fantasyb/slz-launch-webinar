@@ -1,0 +1,63 @@
+{
+  "id": "cairn-0032",
+  "status": "active",
+  "createdAt": "2026-09-01T05:10:00Z",
+  "title": "A language prior sampled from developer docs rates ordinary English as distinctive",
+  "claim": "A word-frequency table built from developer documentation omits words that are common in speech but rare in technical writing — silently, reaches, remains, holds — so a retriever using it as an English prior treats them as distinctive terms. The weak-match caveat that exists to catch a hit resting only on ordinary words is then suppressed exactly when the query is nothing but ordinary words.",
+  "kind": "trap",
+  "subject": {
+    "name": "language priors",
+    "ecosystem": "retrieval",
+    "versions": "*"
+  },
+  "scope": "universal",
+  "basis": "empirical",
+  "cost": "hours",
+  "provenance": "firsthand",
+  "expectation": "A measured frequency table damps ordinary English, so a match resting only on filler is labelled weak and the reader is warned before acting on it.",
+  "reality": "The table covers 2,460 terms sampled from developer documentation. `silently`, `reaches` and `reach` are absent from it, so they score as distinctive. Asked about a CLI flag that npm was swallowing, the retriever returned a finding about headless Chromium and the proxy at 75% confidence with no caveat, matched on `silently, reaches, reach, before, never`. The third-ranked hit was correctly labelled weak; the top two were not.",
+  "mechanism": "The caveat fires when no matched term is both informative and uncommon. Commonness is looked up in the measured table, so a word the table never sampled is treated as uncommon by default. A developer-documentation corpus systematically under-samples ordinary narrative English, which is precisely the vocabulary a person writes when describing a failure in their own words — so the gap in the table lines up exactly with the queries the caveat is meant to catch.",
+  "appliesTo": "Any retriever using a domain-sampled frequency list as a general language prior, where absence from the list is read as evidence of rarity.",
+  "workaround": "Read absence from a domain-sampled table as unknown rather than as rare. Either source the prior from a general English frequency list, or require positive evidence of rarity before counting a word as distinctive. A hand-maintained residual list does not close the gap: this project has forty such words and none of the three that caused the failure are among them.",
+  "evidence": [
+    {
+      "command": "node -e \"const r=require('./data/word-frequency.json').rates; for (const w of ['silently','reaches','reach']) console.log(w, r[w])\"",
+      "output": "silently undefined\nreaches undefined\nreach undefined",
+      "note": "Ordinary English, absent from a 2,460-term developer-documentation sample."
+    },
+    {
+      "command": "node bin/cairn-find.js \"npm run cairn:find -- --before is silently ignored, the flag never reaches the script\"",
+      "output": "cairn-0013     7.6  Headless Chromium sends localhost through the proxy and times out silently\n      confidence 75% [precondition holds here]\n      matched: silently, reaches, reach, before, never",
+      "note": "No weak-match caveat on a hit whose every matched term is ordinary English."
+    }
+  ],
+  "check": {
+    "command": "node -e \"const r=require('./data/word-frequency.json').rates; const missing=['silently','reaches','remains','holds'].filter(w=>r[w]===undefined); console.log('missing='+missing.length); process.exit(missing.length?0:1)\"",
+    "confirmedIf": "prints missing=1 or more: ordinary English words are absent from the prior and will score as distinctive",
+    "refutedIf": "prints missing=0: the prior covers ordinary narrative English",
+    "manual": false
+  },
+  "triggers": [],
+  "halfLifeDays": 180,
+  "observations": [
+    {
+      "at": "2026-09-01T05:10:00Z",
+      "by": "claude-opus-5",
+      "verdict": "confirmed",
+      "note": "Found by using the tool rather than evaluating it. Queried cairn with four real failures from this session; all four returned unrelated findings, and the two highest-scoring carried no caveat.",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node 22.22.2",
+        "note": "Claude Code remote sandbox"
+      },
+      "signature": {
+        "algorithm": "ed25519",
+        "keyId": "56f7a413738936bd",
+        "value": "ui16nwLJkBoCWukXC81Pb4eQqBlm5r9TgHMLqr4Gzk7HhAsXnteI/7RjK4n/1/7/ZS8+KMDONMj+Wkw4bY4vCg=="
+      }
+    }
+  ],
+  "predictions": [],
+  "precondition": []
+}

@@ -1,0 +1,368 @@
+{
+  "_comment": [
+    "GENERATED. Queries a searcher might arrive with, written by a model at",
+    "build time and indexed as weak-tier text so they can add weight to a",
+    "finding without outranking its own account of itself.",
+    "",
+    "Committed deliberately: this is the artefact that makes the approach",
+    "auditable. Read them. Delete a line that is wrong — nothing regenerates",
+    "it unless you pass --force, and the index rebuilds from what is here.",
+    "",
+    "The generator never sees observations[].note or predictions[].reasoning.",
+    "Those are the held-out evaluation set. See scripts/expand.ts.",
+    "",
+    "TRIMMED TO SEVEN PER FINDING, by generation order and not by score.",
+    "The count was chosen by measurement — swept 4..14 against every suite, with",
+    "field P@1 reaching 11/11 at 6 and 7, and 7 strictly better on silence,",
+    "held-out and delivery. WHICH seven survive was not chosen: they are the first",
+    "seven the generator produced, and the prompt asks for its kinds in order, so",
+    "the error text, the plain symptom and the situation are the ones kept.",
+    "Picking the seven that scored best would be fitting the corpus to the eval."
+  ],
+  "generatedAt": "2026-09-01T15:16:43.556Z",
+  "model": "claude-opus-5",
+  "expansions": {
+    "cairn-0001": [
+      "curl: (56) CONNECT tunnel failed, response 403",
+      "curl exit 56 remote_ip 127.0.0.1",
+      "why does curl say remote ip is 127.0.0.1 for an external https url",
+      "every https request fails but ping and dns work fine",
+      "is this website down or is my machine blocking it",
+      "CI step that fetches a dependency suddenly fails with a tunnel error",
+      "nightly scraper job reports all target sites unreachable overnight"
+    ],
+    "cairn-0002": [
+      "dig: command not found in container",
+      "dig +short returns nothing no error",
+      "bash: nslookup: command not found alpine",
+      "getent hosts returns nothing but website loads in browser",
+      "CI step checks domain resolution, empty result, is the domain unregistered?",
+      "inherited deploy script uses dig, works locally, silent in docker build",
+      "how do I check MX records without dig installed"
+    ],
+    "cairn-0003": [
+      "regex parse error: repetition quantifier expects a valid decimal",
+      "grep: Invalid content of \\{\\}",
+      "rg 'interface{}' returns nothing but the code definitely uses it",
+      "searching for struct{} in go repo finds zero results",
+      "migration script grepping for interface{} across the repo reported no usages, then the build broke",
+      "CI lint step counts occurrences of a token and always gets 0",
+      "why does my search tool say no matches for text I can see in the file"
+    ],
+    "cairn-0004": [
+      "Property 'b' is missing in type '{ a: string; }' but required in type",
+      "TS2741 property missing but required zod schema type",
+      "typescript says my field is required even though the schema gives it a default",
+      "seed data fixture typed from schema demands fields that have defaults",
+      "wrote a JSON fixture for a config validated by a schema, tsc complains every optional key is missing",
+      "CI typecheck fails on test fixtures after adding default to schema field",
+      "migration script seed objects now need every field spelled out"
+    ],
+    "cairn-0005": [
+      "timestamp on my page never updates in production but works locally",
+      "next build shows ○ next to page how do I make it server rendered",
+      "countdown timer stuck at same number after deploy",
+      "\"days ago\" label wrong on deployed site, correct on localhost",
+      "why does new Date() return the same value every request in server component",
+      "deployed Next.js dashboard shows stale data until I redeploy",
+      "nightly cron rebuilds the site and only then does the clock advance"
+    ],
+    "cairn-0006": [
+      "SyntaxError: Unexpected end of JSON input when parsing model response",
+      "model returns JSON that just stops in the middle of a string",
+      "nightly summarization job started failing on JSON.parse for some documents only",
+      "CI test that validates LLM structured output fails intermittently on longer inputs",
+      "gpt keeps ignoring my prompt to return valid JSON",
+      "how do I force the model to always close its JSON braces",
+      "why does my extraction pipeline break only on large records"
+    ],
+    "cairn-0007": [
+      "ENOSPC: no space left on device during npm install",
+      "playwright install downloading chromium again even though it's already there",
+      "ran out of disk in container while setting up e2e tests",
+      "Downloading Chromium 140 MiB then failed write error",
+      "why does my CI sandbox fill up its disk on the browser setup step",
+      "inherited setup script runs playwright install, agent session dies out of space",
+      "docker image already has browsers but test setup fetches them anyway"
+    ],
+    "cairn-0008": [
+      "df -h shows 252G size 8.1G used but only 29G avail",
+      "no space left on device but df says 22% used",
+      "write failed ENOSPC plenty of free space according to df",
+      "docker build fails no space left on device disk not full",
+      "CI job dies partway through with disk full but only 8GB used",
+      "nightly cron script writing output gets ENOSPC, df shows terabytes free",
+      "is my container filesystem corrupted? avail 0 but used low"
+    ],
+    "cairn-0009": [
+      "SecurityError: Failed to read the 'localStorage' property from 'Window': Access is denied for this document",
+      "blank page only in incognito mode, works normally otherwise",
+      "uncaught exception when reading saved settings on page load",
+      "app crashes for some users but I cannot reproduce it locally",
+      "why is localStorage null check not enough",
+      "DOMException accessing window.localStorage in iframe",
+      "our React app renders white screen in private browsing but fine in normal window"
+    ],
+    "cairn-0011": [
+      "imported records show up as unsigned even though the peer signs them",
+      "signature verification returns false with no error or log",
+      "we prefix ids on import to avoid collisions, now nothing verifies",
+      "does the remote peer actually sign its records or not?",
+      "nightly sync job pulls records from upstream, all of them come back untrusted",
+      "signed payload verifies locally but fails after it goes through our importer",
+      "verify passes in the same process as signing but fails later"
+    ],
+    "cairn-0012": [
+      "browserType.launch: Executable doesn't exist at /opt/pw-browsers/chromium-1181/chrome-linux/chrome",
+      "Please run the following command to download new browsers npx playwright install",
+      "playwright says browser missing but the folder has chromium in it",
+      "CI job runs headless chrome tests, playwright errors on launch even though image preinstalls browsers",
+      "inherited scrape script fails at browser launch inside sandbox container, browsers dir is populated",
+      "PLAYWRIGHT_BROWSERS_PATH set but playwright still wants to download hundreds of MB",
+      "why is playwright ignoring my browsers path env var"
+    ],
+    "cairn-0013": [
+      "page.goto: Timeout 30000ms exceeded navigating to http://localhost:3200/",
+      "playwright times out on localhost but curl returns 200",
+      "headless browser hangs loading local dev server, no error message",
+      "CI e2e suite passes locally but every navigation times out on the build runner",
+      "nightly screenshot job stopped producing images, all page.goto calls time out",
+      "inherited test script: browser never loads the vite server it just started",
+      "docker container playwright can't reach the app on 127.0.0.1"
+    ],
+    "cairn-0014": [
+      "our setup docs say tell your agent to fetch this url and do what it says — is that safe",
+      "agent read a remote install page and edited files we didn't expect",
+      "onboarding one-liner asks the assistant to follow a web page, review before we adopt it",
+      "content of a documented setup page changed after we already told everyone to follow it",
+      "how to pin a version of a remote instruction page fetched by an agent",
+      "is fetching markdown at setup time a supply chain risk",
+      "we ran the recommended install step in a fresh repo and got a different diff than a coworker"
+    ],
+    "cairn-0015": [
+      "my security test passes but I think it's testing nothing",
+      "how to test that a client rejects a forged signing key",
+      "generated attacker keypair with our own keygen and the client accepted it",
+      "test run: hostile server scenario passes, honest scenario also passes, suspicious",
+      "wrote a negative test for key pinning, can't tell if the refusal is for the right reason",
+      "moved keys directory to simulate a fresh user, now nothing is signed at all",
+      "WARNING: THE KEY FOR THIS HOST HAS CHANGED"
+    ],
+    "cairn-0016": [
+      "signature still verifies after I edited the record body",
+      "I changed the content but the entry still shows as signed",
+      "review job: signed note in our knowledge base had wrong command, signature valid",
+      "how do I make an edit invalidate an existing signature",
+      "does signing a review comment protect the thing being reviewed",
+      "audit found tampered entry marked as attested by three people",
+      "what exactly does this signature cover"
+    ],
+    "cairn-0017": [
+      "one user submitted five reports with different OS strings and our confidence score jumped to max",
+      "why does my reproducibility count go up when the same key signs multiple builds",
+      "confirmation count inflated by single reporter",
+      "we shipped a nightly verification job and one machine made a package look verified by five platforms",
+      "bug bounty report: signature valid but the machine described never existed",
+      "how to stop a single account from making a claim look independently confirmed",
+      "does a valid signature prove the reported hardware is real"
+    ],
+    "cairn-0018": [
+      "our top forecaster has a perfect score but something feels off",
+      "hash commit reveal predictions leaderboard gaming",
+      "user only reveals winning predictions how to detect",
+      "prediction market accuracy scores too good to be true",
+      "we built a sealed forecast ledger and the ranking looks wrong",
+      "brier score leaderboard everyone improving over time suspicious",
+      "auditing a forecasting tournament inherited from another team, scores don't match my recount"
+    ],
+    "cairn-0019": [
+      "item six years old still showing as fresh score 1.0",
+      "user set their own expiry and it never decays",
+      "why is my exclusion filter passing records it should drop",
+      "nightly ranking job promotes stale entries to the top",
+      "self-reported field used in scoring, is that a problem",
+      "author's own submission got counted in their own score",
+      "validation passes but the rule isn't actually doing anything"
+    ],
+    "cairn-0020": [
+      "disputed entry shows as valid again after someone appends one record",
+      "append-only log status computed from last entry only",
+      "a failing package got marked healthy after one 'works for me' comment",
+      "how to compute trust status from a signed event log",
+      "CI reports a known-broken build as passing after a rerun report",
+      "nightly verification job flagged a bad artifact, next morning flag is gone",
+      "why does my flag clear when I add any new entry"
+    ],
+    "cairn-0021": [
+      "fixed the bug and tests pass but same bug showed up somewhere else",
+      "same field read in four places only one filters correctly",
+      "after deploy a different endpoint still returns the wrong count",
+      "why does my fix work in one function but not another that does the same thing",
+      "bug fix verified and committed then reappeared in a different report",
+      "grep for all callers of a helper after changing its behavior",
+      "nightly aggregation job still double counts after we patched the dedupe"
+    ],
+    "cairn-0022": [
+      "correlation returns 1.0 for two columns that never change",
+      "pearson r exactly -1 on constant data",
+      "why is my correlation perfect when both variables are the same value every row",
+      "denominator === 0 guard not catching zero variance",
+      "nightly analytics job reporting r = 1 between two metrics that are flat",
+      "backtest scorecard shows perfect correlation between two predictors, suspect a bug in my join",
+      "standard deviation of identical values is 1e-17 instead of 0"
+    ],
+    "cairn-0023": [
+      "brier score 0.0001 immediately after sealing forecast, no test was run",
+      "prediction resolved against evidence older than the commit hash",
+      "commit reveal timestamp verified but score still fake",
+      "why does my forecast always resolve confirmed instantly",
+      "filtering observations by asOf with no start time",
+      "nightly calibration job reports near-perfect scores for every agent",
+      "how do I prove the check actually ran after I sealed the prior"
+    ],
+    "cairn-0024": [
+      "curl -H 'Host: evil.example' returns block with evil.example URLs signed by real key",
+      "signature verifies but URLs point to a domain I never configured",
+      "during a pentest I changed the Host header and the server signed whatever I asked for",
+      "our install one-liner fetches a signed manifest — is verifying the fingerprint enough?",
+      "CI smoke test hits the API through a proxy and the returned base url is the internal hostname",
+      "why does request.headers.get('host') return an attacker controlled value",
+      "deploy behind CDN: generated absolute links use the client supplied host"
+    ],
+    "cairn-0025": [
+      "confidence dropped to zero but disagreement count says zero refuters",
+      "unsigned entry zeroed out my score while validation says it was ignored",
+      "score = 0 after appending one unverified record",
+      "nightly scoring job: one anonymous line tanked a record that had two signed confirmations",
+      "why does my early return ignore the filter the rest of the function applies",
+      "asked in code review: which functions read this list without the check",
+      "cap on weighted items lets excluded items back in at half weight"
+    ],
+    "cairn-0026": [
+      "two different inputs produce the same sha256 hash string",
+      "hash commitment can be revealed as two different values",
+      "user submitted text containing 0x1f separator broke my hash check",
+      "joined fields with unit separator then hashed, is this safe",
+      "nightly audit script reports a sealed forecast verifies against two different payloads",
+      "CI verification step passes for a record that was edited after publishing",
+      "inherited script builds hash preimage with join and a comment saying delimiter is safe"
+    ],
+    "cairn-0027": [
+      "confidence score jumps when I add signature objects that were never verified",
+      "reputation aggregate counts distinct signers but never checks the keys",
+      "writing a fuzz test for our attestation scoring and fake signatures raised the score",
+      "how do I tell if a function reads a credential field without validating it",
+      "auditing an inherited trust scoring module before release, found two different patterns in one file",
+      "one refutation from an unknown party zeroed out a finding with real signers",
+      "dedupe by user-supplied name field can be gamed"
+    ],
+    "cairn-0028": [
+      "git diff base...HEAD returns nothing but git status shows changes",
+      "CI review step says no changed files but the PR clearly changed files",
+      "checked out base commit then copied PR files, diff range empty",
+      "nightly PR gate passes every time, suspicious it isn't checking anything",
+      "after hardening our workflow the review step stopped catching anything",
+      "exit 0 with no output from validation script in GitHub Actions",
+      "why does git diff between two commits show no changes after checkout -- path"
+    ],
+    "cairn-0029": [
+      "curl: (56) CONNECT tunnel failed, response 403",
+      "why does https rdap lookup fail but dns still resolves in sandbox",
+      "getent hosts only gives me A records, how do I get MX and NS",
+      "checking whether a domain is registered from inside a locked down agent environment",
+      "nightly script that queries whois broke, everything returns 403 through proxy",
+      "CI job needs nameserver records but dig is not installed",
+      "is DNS blocked in this container or just HTTP"
+    ],
+    "cairn-0030": [
+      "dns query to an ip with no server still returns an answer",
+      "SERVFAIL from gtld-servers.net but 8.8.8.8 works fine",
+      "why does AA=0 on a response from an authoritative nameserver",
+      "checking domain delegation from a CI script, got answers from a bogus IP",
+      "203.0.113.99 responded to my DNS query",
+      "nightly script that verifies NS records intermittently reports domain not registered",
+      "every nameserver I query gives the same answer"
+    ],
+    "cairn-0031": [
+      "dig example.com NS returns cloudflare nameservers instead of iana-servers.net",
+      "example.com   elliott.ns.cloudflare.com hera.ns.cloudflare.com",
+      "is my resolver returning fake NS records for example.com",
+      "DNS lookup answers for an address that shouldn't exist, now I don't trust any answer",
+      "nightly monitoring job flags nameserver change as spoofing, is it real",
+      "CI check compares live DNS to expected values and fails after months of passing",
+      "agent report claims a service returned false data based only on what the model remembers"
+    ],
+    "cairn-0032": [
+      "search returns unrelated result with high confidence for a plain english query",
+      "why is my retriever matching on words like silently and never",
+      "idf lookup returns undefined for common word",
+      "top hit 75% confidence but completely wrong topic",
+      "asked about a CLI flag and got back a headless chromium result",
+      "weak match warning only shows on the third result not the first",
+      "stopword list missing ordinary verbs"
+    ],
+    "cairn-0033": [
+      "content: [] with stop_reason refusal but HTTP 200",
+      "output_tokens 0 and no content blocks returned",
+      "agent loop returns empty string as final answer sometimes",
+      "eval harness scoring blank answers as zero, no errors in logs",
+      "why does my model response have no text and no tool calls",
+      "nightly benchmark run: one arm scored 0% but no exceptions thrown",
+      "CI test suite passes but agent transcript is empty for some tasks"
+    ],
+    "cairn-0034": [
+      "control 3/3 with rag 3/3 no difference",
+      "A/B eval shows identical scores with and without knowledge base",
+      "agent retrieves the right doc, cites it, output unchanged",
+      "built a RAG corpus for our coding agent and it changed nothing",
+      "nightly eval harness: both arms pass every trial, delta zero",
+      "added internal docs to agent context, no measurable improvement in task success",
+      "why does my retrieval augmented agent do just as well without retrieval"
+    ],
+    "cairn-0035": [
+      "with cairn 0/5 askedCairn: false, false, false, false, false",
+      "total tool calls across all 5 trials: 0",
+      "nothing known about `cat > rank.mjs`",
+      "smaller model never calls the MCP tool I registered",
+      "model ignores my tool description and answers from memory",
+      "evaluating a docs search tool: scores identical to the no-tool baseline",
+      "A/B eval of my knowledge base shows zero lift for one model"
+    ],
+    "cairn-0036": [
+      "until ! pgrep -f script.ts; do sleep 20; done never returns",
+      "wait loop never exits even though the process finished",
+      "bash script hangs forever polling for a job that already exited",
+      "nightly cron job never completes, stuck in a sleep loop waiting on a background task",
+      "CI step times out waiting for a worker to finish but the worker logs show it exited",
+      "deploy script stuck at 'waiting for old process to stop' forever",
+      "inherited shell script polls for a process and hangs, no error output"
+    ],
+    "cairn-0037": [
+      "retrieval eval P@1 dropped after adding new documents to the index",
+      "a page about the documentation itself keeps ranking above the page that answers the question",
+      "why does my vector search return the meta doc instead of the actual answer",
+      "top result is a doc about how the knowledge base works, not the topic asked",
+      "added one document and search accuracy for unrelated queries got worse",
+      "nightly eval job shows precision@1 fell 1 point, no code changes to the retriever",
+      "CI check on our RAG benchmark regressed after a docs merge, how to find the culprit chunk"
+    ],
+    "cairn-0038": [
+      "hybrid search returns the wrong doc first even though it wins bm25 and vector",
+      "rrf fused scores all within 0.1% of each other",
+      "why does my fusion score barely change between rank 1 and rank 2",
+      "0.04374 vs 0.04381 fused score tie",
+      "small index of 40 docs, combining rankers gives almost identical scores",
+      "RAG retrieval eval: top result flips between runs with no code change",
+      "inherited search script fuses four rankers, ranking looks random"
+    ],
+    "cairn-0039": [
+      "retrieval works great in our benchmark but users can't find anything",
+      "P@1 0.85 in eval, much worse in production search",
+      "why does search score high offline and fail with real users",
+      "our RAG eval numbers look too good, is something wrong",
+      "built a test set from our own docs — is that valid",
+      "nightly eval job reports 0.84 precision but support tickets say search is broken",
+      "CI check on our vector index passes while the demo search misses obvious docs"
+    ]
+  }
+}

@@ -1,0 +1,49 @@
+{
+  "id": "cairn-0041",
+  "title": "esbuild refuses top-level await under the cjs output format",
+  "claim": "esbuild fails the whole bundle when an entrypoint uses top-level await and the output format is cjs, so a script that runs correctly under tsx cannot be bundled without being wrapped in a function.",
+  "kind": "trap",
+  "subject": {
+    "name": "esbuild",
+    "ecosystem": "npm",
+    "versions": "*"
+  },
+  "scope": "environment-specific",
+  "basis": "empirical",
+  "appliesTo": "Environment not reported by the submitter.",
+  "tags": [
+    "esbuild",
+    "bundling",
+    "cjs"
+  ],
+  "cost": "hours",
+  "expectation": "a script that runs under tsx bundles for the same runtime, since both target the same Node version",
+  "reality": "the build fails with 'Top-level await is currently not supported with the cjs output format', naming the await line, and the script ships unbundled or not at all \u2014 three entrypoints here were written this way and two of them shipped unable to run",
+  "workaround": "wrap the awaiting tail in an async main() and call it; nothing else changes, and the failure is a bundle-time error rather than a runtime one so tests that only run under tsx will not catch it",
+  "evidence": [
+    {
+      "command": "npm run cairn:build-cli",
+      "output": "\u2718 [ERROR] Top-level await is currently not supported with the \"cjs\" output format\n      183 \u2502 await server.connect(new StdioServerTransport());"
+    }
+  ],
+  "check": {
+    "command": "printf 'await Promise.resolve();\\n' > /tmp/tla-probe.mjs && npx esbuild --bundle --platform=node --format=cjs /tmp/tla-probe.mjs >/dev/null 2>&1; [ $? -ne 0 ]",
+    "confirmedIf": "esbuild exits non-zero on a cjs bundle containing top-level await",
+    "refutedIf": "the bundle succeeds",
+    "manual": false
+  },
+  "provenance": "firsthand",
+  "halfLifeDays": 180,
+  "observations": [
+    {
+      "at": "2026-09-02T00:14:23.443Z",
+      "by": "claude-opus-5",
+      "verdict": "confirmed",
+      "note": "Hit three times in one day in this repository: record.ts, gate.ts and the MCP server were all written with a top-level await and all failed at bundle time rather than at runtime, so each ran correctly under tsx and shipped unable to run."
+    }
+  ],
+  "predictions": [],
+  "visibility": "shared",
+  "status": "active",
+  "createdAt": "2026-09-02T00:14:23.443Z"
+}
