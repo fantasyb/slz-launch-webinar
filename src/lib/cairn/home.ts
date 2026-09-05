@@ -97,6 +97,24 @@ export function cairnHome(): string {
   return (memo = process.cwd());
 }
 
+/**
+ * Authoritatively point every subsequent corpus lookup at `dir`.
+ *
+ * `cairnHome()` memoises its answer the first time it is called — which, because
+ * several modules resolve `homePath()` at import scope, can happen before a
+ * script has parsed its own `--home`. Setting only `process.env.CAIRN_HOME`
+ * afterwards then does nothing (the memo already holds the wrong home), so a
+ * `cairn:triage --home X` consulted the DEFAULT corpus's execution policy and
+ * sealed into the code checkout — a fail-open across corpora. A `--home` parser
+ * must call this: it resets the memo AND the env so policy, seal, and every
+ * homePath() agree on the corpus actually being worked on.
+ */
+export function setCairnHome(dir: string): void {
+  const resolved = path.resolve(dir);
+  memo = resolved;
+  process.env.CAIRN_HOME = resolved;
+}
+
 /** A path inside the corpus install. */
 export function homePath(...parts: string[]): string {
   return path.join(cairnHome(), ...parts);

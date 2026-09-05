@@ -30,7 +30,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { spawn, execSync } from 'child_process';
-import { homePath, cairnHome } from '../src/lib/cairn/home';
+import { homePath, cairnHome, setCairnHome } from '../src/lib/cairn/home';
 import { executionPolicy } from '../src/lib/cairn/policy';
 import { pendingCandidates } from '../src/lib/cairn/triage';
 import { gateCandidates, DEFAULT_TRIAGE_THRESHOLD } from '../src/lib/cairn/triageScore';
@@ -115,7 +115,7 @@ function main(): void {
      * spawned. --home is authoritative for this run; align the env to it.
      */
     const home = resolvedHome();
-    if (home) process.env.CAIRN_HOME = home;
+    if (home) setCairnHome(home); // resets the memo too, not just the env — see home.ts
 
     const dir = draftsDir();
     if (!dir) return;

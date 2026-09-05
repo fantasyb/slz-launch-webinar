@@ -26,7 +26,7 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { homePath, cairnHome } from '../src/lib/cairn/home';
+import { homePath, cairnHome, setCairnHome } from '../src/lib/cairn/home';
 import { executionPolicy, policyPath } from '../src/lib/cairn/policy';
 import { gate } from '../src/lib/cairn/gate';
 import { pendingCandidates, hasCheck, settle, routeVerdict, yieldSummary } from '../src/lib/cairn/triage';
@@ -36,10 +36,17 @@ import type { Finding } from '../src/lib/cairn/schema';
 const argv = process.argv.slice(2);
 const STATUS = argv.includes('--status');
 
-function draftsDir(): string | null {
+/**
+ * Align CAIRN_HOME to --home BEFORE any policy/seal/homePath lookup. Without this,
+ * `cairn:triage --home X` ran the gate under the DEFAULT corpus's execution policy
+ * (fail-open across corpora) and sealed admitted findings into the code checkout —
+ * because executionPolicy(), sealAndCommit() and homePath() all read cairnHome(),
+ * which --home never reached. Returns the drafts dir of the now-aligned corpus.
+ */
+function alignHomeAndDrafts(): string | null {
   const i = argv.indexOf('--home');
   const explicit = i !== -1 && argv[i + 1] ? argv[i + 1] : undefined;
-  if (explicit) return path.join(explicit.startsWith('~') ? path.join(os.homedir(), explicit.slice(1)) : explicit, 'drafts');
+  if (explicit) setCairnHome(explicit.startsWith('~') ? path.join(os.homedir(), explicit.slice(1)) : explicit);
   try {
     return homePath('drafts');
   } catch {
@@ -64,7 +71,7 @@ function reportYield(dir: string): void {
 }
 
 async function main(): Promise<void> {
-  const dir = draftsDir();
+  const dir = alignHomeAndDrafts();
   console.log('\ncairn:triage — draining what this machine can settle');
   console.log('='.repeat(60));
   if (!dir) {
