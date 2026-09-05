@@ -926,7 +926,7 @@ test('a note is one call, unreachable through the gateway, offered back by a lat
       workaround: 'pass mapping_id explicitly',
     });
     assert.ok(!r.isError, texts(r).join('\n'));
-    const m = /Noted \((note-[a-z0-9]+)\); not a finding until/.exec(texts(r)[0]);
+    const m = /Noted \((note-[a-z0-9-]+)\); not a finding until/.exec(texts(r)[0]);
     assert.ok(m, texts(r)[0]);
     noteId = m![1];
     assert.equal(fs.readdirSync(path.join(home, 'cairn')).length, 0, 'the corpus is untouched');

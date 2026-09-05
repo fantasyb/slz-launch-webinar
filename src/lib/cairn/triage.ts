@@ -32,6 +32,7 @@
 import fs from 'fs';
 import path from 'path';
 import type { GateVerdict } from './gate';
+import { readsAsProse } from './submission';
 
 /**
  * Where a settled candidate ends up, and what the queue means by it.
@@ -108,9 +109,11 @@ export function pendingCandidates(draftsDir: string): Candidate[] {
   }
   const out: Candidate[] = [];
   for (const n of names) {
-    /* Skip Cairn's own bookkeeping (.triage-scores.json, .consolidated, …): a
-     * dotfile is never a candidate, only a *.json draft sleep wrote is. */
-    if (n.startsWith('.') || !n.endsWith('.json')) continue;
+    /* Skip Cairn's own bookkeeping (.triage-scores.json, …) and notes: a dotfile
+     * is never a candidate, and note-*.json is the second-tier note queue
+     * (notes.ts), not a triage candidate — including it put notes in the brief
+     * and the pending count. Only a *.json draft the harvest/proxy wrote is. */
+    if (n.startsWith('.') || n.startsWith('note-') || !n.endsWith('.json')) continue;
     const file = path.join(draftsDir, n);
     let stat: fs.Stats;
     try {
@@ -128,10 +131,23 @@ export function pendingCandidates(draftsDir: string): Candidate[] {
   return out;
 }
 
-/** Is this candidate ready for the gate — does it carry a check to run? */
+/**
+ * Is this candidate READY for the gate — does it carry a runnable, gateable check?
+ *
+ * Not merely "check.command is a string": the gateway's hole/contradiction drafts
+ * carry a PROSE placeholder command with an empty absentWhen, waiting for a person
+ * (or the triage agent) to fill in a real check. Treating those as ready ran them
+ * through the gate, where deltaPlan returned null -> no-delta -> REJECTED, so every
+ * proxy draft was auto-rejected before anyone saw it and the yield ledger recorded
+ * it as a gate rejection. A candidate is ready only with a RUNNABLE (non-prose)
+ * command; a runnable command with no way to make the trap absent still returns
+ * no-delta (an honest refusal), but a prose placeholder must never be gated.
+ */
 export function hasCheck(c: Candidate): boolean {
   const check = c.data.check;
-  return !!check && typeof check === 'object' && typeof (check as { command?: unknown }).command === 'string';
+  if (!check || typeof check !== 'object') return false;
+  const command = (check as { command?: unknown }).command;
+  return typeof command === 'string' && command.trim() !== '' && !readsAsProse(command);
 }
 
 /**
@@ -161,14 +177,18 @@ export function settle(draftsDir: string, c: Candidate, outcome: Outcome, detail
     }
     return; // stays pending for a session that can settle it
   }
-  appendYield(draftsDir, { file: path.basename(c.file), tool: String(c.data.tool ?? ''), outcome, detail });
+  // MOVE FIRST, then record. If the rename fails, the candidate stays pending
+  // and is gated again next pass — recording the outcome first meant a failed
+  // move left an admitted/rejected row in the ledger AND the candidate still
+  // pending, so the next pass double-counted it.
   const dir = path.join(draftsDir, SETTLED_DIR[outcome]);
   try {
     fs.mkdirSync(dir, { recursive: true });
     fs.renameSync(c.file, path.join(dir, path.basename(c.file)));
   } catch {
-    /* if the move fails the ledger still recorded the outcome; next pass retries */
+    return; // could not settle it here; leave it pending, do not record an outcome
   }
+  appendYield(draftsDir, { file: path.basename(c.file), tool: String(c.data.tool ?? ''), outcome, detail });
 }
 
 interface YieldRow {

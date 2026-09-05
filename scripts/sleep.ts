@@ -68,6 +68,15 @@ function writeCandidate(dir: string, c: Candidate, source: string): void {
   ensureDrafts(dir);
   const digest = crypto.createHash('sha256').update(`${c.tool}\0${c.expectation}\0${c.reality}\0${c.update}`).digest('hex').slice(0, 10);
   const name = `sleep-${path.basename(source, '.jsonl')}-${c.tool.replace(/[^A-Za-z0-9_.-]+/g, '_')}-${c.surprisal}-${digest}.json`;
+  // Re-harvest is the NORMAL path (a resumed session re-consolidates its
+  // transcript). The candidate file is also the mutable queue entry: settle
+  // writes _defers into it and triage adds a check. Overwriting it reset that
+  // state — deferrals reset so MAX_DEFERS never fired, an agent's check was
+  // discarded — and recreating one already moved to admitted/rejected/leads
+  // resurrected a settled candidate. So write ONLY if it exists nowhere yet.
+  for (const p of [dir, path.join(dir, 'admitted'), path.join(dir, 'rejected'), path.join(dir, 'leads')]) {
+    if (fs.existsSync(path.join(p, name))) return; // already queued or settled — leave its state alone
+  }
   fs.writeFileSync(path.join(dir, name), JSON.stringify(draftFor(c, path.basename(source)), null, 2) + '\n');
 }
 

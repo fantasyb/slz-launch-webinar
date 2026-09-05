@@ -90,13 +90,16 @@ export function buildSubmissionView(f: Partial<Finding>): string {
 }
 
 export function parseVerdict(text: string): AdjudicationVerdict {
-  const cleaned = text.replace(/```(?:json)?/gi, '').trim();
-  const start = cleaned.indexOf('{');
-  const end = cleaned.lastIndexOf('}');
+  // Do NOT globally strip ``` — a fence inside a JSON string value (e.g.
+  // quotedEvidence, which must be an exact substring of the submission) would be
+  // removed, corrupting the value. The object is delimited by its own braces;
+  // a markdown fence carries none, so first-{ to last-} finds it either way.
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
   if (start === -1 || end === -1) {
     throw new Error(`no JSON verdict in reviewer response: ${text.slice(0, 160)}`);
   }
-  return VerdictSchema.parse(JSON.parse(cleaned.slice(start, end + 1)));
+  return VerdictSchema.parse(JSON.parse(text.slice(start, end + 1)));
 }
 
 export interface Adjudication {

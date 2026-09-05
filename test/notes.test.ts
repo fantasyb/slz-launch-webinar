@@ -27,7 +27,7 @@ test('a note takes what the session has and nothing that needs thought, and land
   const { recordNote } = await import('../src/lib/cairn/notes');
   const r = recordNote(minimal);
   assert.equal(r.ok, true, r.message);
-  assert.match(r.message, /^Noted \(note-[a-z0-9]+\); not a finding until claim, expectation, reality and check are filled/);
+  assert.match(r.message, /^Noted \(note-[a-z0-9-]+\); not a finding until claim, expectation, reality and check are filled/);
   assert.ok(r.file!.startsWith(path.join(home, 'drafts')));
   assert.equal(fs.readdirSync(path.join(home, 'cairn')).length, 0, 'nothing entered the corpus');
   assert.equal(fs.readFileSync(path.join(home, 'drafts', '.gitignore'), 'utf8'), '*\n');

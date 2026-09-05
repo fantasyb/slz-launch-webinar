@@ -274,8 +274,19 @@ export async function recordSubmission(
   const dir = homePath('cairn');
   fs.mkdirSync(dir, { recursive: true });
   const file = path.join(dir, `${num}-${slugify(data.title)}.json`);
-  if (fs.existsSync(file)) return { ok: false, message: `${file} already exists; nothing was written.` };
-  fs.writeFileSync(file, `${JSON.stringify(finding, null, 2)}\n`);
+  // Exclusive create (wx), not existsSync-then-write: two records minting the
+  // same cairn-NNNN concurrently (e.g. two gateway sessions) otherwise both
+  // passed the existsSync check and the second overwrote the first. wx makes the
+  // second fail loudly so it can retry with a fresh id, rather than silently
+  // clobbering — the corpus-breaking duplicate this guard exists to prevent.
+  try {
+    fs.writeFileSync(file, `${JSON.stringify(finding, null, 2)}\n`, { flag: 'wx' });
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'EEXIST') {
+      return { ok: false, message: `${file} was just created by another writer; nothing was written — try again.` };
+    }
+    throw e;
+  }
 
   /*
    * Only a TRUSTED write path (the operator's CLI, not a model over MCP) may

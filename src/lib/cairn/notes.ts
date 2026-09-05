@@ -32,6 +32,7 @@
  */
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 import { z } from 'zod';
 import { homePath } from './home';
 import { scanExecutable, scanInjection, scanSensitive, draftSurface, redact } from './safety';
@@ -105,7 +106,10 @@ export function recordNote(raw: unknown, opts: { by?: string; session?: string }
     };
   }
   const at = new Date();
-  const id = `note-${at.getTime().toString(36)}`;
+  // A random suffix: two notes in the same millisecond (two sessions, or a burst)
+  // otherwise shared an id, and update()/finishNotes() then acted on whichever
+  // file readAll sorted first.
+  const id = `note-${at.getTime().toString(36)}-${crypto.randomBytes(3).toString('hex')}`;
   const note: Note = { kind: 'note', id, at: at.toISOString(), session: opts.session, status: 'open', ...data };
   const d = ensureDir();
   const file = path.join(d, `${id}-${slugify(data.title)}.json`);

@@ -72,12 +72,16 @@ export function parseTranscript(raw: string): Turn[] {
   const turns: Turn[] = [];
   for (const line of raw.split('\n')) {
     if (!line.trim()) continue;
-    let e: { message?: { role?: string; content?: unknown } };
+    let parsed: unknown;
     try {
-      e = JSON.parse(line);
+      parsed = JSON.parse(line);
     } catch {
       continue;
     }
+    // A line that is null/a number/a string parses fine, then `.message` on it
+    // throws — and "malformed lines are skipped, never fatal" was the promise.
+    if (!parsed || typeof parsed !== 'object') continue;
+    const e = parsed as { message?: { role?: string; content?: unknown } };
     const m = e.message;
     if (!m || (m.role !== 'user' && m.role !== 'assistant')) continue;
     const content = m.content;
@@ -85,7 +89,11 @@ export function parseTranscript(raw: string): Turn[] {
       ? (content as RawBlock[])
       : [{ type: 'text', text: typeof content === 'string' ? content : '' }];
 
-    for (const b of blocks) {
+    for (const raw of blocks as unknown[]) {
+      // A content array can hold null / a bare string; `b.type` on a non-object throws.
+      if (typeof raw === 'string') { if (raw.trim()) turns.push({ role: m.role as 'user' | 'assistant', text: raw }); continue; }
+      if (!raw || typeof raw !== 'object') continue;
+      const b = raw as RawBlock;
       if (b.type === 'tool_use' && b.name) {
         const turn: Turn = { role: 'assistant', tool: { name: b.name, input: (b.input ?? {}) as Record<string, unknown> } };
         turns.push(turn);
