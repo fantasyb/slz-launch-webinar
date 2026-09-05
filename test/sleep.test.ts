@@ -32,14 +32,14 @@ test('parseTranscript pairs a tool call with its result', () => {
 test('a model update after a result is a surprise gap', () => {
   const turns = parseTranscript(
     jsonl([
-      asst(say('I expect this to return the churned contacts.'), call('a1', 'query_records', { object: 'Contact' })),
+      asst(say('I expect this to return the churned contacts.'), call('a1', 'mcp__sf__query_records', { object: 'Contact' })),
       user(result('a1', '{"records":[]}')),
       asst(say('Zero rows — actually it turns out the MCP bound to the wrong org and returned empty instead of erroring.')),
     ]),
   );
   const c = detectCandidates(turns);
   assert.equal(c.length, 1, 'the model update is caught');
-  assert.equal(c[0].tool, 'query_records');
+  assert.equal(c[0].tool, 'mcp__sf__query_records');
   assert.match(c[0].update, /wrong org/, 'the mechanism comes from the agent\'s own words');
   assert.ok(c[0].surprisal >= 3, 'a model update clears the gate on its own');
 });
@@ -100,15 +100,62 @@ test('a successful call followed by work-narration is not a model update', () =>
 test('empty-then-superset on a real query tool IS a contradiction', () => {
   const turns = parseTranscript(
     jsonl([
-      asst(call('e1', 'query_records', { object: 'Case' })),
+      asst(call('e1', 'mcp__sf__query_records', { object: 'Case' })),
       user(result('e1', '{"records":[]}')),
-      asst(call('e2', 'query_records', { object: 'Case', org: 'prod' })),
+      asst(call('e2', 'mcp__sf__query_records', { object: 'Case', org: 'prod' })),
       user(result('e2', '{"records":[1,2,3]}')),
     ]),
   );
   const c = detectCandidates(turns);
   assert.equal(c.length, 1, 'the silent-scope trap is caught even with no error and no prose');
   assert.match(c[0].reasons.join(' '), /returned empty; this superset returned rows/);
+});
+
+test('the same query empty under one scope, rows under another, is a wrong-scope trap (R3)', () => {
+  // Identical arg KEYS, only the scope value (org) differs — the superset signal
+  // (more keys) misses this; the wrong-scope signal must catch it.
+  const turns = parseTranscript(
+    jsonl([
+      asst(call('w1', 'mcp__sf__query_records', { object: 'Case', org: 'sandbox' })),
+      user(result('w1', '{"records":[]}')),
+      asst(call('w2', 'mcp__sf__query_records', { object: 'Case', org: 'prod' })),
+      user(result('w2', '{"records":[1,2,3]}')),
+    ]),
+  );
+  const c = detectCandidates(turns);
+  assert.equal(c.length, 1, 'the wrong-org trap is caught with identical keys and no prose');
+  assert.match(c[0].reasons.join(' '), /wrong-scope/);
+});
+
+test('a nested empty array in a non-empty payload is not read as empty (R4)', () => {
+  // Each row carries "labels":[]; the payload is NOT empty. The old looksEmpty
+  // matched ":[]" anywhere and both mis-scored this and poisoned the superset.
+  const turns = parseTranscript(
+    jsonl([
+      asst(call('n1', 'mcp__gh__list_issues', { repo: 'x' })),
+      user(result('n1', '{"items":[{"id":1,"labels":[]},{"id":2,"labels":[]}]}')),
+      asst(say('Actually it turns out this silently returns closed issues too, unexpectedly.')),
+    ]),
+  );
+  // notable requires empty/error/expectation; this payload is NOT empty and there
+  // was no stated expectation and no error, so the free-floating "actually" does
+  // NOT clear the gate — which is correct (narration, not a tool-model change).
+  assert.deepEqual(detectCandidates(turns), [], 'a non-empty payload with nested [] is not "notable" on prose alone');
+});
+
+test('genuinely empty shapes beyond {records:[]} are recognised (R4)', () => {
+  for (const body of ['[]', '{"data":null}', '{"total_count":0}', '{"items":[]}', 'No results found']) {
+    const turns = parseTranscript(
+      jsonl([
+        asst(call('g1', 'mcp__x__search', { q: 'a' })),
+        user(result('g1', body)),
+        asst(call('g2', 'mcp__x__search', { q: 'a', includeArchived: true })),
+        user(result('g2', '{"items":[1,2]}')),
+      ]),
+    );
+    const c = detectCandidates(turns);
+    assert.equal(c.length, 1, `"${body}" must read as empty so the superset fires`);
+  }
 });
 
 test('the agent\'s own built-in tools are not harvested (a Read is not a trap)', () => {

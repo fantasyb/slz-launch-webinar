@@ -28,6 +28,28 @@
  * nothing and decides nothing about the corpus. Consolidating a candidate into a
  * finding, and letting selection (checks, usage, decay) cull it, happens
  * downstream — candidates are born provisional, in drafts/, never in cairn/.
+ *
+ * KNOWN LIMITS — what this recall deliberately does NOT reach, so nobody reads
+ * silence as coverage (Fable review, R7/R11/P2/P4):
+ *   - Recall is bounded by what the agent said to the HUMAN. On-disk `thinking`
+ *     blocks are redacted to a signature, so the "reasoning trace" the reframe
+ *     leans on survives only as user-facing prose; a quiet or headless run leaves
+ *     less to harvest. The structural contradiction signals (superset, wrong-
+ *     scope) are the prose-free floor that still fires when the agent said nothing.
+ *   - A trap that neither the agent NOR the user noticed has no textual tell and
+ *     is not recoverable here — accepted. Success-shaped wrong data with no tell
+ *     (a right-looking count that is wrong) is prose-only for the same reason.
+ *   - Cross-SESSION traps (empty in one session, wide in the next) and TWO-TOOL
+ *     traps (curl-vs-browser; a search that says 0 for a symbol another call
+ *     proves exists) have no structural path — priorEmpty is per-transcript,
+ *     per-tool. They surface only when the agent wrote prose about them.
+ *   - Bash harvests the agent's OWN inline scripts (heredocs, `node -e`) the same
+ *     as an external program — nothing at this layer distinguishes them, and
+ *     filtering the script forms would also drop real probes (a `python3 -c`
+ *     import error is a genuine env trap). The check-writer's brief is the cull.
+ *   - Dedup is per-candidate (by content hash), not per-TRAP: three probes of one
+ *     trap become three drafts. The cheap gate and check-writer absorb the
+ *     duplication; the corpus does not (a finding is recorded once).
  */
 
 /** One normalized step in a session: text the agent said, or a tool round-trip. */
@@ -161,6 +183,42 @@ export interface Candidate {
  */
 const THRESHOLD = 2;
 
+/*
+ * Is a parsed result payload empty? Anchored to the TOP LEVEL, which is the fix
+ * for the old `:\s*\[\s*\]`-anywhere test: a non-empty payload whose rows each
+ * carry an empty "labels":[] (GitHub) or "Tags":[] (Salesforce) is NOT empty,
+ * and reading it as empty both poisoned the contradiction signal and missed the
+ * genuinely-empty shapes below. Empty means: the whole payload is null / [] / {},
+ * OR every top-level collection field is empty, OR every top-level count/total
+ * is 0, OR data is null.
+ */
+const COLLECTION_KEY = /^(records?|items?|results?|rows?|data|values?|entries|matches|hits|edges|nodes|documents?|objects?|files?|events?|messages?|contents?)$/i;
+const COUNT_KEY = /^(total|total_?count|count|size|num_?results|resultCount|totalSize)$/i;
+export function jsonLooksEmpty(v: unknown): boolean {
+  if (v === null || v === undefined) return true;
+  if (Array.isArray(v)) return v.length === 0;
+  if (typeof v !== 'object') return false;
+  const o = v as Record<string, unknown>;
+  const keys = Object.keys(o);
+  if (keys.length === 0) return true;
+  let sawSignal = false;
+  for (const k of keys) {
+    if (COLLECTION_KEY.test(k)) {
+      sawSignal = true;
+      const val = o[k];
+      const emptyHere = val === null || val === undefined || (Array.isArray(val) && val.length === 0);
+      if (!emptyHere) return false; // a non-empty collection field ⇒ not empty
+    } else if (COUNT_KEY.test(k)) {
+      sawSignal = true;
+      if (typeof o[k] === 'number' && o[k] !== 0) return false; // a positive count ⇒ not empty
+    }
+  }
+  // Every collection field was empty and every count was 0. If we saw either
+  // kind of signal, call it empty; if the object had neither (an opaque record)
+  // it is not an emptiness we can read.
+  return sawSignal;
+}
+
 export function detectCandidates(turns: Turn[]): Candidate[] {
   const out: Candidate[] = [];
 
@@ -178,68 +236,100 @@ export function detectCandidates(turns: Turn[]): Candidate[] {
    * structural one is scoped, because only this one is meaningless off-query. */
   const SHELL = /^(bash|shell|sh|exec|run|terminal|command)$/i;
   /*
-   * The agent's own built-in tools are its hands, not an external surface whose
-   * behaviour is a trap worth banking for the next agent: Read returning a file,
-   * Edit writing one, a sub-Agent launching, AskUserQuestion being declined.
-   * Harvesting them turns any coding session into a firehose — measured on one
-   * real transcript, 119 of 197 candidates were Read/Edit/Agent/AskUserQuestion
-   * scaffolding, because a Read of any file containing "[]" reads as an "empty"
-   * result (looksEmpty) and a later Read of the same file with an offset is a
-   * structural superset of it. Cairn banks traps in EXTERNAL tools — mcp__*
-   * servers, shelled-out programs (Bash stays), the network (WebFetch/WebSearch
-   * stay) — so the known Claude Code built-ins are skipped by name. Unknown and
-   * mcp__* tools are always kept: a custom or MCP tool is exactly the target,
-   * and triage culls anything that slips through. A denylist, never an allowlist,
-   * so a tool nobody has heard of is investigated, not silently dropped.
+   * Harvest only EXTERNAL surfaces. The agent's own built-in tools — Read, Edit,
+   * Glob, Grep, a sub-Agent, AskUserQuestion — are its hands, not a tool whose
+   * behaviour is a trap worth banking for the next agent, and harvesting them
+   * turned a coding session into a firehose (119 of 197 candidates on one real
+   * transcript were Read/Edit scaffolding, because a Read of any file containing
+   * "[]" read as "empty" and the next Read of it "superset"-contradicted it).
+   * The external surface is an MCP server (mcp__*), a shelled-out program (Bash),
+   * or the network (WebFetch/WebSearch). This is an ALLOWLIST, not a denylist of
+   * known built-ins, on purpose: the harness grows a new built-in every release,
+   * and a denylist under an "unknown is kept" policy re-opens the firehose on
+   * each one. The cost is that a custom, bare-named external tool (not mcp__-
+   * prefixed) is not harvested until it is added here — rare, and the loud
+   * failure (it harvests nothing) beats the silent one (the firehose returns).
    */
-  const BUILTIN_SCAFFOLD = /^(Read|Write|Edit|MultiEdit|NotebookEdit|Glob|Grep|LS|TodoWrite|Task|Agent|ToolSearch|AskUserQuestion|ExitPlanMode|BashOutput|KillShell|KillBash|Skill|SlashCommand)$/;
-  /* Claude Code's own permission-system and cancellation messages. A call these
-   * describe never reached the tool, so the text is the harness talking, not the
-   * tool. Deliberately specific — "permission denied" alone is a real shell trap
-   * and must still harvest, so we match the Claude Code phrasings only. */
-  const HARNESS_DENIAL = /\b(denied by the Claude Code|Claude Code auto[- ]?monitor|the user doesn't want to proceed|user (?:rejected|declined|has denied)|requested permissions to use|Permission for this action was denied|Denied by user|tool use was rejected)\b/i;
+  const EXTERNAL = (name: string): boolean =>
+    /^mcp__/.test(name) || SHELL.test(name) || /^(WebFetch|WebSearch)$/i.test(name);
+  /*
+   * Claude Code's own permission-system, cancellation and input-validation
+   * messages. A call these describe never reached the tool, so the text is the
+   * harness talking, not the tool. Specific on purpose in BOTH directions: a
+   * bare "permission denied" is a real shell trap (cf. cairn-0035) and must
+   * still harvest, and an OAuth provider's own "the user has denied access" /
+   * "Denied by user" is a genuine external-tool result, NOT this — those broad
+   * phrasings were removed after they were found to swallow real auth traps.
+   * The <tool_use_error> wrapper is NOT matched wholesale (it wraps genuine tool
+   * errors too); only the specific harness-noise strings inside it are.
+   */
+  const HARNESS_DENIAL = /(the user doesn't want to proceed with this tool use|the tool use was rejected|Permission for this action was denied|denied by the Claude Code|Claude Code auto[- ]?monitor|requested permissions to use|InputValidationError|exceeds maximum allowed (?:size|tokens|length)|Blocked:[^\n]*\buse Monitor\b)/i;
   const NON_SEMANTIC = new Set(['description', 'timeout', 'run_in_background', 'reason', 'explanation']);
-  const priorEmpty = new Map<string, Set<string>>(); // tool -> set of arg-key strings that returned "empty"
-  const argKey = (input: Record<string, unknown>) =>
-    Object.keys(input)
-      .filter((k) => !NON_SEMANTIC.has(k))
-      .sort()
-      .join(',');
-  const looksEmpty = (t: string) => /(:\s*\[\s*\]|"records"\s*:\s*\[\s*\]|\b0 (?:rows|records|results)\b|^\s*$)/i.test(t);
+  /* Scope/context parameters: the ones whose WRONG VALUE is the trap (the MCP
+   * bound to the sandbox org, the query against the wrong branch/ref/env). A
+   * later call that changes only one of these and flips empty -> rows is the
+   * wrong-scope trap, even though the argument KEYS are identical — which the
+   * superset signal (more keys) misses entirely. */
+  const SCOPE_KEYS = /^(org|orgId|org_id|branch|ref|revision|environment|env|stage|mapping|mappingId|mapping_id|database|db|project|projectId|project_id|account|accountId|tenant|workspace|region|zone|instance|namespace|catalog|schema|host|realm)$/i;
+  const isSemantic = (k: string) => !NON_SEMANTIC.has(k);
+  /* Keys only, for the superset signal (a wider QUERY returns more). */
+  const argKey = (input: Record<string, unknown>) => Object.keys(input).filter(isSemantic).sort().join(',');
+  /* key=value of the non-scope args ("what am I asking") and of the scope args
+   * ("where"), so the same question under a different scope can be spotted. */
+  const semanticSig = (input: Record<string, unknown>) =>
+    Object.keys(input).filter((k) => isSemantic(k) && !SCOPE_KEYS.test(k)).sort().map((k) => `${k}=${JSON.stringify(input[k])}`).join('&');
+  const scopeSig = (input: Record<string, unknown>) =>
+    Object.keys(input).filter((k) => isSemantic(k) && SCOPE_KEYS.test(k)).sort().map((k) => `${k}=${JSON.stringify(input[k])}`).join('&');
+  const looksEmpty = (text: string): boolean => {
+    const s = text.trim();
+    if (s === '') return true;
+    try {
+      return jsonLooksEmpty(JSON.parse(s));
+    } catch {
+      /* not JSON — fall through to the textual empty shapes */
+    }
+    return /^\s*(no (?:results?|matches|records?|rows?|items?|data|files?|events?)\b|not found|nothing (?:found|returned)|empty)\b/i.test(s)
+      || /(^|\W)0 (?:results?|matches|records?|rows?|items?|files?|events?)\b/i.test(s);
+  };
+
+  const priorEmptyKeys = new Map<string, Set<string>>();               // tool -> argKeys that returned empty (superset signal)
+  const priorEmptyScopes = new Map<string, Map<string, Set<string>>>(); // tool -> semanticSig -> scopeSigs seen empty (wrong-scope signal)
 
   for (let i = 0; i < turns.length; i++) {
     const t = turns[i];
     if (!t.tool || !t.result) continue;
-    // Skip the agent's own built-in tools — see BUILTIN_SCAFFOLD. Everything
-    // else (Bash, WebFetch/WebSearch, mcp__*, and any tool we do not recognise)
-    // is an external surface and is harvested normally.
-    if (BUILTIN_SCAFFOLD.test(t.tool.name)) continue;
-    // Skip harness artifacts: a call the PERMISSION system denied or the user
-    // cancelled never ran, so its result is not the tool's behaviour and cannot
-    // be a trap. Scoped to Claude Code's own permission phrasing so a genuine
-    // shell "permission denied" (a real environment trap — cf. cairn-0035)
-    // still harvests.
+    // Harvest only external surfaces — see EXTERNAL. The agent's own built-in
+    // file/search/task tools are its hands, never a bankable trap.
+    if (!EXTERNAL(t.tool.name)) continue;
+    // A call the harness denied, blocked, or rejected never reached the tool,
+    // so its result is not the tool's behaviour — see HARNESS_DENIAL.
     if (HARNESS_DENIAL.test(t.result.text)) continue;
 
     const expectation = i > 0 && turns[i - 1].role === 'assistant' && turns[i - 1].text ? turns[i - 1].text! : '';
-    /* The next assistant prose after the result is the model update. */
+    /* The model update: the next prose that reads as a correction, from the
+     * agent OR the user — a user's "no, that's the sandbox org, there are 40" is
+     * the strongest surprise signal a transcript holds, and requiring role
+     * 'assistant' threw it away. Scan to the next tool action, and prefer an
+     * update-worded turn over the first scrap of narration ("Got 50. Summarising."
+     * used to win the window and bury the correction two turns behind it). */
     let update = '';
-    for (let j = i + 1; j < Math.min(turns.length, i + 4); j++) {
-      if (turns[j].role === 'assistant' && turns[j].text) {
-        update = turns[j].text!;
-        break;
+    let firstText = '';
+    for (let j = i + 1; j < Math.min(turns.length, i + 6); j++) {
+      const tj = turns[j];
+      if (tj.tool) break; // a new action ends this result's discussion
+      if (tj.text && (tj.role === 'assistant' || tj.role === 'user')) {
+        if (!firstText) firstText = tj.text;
+        if (hits(tj.text, UPDATE)) { update = tj.text; break; }
       }
     }
+    if (!update) update = firstText;
 
     /* Surprise requires something to be surprised BY. A model update counts only
      * when the result itself was notable — an error, an empty payload, or a
      * violated stated expectation. Free-floating "actually / turns out" after a
      * plain successful call is the agent narrating its own work, not its model of
-     * a tool changing. Measured on a real build transcript: without this gate,
-     * 652 of 704 candidates were commit narration ("Pushed", "Done", "Verified")
-     * that tripped the prose regex with nothing behind it. The two are
-     * linguistically identical in prose; they are NOT identical in what the tool
-     * returned, so we anchor the prose signal to the result, not to the words. */
+     * a tool changing (measured: 652 of 704 candidates were commit narration
+     * without this anchor). */
     const empty = looksEmpty(t.result.text);
     const expected = hits(expectation, EXPECTATION);
     const notable = t.result.isError || empty || expected;
@@ -254,28 +344,41 @@ export function detectCandidates(turns: Turn[]): Candidate[] {
       score += 1;
       reasons.push('the call errored');
     }
-    if (expected) {
-      score += 1;
-      reasons.push('the agent had stated an expectation before the call');
-    }
+    /* No standalone bonus for a stated expectation: it gates the model-update
+     * signal (via `notable`) but does not itself clear the bar. Adding it did —
+     * a vague "let me try to get X" plus any error summed to THRESHOLD and
+     * admitted exactly the cheap unreasoned-error class cairn-0045 rejects. */
 
-    /* In-session contradiction: an empty success on some args, then a superset
-     * of those args returning non-empty. The silent-scope / wrong-default trap,
-     * invisible in the moment, plain in replay. */
-    const key = argKey(t.tool.input);
-    const empties = priorEmpty.get(t.tool.name);
-    if (!t.result.isError && !SHELL.test(t.tool.name) && key) {
-      if (looksEmpty(t.result.text)) {
-        (priorEmpty.get(t.tool.name) ?? priorEmpty.set(t.tool.name, new Set()).get(t.tool.name)!).add(key);
-      } else if (empties) {
-        for (const prior of empties) {
-          const priorArgs = new Set(prior ? prior.split(',') : []);
-          const nowArgs = new Set(key ? key.split(',') : []);
-          const superset = [...priorArgs].every((a) => nowArgs.has(a)) && nowArgs.size > priorArgs.size;
-          if (superset) {
+    /* In-session contradiction — two shapes of the silent-scope / wrong-default
+     * trap, both invisible in the moment and plain in replay:
+     *   (a) a wider QUERY (more args) returns rows where a narrower one was empty;
+     *   (b) the SAME query under a different SCOPE (org/branch/env) returns rows
+     *       where one scope was empty — identical arg keys, different "where". */
+    if (!t.result.isError && !SHELL.test(t.tool.name)) {
+      const key = argKey(t.tool.input);
+      const sem = semanticSig(t.tool.input);
+      const scope = scopeSig(t.tool.input);
+      if (empty) {
+        (priorEmptyKeys.get(t.tool.name) ?? priorEmptyKeys.set(t.tool.name, new Set()).get(t.tool.name)!).add(key);
+        const byScope = priorEmptyScopes.get(t.tool.name) ?? priorEmptyScopes.set(t.tool.name, new Map()).get(t.tool.name)!;
+        (byScope.get(sem) ?? byScope.set(sem, new Set()).get(sem)!).add(scope);
+      } else {
+        const nowKeys = new Set(key ? key.split(',') : []);
+        let fired = false;
+        for (const prior of priorEmptyKeys.get(t.tool.name) ?? []) {
+          const priorKeys = new Set(prior ? prior.split(',') : []);
+          if ([...priorKeys].every((a) => nowKeys.has(a)) && nowKeys.size > priorKeys.size) {
             score += 2;
             reasons.push('an earlier call with fewer arguments returned empty; this superset returned rows');
+            fired = true;
             break;
+          }
+        }
+        if (!fired) {
+          const scopes = priorEmptyScopes.get(t.tool.name)?.get(sem);
+          if (scopes && [...scopes].some((s) => s !== scope)) {
+            score += 2;
+            reasons.push('the same query returned empty under a different scope (org/branch/env) and rows here — a wrong-scope trap');
           }
         }
       }

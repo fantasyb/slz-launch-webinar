@@ -50,7 +50,7 @@ function transcript(dir: string, name: string): string {
   fs.writeFileSync(
     file,
     [
-      line({ role: 'assistant', content: [{ type: 'text', text: 'I expect the churned contacts.' }, { type: 'tool_use', id: 'a1', name: 'query_records', input: { object: 'Contact' } }] }),
+      line({ role: 'assistant', content: [{ type: 'text', text: 'I expect the churned contacts.' }, { type: 'tool_use', id: 'a1', name: 'mcp__sf__query_records', input: { object: 'Contact' } }] }),
       line({ role: 'user', content: [{ type: 'tool_result', tool_use_id: 'a1', content: '{"records":[]}' }] }),
       line({ role: 'assistant', content: [{ type: 'text', text: 'Zero rows — actually it turns out the MCP bound to the wrong org.' }] }),
     ].join('\n'),
@@ -69,8 +69,32 @@ test('--hook consolidates the transcript named on stdin into drafts/', () => {
   assert.equal(draftCount(w), 1, 'the one surprise gap became one draft');
   const drafts = fs.readdirSync(w.drafts).filter((n) => n.endsWith('.json'));
   const draft = JSON.parse(fs.readFileSync(path.join(w.drafts, drafts[0]), 'utf8'));
-  assert.equal(draft.tool, 'query_records');
+  assert.equal(draft.tool, 'mcp__sf__query_records');
   assert.match(draft.mechanism_or_update, /wrong org/, "the agent's own correction is carried into the draft");
+});
+
+test('--hook also consolidates the session\'s subagent transcripts (R2)', () => {
+  const w = world();
+  const t = transcript(w.projects, 'parent.jsonl');
+  // Subagents live at <proj>/<session>/subagents/*.jsonl, and hold most external
+  // tool use. They finish before the parent, so the watermark would hide them.
+  const subDir = path.join(w.projects, 'parent', 'subagents');
+  fs.mkdirSync(subDir, { recursive: true });
+  const line = (message: object) => JSON.stringify({ message });
+  fs.writeFileSync(
+    path.join(subDir, 'sub1.jsonl'),
+    [
+      line({ role: 'assistant', content: [{ type: 'text', text: 'Fetching the page.' }, { type: 'tool_use', id: 's1', name: 'WebFetch', input: { url: 'https://x' } }] }),
+      line({ role: 'user', content: [{ type: 'tool_result', tool_use_id: 's1', content: '{"error":"EGRESS_BLOCKED"}', is_error: true }] }),
+      line({ role: 'assistant', content: [{ type: 'text', text: 'Blocked — actually it turns out the allowlist proxy silently blocks this domain.' }] }),
+    ].join('\n'),
+  );
+  const { status } = run(w, ['--hook', '--home', w.corpus], JSON.stringify({ transcript_path: t, session_id: 'x' }));
+  assert.equal(status, 0);
+  const tools = fs.readdirSync(w.drafts).filter((n) => n.endsWith('.json'))
+    .map((n) => JSON.parse(fs.readFileSync(path.join(w.drafts, n), 'utf8')).tool);
+  assert.ok(tools.includes('mcp__sf__query_records'), 'the parent trap is consolidated');
+  assert.ok(tools.includes('WebFetch'), 'the SUBAGENT trap is consolidated too, not lost behind the watermark');
 });
 
 test('--surface catches up a transcript a missed SessionEnd never consolidated', () => {

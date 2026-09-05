@@ -143,6 +143,26 @@ function writeWatermark(dir: string, ms: number): void {
   }
 }
 
+/**
+ * A session's subagent transcripts, if any. Claude Code writes them to
+ * `<projects>/<proj>/<session>/subagents/*.jsonl` — where MOST external tool use
+ * now lives (a session that delegates research hands every WebSearch/WebFetch/mcp
+ * call to a subagent). They finish BEFORE the parent's final write, so their
+ * mtime is behind the parent's; once the SessionEnd hook advances the watermark
+ * to the parent's mtime they are `<= watermark` and skipped forever. So the hook
+ * must sweep them in the same pass — see runHook. (The --surface catch-up already
+ * sees them: allTranscripts walks recursively, so a crashed session's subagents,
+ * never watermarked, are picked up on their own mtime.)
+ */
+function subagentTranscripts(transcriptPath: string): string[] {
+  try {
+    const dir = path.join(path.dirname(transcriptPath), path.basename(transcriptPath, '.jsonl'), 'subagents');
+    return fs.readdirSync(dir).filter((n) => n.endsWith('.jsonl')).map((n) => path.join(dir, n));
+  } catch {
+    return [];
+  }
+}
+
 /** Consolidate one transcript into drafts/. Idempotent by content hash. */
 function consolidateFile(dir: string, file: string): number {
   try {
@@ -165,7 +185,12 @@ function runHook(): void {
     const { transcript_path } = hookInput();
     const dir = draftsDir();
     if (!transcript_path || !dir || !fs.existsSync(transcript_path)) return;
-    const n = consolidateFile(dir, transcript_path);
+    let n = consolidateFile(dir, transcript_path);
+    // Sweep this session's subagent transcripts BEFORE the watermark advances
+    // past them — that is where most external tool use lives (R2). They are
+    // consolidated here, not left to --surface, precisely because advancing the
+    // watermark to the parent's mtime would hide them from --surface forever.
+    for (const sub of subagentTranscripts(transcript_path)) n += consolidateFile(dir, sub);
     try {
       writeWatermark(dir, Math.max(readWatermark(dir) ?? 0, fs.statSync(transcript_path).mtimeMs));
     } catch {
