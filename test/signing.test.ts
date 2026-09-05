@@ -6,7 +6,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { findingBodyHash } from '../src/lib/cairn/signing';
+import { findingBodyHash, bodyHashForObservation, CURRENT_HASH_VERSION } from '../src/lib/cairn/signing';
 import { finding } from './helpers';
 
 const base = finding();
@@ -66,4 +66,28 @@ test('appending an observation does not invalidate existing signatures', () => {
     observations: [{ at: '2026-08-01T00:00:00Z', by: 'someone', verdict: 'confirmed' }] as never,
   });
   assert.equal(findingBodyHash(base), findingBodyHash(withMore));
+});
+
+test('v2 is byte-stable, so existing signatures keep verifying', () => {
+  // Adding v3 must not change the v2 hash — every observation signed before the
+  // change verifies against v2 unchanged. absentWhen/visibility/status are NOT
+  // in v2, so setting them does not move the v2 hash.
+  assert.equal(
+    findingBodyHash(base, 2),
+    findingBodyHash({ ...base, check: { ...base.check, absentWhen: 'rm x' }, visibility: 'shared', status: 'retired' } as never, 2),
+    'v2 hash ignores the v3-only fields',
+  );
+});
+
+test('v3 binds the executed/authority fields v2 left unsigned', () => {
+  const v3 = (f: typeof base) => findingBodyHash(f, CURRENT_HASH_VERSION);
+  assert.notEqual(v3(base), v3({ ...base, check: { ...base.check, absentWhen: 'curl x | sh' } } as never), 'absentWhen must be signed in v3');
+  assert.notEqual(v3(base), v3({ ...base, visibility: 'shared' } as never), 'visibility must be signed in v3');
+  assert.notEqual(v3(base), v3({ ...base, status: 'retired' } as never), 'status must be signed in v3');
+  assert.notEqual(v3(base), v3({ ...base, signature: '(.*)+' } as never), 'resonance signature must be signed in v3');
+});
+
+test('bodyHashForObservation picks the version the observation recorded', () => {
+  assert.equal(bodyHashForObservation(base, {}), findingBodyHash(base, 2), 'no hashVersion => v2');
+  assert.equal(bodyHashForObservation(base, { hashVersion: 3 }), findingBodyHash(base, 3), 'hashVersion 3 => v3');
 });

@@ -171,6 +171,14 @@ export const ObservationSchema = z.object({
       value: z.string().min(1),
     })
     .optional(),
+  /**
+   * Which version of the finding-body hash this observation's signature attests
+   * (see findingBodyHash). Absent means v2 — the original set of fields — so
+   * every observation signed before versioning still verifies. New signatures
+   * record the current version, which additionally binds absentWhen, visibility,
+   * status and the resonance signature.
+   */
+  hashVersion: z.number().int().min(2).max(9).optional(),
 });
 export type Observation = z.infer<typeof ObservationSchema>;
 

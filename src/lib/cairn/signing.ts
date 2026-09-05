@@ -52,7 +52,10 @@ export const SIGNATURE_VERSION = 'cairn-sig-v2';
  * change as the corpus lives, and folding them in would invalidate everything
  * on every append.
  */
-export function findingBodyHash(f: {
+/** The current (newest) body-hash version. New signatures attest this. */
+export const CURRENT_HASH_VERSION = 3;
+
+export interface HashableFinding {
   id: string;
   title: string;
   claim: string;
@@ -69,32 +72,58 @@ export function findingBodyHash(f: {
   provenance: string;
   halfLifeDays: number;
   subject: { name: string; ecosystem: string; versions: string };
-  check: { command: string; confirmedIf: string; refutedIf: string; manual: boolean };
+  check: { command: string; confirmedIf: string; refutedIf: string; manual: boolean; absentWhen?: string };
   evidence: Array<{ command: string; output: string; note?: string }>;
-}): string {
-  return crypto
-    .createHash('sha256')
-    .update(
-      JSON.stringify([
-        f.id, f.claim, f.expectation, f.reality,
-        f.mechanism ?? '', f.workaround ?? '', f.derivation ?? '', f.appliesTo ?? '',
-        f.scope, f.basis ?? 'empirical',
-        // halfLifeDays, provenance, title, kind and cost are authored once and
-        // were outside the signed bytes. An author could sign a finding and
-        // then change halfLifeDays from 30 to 3650 with every signature still
-        // verifying -- keeping a claim "fresh" for a decade and defeating the
-        // decay the schema calls the corpus's central honesty property. Same
-        // for flipping provenance between firsthand and secondhand, and for
-        // rewriting the title a reader actually sees while the signed claim
-        // underneath stays intact.
-        f.kind, f.cost, f.provenance, String(f.halfLifeDays), f.title,
-        f.subject.name, f.subject.ecosystem, f.subject.versions,
-        f.check.command, f.check.confirmedIf, f.check.refutedIf, f.check.manual,
-        f.evidence.map((e) => [e.command, e.output, e.note ?? '']),
-      ]),
-      'utf8',
-    )
-    .digest('hex');
+  visibility?: string;
+  status?: string;
+  signature?: string;
+}
+
+/**
+ * Hash the fields an observation attests to.
+ *
+ * VERSIONED, and the version is the whole reason existing signatures keep
+ * verifying while new ones cover more. v2 is byte-identical to the original, so
+ * every observation signed before this change still verifies against it. v3
+ * additionally binds the fields that are executed or that change what an agent
+ * does with a signed finding but were outside the signed bytes:
+ *   - check.absentWhen — run through /bin/sh by the gate (an added `curl|sh`
+ *     was invisible to every signature),
+ *   - visibility — flipping private→shared publishes org data unattested,
+ *   - status — retiring a true, signed warning silences it (poisoning's mirror),
+ *   - signature — the resonance regex re-targets WHEN a finding fires.
+ * Each verifier hashes at the version the observation recorded (v2 when absent),
+ * so a v3-signed observation detects a tamper on any of these; older findings,
+ * whose observations are v2, are protected instead by lint (which scans
+ * absentWhen) and the gate's own sabotage guard.
+ */
+export function findingBodyHash(f: HashableFinding, version: number = 2): string {
+  const base: unknown[] = [
+    f.id, f.claim, f.expectation, f.reality,
+    f.mechanism ?? '', f.workaround ?? '', f.derivation ?? '', f.appliesTo ?? '',
+    f.scope, f.basis ?? 'empirical',
+    // halfLifeDays, provenance, title, kind and cost are authored once and
+    // were outside the signed bytes. An author could sign a finding and
+    // then change halfLifeDays from 30 to 3650 with every signature still
+    // verifying -- keeping a claim "fresh" for a decade and defeating the
+    // decay the schema calls the corpus's central honesty property. Same
+    // for flipping provenance between firsthand and secondhand, and for
+    // rewriting the title a reader actually sees while the signed claim
+    // underneath stays intact.
+    f.kind, f.cost, f.provenance, String(f.halfLifeDays), f.title,
+    f.subject.name, f.subject.ecosystem, f.subject.versions,
+    f.check.command, f.check.confirmedIf, f.check.refutedIf, f.check.manual,
+    f.evidence.map((e) => [e.command, e.output, e.note ?? '']),
+  ];
+  if (version >= 3) {
+    base.push(f.check.absentWhen ?? '', f.visibility ?? 'private', f.status ?? 'active', f.signature ?? '');
+  }
+  return crypto.createHash('sha256').update(JSON.stringify(base), 'utf8').digest('hex');
+}
+
+/** The body hash at the version a given observation was signed under (v2 when it records none). */
+export function bodyHashForObservation(f: HashableFinding, o: { hashVersion?: number }): string {
+  return findingBodyHash(f, o.hashVersion ?? 2);
 }
 export const SIGNATURE_ALGORITHM = 'ed25519';
 

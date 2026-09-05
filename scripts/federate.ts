@@ -21,6 +21,7 @@ import {
 import {
   verifyObservation,
   findingBodyHash,
+  bodyHashForObservation,
   deriveKeyId,
   validateLabel,
   type KeyRecord,
@@ -87,7 +88,7 @@ async function main() {
       let unverified = 0;
       for (const f of bundle.findings) {
         for (const o of f.observations) {
-          if (verifyObservation(f.id, o, keys, findingBodyHash(f)) === 'signed') verified++;
+          if (verifyObservation(f.id, o, keys, bodyHashForObservation(f, o)) === 'signed') verified++;
           else unverified++;
         }
       }

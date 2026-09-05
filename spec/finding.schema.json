@@ -302,6 +302,11 @@
                   "value"
                 ],
                 "additionalProperties": false
+              },
+              "hashVersion": {
+                "type": "integer",
+                "minimum": 2,
+                "maximum": 9
               }
             },
             "required": [

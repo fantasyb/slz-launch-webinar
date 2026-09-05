@@ -12,7 +12,7 @@ import crypto from 'crypto';
 import { writeJsonAtomic } from '../src/lib/cairn/atomic';
 import path from 'path';
 import { FindingSchema } from '../src/lib/cairn/schema';
-import { signObservation, deriveKeyId, findingBodyHash } from '../src/lib/cairn/signing';
+import { signObservation, deriveKeyId, findingBodyHash, CURRENT_HASH_VERSION } from '../src/lib/cairn/signing';
 import { loadKeys } from '../src/lib/cairn/keys';
 import { homePath } from '../src/lib/cairn/home';
 
@@ -72,10 +72,10 @@ for (const file of fs.readdirSync(DIR).filter((f) => f.endsWith('.json'))) {
       return raw.observations[i];
     }
     const { signature: _drop, ...unsigned } = o;
-    const value = signObservation(f.id, unsigned, privateKey, findingBodyHash(f));
+    const value = signObservation(f.id, unsigned, privateKey, findingBodyHash(f, CURRENT_HASH_VERSION));
     touched = true;
     signed++;
-    return { ...raw.observations[i], signature: { algorithm: 'ed25519', keyId, value } };
+    return { ...raw.observations[i], hashVersion: CURRENT_HASH_VERSION, signature: { algorithm: 'ed25519', keyId, value } };
   });
 
   if (touched) writeJsonAtomic(full, raw);

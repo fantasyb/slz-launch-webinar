@@ -29,7 +29,7 @@ import { writeJsonAtomic } from './atomic';
 import { homePath } from './home';
 import { standing, lastConfirmedAt, daysSince, type Standing } from './decay';
 import { scanInjection, scanSensitive, draftSurface } from './safety';
-import { signObservation, findingBodyHash } from './signing';
+import { signObservation, findingBodyHash, CURRENT_HASH_VERSION } from './signing';
 import { reloadKeys } from './keys';
 
 export const VERDICTS = ['confirmed', 'refuted', 'inconclusive'] as const;
@@ -103,8 +103,8 @@ export function attest(raw: unknown, opts: { by?: string; via?: string; keyId?: 
   if (signable) {
     const body = FindingSchema.safeParse(rawFinding);
     if (body.success) {
-      const value = signObservation(a.finding, observation, fs.readFileSync(privFile!, 'utf8'), findingBodyHash(body.data));
-      signed = { ...observation, signature: { algorithm: 'ed25519', keyId: opts.keyId, value } };
+      const value = signObservation(a.finding, observation, fs.readFileSync(privFile!, 'utf8'), findingBodyHash(body.data, CURRENT_HASH_VERSION));
+      signed = { ...observation, hashVersion: CURRENT_HASH_VERSION, signature: { algorithm: 'ed25519', keyId: opts.keyId, value } };
     }
   }
   rawFinding.observations = [...((rawFinding.observations as unknown[]) ?? []), signed];

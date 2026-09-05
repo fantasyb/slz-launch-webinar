@@ -5,6 +5,7 @@ import { FindingSchema, ObservationSchema, type Finding, type Observation } from
 import {
   verifyObservation,
   findingBodyHash,
+  bodyHashForObservation,
   deriveKeyId,
   validateLabel,
   type KeyRecord,
@@ -214,7 +215,7 @@ export function loadFederated(): FederatedFinding[] {
       let verified = 0;
       let unverified = 0;
       for (const o of finding.observations) {
-        if (verifyObservation(finding.id, o, upstreamKeys, findingBodyHash(finding)) === 'signed') verified++;
+        if (verifyObservation(finding.id, o, upstreamKeys, bodyHashForObservation(finding, o)) === 'signed') verified++;
         else unverified++;
       }
 

@@ -24,7 +24,7 @@ import { execFileSync } from 'child_process';
 import { loadKeys } from './keys';
 import { homePath, cairnHome } from './home';
 import { FindingSchema } from './schema';
-import { signObservation, findingBodyHash, deriveKeyId, type KeyRecord } from './signing';
+import { signObservation, findingBodyHash, CURRENT_HASH_VERSION, deriveKeyId, type KeyRecord } from './signing';
 import { writeJsonAtomic } from './atomic';
 
 export interface MachineIdentity {
@@ -87,10 +87,10 @@ export function sealOwnObservations(id: MachineIdentity): number {
       const row = (raw.observations as Record<string, unknown>[])[i];
       if (o.signature || o.by !== id.label) return row;
       const { signature: _drop, ...unsigned } = o;
-      const value = signObservation(f.id, unsigned, id.privateKey, findingBodyHash(f));
+      const value = signObservation(f.id, unsigned, id.privateKey, findingBodyHash(f, CURRENT_HASH_VERSION));
       touched = true;
       signed++;
-      return { ...row, signature: { algorithm: 'ed25519', keyId: id.keyId, value } };
+      return { ...row, hashVersion: CURRENT_HASH_VERSION, signature: { algorithm: 'ed25519', keyId: id.keyId, value } };
     });
     if (touched) writeJsonAtomic(full, raw);
   }

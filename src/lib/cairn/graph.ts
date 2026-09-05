@@ -41,7 +41,7 @@
  */
 import type { Finding, Observation } from './schema';
 import { environmentSignature } from './schema';
-import { verifyObservation, findingBodyHash } from './signing';
+import { verifyObservation, bodyHashForObservation } from './signing';
 import { loadKeys } from './keys';
 
 /**
@@ -55,7 +55,7 @@ import { loadKeys } from './keys';
 function attesterOf(f: Finding, o: Observation): { id: string; signed: boolean } | null {
   if (o.signature) {
     const keys = loadKeys();
-    if (verifyObservation(f.id, o, keys, findingBodyHash(f)) === 'signed') {
+    if (verifyObservation(f.id, o, keys, bodyHashForObservation(f, o)) === 'signed') {
       return { id: `key:${o.signature.keyId}`, signed: true };
     }
   }

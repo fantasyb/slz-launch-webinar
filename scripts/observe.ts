@@ -21,7 +21,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { overlayDir, loadFederated } from '../src/lib/cairn/federation';
-import { signObservation, findingBodyHash } from '../src/lib/cairn/signing';
+import { signObservation, findingBodyHash, CURRENT_HASH_VERSION } from '../src/lib/cairn/signing';
 import { loadKeys } from '../src/lib/cairn/keys';
 import { FindingSchema } from '../src/lib/cairn/schema';
 import { writeJsonAtomic } from '../src/lib/cairn/atomic';
@@ -88,11 +88,11 @@ if (isLocal) {
     findingId,
     observation,
     fs.readFileSync(privFile, 'utf8'),
-    findingBodyHash(finding),
+    findingBodyHash(finding, CURRENT_HASH_VERSION),
   );
   raw.observations = [
     ...raw.observations,
-    { ...observation, signature: { algorithm: 'ed25519', keyId, value } },
+    { ...observation, hashVersion: CURRENT_HASH_VERSION, signature: { algorithm: 'ed25519', keyId, value } },
   ];
   writeJsonAtomic(full, raw);
 
@@ -110,9 +110,9 @@ if (isLocal) {
     findingId,
     observation,
     fs.readFileSync(privFile, 'utf8'),
-    findingBodyHash(target.finding),
+    findingBodyHash(target.finding, CURRENT_HASH_VERSION),
   );
-  const signed = { ...observation, signature: { algorithm: 'ed25519', keyId, value } };
+  const signed = { ...observation, hashVersion: CURRENT_HASH_VERSION, signature: { algorithm: 'ed25519', keyId, value } };
 
   const dir = path.join(overlayDir(), upstream as string);
   fs.mkdirSync(dir, { recursive: true });

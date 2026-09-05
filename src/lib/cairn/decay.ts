@@ -1,5 +1,5 @@
 import { environmentSignature, type Finding, type Observation } from './schema';
-import { verifyObservation, findingBodyHash, type KeyRecord } from './signing';
+import { verifyObservation, findingBodyHash, bodyHashForObservation, type KeyRecord } from './signing';
 import { loadKeys } from './keys';
 
 export const DAY_MS = 86_400_000;
@@ -168,7 +168,7 @@ function signedEnvironments(
       o.verdict === 'confirmed' &&
       o.environment &&
       notInFuture(o, now) &&
-      verifyObservation(f.id, o, attestKeys(f, keys), findingBodyHash(f)) === 'signed',
+      verifyObservation(f.id, o, attestKeys(f, keys), bodyHashForObservation(f, o)) === 'signed',
   );
 
   const environments = new Set(attested.map((o) => environmentSignature(o.environment!)));
@@ -215,7 +215,7 @@ export function effectiveEnvironments(
       o.verdict === 'confirmed' &&
       o.environment &&
       notInFuture(o, now) &&
-      verifyObservation(f.id, o, attestKeys(f, keys), findingBodyHash(f)) !== 'signed',
+      verifyObservation(f.id, o, attestKeys(f, keys), bodyHashForObservation(f, o)) !== 'signed',
   );
   // Environments already earned by a signature are not counted twice.
   const unsignedEnvs = new Set(
@@ -349,7 +349,7 @@ function partyOf(
   // one -- the identity function behind corroboration, the refutation gate and
   // derivedVerdict -- did not.
   if (!o.signature) return null;
-  if (verifyObservation(f.id, o, attestKeys(f, keys), findingBodyHash(f)) !== 'signed') return null;
+  if (verifyObservation(f.id, o, attestKeys(f, keys), bodyHashForObservation(f, o)) !== 'signed') return null;
   return `key:${o.signature.keyId}`;
 }
 
