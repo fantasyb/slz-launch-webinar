@@ -70,11 +70,12 @@ import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import { preflight, retrieve } from '../src/lib/cairn/retrieval';
 import { matchEnvironment } from '../src/lib/cairn/precondition';
 import { FindingSchema, type Finding } from '../src/lib/cairn/schema';
-import { homePath } from '../src/lib/cairn/home';
+import { homePath, cairnHome } from '../src/lib/cairn/home';
 import { observe } from '../src/lib/cairn/observe';
 import { recordSubmission } from '../src/lib/cairn/recordFinding';
 import { redactForLedger } from '../src/lib/cairn/safety';
 import { shapeOf, diffSurface, findingNames, type ToolShape, type SurfaceChange } from '../src/lib/cairn/toolsurface';
+import { trustMode, readPin, writePin, evaluateTrust } from '../src/lib/cairn/trust';
 import { summarise, detect, type CallSummary } from '../src/lib/cairn/contradiction';
 import { tierOf } from '../src/lib/cairn/brief';
 import { resonates } from '../src/lib/cairn/resonance';
@@ -819,6 +820,10 @@ interface Upstream {
    */
   surface: ToolShape[] | null;
   surfaceEvents: Array<{ at: string; changes: SurfaceChange[] }>;
+  /** RAW tool names withheld by the trust pin (changed or unapproved since the
+   * server was approved). Populated from the pin whenever the surface is read;
+   * enforced only in trust enforce mode. See src/lib/cairn/trust.ts. */
+  trustBlocked: Set<string>;
 }
 
 /** Lifted from the SDK's 60s: a long-running tool must not fail only because it was proxied. */
@@ -1150,7 +1155,7 @@ async function main() {
   /* Declared before the relay that reads it; assigned once the upstreams have said what they offer. */
   let capabilities: ServerCapabilities = {};
   const upstreams: Upstream[] = specs.map((spec) => ({
-    spec, client: null, caps: {}, alive: false, respawnFailures: 0, nextRespawnAt: 0, respawning: null, surface: null, surfaceEvents: [],
+    spec, client: null, caps: {}, alive: false, respawnFailures: 0, nextRespawnAt: 0, respawning: null, surface: null, surfaceEvents: [], trustBlocked: new Set(),
   }));
   /* Every live server, so an upstream notification reaches every session. */
   const servers = new Set<Server>();
@@ -1171,8 +1176,46 @@ async function main() {
    * each session is told once on its next result. Nothing here changes what
    * is routed or offered.
    */
+  /** CAIRN_HOME/trust, where the approval pins live. Null if no home resolves. */
+  function trustDirOf(): string | null {
+    try { return path.join(cairnHome(), 'trust'); } catch { return null; }
+  }
+
+  /*
+   * The security check: compare the live surface to the APPROVED one. First
+   * sight of a server pins it (trust on first use); after that, a tool whose
+   * description, schema, or annotations changed — or a tool that appeared — is
+   * drift from what was approved, the tool-poisoning / rug-pull move. In monitor
+   * mode it is flagged; in enforce mode its raw name goes into up.trustBlocked
+   * and is withheld from the client until re-approved. Runs on every surface
+   * read so the block set is always current. Never throws.
+   */
+  function evaluateTrustFor(up: Upstream, shapes: ToolShape[]): void {
+    const mode = trustMode();
+    const dir = trustDirOf();
+    if (mode === 'off' || !dir) { up.trustBlocked = new Set(); return; }
+    const pin = readPin(up.spec.name, dir);
+    if (!pin) {
+      writePin(up.spec.name, shapes, dir); // trust on first use: this surface is the baseline
+      up.trustBlocked = new Set();
+      process.stderr.write(`cairn-proxy: TRUST ${up.spec.name}: pinned ${shapes.length} tool(s) as approved (first sight)\n`);
+      return;
+    }
+    const { changes, blocked } = evaluateTrust(pin.tools, shapes);
+    up.trustBlocked = blocked;
+    if (!changes.length) return;
+    for (const c of changes) {
+      const action = blocked.has(c.tool) ? (mode === 'enforce' ? 'WITHHELD until re-approved' : 'flagged (monitor)') : 'noted';
+      process.stderr.write(`cairn-proxy: TRUST ${up.spec.name}: ${c.detail} — ${action}\n`);
+    }
+    try {
+      observe(`${up.spec.name} tool surface drifted from approval: ${changes.map((c) => c.detail).join('; ').slice(0, 500)}`, [], `mcp-proxy:trust-${mode}`, { by: 'gateway', session: process.env.CAIRN_SESSION });
+    } catch { /* never fatal */ }
+  }
+
   function noteSurface(up: Upstream, tools: Tool[]): void {
     const shapes = tools.map(shapeOf);
+    evaluateTrustFor(up, shapes); // security: compare against the approval pin, every read
     if (!up.surface) { up.surface = shapes; return; }
     const changes = diffSurface(up.surface, shapes);
     up.surface = shapes;
@@ -1443,17 +1486,23 @@ async function main() {
           complete = false;
           break;
         }
-        for (const t of page.tools) {
-          const name = expose(up, t.name);
-          owners.set(name, { up, raw: t.name });
-          // Defang any imitation of our label in the upstream's own description
-          // before it reaches the model (an HTTP host could forge a Cairn block).
-          out.push({ ...t, name, description: t.description ? defangUpstream(t.description) : t.description });
-          mine.push(t);
-        }
+        for (const t of page.tools) mine.push(t);
         cursor = page.nextCursor;
       } while (cursor);
+      // Read the surface (and evaluate trust) BEFORE exposing, so a withheld tool
+      // never reaches the list even for one listing.
       if (complete) noteSurface(up, mine);
+      const enforce = trustMode() === 'enforce';
+      for (const t of mine) {
+        const name = expose(up, t.name);
+        // Always route-known, so a call to a withheld tool gets a clear refusal
+        // rather than a generic "no such tool".
+        owners.set(name, { up, raw: t.name });
+        if (enforce && up.trustBlocked.has(t.name)) continue; // withhold a changed/unapproved tool from the list
+        // Defang any imitation of our label in the upstream's own description
+        // before it reaches the model (an HTTP host could forge a Cairn block).
+        out.push({ ...t, name, description: t.description ? defangUpstream(t.description) : t.description });
+      }
     }
     // Atomic swap: no await between clear and repopulate, so no other task ever
     // observes a partially-built toolOwner.
@@ -1615,6 +1664,20 @@ async function main() {
       }
       if (!owner) {
         return textResult(`cairn-proxy: no upstream offers a tool named "${req.params.name}"`, true);
+      }
+      /*
+       * Trust enforcement: a tool whose surface drifted from what was approved is
+       * withheld from the list, but a client could still call it by name. Refuse
+       * it here, so a poisoned/rug-pulled tool cannot be invoked until a human
+       * re-approves the server. Monitor mode only flags; it does not block.
+       */
+      if (trustMode() === 'enforce' && owner.up.trustBlocked.has(owner.raw)) {
+        try { observe(`${owner.up.spec.name} ${owner.raw} [trust-withheld]`, [], 'mcp-proxy:trust-withheld', { by: session.agent, session: session.id }); } catch { /* never fatal */ }
+        return textResult(
+          `cairn-proxy: "${req.params.name}" is withheld — its definition changed since this server was approved, ` +
+            `which is how a tool-poisoning / rug-pull attack looks. Re-approve the server with \`cairn:trust --reapprove ${owner.up.spec.name}\` once you have confirmed the change is legitimate.`,
+          true,
+        );
       }
       if (!(await ensure(owner.up))) {
         return textResult(`cairn-proxy: upstream "${owner.up.spec.name}" is not running (${owner.up.lastError ?? 'unknown'})${retryHint(owner.up)}`, true);

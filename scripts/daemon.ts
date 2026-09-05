@@ -17,11 +17,11 @@
  * installer registers this under launchd (survives logout/reboot); elsewhere,
  * run it under your own service manager or nohup.
  */
-import { spawn } from 'child_process';
+import { spawn, execFileSync } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { selfUpdate, describeUpdate } from '../src/lib/cairn/selfUpdate';
+import { selfUpdate, describeUpdate, repoRoot } from '../src/lib/cairn/selfUpdate';
 
 const argv = process.argv.slice(2);
 function opt(name: string): string | undefined {
@@ -152,6 +152,24 @@ function maybeSelfUpdate(): void {
   if (r.status === 'up-to-date') return;
   process.stderr.write(`cairn:daemon self-update: ${describeUpdate(r)}\n`);
   if (r.status === 'updated') {
+    // Re-run the install after a code update so install-side improvements (new
+    // wrapping rules, the security defaults) apply and any MCP server added since
+    // the last install gets wrapped — automatically, not only when the operator
+    // remembers. Idempotent, and it PRESERVES the trust mode (install reads the
+    // existing one), so enforce is never downgraded. Disable with
+    // CAIRN_DAEMON_REINSTALL=0.
+    if (process.env.CAIRN_DAEMON_REINSTALL !== '0') {
+      try {
+        execFileSync('npm', ['run', 'cairn:install', '--', ...(home ? ['--home', home] : [])], {
+          cwd: repoRoot(),
+          stdio: ['ignore', 'inherit', 'inherit'],
+          timeout: 5 * 60_000,
+        });
+        process.stderr.write('cairn:daemon re-ran install after update (new servers wrapped; trust mode preserved)\n');
+      } catch (e) {
+        process.stderr.write(`cairn:daemon re-install after update failed (ignored): ${(e as Error).message}\n`);
+      }
+    }
     process.stderr.write('cairn:daemon exiting to reload the new code (a supervisor restarts me; if run by hand, restart to apply).\n');
     process.exit(0);
   }

@@ -729,6 +729,47 @@ test('degraded, a changed tool surface is noticed on stderr and nothing is appen
   } finally { await s.close(); }
 });
 
+test('trust enforce: a tool whose description changed since approval is withheld and refused', async () => {
+  const home = corpus();
+  const enforce = { CAIRN_TRUST_MODE: 'enforce' };
+  // Session one pins the server's surface on first sight.
+  const a = new Session(home, ['--server', `node ${FIXTURE}`], enforce);
+  try {
+    await a.init();
+    assert.ok((await a.tools()).some((t) => t.name === 'mcp__data360__query_records'), 'the tool is offered on first sight (pinned)');
+  } finally { await a.close(); }
+
+  // Session two: the same server, but query_records' DESCRIPTION is poisoned.
+  const b = new Session(home, ['--server', `node ${FIXTURE} --poison`], enforce);
+  try {
+    await b.init();
+    const names = (await b.tools()).map((t) => t.name);
+    assert.ok(!names.includes('mcp__data360__query_records'), 'the poisoned tool is withheld from the list');
+    // A direct call by name is refused with the rug-pull explanation.
+    const r = await b.call('mcp__data360__query_records', { object: 'A' });
+    assert.equal(r.isError, true);
+    assert.ok(texts(r).some((x) => /withheld|changed since|re-approve/i.test(x)), 'and the refusal says why and how to re-approve');
+    // An unrelated, unchanged tool is still offered.
+    assert.ok(names.includes('mcp__data360__unrelated'), 'only the changed tool is withheld, not the whole server');
+  } finally { await b.close(); }
+});
+
+test('trust monitor: drift is flagged but nothing is withheld', async () => {
+  const home = corpus();
+  const monitor = { CAIRN_TRUST_MODE: 'monitor' };
+  const a = new Session(home, ['--server', `node ${FIXTURE}`], monitor);
+  try { await a.init(); await a.tools(); } finally { await a.close(); }
+  const b = new Session(home, ['--server', `node ${FIXTURE} --poison`], monitor);
+  try {
+    await b.init();
+    const names = (await b.tools()).map((t) => t.name);
+    assert.ok(names.includes('mcp__data360__query_records'), 'monitor mode never withholds — it only flags');
+    const deadline = Date.now() + 8000;
+    while (Date.now() < deadline && !/TRUST .*description changed/.test(b.stderr)) await new Promise((r) => setTimeout(r, 200));
+    assert.match(b.stderr, /TRUST .*description changed/, 'the drift is flagged on stderr');
+  } finally { await b.close(); }
+});
+
 /* ------------------------------------------------------------------------ */
 /* Ambient, in front of a real connector all day                              */
 /* ------------------------------------------------------------------------ */

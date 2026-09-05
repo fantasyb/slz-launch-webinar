@@ -86,6 +86,28 @@ const WRAP_EXCLUDE = splitList(opts('exclude'));
  * a headerless OAuth `notion`; now it does not.
  */
 const WRAP_NO_AUTH = splitList(opts('http-no-auth'));
+/*
+ * Trust mode baked into each wrapped server, so a real install is security-active
+ * by default without the operator setting an env var. `monitor` (the default)
+ * pins each server's approved tool surface on first sight and FLAGS later drift
+ * (tool-poisoning / rug-pull) without blocking; `--enforce` additionally
+ * WITHHOLDS a changed tool until re-approved; `--no-trust` turns it off.
+ *
+ * An EXPLICIT flag always wins. With no flag, an already-installed mode is
+ * PRESERVED — read from an existing wrapped server's env — so a re-install (the
+ * daemon runs one after each self-update) never silently downgrades an operator's
+ * `enforce` back to `monitor`. Only a first install with no flag defaults to
+ * monitor.
+ */
+const EXPLICIT_TRUST = has('--enforce') ? 'enforce' : has('--no-trust') ? 'off' : has('--monitor') ? 'monitor' : null;
+function effectiveTrustMode(servers: Record<string, ServerEntry>): string {
+  if (EXPLICIT_TRUST) return EXPLICIT_TRUST;
+  for (const s of Object.values(servers)) {
+    const m = (s as { env?: Record<string, unknown> })?.env?.CAIRN_TRUST_MODE;
+    if (m === 'off' || m === 'monitor' || m === 'enforce') return m;
+  }
+  return 'monitor';
+}
 
 const HOME = process.env.HOME || os.homedir();
 const expand = (p: string) => (p.startsWith('~') ? path.join(HOME, p.slice(1)) : path.resolve(p));
@@ -370,13 +392,14 @@ const httpHasAuth = (e: ServerEntry) => {
 const isWrappedByUs = (e: ServerEntry) =>
   e.command === 'node' && Array.isArray(e.args) && e.args.some((a) => typeof a === 'string' && path.basename(a) === 'cairn-proxy.js');
 
-interface WrapSummary { wrapped: string[]; skipped: Array<{ name: string; why: string }>; already: string[] }
+interface WrapSummary { wrapped: string[]; skipped: Array<{ name: string; why: string }>; already: string[]; trustMode: string }
 
 function wrapServers(file: string, home: string): WrapSummary {
   const cfg = readConfig(file);
   const servers = (cfg.mcpServers ??= {}) as Record<string, ServerEntry>;
   const wrappedDir = path.join(home, 'wrapped');
-  const summary: WrapSummary = { wrapped: [], skipped: [], already: [] };
+  const trustMode = effectiveTrustMode(servers); // explicit flag, else preserve existing, else monitor
+  const summary: WrapSummary = { wrapped: [], skipped: [], already: [], trustMode };
   let changed = false;
   for (const name of Object.keys(servers)) {
     if (name === MCP_NAME) continue; // never wrap our own pull server
@@ -413,7 +436,7 @@ function wrapServers(file: string, home: string): WrapSummary {
     }
     /* --no-cairn-tools: the standalone cairn server already offers the pull tools,
      * so a wrapped server must not re-advertise them once per server. Push is unaffected. */
-    servers[name] = { command: 'node', args: [PROXY_BIN, '--config', wrappedFile, '--no-cairn-tools'], env: { CAIRN_HOME: home } };
+    servers[name] = { command: 'node', args: [PROXY_BIN, '--config', wrappedFile, '--no-cairn-tools'], env: { CAIRN_HOME: home, CAIRN_TRUST_MODE: trustMode } };
     summary.wrapped.push(name);
     changed = true;
   }
@@ -769,7 +792,7 @@ function main() {
     if (!DRY) {
       try {
         const gi = path.join(home, '.gitignore');
-        const want = ['.cairn-secrets/', 'drafts/', 'retrievals/', 'wrapped/'];
+        const want = ['.cairn-secrets/', 'drafts/', 'retrievals/', 'wrapped/', 'trust/'];
         const existing = fs.existsSync(gi) ? fs.readFileSync(gi, 'utf8') : '';
         const lines = new Set(existing.split('\n').map((l) => l.trim()));
         const missing = want.filter((w) => !lines.has(w));
@@ -855,7 +878,10 @@ function main() {
    * Silent per-call unless a finding resonates, and fully reversible on uninstall. */
   if (!has('--no-wrap')) {
     const w = wrapServers(claudeJson, home);
-    if (w.wrapped.length) console.log(`  ${DRY ? 'would wrap' : 'wrapped  '}  ${w.wrapped.length} server(s) through the gateway: ${w.wrapped.join(', ')}`);
+    if (w.wrapped.length) {
+      console.log(`  ${DRY ? 'would wrap' : 'wrapped  '}  ${w.wrapped.length} server(s) through the gateway: ${w.wrapped.join(', ')}`);
+      console.log(`  trust      ${w.trustMode}${w.trustMode === 'monitor' ? ' — each server\'s tools are pinned on first use; a later change is flagged (use --enforce to withhold it)' : w.trustMode === 'enforce' ? ' — a tool that changes after approval is withheld until re-approved (cairn:trust)' : ' — surface pinning off'}`);
+    }
     for (const a of w.already) console.log(`  already    "${a}" already routed through the gateway`);
     for (const sk of w.skipped) console.log(`  skipped    "${sk.name}" — ${sk.why}`);
     if (!w.wrapped.length && !w.already.length && !w.skipped.length) {

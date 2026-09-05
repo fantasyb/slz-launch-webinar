@@ -37,6 +37,7 @@ Run every command below from the Cairn checkout with that home, e.g. `CAIRN_HOME
 | `/cairn retire <id> "<reason>"` | retire it — never delete (see **Managing**) |
 | `/cairn holes` \| `/cairn drafts` | `cairn:unanswered` and the drafts in `cairn:report` — what's noticed but unwritten |
 | `/cairn queue` | the **sleep queue** and daemon health — what is harvested and waiting for triage, and whether the always-on daemon is draining it (see **The queue**) |
+| `/cairn trust` | the **security pins** — which wrapped servers are approved, and any tool that drifted from its approval (tool-poisoning / rug-pull). `cairn:trust`; `--reapprove <server>` after a legitimate change (see **Trust**) |
 | `/cairn update` | bring the **code** up to date, safely: `cairn:update` (fast-forward only, rolls back a bad build). `--check` to preview (see **Updating**) |
 | `/cairn why <question>` | `cairn:history "<question>"` — search the *reasoning* in git history, not just the corpus |
 | `/cairn sync` | `cairn:sync` — pull the shared **corpus** and re-federate (findings, not code) |
@@ -75,6 +76,18 @@ Two different "updates", and they must not be confused:
 - **`/cairn sync`** pulls the **corpus** — the findings themselves. Different thing, different command.
 
 If `cairn:update` reports **local changes**, the checkout has uncommitted edits: report them and let the user commit or stash — never discard. If it **rolled back**, the upstream commit did not build here; say so and stay on the working version. After a successful update, note that a running daemon reloads on its next tick, or the operator can restart it to apply immediately.
+
+## Trust — the security pins (`/cairn trust`)
+
+Cairn's gateway sits in front of every wrapped MCP server, so it is the place to catch a server turning hostile: a tool whose **description or schema changes after you approved it** (tool poisoning / rug-pull), or a new tool that **appeared unapproved**. On first sight the gateway **pins** each server's tool surface (approve-on-first-use); after that, drift from the pin is a security event.
+
+- `CAIRN_HOME=<home> npm run cairn:trust` — list the pinned servers and when each was approved.
+- **Modes** (set at install into each wrapped server, `CAIRN_TRUST_MODE`): `monitor` (the install default) **flags** drift on the gateway's stderr and in the ledger but never blocks; `enforce` additionally **withholds** a changed tool from the model and refuses a direct call to it until re-approved; `off` disables it. Enforce with `cairn:install -- --enforce`; disable with `--no-trust`.
+- When a drift is a **legitimate upgrade** (the server really did change), re-approve it: `CAIRN_HOME=<home> npm run cairn:trust -- --reapprove <server>`. That forgets the pin, and the next session re-pins to what the server offers then. Only do this once the change is confirmed benign — re-approving a poisoned surface trusts the attacker.
+
+When showing trust, lead with **whether anything is withheld or flagged right now** (a live security event), then which servers are pinned. A drifted tool in enforce mode is not a bug to fix — it is the defense working; the action is to inspect the change and either re-approve or leave it blocked.
+
+It installs and updates with everything else: every wrapped server is trust-`monitor` by default from the moment you install, and the daemon's self-update keeps the security logic current with the rest of the code — nothing separate to turn on.
 
 ## Managing
 
