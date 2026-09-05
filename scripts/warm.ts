@@ -31,7 +31,7 @@ import path from 'path';
 import crypto from 'crypto';
 import { gunzipSync } from 'zlib';
 import { loadCorpus } from '../src/lib/cairn/load';
-import { corpusFingerprint, indexIdentity } from '../src/lib/cairn/retrieval';
+import { corpusFingerprint, indexIdentity, columnarFile } from '../src/lib/cairn/retrieval';
 import { deserialize } from '../src/lib/cairn/columnar';
 import { loadKeys } from '../src/lib/cairn/keys';
 
@@ -110,9 +110,12 @@ async function main() {
   console.log(`  fingerprint: matches this corpus (${wantCorpus.slice(0, 12)})`);
   console.log(`  indexer:     matches this version (${want.slice(0, 12)})`);
 
-  const dir = path.join(process.cwd(), '.cairn-cache');
-  fs.mkdirSync(dir, { recursive: true });
-  const file = path.join(dir, 'index-v3.bin');
+  // The exact path the reader looks for: fingerprint-keyed name under CAIRN_HOME's
+  // cache dir. The old fixed 'index-v3.bin' in the cwd was read only when cwd was
+  // the home; keyed and homed through columnarFile, a warm always lands where the
+  // next query reads.
+  const file = columnarFile(want);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
   const tmp = `${file}.${process.pid}.tmp`;
   fs.writeFileSync(tmp, raw);
   fs.renameSync(tmp, file);

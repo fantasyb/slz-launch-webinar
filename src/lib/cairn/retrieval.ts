@@ -158,16 +158,21 @@ export function tokenize(text: string): Token[] {
     const t = raw.toLowerCase();
     // Single characters and pure punctuation identify nothing.
     if (t.length < 2) return;
-    const key = `${kind}:${t}`;
-    if (seen.has(key)) return;
-    seen.add(key);
+    // Dedupe on TEXT, not kind:text. `ENOSPC` matches both the errno rule and
+    // the generic word rule, and keying on kind kept both — so `matched`
+    // double-counted it and `explains`/`inContest`/tf were all inflated for the
+    // exact machine-output tokens this ranker optimises for. Higher-weight kinds
+    // (errno/path/flag/status) are extracted before generic words, so the first
+    // occurrence to win the text is the right (heavier) one.
+    if (seen.has(t)) return;
+    seen.add(t);
     out.push({ text: t, kind, weight: KIND_WEIGHT[kind] });
     // The stem is emitted as a second, slightly cheaper token rather than
     // replacing the surface form, so an exact match still outranks a
     // morphological one.
     const st = stem(t);
-    if (st !== t && !seen.has(`${kind}:${st}`)) {
-      seen.add(`${kind}:${st}`);
+    if (st !== t && !seen.has(st)) {
+      seen.add(st);
       out.push({ text: st, kind, weight: KIND_WEIGHT[kind] * 0.85 });
     }
   };
@@ -607,8 +612,68 @@ function entryFile(): string {
   return entryFileMemo;
 }
 
-/** The assembled index, laid out flat. See columnar.ts for why. */
-const columnarFile = () => path.join(CACHE_DIR(), `index-v${CACHE_SCHEMA}.bin`);
+/**
+ * The assembled index, laid out flat. See columnar.ts for why.
+ *
+ * Named by the corpus fingerprint, for the thrash reason the entry store's
+ * comment gives — but the columnar file needs it and the entry store did not.
+ * The entry store is a per-finding map, so two corpora coexist in one file
+ * (each finding under its own content hash, capped by MAX_CACHE_ENTRIES); a
+ * single filename never evicts across corpora. The columnar file is one
+ * monolithic blob for one exact corpus state, so a single filename DID: a
+ * benchmark over a synthetic corpus overwrote the real corpus's `index.bin`,
+ * and the next real lookup rebuilt from scratch. Keyed by fingerprint, distinct
+ * corpora get distinct files; `pruneColumnar` bounds the set so a corpus that
+ * advances state by state does not leave a blob per version forever. The
+ * fingerprint check inside readColumnar stays as the correctness backstop.
+ */
+const COLUMNAR_PREFIX = `index-v${CACHE_SCHEMA}-`;
+export const columnarFile = (fingerprint: string) =>
+  path.join(CACHE_DIR(), `${COLUMNAR_PREFIX}${fingerprint.slice(0, 16)}.bin`);
+
+/** Columnar blobs to retain. Each is the whole assembled index for one corpus
+ * state, so this is deliberately small — enough that a real corpus and a
+ * benchmark alongside it both stay warm, not so many that stale states pile up. */
+const MAX_COLUMNAR_FILES = 4;
+
+/**
+ * Keep only the most-recently-touched columnar blobs, deleting the rest.
+ *
+ * Called after each write, so the file just written (freshest mtime) is always
+ * kept. Only files under our own prefix are touched — never the entry store,
+ * the confusion cache, or a blob from another CACHE_SCHEMA, which age out on
+ * their own version bump. Best-effort: a read-only or racing filesystem just
+ * leaves the extra files, which are correct-but-cold, never wrong.
+ */
+function pruneColumnar(keepFile: string): void {
+  try {
+    const dir = CACHE_DIR();
+    const mine = fs
+      .readdirSync(dir)
+      .filter((n) => n.startsWith(COLUMNAR_PREFIX) && n.endsWith('.bin'))
+      .map((n) => {
+        const full = path.join(dir, n);
+        let mtime = 0;
+        try {
+          mtime = fs.statSync(full).mtimeMs;
+        } catch {
+          /* vanished between readdir and stat: treat as oldest so it is pruned */
+        }
+        return { full, mtime };
+      })
+      .sort((a, b) => b.mtime - a.mtime);
+    for (const { full } of mine.slice(MAX_COLUMNAR_FILES)) {
+      if (full === keepFile) continue;
+      try {
+        fs.unlinkSync(full);
+      } catch {
+        /* another process took it, or read-only: leave it */
+      }
+    }
+  } catch {
+    /* CACHE_DIR unreadable: nothing to prune */
+  }
+}
 
 /**
  * What identifies a record for caching purposes.
@@ -762,6 +827,15 @@ export function entryKey(f: Finding): string {
 
 interface CachedDoc {
   confidence: number;
+  /**
+   * Wall-clock ms at which `confidence` was computed. Everything else in this
+   * entry is a pure function of the finding's bytes and is valid for as long as
+   * the record is byte-identical; confidence alone decays with time. Keyed by
+   * content hash, an entry would otherwise pin a confidence from whenever the
+   * finding was last edited — days stale — so we stamp when it was computed and
+   * recompute past INDEX_TTL_MS. See buildIndex.
+   */
+  confAt: number;
   surprise: number | null;
   terms: Array<[string, number]>;
   strong: string[];
@@ -786,9 +860,16 @@ function readEntryStore(): { at: number; entries: Record<string, CachedDoc> } {
      * /api/search do not wrap retrieve, so that crashed the request.
      */
     if (typeof raw.at !== 'number' || !raw.entries || typeof raw.entries !== 'object') return empty;
-    // Confidence decays with wall-clock time; tokens do not. The TTL applies
-    // to the store as a whole because the two travel together in one entry.
-    if (Date.now() - raw.at >= INDEX_TTL_MS) return empty;
+    /*
+     * No whole-store TTL. Tokens, strong/weak terms and BM25 frequencies are
+     * pure functions of a finding's bytes and never expire while the record is
+     * unchanged; throwing the whole store away on age discarded that tokenizing
+     * work for nothing on the first query after INDEX_TTL_MS. Only `confidence`
+     * decays with time, and buildIndex refreshes it per-entry off each entry's
+     * own `confAt`. An entry from an older format that predates `confAt` reads
+     * back as `confAt: undefined`; buildIndex treats that as infinitely stale
+     * and recomputes, so the migration is self-healing.
+     */
     return raw as { at: number; entries: Record<string, CachedDoc> };
   } catch {
     return empty;
@@ -843,7 +924,7 @@ export function buildIndex(findings: Finding[]): CorpusIndex {
    * the bytes are already in the shape the index needs.
    */
   const fingerprint = indexIdentity(findings);
-  const flat = readColumnar(columnarFile(), fingerprint);
+  const flat = readColumnar(columnarFile(fingerprint), fingerprint);
   if (flat && Date.now() - flat.builtAt < INDEX_TTL_MS) {
     const rebuilt = fromColumnar(flat, findings);
     indexCache.set(findings, rebuilt);
@@ -860,17 +941,29 @@ export function buildIndex(findings: Finding[]): CorpusIndex {
    */
   const store = readEntryStore();
   let misses = 0;
+  let refreshed = 0;
+  const nowMs = at.getTime();
 
   const docs: Indexed[] = findings.map((f) => {
     const key = entryKey(f);
     const hit = store.entries[key];
     if (hit) {
+      // The content-derived fields stand; only confidence decays. Recompute it
+      // in place once it is older than INDEX_TTL_MS (or predates confAt), and
+      // stamp the store so the fresher value is written back.
+      let conf = hit.confidence;
+      if (typeof hit.confAt !== 'number' || nowMs - hit.confAt >= INDEX_TTL_MS) {
+        conf = confidence(f, at);
+        hit.confidence = conf;
+        hit.confAt = nowMs;
+        refreshed += 1;
+      }
       return {
         id: f.id,
         finding: f,
         bm25: { tf: new Map(hit.bm25.tf), length: hit.bm25.length },
         length: hit.terms.reduce((a, [, n]) => a + n, 0),
-        confidence: hit.confidence,
+        confidence: conf,
         surprise: hit.surprise,
         terms: new Map(hit.terms),
         strong: new Set(hit.strong),
@@ -893,6 +986,7 @@ export function buildIndex(findings: Finding[]): CorpusIndex {
     const bm25 = bm25Doc(f);
     const entry: CachedDoc = {
       confidence: confidence(f, at),
+      confAt: nowMs,
       surprise: surprise(f),
       terms: [...terms],
       strong: [...strong],
@@ -914,7 +1008,7 @@ export function buildIndex(findings: Finding[]): CorpusIndex {
     };
   });
 
-  if (misses > 0) writeEntryStore(store.entries);
+  if (misses > 0 || refreshed > 0) writeEntryStore(store.entries);
 
   const df = new Map<string, number>();
   const postings = new Map<string, Array<{ doc: number; tf: number }>>();
@@ -978,7 +1072,9 @@ export function buildIndex(findings: Finding[]): CorpusIndex {
     byCommand, strongByTerm, weakByTerm,
     ...flatten(postings, bm25Postings),
   };
-  writeColumnar(columnarFile(), toColumnar(index, fingerprint));
+  const cf = columnarFile(fingerprint);
+  writeColumnar(cf, toColumnar(index, fingerprint));
+  pruneColumnar(cf);
   indexCache.set(findings, index);
   return index;
 }
@@ -1855,9 +1951,15 @@ export function retrieve(
     return best / totalQueryInformation;
   };
 
-  const informativeTerms = [...queryInformation.values()].filter(
-    (v) => v >= MIN_TERM_INFORMATION,
-  ).length;
+  // Count terms that are GENUINELY informative — the UNFLOORED idf clears the
+  // threshold — not every term. queryInformation floors every value at
+  // MIN_TERM_INFORMATION, so filtering on the floored value kept all of them
+  // (including errno aliases and stems), and a one-word query like "ENOSPC"
+  // read as many "informative terms" and let the coverage rankers vote on the
+  // degenerate single-term case they must not.
+  const informativeTerms = new Set(
+    [...queryInformation.keys()].filter((term) => idf(index.df.get(term) ?? 0, index.n) >= MIN_TERM_INFORMATION),
+  ).size;
   const coverageIsMeaningful = informativeTerms >= coverageMinTerms();
 
   const rankers = [

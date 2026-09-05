@@ -332,8 +332,22 @@ export interface Searchable {
  * upstream finding. A personal corpus with forty findings cached from its
  * upstream answered "No corpus found."
  */
+/*
+ * Memoized on the identity of the array loadCorpus() returns. loadCorpus itself
+ * memoizes for the life of the process and hands back a NEW array only after
+ * reloadCorpus() — which every local write calls — so keying on that reference
+ * gives exact read-after-write (a recorded finding is visible at the very next
+ * tool call) while collapsing the per-tool-call rebuild. Without this the
+ * gateway built a fresh findings array on every call, which also defeated
+ * buildIndex's array-identity memo and re-tokenized the whole corpus each time.
+ * Out-of-process bundle/overlay/project changes are picked up whenever the local
+ * corpus next changes, the same visibility those sources had before.
+ */
+let searchableMemo: { key: SearchableFinding[]; value: Searchable } | null = null;
+
 export function loadSearchable(): Searchable {
   const local: SearchableFinding[] = loadCorpus();
+  if (searchableMemo && searchableMemo.key === local) return searchableMemo.value;
   const localKeys = loadKeys();
   const findings: SearchableFinding[] = [...local];
 
@@ -389,5 +403,7 @@ export function loadSearchable(): Searchable {
     }
   }
 
-  return { findings };
+  const value = { findings };
+  searchableMemo = { key: local, value };
+  return value;
 }
