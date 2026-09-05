@@ -20,29 +20,109 @@
 const MAX_MATCH_CHARS = 20_000;
 
 /**
- * Does this finding's signature resonate with the live result? A finding
- * without a signature always resonates (it rings on its tool alone). A finding
- * whose signature is not a valid pattern is treated as dormant — never firing —
- * rather than crashing delivery or firing blindly; the corpus lint rejects such
- * a signature at record time, so this only guards a corpus that got past it.
+ * Catastrophic-backtracking guard.
+ *
+ * The input cap bounds LENGTH, not the exponent: `(a+)+$` against 26 `a`s then a
+ * `b` already takes ~400ms and doubles per character, so a single such signature
+ * — arriving in a federated bundle and re-tested against every tool result on the
+ * gateway's main thread — freezes every session. Compiling successfully is not
+ * enough; the pattern must also be structurally safe.
+ *
+ * We reject the two classic evil-regex shapes: a quantified group whose body
+ * itself contains an unbounded quantifier (nested quantifiers — `(a+)+`, `(a*)*`,
+ * `(.*)+`, `(?:a+){2,}`), and any backreference (`\1`), whose combination with a
+ * quantifier is the other exponential class. Escapes and character classes are
+ * skipped so `\(` and `[+*]` do not trip it. A trap marker never needs either
+ * shape, so a false positive costs the author a rewrite, never a real signature.
+ */
+function isDangerousPattern(src: string): boolean {
+  const open: number[] = [];
+  for (let i = 0; i < src.length; i++) {
+    const c = src[i];
+    if (c === '\\') {
+      if (/[1-9]/.test(src[i + 1] ?? '')) return true; // a backreference (outside a char class)
+      i++;
+      continue;
+    }
+    if (c === '[') { i++; while (i < src.length && src[i] !== ']') { if (src[i] === '\\') i++; i++; } continue; }
+    if (c === '(') open.push(i);
+    else if (c === ')') {
+      const start = open.pop();
+      if (start === undefined) continue;
+      if (outerUnbounded(src, i + 1) && bodyHasUnboundedQuantifier(src.slice(start + 1, i))) return true;
+    }
+  }
+  return false;
+}
+
+/** Blank out character-class contents so `[\1]`/`[+]` don't read as a backreference/quantifier. */
+function unclassed(src: string): string {
+  return src.replace(/\\./g, '..').replace(/\[[^\]]*\]/g, '[]');
+}
+
+/** At position `i` (just past a `)`), is there an unbounded quantifier — `*`, `+`, or `{n,}`? Bounded `{n,m}` is safe. */
+function outerUnbounded(src: string, i: number): boolean {
+  const c = src[i];
+  if (c === '*' || c === '+') return true;
+  if (c === '{') {
+    const m = src.slice(i).match(/^\{\d*,\}/); // open upper bound
+    return !!m;
+  }
+  return false;
+}
+
+/** Does a group body contain an unbounded quantifier applied to something (an inner `*`, `+`, or `{n,}`)? */
+function bodyHasUnboundedQuantifier(body: string): boolean {
+  const s = unclassed(body);
+  return /[*+]/.test(s) || /\{\d*,\}/.test(s);
+}
+
+/**
+ * A signature is usable only if it compiles AND is structurally safe. Used by the
+ * schema/lint to refuse a signature that could never fire or could hang the
+ * gateway. (A dangerous pattern is rejected here, so it never reaches the corpus;
+ * `resonates` also refuses it at runtime as defence in depth for older corpora.)
+ */
+export function isValidSignature(sig: string): boolean {
+  try {
+    new RegExp(sig, 's');
+  } catch {
+    return false;
+  }
+  return !isDangerousPattern(sig);
+}
+
+/**
+ * Compiled-regex cache. A signature is compiled once, not per finding per result
+ * (the gateway re-tests every finding against every result). A dangerous or
+ * uncompilable pattern caches as `null` = permanently dormant.
+ */
+const compiled = new Map<string, RegExp | null>();
+function compile(sig: string): RegExp | null {
+  const hit = compiled.get(sig);
+  if (hit !== undefined) return hit;
+  let re: RegExp | null = null;
+  if (isValidSignature(sig)) {
+    try { re = new RegExp(sig, 's'); } catch { re = null; }
+  } else {
+    process.stderr.write(`cairn: finding signature is unsafe or invalid; treating as dormant\n`);
+  }
+  if (compiled.size > 2000) compiled.clear(); // bound the cache; corpora have far fewer signatures
+  compiled.set(sig, re);
+  return re;
+}
+
+/**
+ * Does this finding's signature resonate with the live result? A finding without
+ * a signature always resonates (it rings on its tool alone). A signature that is
+ * uncompilable OR structurally dangerous is treated as dormant — never firing —
+ * rather than crashing delivery, firing blindly, or hanging the event loop.
  */
 export function resonates(finding: { signature?: string }, resultText: string): boolean {
   const sig = finding.signature;
   if (!sig) return true;
-  try {
-    return new RegExp(sig, 's').test((resultText ?? '').slice(0, MAX_MATCH_CHARS));
-  } catch (e) {
-    process.stderr.write(`cairn: finding signature is not a valid pattern (${(e as Error).message}); treating as dormant\n`);
-    return false;
-  }
-}
-
-/** Whether a string compiles as a regex — used by the schema/lint to refuse a signature that could never fire. */
-export function isValidSignature(sig: string): boolean {
-  try {
-    new RegExp(sig, 's');
-    return true;
-  } catch {
-    return false;
-  }
+  const re = compile(sig);
+  if (!re) return false;
+  const text = typeof resultText === 'string' ? resultText : '';
+  return re.test(text.slice(0, MAX_MATCH_CHARS));
 }

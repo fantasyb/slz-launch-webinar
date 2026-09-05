@@ -49,3 +49,26 @@ test('isValidSignature accepts real patterns, rejects garbage', () => {
   assert.equal(isValidSignature('rows returned: \\d+'), true);
   assert.equal(isValidSignature('('), false);
 });
+
+test('a catastrophic-backtracking signature is rejected, and dormant at runtime', () => {
+  /* Classic evil-regex shapes: a quantified group whose body is itself
+   * unbounded, and a backreference. Each would hang the gateway's event loop. */
+  for (const evil of ['(a+)+$', '(a*)*b', '(.*)+x', '(?:a+){2,}', '(\\w+\\s?)*$', '(a)\\1+']) {
+    assert.equal(isValidSignature(evil), false, `rejected: ${evil}`);
+  }
+  /* And if one somehow reached an older corpus, resonates() must NOT run it —
+   * this returns immediately (dormant), it does not backtrack. */
+  const bomb = { signature: '(a+)+$' };
+  const attack = 'a'.repeat(40) + 'b';
+  const t0 = Date.now();
+  assert.equal(resonates(bomb, attack), false, 'unsafe pattern is dormant, not executed');
+  assert.ok(Date.now() - t0 < 100, 'returned immediately — no exponential backtracking');
+});
+
+test('safe quantifiers and escaped/char-class metacharacters are still accepted', () => {
+  assert.equal(isValidSignature('records"\\s*:\\s*\\[\\]'), true, 'single quantifiers are fine');
+  assert.equal(isValidSignature('(error|failed)+'), true, 'a quantified group with no inner unbounded quantifier is fine');
+  assert.equal(isValidSignature('\\(a+\\)+'), true, 'escaped parens are not a group');
+  assert.equal(isValidSignature('[+*]+ retries'), true, 'a quantified char class is not a nested quantifier');
+  assert.equal(isValidSignature('(ab){2,5}'), true, 'a bounded outer repeat is safe');
+});
