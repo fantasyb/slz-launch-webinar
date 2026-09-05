@@ -28,7 +28,10 @@ export async function GET(request: Request) {
    * only from its own directory while `cairn:find` on the same install
    * answered from both would be two different corpora behind one name.
    */
-  const hits = retrieve(q, loadSearchable().findings);
+  // Only visibility:shared is served over HTTP — the same rule as the other
+  // read routes. A finding the author withheld must not be searchable here.
+  const searchable = loadSearchable().findings.filter((f) => f.visibility === 'shared');
+  const hits = retrieve(q, searchable);
   const kept = includeRetired ? hits : hits.filter((h) => h.finding.status !== 'retired');
   const results = kept.map((h) => h.finding);
   // Default to the minimal projection. Full prose is a deliberate second

@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { UNTRUSTED_NOTICE, UNTRUSTED_FIELDS } from '@/lib/cairn/safety';
-import { loadCorpus, serialize } from '@/lib/cairn/load';
+import { publicCorpus, serialize, byConfidence } from '@/lib/cairn/load';
 import { confidence } from '@/lib/cairn/decay';
 import { numberParam, BadParam } from '@/lib/cairn/params';
 
@@ -20,7 +20,7 @@ export async function GET(request: Request) {
   const includeRetired = searchParams.get('includeRetired') === 'true';
   const scope = searchParams.get('scope');
 
-  let findings = loadCorpus();
+  let findings = publicCorpus(); // only visibility:shared over HTTP
   if (!includeRetired) findings = findings.filter((f) => f.status !== 'retired');
   if (ecosystem) findings = findings.filter((f) => f.subject.ecosystem === ecosystem);
   if (subject) findings = findings.filter((f) => f.subject.name === subject);
@@ -32,8 +32,8 @@ export async function GET(request: Request) {
     _untrustedFields: UNTRUSTED_FIELDS,
     count: findings.length,
     generatedAt: new Date().toISOString(),
-    findings: findings
-      .sort((a, b) => confidence(b) - confidence(a))
-      .map((f) => serialize(f)),
+    // byConfidence computes the key once per finding, not inside the comparator
+    // (confidence() runs an ed25519 verify per observation).
+    findings: byConfidence(findings).map((f) => serialize(f)),
   });
 }

@@ -1,4 +1,4 @@
-import { loadCorpus, staleQueue } from '@/lib/cairn/load';
+import { publicCorpus, staleQueue } from '@/lib/cairn/load';
 import { confidence, standing } from '@/lib/cairn/decay';
 import { resolveOrigin } from '@/lib/cairn/origin';
 import { ledgerIntegrity } from '@/lib/cairn/calibration';
@@ -14,7 +14,7 @@ export async function GET(request: Request) {
   // which URLs to query, and a caller must not get to choose them. Unsigned,
   // so the stakes are lower than /api/block, but the shape is the same.
   const { base } = resolveOrigin(request);
-  const all = loadCorpus();
+  const all = publicCorpus();
   const active = all.filter((f) => f.status === 'active');
   const integrity = ledgerIntegrity(all);
   const queue = staleQueue(5);

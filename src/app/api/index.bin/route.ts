@@ -4,7 +4,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { gzipSync } from 'zlib';
-import { loadCorpus } from '@/lib/cairn/load';
+import { publicCorpus } from '@/lib/cairn/load';
 import { buildIndex, corpusFingerprint, indexIdentity } from '@/lib/cairn/retrieval';
 import { toColumnarPublic } from '@/lib/cairn/retrieval';
 import { serialize } from '@/lib/cairn/columnar';
@@ -43,7 +43,7 @@ import { loadKeys } from '@/lib/cairn/keys';
  * with, so a valid signature over the WRONG corpus is still rejected.
  */
 export async function GET() {
-  const findings = loadCorpus();
+  const findings = publicCorpus(); // the public search index must not carry private findings
   const index = buildIndex(findings);
   const fingerprint = corpusFingerprint(findings);
   /*

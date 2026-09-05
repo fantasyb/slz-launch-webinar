@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { readJsonBody, BodyTooLarge } from '@/lib/cairn/httpBody';
 import { SubmissionSchema, normalise, likelyDuplicates } from '@/lib/cairn/submission';
 import { FindingSchema } from '@/lib/cairn/schema';
 import { loadConfig } from '@/lib/cairn/federation';
@@ -24,8 +25,9 @@ export const dynamic = 'force-dynamic';
 export async function POST(request: Request) {
   let raw: unknown;
   try {
-    raw = await request.json();
-  } catch {
+    raw = await readJsonBody(request);
+  } catch (e) {
+    if (e instanceof BodyTooLarge) return NextResponse.json({ ok: false, error: e.message }, { status: 413 });
     return NextResponse.json({ ok: false, error: 'body must be JSON' }, { status: 400 });
   }
 

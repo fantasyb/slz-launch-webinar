@@ -99,6 +99,20 @@ export function getFinding(id: string): Finding | undefined {
 }
 
 /**
+ * The findings this deployment may serve over HTTP: `visibility: shared` only.
+ *
+ * The schema documents visibility as "enforced rather than advised" and defaults
+ * it to private "because the failure mode of guessing the other way is
+ * publishing somebody's org data". Only /api/federation honoured it; every other
+ * read route served the whole corpus, so a contributor who withheld `share` was
+ * still published the moment their PR merged. Every public read path must go
+ * through this, not loadCorpus().
+ */
+export function publicCorpus(): Finding[] {
+  return loadCorpus().filter((f) => f.visibility === 'shared');
+}
+
+/**
  * Sort by a computed key, computing it once per element.
  *
  * confidence() and decayUrgency() both reach scopeSupport ->
@@ -184,7 +198,10 @@ export function corpusStats(): CorpusStats {
  */
 export function summarise(f: Finding, now: Date = new Date()) {
   return {
-    id: f.id,
+    // The DISPLAY id, matching `detail` below. Reporting the native `f.id` for a
+    // federated finding (a raw cairn-0002) made the agent resolve it against the
+    // LOCAL corpus — a different claim; publicView namespaces it.
+    id: publicView(f).id,
     title: f.title,
     kind: f.kind,
     scope: f.scope,

@@ -21,7 +21,9 @@ export async function GET(request: Request) {
   }
   const automatableOnly = searchParams.get('automatable') === 'true';
 
-  let queue = staleQueue(100);
+  // Only visibility:shared over HTTP — a private finding's check must not be
+  // handed to a stranger as maintenance work.
+  let queue = staleQueue(100).filter((f) => f.visibility === 'shared');
   if (automatableOnly) queue = queue.filter((f) => !f.check.manual);
 
   return NextResponse.json({

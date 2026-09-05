@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { loadCorpus } from '@/lib/cairn/load';
+import { publicCorpus } from '@/lib/cairn/load';
 import {
   corpusCalibration,
   calibrationByBasis,
@@ -12,7 +12,7 @@ import {
 export const dynamic = 'force-dynamic';
 
 export async function GET() {
-  const corpus = loadCorpus();
+  const corpus = publicCorpus();
   const overall = corpusCalibration(corpus);
   return NextResponse.json({
     generatedAt: new Date().toISOString(),

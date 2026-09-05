@@ -51,7 +51,10 @@ export const SubmissionSchema = z.object({
   by: z.string().min(1).max(200),
   /* The reasoned way past the near-duplicate gate. See FindingSchema. */
   distinctFrom: z
-    .array(z.object({ id: z.string().min(1).max(60), because: z.string().min(20).max(500) }))
+    // The SAME id shape FindingSchema enforces — a looser rule here let a
+    // submission with `id: "0007"` clear this schema and then 500 out of
+    // FindingSchema during normalisation instead of a clean 400.
+    .array(z.object({ id: z.string().regex(/^[a-z0-9.-]*cairn-\d{4}$/), because: z.string().min(20).max(500) }))
     .max(3)
     .optional(),
 

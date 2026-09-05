@@ -7,7 +7,9 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const finding = getFinding((await params).id);
-  if (!finding) {
+  // A private (non-shared) finding is 404 over HTTP, same as if it did not
+  // exist — the API must not publish what visibility withheld.
+  if (!finding || finding.visibility !== 'shared') {
     return NextResponse.json({ error: 'not found' }, { status: 404 });
   }
   return NextResponse.json({

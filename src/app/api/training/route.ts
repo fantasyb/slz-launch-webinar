@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { UNTRUSTED_NOTICE, UNTRUSTED_FIELDS } from '@/lib/cairn/safety';
-import { loadCorpus } from '@/lib/cairn/load';
+import { publicCorpus } from '@/lib/cairn/load';
 import { surprise, isScorableIn, brier, actualValue } from '@/lib/cairn/calibration';
 import { confidence } from '@/lib/cairn/decay';
 import { numberParam, BadParam } from '@/lib/cairn/params';
@@ -31,7 +31,7 @@ export async function GET(request: Request) {
     throw e;
   }
 
-  const rows = loadCorpus().flatMap((f) => {
+  const rows = publicCorpus().flatMap((f) => {
     const s = surprise(f);
     if (s === null || s < minSurprise) return [];
     return f.predictions

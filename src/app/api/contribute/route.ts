@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { SubmissionSchema, normalise, likelyDuplicates } from '@/lib/cairn/submission';
 import { FindingSchema } from '@/lib/cairn/schema';
 import { scanExecutable, scanInjection, scanSensitive, draftSurface } from '@/lib/cairn/safety';
+import { readJsonBody, BodyTooLarge } from '@/lib/cairn/httpBody';
 
 export const dynamic = 'force-dynamic';
 
@@ -53,6 +54,40 @@ const BRANCH = process.env.CAIRN_BRANCH ?? 'main';
 const TOKEN = process.env.CAIRN_GITHUB_TOKEN;
 /* Verifies the whole path except the network call, so it is testable offline. */
 const DRY = process.env.CAIRN_CONTRIBUTE_DRYRUN === '1';
+/*
+ * Optional shared secret. When set, a caller must present it as a bearer token —
+ * otherwise the only gate before spending the repo token is "is a token set",
+ * which is an unauthenticated write path holding write access to the corpus.
+ */
+const CONTRIBUTE_SECRET = process.env.CAIRN_CONTRIBUTE_SECRET;
+
+/*
+ * A best-effort in-memory rate limit. Serverless instances do not share this
+ * map, so it is a floor, not a ceiling — but it turns "unbounded PR/commit
+ * creation that exhausts the token's hourly budget" into "bounded per instance",
+ * which is the difference between a nuisance and an outage. Per client, a
+ * sliding window; plus a small global in-flight cap so a burst cannot fan out.
+ */
+const RL_WINDOW_MS = 60 * 60_000;
+const RL_MAX_PER_WINDOW = Number(process.env.CAIRN_CONTRIBUTE_RATE ?? '20');
+const rlHits = new Map<string, number[]>();
+
+function clientKey(request: Request): string {
+  const xff = request.headers.get('x-forwarded-for');
+  return (xff ? xff.split(',')[0].trim() : '') || request.headers.get('x-real-ip') || 'unknown';
+}
+
+/** Returns null if allowed, or an error message if the caller is over the limit. */
+function rateLimit(request: Request): string | null {
+  const now = Date.now();
+  const key = clientKey(request);
+  const hits = (rlHits.get(key) ?? []).filter((t) => now - t < RL_WINDOW_MS);
+  if (hits.length >= RL_MAX_PER_WINDOW) return `rate limit: at most ${RL_MAX_PER_WINDOW} contributions per hour`;
+  hits.push(now);
+  rlHits.set(key, hits);
+  if (rlHits.size > 10_000) rlHits.clear(); // bound the map itself
+  return null;
+}
 
 /**
  * The ids the LIVE corpus already uses, read from the repository itself.
@@ -89,6 +124,31 @@ async function liveNumbersInUse(): Promise<Set<number>> {
     const n = parseInt(e.name.slice(0, 4), 10);
     if (Number.isFinite(n)) used.add(n);
   }
+
+  /*
+   * ALSO the numbers already claimed by OPEN contribution branches. Reading only
+   * `main` left the entire time-to-merge of every open PR as a collision window:
+   * a second contributor minted the same cairn-NNNN because the first's branch
+   * was invisible, both PRs linted clean in isolation, and merging both put two
+   * files with one id on main — which fails loadCorpus for every clone. One
+   * extra request against the matching-refs API closes it.
+   */
+  try {
+    const refs = await fetch(
+      `https://api.github.com/repos/${REPO}/git/matching-refs/heads/cairn/`,
+      { headers: { authorization: `Bearer ${TOKEN}`, accept: 'application/vnd.github+json' }, cache: 'no-store' },
+    );
+    if (refs.ok) {
+      const list = (await refs.json()) as { ref?: string }[];
+      for (const r of list) {
+        const m = r.ref?.match(/refs\/heads\/cairn\/(\d{4})-/);
+        if (m) used.add(parseInt(m[1], 10));
+      }
+    }
+  } catch {
+    /* if the ref listing fails, fall back to main-only (the create-only path
+     * still refuses an exact filename clash); do not block a contribution on it */
+  }
   return used;
 }
 
@@ -100,10 +160,24 @@ export async function POST(request: Request) {
     );
   }
 
+  // If a shared secret is configured, require it. (No secret = the host has
+  // opted into an open endpoint; the rate limit below still applies.)
+  if (CONTRIBUTE_SECRET) {
+    const auth = request.headers.get('authorization') ?? '';
+    const presented = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+    if (presented !== CONTRIBUTE_SECRET) {
+      return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 });
+    }
+  }
+
+  const limited = rateLimit(request);
+  if (limited) return NextResponse.json({ ok: false, error: limited }, { status: 429 });
+
   let raw: unknown;
   try {
-    raw = await request.json();
-  } catch {
+    raw = await readJsonBody(request);
+  } catch (e) {
+    if (e instanceof BodyTooLarge) return NextResponse.json({ ok: false, error: e.message }, { status: 413 });
     return NextResponse.json({ ok: false, error: 'body must be JSON' }, { status: 400 });
   }
 
@@ -272,7 +346,10 @@ export async function POST(request: Request) {
       head: branch,
       base: BRANCH,
       body:
-        `Submitted through \`/api/contribute\` by \`${check.data.observations[0].by}\`.\n\n` +
+        // Sanitise `by` to [\w.-]: it is submitter-controlled and was interpolated
+        // into a PR body authored by the bot's identity, so `@someone` mentioned
+        // arbitrary users and backticks/newlines could break the markdown out.
+        `Submitted through \`/api/contribute\` by \`${check.data.observations[0].by.replace(/[^\w.-]/g, '').slice(0, 64) || 'unknown'}\`.\n\n` +
         'Schema, executable-content, injection, secret and duplicate checks passed ' +
         'before this branch was created. Corpus lint and the review workflow run here.',
     }),
