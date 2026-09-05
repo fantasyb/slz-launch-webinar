@@ -806,6 +806,39 @@ test('a cancelled call is cancelled upstream, not merely unanswered', async () =
   } finally { await s.close(); }
 });
 
+/**
+ * A long call's progress must reach the client, or the client's own timeout
+ * fires while the upstream is still working and reporting. The proxy lifts its
+ * OWN timeout on progress; this proves it also relays the upstream's progress
+ * back under the client's token so the client's timeout resets too.
+ */
+test('a long call\'s progress is relayed to the client under its own token', async () => {
+  const s = single(corpus());
+  try {
+    await s.init();
+    const before = s.notifications.filter((n) => n.method === 'notifications/progress').length;
+    const r = await s.request('tools/call', {
+      name: 'mcp__data360__progressing',
+      arguments: {},
+      _meta: { progressToken: 'client-token-42' },
+    });
+    assert.ok(!r.error, 'the call itself succeeds');
+    const deadline = Date.now() + 3000;
+    let progress: Msg | undefined;
+    while (Date.now() < deadline && !progress) {
+      progress = s.notifications
+        .slice(before)
+        .find((n) => n.method === 'notifications/progress'
+          && (n.params as { progressToken?: unknown })?.progressToken === 'client-token-42');
+      if (!progress) await new Promise((r) => setTimeout(r, 50));
+    }
+    assert.ok(progress, 'the client received a progress notification carrying its own token');
+    const p = progress!.params as { progress?: number; total?: number };
+    assert.equal(p.progress, 1, 'the upstream\'s progress value is relayed, not invented');
+    assert.equal(p.total, 2, 'and its total');
+  } finally { await s.close(); }
+});
+
 /* ------------------------------------------------------------------------ */
 /* The other half: findings reached through a program, not a tool           */
 /* ------------------------------------------------------------------------ */
@@ -838,7 +871,7 @@ test('a finding triggered by a program, not a tool, is indexed at connect and on
     const second = texts(await s.call('mcp__data360__unrelated'));
     assert.ok(!second.some((x) => x.includes('cairn-0003')), 'once');
     assert.deepEqual((await s.tools()).map((t) => t.name).filter((n) => n.startsWith('mcp__')).sort(),
-      ['mcp__data360__failing', 'mcp__data360__query_records', 'mcp__data360__slow', 'mcp__data360__unrelated'], 'nothing withheld, nothing added');
+      ['mcp__data360__failing', 'mcp__data360__progressing', 'mcp__data360__query_records', 'mcp__data360__slow', 'mcp__data360__unrelated'], 'nothing withheld, nothing added');
   } finally { await s.close(); }
 });
 

@@ -408,7 +408,13 @@ function propertyNames(tool: Tool): string[] {
 
 function describe(session: SessionState, tool: Tool, about: About[], budgetLeft: number): Tool {
   if (!about.length) return tool;
-  for (const a of about) served(session, a.finding.id, tool.name, a.props.length ? 'argument' : 'description');
+  for (const a of about) {
+    const surface = a.props.length ? 'argument' : 'description';
+    const k = `${tool.name}|${a.finding.id}|${surface}`;
+    if (session.describedSurfaces.has(k)) continue;
+    session.describedSurfaces.add(k);
+    served(session, a.finding.id, tool.name, surface);
+  }
   const out: Tool = { ...tool, inputSchema: { ...tool.inputSchema } };
   const props = (out.inputSchema as { properties?: Props }).properties;
 
@@ -493,11 +499,21 @@ interface SessionState {
   contradicted: Set<string>;
   /** Tools whose unfinished notes have been offered back this session. */
   notesOffered: Set<string>;
+  /** `${tool}|${findingId}|${surface}` pre-call deliveries already recorded, so
+   * a client re-listing tools (every list, every list_changed) does not book the
+   * same description/argument delivery to the ledger again and again — the
+   * delivery is real once per session, not once per tools/list. */
+  describedSurfaces: Set<string>;
+  /** Wall-clock ms of the last request handled for this session. The hosted
+   * reaper closes sessions idle past CAIRN_SESSION_IDLE_MS; a client that drops
+   * without a clean close otherwise leaks its transport, Server and this state
+   * for the life of the process. Unused over stdio (one process, one session). */
+  lastSeen: number;
 }
 
 function newSession(id: string): SessionState {
   return {
-    id, introduced: new Set(), callsByTool: new Map(), shown: new Set(), nudged: new Set(), holes: new Map(), drafted: new Set(), surfaceSeen: new Map(), recent: new Map(), contradicted: new Set(), notesOffered: new Set(),
+    id, introduced: new Set(), callsByTool: new Map(), shown: new Set(), nudged: new Set(), holes: new Map(), drafted: new Set(), surfaceSeen: new Map(), recent: new Map(), contradicted: new Set(), notesOffered: new Set(), describedSurfaces: new Set(), lastSeen: Date.now(),
   };
 }
 
@@ -680,11 +696,21 @@ function draftFor(session: SessionState, tool: string, args: Record<string, unkn
  * a diff would make the ledger something nobody vouched for.
  */
 const RECENT_PER_TOOL = 8;
+/*
+ * The draft's evidence slices each result at 2000 chars and summarise() has
+ * already read items/continuation off the full text by the time it is stored,
+ * so nothing downstream needs more than this. Keeping the whole result body for
+ * eight calls across every tool a session touches leaked the session's entire
+ * transcript into a hosted process's memory, which is never freed until the
+ * session ends. Cap stored text with headroom over the 2000-char slice.
+ */
+const RECENT_TEXT_CAP = 4096;
 function contradictionFor(session: SessionState, tool: string, args: Record<string, unknown>, ownText: string): string {
   const history = session.recent.get(tool) ?? [];
   const now = summarise(args, ownText);
   const found = session.contradicted.has(tool) ? null : detect(history, now);
-  history.push(now);
+  const stored = now.text.length > RECENT_TEXT_CAP ? { ...now, text: now.text.slice(0, RECENT_TEXT_CAP) } : now;
+  history.push(stored);
   if (history.length > RECENT_PER_TOOL) history.shift();
   session.recent.set(tool, history);
   if (!found) return '';
@@ -1508,10 +1534,32 @@ async function main() {
          * response and the upstream ran the call to completion -- a write
          * the person cancelled, still written.
          */
+        /*
+         * Relay the upstream's progress back to the client. FORWARD lifts the
+         * PROXY's timeout on progress (proxy->upstream leg), but the client's own
+         * timeout (client->proxy) resets only when IT sees progress — and the
+         * proxy sat silent, so a genuinely long call the upstream was reporting
+         * on still timed out at the client. When the client attached a
+         * progressToken, hand the upstream request an onprogress that re-emits a
+         * notifications/progress to the client under that same token. Best-effort:
+         * a failed relay must never fail the call.
+         */
+        const progressToken = (req.params as { _meta?: { progressToken?: string | number } })._meta?.progressToken;
+        const onprogress =
+          progressToken !== undefined && typeof extra.sendNotification === 'function'
+            ? (p: { progress: number; total?: number; message?: string }) => {
+                void Promise.resolve(
+                  extra.sendNotification({
+                    method: 'notifications/progress',
+                    params: { ...p, progressToken },
+                  }),
+                ).catch(() => { /* client gone or slow; the result still returns */ });
+              }
+            : undefined;
         result = await owner.up.client!.request(
           { method: 'tools/call', params: { ...req.params, name: owner.raw } },
           CallToolResultSchema,
-          { ...FORWARD, signal: extra.signal },
+          { ...FORWARD, signal: extra.signal, onprogress },
         );
       } catch (e) {
         if (extra.signal.aborted) {
@@ -1831,6 +1879,37 @@ async function main() {
    * interface is a decision, not a default.
    */
   const transports = new Map<string, StreamableHTTPServerTransport>();
+  /*
+   * A parallel registry so the reaper can reach a session's Server and state,
+   * not just its transport. Kept in lockstep with `transports`: every add here
+   * has a matching delete in the same onclose that clears `transports`.
+   */
+  const live = new Map<string, { transport: StreamableHTTPServerTransport; server: Server; session: SessionState }>();
+
+  /*
+   * Idle-session reaper. A client that disconnects cleanly fires onclose and
+   * frees everything; one that drops (crash, network, killed laptop) never
+   * does, and a hosted gateway accumulates a dead session's transport, Server
+   * and delivery state until the process restarts. Close anything idle past the
+   * TTL — closing the transport cascades through onclose, which does the actual
+   * cleanup, so this loop only decides WHAT is stale, never frees directly.
+   */
+  const IDLE_MS = Math.max(60_000, Number(process.env.CAIRN_SESSION_IDLE_MS) || 30 * 60_000);
+  const reaper = setInterval(() => {
+    const cutoff = Date.now() - IDLE_MS;
+    for (const [id, meta] of live) {
+      if (meta.session.lastSeen > cutoff) continue;
+      live.delete(id);
+      try {
+        void meta.transport.close();
+      } catch (e) {
+        /* already closing, or the socket is gone: onclose still clears the maps */
+        process.stderr.write(`cairn-proxy: reaping idle session ${id.slice(0, 8)}: ${(e as Error).message}\n`);
+      }
+    }
+  }, Math.min(IDLE_MS, 5 * 60_000));
+  /* Never let the reaper alone hold the process open. */
+  reaper.unref?.();
   const host = process.env.CAIRN_HTTP_HOST || '127.0.0.1';
   /*
    * Last-resort net: this gateway is a passenger and must never crash the
@@ -1867,6 +1946,8 @@ async function main() {
       const sid = req.headers['mcp-session-id'];
       const existing = typeof sid === 'string' ? transports.get(sid) : undefined;
       if (existing) {
+        const meta = typeof sid === 'string' ? live.get(sid) : undefined;
+        if (meta) meta.session.lastSeen = Date.now();
         await existing.handleRequest(req, res, body);
         return;
       }
@@ -1875,10 +1956,11 @@ async function main() {
         const transport = new StreamableHTTPServerTransport({
           sessionIdGenerator: () => session.id,
           onsessioninitialized: (id) => { transports.set(id, transport); },
-          onsessionclosed: (id) => { transports.delete(id); },
+          onsessionclosed: (id) => { transports.delete(id); live.delete(id); },
         });
         const server = buildServer(session, await instructionsFor(session));
-        transport.onclose = () => { transports.delete(session.id); servers.delete(server); };
+        live.set(session.id, { transport, server, session });
+        transport.onclose = () => { transports.delete(session.id); live.delete(session.id); servers.delete(server); };
         await server.connect(transport);
         await transport.handleRequest(req, res, body);
         return;

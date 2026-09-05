@@ -81,6 +81,26 @@ s.registerTool(
   { description: 'A tool whose call fails', inputSchema: {} },
   async () => ({ isError: true, content: [{ type: 'text', text: 'UPSTREAM_FAILURE: mapping not found' }] }),
 );
+/*
+ * A tool that reports progress before it returns. When the caller attached a
+ * progressToken it emits one notifications/progress carrying that token, which
+ * is what a long-running server does to say "still working" — the signal the
+ * proxy must relay so a client's own timeout resets. No token, no notification.
+ */
+s.registerTool(
+  'mcp__data360__progressing',
+  { description: 'A tool that reports progress', inputSchema: {} },
+  async (_args, extra) => {
+    const token = extra?._meta?.progressToken;
+    if (token !== undefined && typeof extra?.sendNotification === 'function') {
+      await extra.sendNotification({
+        method: 'notifications/progress',
+        params: { progressToken: token, progress: 1, total: 2, message: 'halfway' },
+      });
+    }
+    return { content: [{ type: 'text', text: 'progressing done' }] };
+  },
+);
 s.registerResource(
   'doc',
   'fixture://doc',
