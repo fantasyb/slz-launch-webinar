@@ -55,10 +55,18 @@ function world(): string {
   return home;
 }
 
-test('a finding authored under the machine label signs itself and commits', () => {
+/** What a TRUSTED write path (the operator's CLI) records: this observation is ours to sign. */
+function journal(home: string, findingId: string, at: string): void {
+  const dir = path.join(home, '.cairn-secrets');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.appendFileSync(path.join(dir, 'pending-signatures.jsonl'), JSON.stringify({ f: findingId, at }) + '\n');
+}
+
+test('a JOURNALLED observation under the machine label signs itself and commits', () => {
   const home = world();
   tsx(KEYGEN, ['joey.ahern'], home); // this machine's identity
   fs.writeFileSync(path.join(home, 'cairn', '9001.json'), JSON.stringify(finding('joey.ahern'), null, 2));
+  journal(home, 'cairn-9001', '2026-09-03T00:00:00.000Z'); // a trusted path marked it
   git(home, ['init', '-q']);
   git(home, ['config', 'user.email', 'test@example.com']);
   git(home, ['config', 'user.name', 'test']);
@@ -73,6 +81,20 @@ test('a finding authored under the machine label signs itself and commits', () =
   assert.equal(sig.algorithm, 'ed25519');
   assert.match(sig.keyId, /^[0-9a-f]{16}$/, 'signed by this machine key');
   assert.match(git(home, ['log', '--oneline']), /sign and record|cairn/, 'a commit landed in the corpus git history');
+});
+
+test('a by-label observation that was NOT journalled is refused (no signing oracle)', () => {
+  /* The attack: a model plants `by: "joey.ahern"` on an unsigned observation.
+   * It matches the machine label, but no trusted path journalled it, so autoseal
+   * must NOT sign it — else the operator's key certifies a fabricated claim. */
+  const home = world();
+  tsx(KEYGEN, ['joey.ahern'], home);
+  fs.writeFileSync(path.join(home, 'cairn', '9001.json'), JSON.stringify(finding('joey.ahern'), null, 2));
+  // deliberately NOT journalled
+  const out = tsx(SEAL, [], home);
+  assert.match(out, /signed 0 observation/, 'an un-journalled by-label observation is never auto-signed');
+  const after = JSON.parse(fs.readFileSync(path.join(home, 'cairn', '9001.json'), 'utf8'));
+  assert.ok(!after.observations[0].signature, 'stays unsigned — attributable to nobody');
 });
 
 test('it does not sign an observation authored by someone else', () => {

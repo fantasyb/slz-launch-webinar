@@ -24,6 +24,8 @@ import { gate } from './gate';
 import { executionPolicy } from './policy';
 import { loadSearchable } from './federation';
 import { homePath, cairnHome } from './home';
+import { loadKeys } from './keys';
+import { journalForSelfSign, machineIdentity } from './autoseal';
 
 export interface RecordOutcome {
   ok: boolean;
@@ -149,6 +151,19 @@ export async function recordSubmission(
   }
   const data = parsed.data;
 
+  /*
+   * A machine's key label is a signing identity, not a free-text name. An agent
+   * (a model over MCP) must not claim one: an unsigned observation carrying a
+   * local key's label is either misleading now or, worse, bait for a signer. The
+   * operator's own CLI (origin != agent) is trusted to use their label.
+   */
+  if (opts.origin === 'agent' && data.by) {
+    const reserved = [...loadKeys().values()].some((k) => k.label === data.by);
+    if (reserved) {
+      return { ok: false, message: `"${data.by}" is a signing identity on this machine and cannot be used as an agent \`by\`. Use your own model or agent id.` };
+    }
+  }
+
   const surface = draftSurface(data as unknown as Record<string, unknown>);
   const flags = [...scanExecutable(surface), ...scanInjection(surface), ...scanSensitive(surface)];
   if (flags.length) {
@@ -261,6 +276,18 @@ export async function recordSubmission(
   const file = path.join(dir, `${num}-${slugify(data.title)}.json`);
   if (fs.existsSync(file)) return { ok: false, message: `${file} already exists; nothing was written.` };
   fs.writeFileSync(file, `${JSON.stringify(finding, null, 2)}\n`);
+
+  /*
+   * Only a TRUSTED write path (the operator's CLI, not a model over MCP) may
+   * mark the initial observation for autoseal to sign as this machine. An agent
+   * submission is never journalled, so it stays unsigned — never signed by the
+   * machine key just because its `by` matched the label.
+   */
+  if (opts.origin !== 'agent') {
+    const o0 = finding.observations[0];
+    const id = machineIdentity();
+    if (o0 && id && o0.by === id.label) journalForSelfSign(finding.id, o0.at);
+  }
 
   return {
     ok: true,

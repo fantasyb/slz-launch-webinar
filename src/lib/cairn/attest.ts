@@ -92,6 +92,22 @@ export function attest(raw: unknown, opts: { by?: string; via?: string; keyId?: 
   const key = opts.keyId ? reloadKeys().get(opts.keyId) : undefined;
   const privFile = opts.keyId ? homePath('.cairn-secrets', `${opts.keyId}.key`) : null;
   const signable = !!(key && privFile && fs.existsSync(privFile));
+  /*
+   * A caller-supplied (model) `by` must not claim a reserved identity — the
+   * machine-observer label (which makes verification read as "verified by its
+   * check") or a local signing key's label — unless it is actually being signed
+   * by that key here. Only a `by` the model itself set (raw.by) is untrusted;
+   * a code-set opts.by (doctor's own path) is fine.
+   */
+  const modelBy = typeof raw === 'object' && raw !== null && typeof (raw as Record<string, unknown>).by === 'string'
+    ? String((raw as Record<string, unknown>).by)
+    : undefined;
+  if (modelBy) {
+    const reserved = modelBy === MACHINE_OBSERVER || [...reloadKeys().values()].some((k) => k.label === modelBy);
+    if (reserved && !(signable && key!.label === modelBy)) {
+      return { ok: false, message: `"${modelBy}" is a reserved signing identity on this machine; an unsigned observation cannot claim it. Use your own agent id.` };
+    }
+  }
   const observation = {
     at: new Date().toISOString(),
     by: signable ? key!.label : a.by,

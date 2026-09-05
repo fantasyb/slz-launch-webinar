@@ -20,6 +20,7 @@
  */
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 import { execFileSync } from 'child_process';
 import { loadKeys } from './keys';
 import { homePath, cairnHome } from './home';
@@ -55,14 +56,94 @@ export function machineIdentity(): MachineIdentity | null {
     } catch {
       continue;
     }
-    /* Prove the private half is really this key's before trusting it to sign. */
     if (deriveKeyId(record.publicKey) !== record.keyId) continue;
+    /*
+     * Prove the private half REALLY corresponds to the published public key —
+     * a sign/verify round-trip, not just the keyId check above (which only
+     * re-derives the public key's id). A restored/copied/mismatched .key would
+     * otherwise sign every observation as `broken` and commit them.
+     */
+    try {
+      const probe = Buffer.from('cairn-key-probe');
+      const sig = crypto.sign(null, probe, crypto.createPrivateKey(privateKey));
+      if (!crypto.verify(null, probe, crypto.createPublicKey(record.publicKey), sig)) continue;
+    } catch {
+      continue; // unparseable/mismatched key material
+    }
     return { keyId: record.keyId, label: record.label, record, privateKey };
   }
   return null;
 }
 
-/** Sign every unsigned observation authored by `id.label`. Returns how many it signed. */
+/**
+ * The signing journal — the fix for autoseal being a signing oracle.
+ *
+ * `by` is caller-supplied on every write path (a model calls cairn_observe /
+ * cairn_record and picks its own `by`). So signing every unsigned observation
+ * whose `by` matches the machine label let a model plant `by: "<operator>"` and
+ * have it signed with the operator's key — a fabricated confirmation that then
+ * verifies. The label proves nothing about authorship.
+ *
+ * So autoseal no longer signs by label alone. A TRUSTED local write path (the
+ * operator's CLI, origin != agent) journals the observations it authored as this
+ * machine, in .cairn-secrets (gitignored, never leaves), and autoseal signs ONLY
+ * those. A model's observation is never journaled, so it is never auto-signed —
+ * it stays unsigned, attributable to nobody, exactly as an unverifiable claim
+ * should be.
+ */
+function journalPath(): string | null {
+  try {
+    return homePath('.cairn-secrets', 'pending-signatures.jsonl');
+  } catch {
+    return null;
+  }
+}
+
+/** Mark an observation this machine authored (via a trusted path) as eligible for autoseal. Never throws. */
+export function journalForSelfSign(findingId: string, at: string): void {
+  const p = journalPath();
+  if (!p) return;
+  try {
+    fs.mkdirSync(path.dirname(p), { recursive: true, mode: 0o700 });
+    fs.appendFileSync(p, JSON.stringify({ f: findingId, at }) + '\n');
+  } catch {
+    /* best-effort: worst case the observation stays unsigned, never wrongly signed */
+  }
+}
+
+function readJournal(): { set: Set<string>; entries: Array<{ f: string; at: string }> } {
+  const p = journalPath();
+  const entries: Array<{ f: string; at: string }> = [];
+  const set = new Set<string>();
+  if (!p) return { set, entries };
+  try {
+    for (const line of fs.readFileSync(p, 'utf8').split('\n')) {
+      if (!line.trim()) continue;
+      try {
+        const e = JSON.parse(line) as { f?: unknown; at?: unknown };
+        if (typeof e.f === 'string' && typeof e.at === 'string') { entries.push({ f: e.f, at: e.at }); set.add(`${e.f}|${e.at}`); }
+      } catch { /* skip a torn line */ }
+    }
+  } catch { /* no journal yet */ }
+  return { set, entries };
+}
+
+function pruneJournal(signedKeys: Set<string>): void {
+  const p = journalPath();
+  if (!p) return;
+  const { entries } = readJournal();
+  const kept = entries.filter((e) => !signedKeys.has(`${e.f}|${e.at}`));
+  try {
+    if (kept.length) writeJsonAtomic(p, kept.map((e) => JSON.stringify(e)).join('\n') + '\n');
+    else fs.rmSync(p, { force: true });
+  } catch { /* best-effort */ }
+}
+
+/**
+ * Sign every unsigned observation this machine JOURNALLED as its own (and whose
+ * `by` matches the identity's label). Returns how many it signed. Never signs an
+ * observation it did not itself journal — see journalForSelfSign.
+ */
 export function sealOwnObservations(id: MachineIdentity): number {
   let dir: string;
   try {
@@ -70,6 +151,9 @@ export function sealOwnObservations(id: MachineIdentity): number {
   } catch {
     return 0;
   }
+  const { set: eligible } = readJournal();
+  if (!eligible.size) return 0;
+  const signedKeys = new Set<string>();
   let signed = 0;
   for (const file of fs.readdirSync(dir).filter((f) => f.endsWith('.json'))) {
     const full = path.join(dir, file);
@@ -85,15 +169,18 @@ export function sealOwnObservations(id: MachineIdentity): number {
     let touched = false;
     raw.observations = f.observations.map((o, i) => {
       const row = (raw.observations as Record<string, unknown>[])[i];
-      if (o.signature || o.by !== id.label) return row;
+      // Signed already, not ours by label, or not one we journalled: leave it.
+      if (o.signature || o.by !== id.label || !eligible.has(`${f.id}|${o.at}`)) return row;
       const { signature: _drop, ...unsigned } = o;
       const value = signObservation(f.id, unsigned, id.privateKey, findingBodyHash(f, CURRENT_HASH_VERSION));
       touched = true;
       signed++;
+      signedKeys.add(`${f.id}|${o.at}`);
       return { ...row, hashVersion: CURRENT_HASH_VERSION, signature: { algorithm: 'ed25519', keyId: id.keyId, value } };
     });
     if (touched) writeJsonAtomic(full, raw);
   }
+  if (signedKeys.size) pruneJournal(signedKeys);
   return signed;
 }
 
