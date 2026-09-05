@@ -823,7 +823,9 @@ test('a long call\'s progress is relayed to the client under its own token', asy
       _meta: { progressToken: 'client-token-42' },
     });
     assert.ok(!r.error, 'the call itself succeeds');
-    const deadline = Date.now() + 3000;
+    // 8s, not 3s: under full-suite parallel load the spawn + round-trip + notification
+    // can outrun a tight deadline, which flaked pre-commit though it passes alone.
+    const deadline = Date.now() + 8000;
     let progress: Msg | undefined;
     while (Date.now() < deadline && !progress) {
       progress = s.notifications

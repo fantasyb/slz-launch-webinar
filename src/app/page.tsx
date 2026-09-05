@@ -33,9 +33,10 @@ export default function Home() {
             ends and it&rsquo;s gone. Tomorrow another agent pays for the same hour.
           </p>
           <p>
-            Cairn is the memory it&rsquo;s missing. It quietly records how your tools actually
-            behave and hands the next agent the answer <em>before</em> it hits the same wall.
-            You install it once. After that it runs itself.
+            Cairn is the memory it&rsquo;s missing. It records how your tools actually behave,
+            keeps only what it can still <em>prove</em> is true on your machine, and hands the
+            next agent the answer on the tool call that&rsquo;s about to fail. You install it
+            once. After that it runs itself.
           </p>
         </div>
 
@@ -82,8 +83,8 @@ export default function Home() {
             },
             {
               n: '3',
-              h: 'It’s there next time',
-              b: 'The next session, in any project, gets the answer the moment it’s about to hit the same wall.',
+              h: 'It’s there the instant it matters',
+              b: 'The moment your agent reaches for a tool a trap is recorded about — same session, any project — the answer rides in on that call.',
             },
           ].map((step) => (
             <li key={step.n}>
@@ -93,6 +94,48 @@ export default function Home() {
             </li>
           ))}
         </ol>
+      </section>
+
+      {/* The differentiator: verification, not just storage */}
+      <section className="border-b border-rule py-12">
+        <h2 className="font-claim text-lg">It only remembers what it can prove</h2>
+        <div className="mt-4 max-w-reading space-y-4 text-[14px] leading-relaxed text-ink-soft">
+          <p>
+            A note in a doc rots silently. &ldquo;This tool caps at 50 rows&rdquo; is true when
+            written and false a month later, and the sentence looks identical either way. A
+            person catches the stale date; an agent ingests it as fact.
+          </p>
+          <p>
+            So a Cairn finding is not prose. It carries a command that <em>proves the trap is
+            still live</em> &mdash; run once with the trap present and once with it removed, on a
+            single machine, and kept only if the two come out different. A claim that can&rsquo;t
+            say what would falsify it never gets in. And every finding decays on a clock:
+            confidence halves over its half-life unless someone re-runs the check, so a warning
+            that has quietly stopped being true is retired instead of steering the next agent wrong.
+          </p>
+        </div>
+        <Link href="/about" className="mt-4 inline-block text-[13px] text-ink-soft hover:text-ink">
+          Why prose rots and a check doesn&rsquo;t &rarr;
+        </Link>
+      </section>
+
+      {/* How delivery actually works now: the gateway at the tool-call chokepoint */}
+      <section className="border-b border-rule py-12">
+        <h2 className="font-claim text-lg">Delivered on the call that&rsquo;s about to fail</h2>
+        <div className="mt-4 max-w-reading space-y-4 text-[14px] leading-relaxed text-ink-soft">
+          <p>
+            Cairn sits between your agent and the tools it calls &mdash; every MCP server, one
+            gateway in front. It reads nothing you don&rsquo;t already send and changes no result.
+            It adds one thing: when your agent reaches for a tool a trap is recorded about, the
+            warning rides in on that exact call, in whatever client you use, with no feature to
+            switch on.
+          </p>
+          <p>
+            That is the whole difference between memory that helps and memory that sits unread.
+            The answer arrives at the one moment it can change what the agent does next &mdash;
+            not in a doc it won&rsquo;t open, not next session, but on the tool call itself.
+          </p>
+        </div>
       </section>
 
       {/* Concrete examples — the argument made with instances, not adjectives */}
