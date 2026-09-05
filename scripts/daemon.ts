@@ -21,6 +21,7 @@ import { spawn } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { selfUpdate, describeUpdate } from '../src/lib/cairn/selfUpdate';
 
 const argv = process.argv.slice(2);
 function opt(name: string): string | undefined {
@@ -44,6 +45,29 @@ function parseInterval(raw: string | undefined): number {
 const intervalMs = parseInterval(opt('interval') ?? process.env.CAIRN_DAEMON_INTERVAL) * 1000;
 /** A hung tick must not wedge the loop forever; kill a child that outruns this. */
 const TICK_TIMEOUT_MS = 10 * 60_000;
+
+/*
+ * Auto-update: keep the code current without the operator re-running the install
+ * line. Off means the daemon never touches the checkout. On (the default), every
+ * SELF_UPDATE_MS it tries a fast-forward-only, clean-tree-only, build-gated pull
+ * (src/lib/cairn/selfUpdate.ts); on a real update it exits so the supervisor
+ * (launchd KeepAlive, per the installer) relaunches the new code. Disable with
+ * CAIRN_DAEMON_SELF_UPDATE=0, or set CAIRN_SELF_UPDATE_INTERVAL_SEC=0. A typo
+ * falls back to the default rather than becoming NaN.
+ */
+function parseSelfUpdateInterval(): number {
+  const raw = process.env.CAIRN_SELF_UPDATE_INTERVAL_SEC;
+  if (raw === undefined || raw === '') return 6 * 3600;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) return 6 * 3600;
+  if (n === 0) return 0; // explicit disable
+  return Math.max(60, Math.floor(n)); // floor so a small typo cannot hammer git
+}
+const selfUpdateMs = parseSelfUpdateInterval() * 1000;
+const selfUpdateEnabled = selfUpdateMs > 0 && process.env.CAIRN_DAEMON_SELF_UPDATE !== '0';
+/* Start the clock at boot, so the first check is one interval away — never at
+ * startup, which would let an update->exit->restart cycle re-check immediately. */
+let lastSelfUpdate = Date.now();
 
 /** Find <repo>/bin/cairn-triage-trigger.js from here, whether run as source (scripts/) or bundle (dist/cli/). */
 function findTrigger(): string {
@@ -108,10 +132,40 @@ function interruptibleSleep(ms: number): Promise<void> {
   });
 }
 
+/*
+ * The self-update check, run between triage ticks when due. Synchronous and
+ * never throws; on a real update it exits 0 so a supervisor relaunches the new
+ * code (run by hand instead of under launchd, restart to pick it up). Everything
+ * else — up to date, a clean skip, a rollback — is logged and the loop goes on.
+ */
+function maybeSelfUpdate(): void {
+  if (!selfUpdateEnabled || stopping) return;
+  if (Date.now() - lastSelfUpdate < selfUpdateMs) return;
+  lastSelfUpdate = Date.now();
+  let r;
+  try {
+    r = selfUpdate();
+  } catch (e) {
+    process.stderr.write(`cairn:daemon self-update threw (ignored): ${(e as Error).message}\n`);
+    return;
+  }
+  if (r.status === 'up-to-date') return;
+  process.stderr.write(`cairn:daemon self-update: ${describeUpdate(r)}\n`);
+  if (r.status === 'updated') {
+    process.stderr.write('cairn:daemon exiting to reload the new code (a supervisor restarts me; if run by hand, restart to apply).\n');
+    process.exit(0);
+  }
+}
+
 async function main(): Promise<void> {
-  process.stderr.write(`cairn:daemon up — triage every ${intervalMs / 1000}s, home ${home ?? '(default)'}\n`);
+  process.stderr.write(
+    `cairn:daemon up — triage every ${intervalMs / 1000}s, home ${home ?? '(default)'}` +
+      `, self-update ${selfUpdateEnabled ? `every ${selfUpdateMs / 1000}s` : 'off'}\n`,
+  );
   while (!stopping) {
     await tick();
+    if (stopping) break;
+    maybeSelfUpdate();
     if (stopping) break;
     await interruptibleSleep(intervalMs);
   }

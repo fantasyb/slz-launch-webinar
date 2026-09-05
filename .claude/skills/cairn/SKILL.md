@@ -36,8 +36,10 @@ Run every command below from the Cairn checkout with that home, e.g. `CAIRN_HOME
 | `/cairn observe <id> confirmed\|refuted "<note>"` | record what you just saw (see **Managing**) |
 | `/cairn retire <id> "<reason>"` | retire it — never delete (see **Managing**) |
 | `/cairn holes` \| `/cairn drafts` | `cairn:unanswered` and the drafts in `cairn:report` — what's noticed but unwritten |
+| `/cairn queue` | the **sleep queue** and daemon health — what is harvested and waiting for triage, and whether the always-on daemon is draining it (see **The queue**) |
+| `/cairn update` | bring the **code** up to date, safely: `cairn:update` (fast-forward only, rolls back a bad build). `--check` to preview (see **Updating**) |
 | `/cairn why <question>` | `cairn:history "<question>"` — search the *reasoning* in git history, not just the corpus |
-| `/cairn sync` | `cairn:sync` — pull the shared corpus and re-federate |
+| `/cairn sync` | `cairn:sync` — pull the shared **corpus** and re-federate (findings, not code) |
 | `/cairn add` | start a new finding (see **Managing → Add**) |
 
 ## The overview (default `/cairn`)
@@ -54,6 +56,25 @@ Present four things: **how much it remembers**, **how fresh** (the standing brea
 ## Viewing a finding
 
 Always show, in this order: **title**; **WHAT HAPPENS** (`reality`); **INSTEAD** (`workaround`); **STANDING** (fresh/aging/stale/contested, when last confirmed, and whether a machine can even re-run its `check` — "attested once, never re-run" and "verified by its check today" must never read the same); **COST/tier** (full-push vs hint); and **SIGNATURE** if present (when it resonates). Offer: verify it, observe it, or retire it.
+
+## The queue (`/cairn queue`)
+
+The sleep queue is the harvested-but-not-yet-triaged candidates: raw leads scraped from past sessions, waiting for a triage pass to turn them into findings or reject them. They live in `CAIRN_HOME/drafts/` (never `cairn/` — a draft is unreachable by every reader until it is admitted). Show:
+
+- **Waiting** — count and a one-line digest of `CAIRN_HOME/drafts/*.json` (skip `note-*`, which are the human note tier, not triage candidates). Newest first; name the tool each is about.
+- **Draining?** — is the always-on daemon alive and ticking. On macOS: `launchctl list | grep com.cairn.daemon` (present = loaded), and the freshness of `CAIRN_HOME/daemon.log` (its mtime is the last tick's breadcrumb). If it is not loaded, say so and point at `cairn:install` to register it, or `cairn:daemon` to run it in the foreground.
+- **Stuck?** — a queue that only grows means triage is not clearing anything: either execution is off for this corpus (the gate no-ops by design — say so) or nothing is clearing the bar (healthy). Do not imply a fault the daemon does not have.
+
+Lead with whether the queue is being worked, then how deep it is. Never dump the raw candidate JSON.
+
+## Updating (`/cairn update`)
+
+Two different "updates", and they must not be confused:
+
+- **`/cairn update`** pulls the **code** — the program that serves the findings. `CAIRN_HOME=<home> npm run cairn:update`. It is fast-forward only, clean-tree only, pinned to `origin`, and rolls back if the new code does not build, so it can never discard the operator's work or leave a broken checkout. `--check` previews (change nothing). This is what replaces re-typing `git pull && cairn:build-cli && cairn:install`. The daemon also runs this on its own slow tick, so a machine with the daemon loaded stays current on its own; the command is the manual trigger for when you want it now.
+- **`/cairn sync`** pulls the **corpus** — the findings themselves. Different thing, different command.
+
+If `cairn:update` reports **local changes**, the checkout has uncommitted edits: report them and let the user commit or stash — never discard. If it **rolled back**, the upstream commit did not build here; say so and stay on the working version. After a successful update, note that a running daemon reloads on its next tick, or the operator can restart it to apply immediately.
 
 ## Managing
 
