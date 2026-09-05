@@ -772,17 +772,26 @@ interface CachedDoc {
 }
 
 function readEntryStore(): { at: number; entries: Record<string, CachedDoc> } {
+  const empty = { at: Date.now(), entries: {} };
   try {
     const raw = JSON.parse(fs.readFileSync(entryFile(), 'utf8')) as {
-      at: number;
-      entries: Record<string, CachedDoc>;
+      at?: unknown;
+      entries?: unknown;
     };
+    /*
+     * Validate the shape before trusting it. A file that parses to `{}` or lacks
+     * `at`/`entries` (a truncated write, an old format) otherwise slips the TTL
+     * check (`Date.now() - undefined` is NaN, `NaN >= ttl` is false) and returns
+     * as-is, and the caller then throws on `store.entries[key]`. mcp-server and
+     * /api/search do not wrap retrieve, so that crashed the request.
+     */
+    if (typeof raw.at !== 'number' || !raw.entries || typeof raw.entries !== 'object') return empty;
     // Confidence decays with wall-clock time; tokens do not. The TTL applies
     // to the store as a whole because the two travel together in one entry.
-    if (Date.now() - raw.at >= INDEX_TTL_MS) return { at: Date.now(), entries: {} };
-    return raw;
+    if (Date.now() - raw.at >= INDEX_TTL_MS) return empty;
+    return raw as { at: number; entries: Record<string, CachedDoc> };
   } catch {
-    return { at: Date.now(), entries: {} };
+    return empty;
   }
 }
 

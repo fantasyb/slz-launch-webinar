@@ -28,6 +28,7 @@ import {
 import { loadKeys } from '../src/lib/cairn/keys';
 import { fetchJson } from '../src/lib/cairn/fetchJson';
 import { cairnHome } from '../src/lib/cairn/home';
+import { writeJsonAtomic } from '../src/lib/cairn/atomic';
 
 async function fetchBundle(up: Upstream): Promise<unknown> {
   if (up.source.startsWith('http://') || up.source.startsWith('https://')) {
@@ -91,10 +92,9 @@ async function main() {
         }
       }
 
-      fs.writeFileSync(
-        path.join(cacheDir(), `${up.name}.json`),
-        `${JSON.stringify(bundle, null, 2)}\n`,
-      );
+      /* Atomic: a cron killed mid-write must not leave a truncated bundle that
+       * throws on every subsequent search (readBundle now fails soft too). */
+      writeJsonAtomic(path.join(cacheDir(), `${up.name}.json`), bundle);
       console.log(
         `ok    ${up.name} <- ${bundle.origin}: ${bundle.findings.length} findings, ` +
           `${bundle.keys.length} keys, ${verified} signed / ${unverified} unverified observations`,

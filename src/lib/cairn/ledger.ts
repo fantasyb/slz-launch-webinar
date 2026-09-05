@@ -142,15 +142,31 @@ export function record(r: RetrievalRecord): void {
 }
 
 function readOne(file: string): RetrievalRecord[] {
+  let raw: string;
   try {
-    return fs
-      .readFileSync(file, 'utf8')
-      .split('\n')
-      .filter(Boolean)
-      .map((l) => JSON.parse(l) as RetrievalRecord);
+    raw = fs.readFileSync(file, 'utf8');
   } catch {
-    return [];
+    return []; // no shard yet
   }
+  /*
+   * Parse PER LINE. A single torn line — a process killed mid-append leaves a
+   * partial JSON line, and the next append glues onto it — used to throw inside
+   * one try and discard the ENTIRE shard, so all of an author's history
+   * (the gateway's is the big one) vanished from status/report/impact silently.
+   * Skip the bad line, count it, keep the rest.
+   */
+  const out: RetrievalRecord[] = [];
+  let skipped = 0;
+  for (const line of raw.split('\n')) {
+    if (!line.trim()) continue;
+    try {
+      out.push(JSON.parse(line) as RetrievalRecord);
+    } catch {
+      skipped++;
+    }
+  }
+  if (skipped) process.stderr.write(`cairn: skipped ${skipped} unparseable line(s) in ${file}\n`);
+  return out;
 }
 
 /** Every author's shard, plus the pre-shard file if it is still there. */

@@ -45,6 +45,7 @@ import { observe } from '../src/lib/cairn/observe';
 import { recordSubmission } from '../src/lib/cairn/recordFinding';
 import { recordNote } from '../src/lib/cairn/notes';
 import { attest } from '../src/lib/cairn/attest';
+import { reloadCorpus } from '../src/lib/cairn/load';
 
 const server = new McpServer({ name: 'cairn', version: '0.1.0' });
 
@@ -142,6 +143,7 @@ server.registerTool(
      * arrived through a tool call is never run -- see recordFinding.ts.
      */
     const outcome = await recordSubmission(args, { origin: 'agent' });
+    if (outcome.ok) reloadCorpus(); // so cairn_find in this same session sees the finding just recorded
     return { isError: !outcome.ok, content: [{ type: 'text' as const, text: outcome.message }] };
   },
 );
@@ -184,6 +186,7 @@ server.registerTool(
   },
   async (args) => {
     const outcome = attest(args, { via: 'cairn mcp server' });
+    if (outcome.ok) reloadCorpus(); // so a finding's standing reflects the observation just attested
     return { isError: !outcome.ok, content: [{ type: 'text' as const, text: outcome.message }] };
   },
 );

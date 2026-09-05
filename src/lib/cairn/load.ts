@@ -80,6 +80,20 @@ export function loadCorpus(): Finding[] {
   return (cache = findings);
 }
 
+/**
+ * Drop the corpus cache so the next loadCorpus() reads fresh from disk.
+ *
+ * loadCorpus memoises for the life of the process, which is right for a CLI but
+ * wrong for a long-lived host: the MCP server records a finding or attests an
+ * observation and then, in the same session, cannot find it (stale cache). Call
+ * this after any successful write to the corpus. (Id allocation already reads
+ * fresh via recordFinding's own freshLocal, so this is about read-after-write
+ * visibility, not id safety.)
+ */
+export function reloadCorpus(): void {
+  cache = null;
+}
+
 export function getFinding(id: string): Finding | undefined {
   return loadCorpus().find((f) => f.id === id);
 }

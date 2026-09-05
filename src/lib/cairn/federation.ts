@@ -91,9 +91,22 @@ export const configFile = () => homePath('cairn.config.json');
 export const cacheDir = () => homePath('.cairn-cache');
 export const overlayDir = () => homePath('federation');
 
+const PLACEHOLDER_CONFIG: Config = { origin: 'cairn.local', upstreams: [] }; // deliberately unsignable
+
 export function loadConfig(): Config {
-  if (!fs.existsSync(configFile())) return { origin: 'cairn.local', upstreams: [] }; // no config: still a placeholder, deliberately unsignable
-  return ConfigSchema.parse(JSON.parse(fs.readFileSync(configFile(), 'utf8')));
+  if (!fs.existsSync(configFile())) return PLACEHOLDER_CONFIG; // no config: placeholder
+  /*
+   * A hand-edited config with a trailing comma, or a crash mid-write, must not
+   * throw a SyntaxError on every single search (loadConfig is on the hot
+   * loadSearchable path). Fall back to the placeholder with a warning — the same
+   * fail-soft loadCorpus already applies to the corpus itself.
+   */
+  try {
+    return ConfigSchema.parse(JSON.parse(fs.readFileSync(configFile(), 'utf8')));
+  } catch (e) {
+    process.stderr.write(`cairn: ${configFile()} is unreadable (${(e as Error).message}); ignoring federation config\n`);
+    return PLACEHOLDER_CONFIG;
+  }
 }
 
 /** Namespaced id: an upstream's cairn-0001 is not your cairn-0001. */
@@ -119,19 +132,27 @@ export interface FederatedFinding {
   unverifiedUpstream: number;
 }
 
+/** JSON.parse that never throws — a torn cache/overlay file (killed mid-write) returns undefined, not a crash. */
+function parseJsonFile(file: string): unknown {
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch (e) {
+    process.stderr.write(`cairn: ${file} is unreadable (${(e as Error).message}); ignoring it\n`);
+    return undefined;
+  }
+}
+
 function readBundle(name: string): FederationBundle | null {
   const file = path.join(cacheDir(), `${name}.json`);
   if (!fs.existsSync(file)) return null;
-  const parsed = FederationBundleSchema.safeParse(JSON.parse(fs.readFileSync(file, 'utf8')));
+  const parsed = FederationBundleSchema.safeParse(parseJsonFile(file));
   return parsed.success ? parsed.data : null;
 }
 
 function readOverlay(upstream: string, findingId: string): Observation[] {
   const file = path.join(overlayDir(), upstream, `${findingId}.json`);
   if (!fs.existsSync(file)) return [];
-  const parsed = z
-    .array(ObservationSchema)
-    .safeParse(JSON.parse(fs.readFileSync(file, 'utf8')));
+  const parsed = z.array(ObservationSchema).safeParse(parseJsonFile(file));
   return parsed.success ? parsed.data : [];
 }
 
