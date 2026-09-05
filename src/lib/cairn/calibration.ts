@@ -2,6 +2,7 @@ import type { Finding, Prediction } from './schema';
 import { commitmentStatus, type CommitmentStatus } from './commitment';
 import { findingBodyHash } from './signing';
 import { loadKeys } from './keys';
+import { attestKeys } from './decay';
 
 /**
  * Scoring for the prediction ledger.
@@ -61,7 +62,11 @@ export function isSelfPrediction(f: Finding, p: Prediction): boolean {
   // The honest statement of the guarantee: a SIGNED founding observation
   // cannot have its identity chosen by a later contributor; the forecaster's
   // own label can. Binding predictions to keys is what would close it.
-  const keys = loadKeys();
+  // The finding's own carried keys (federated) first, else local — so an
+  // upstream-signed founding observation resolves to its real signer instead of
+  // falling back to the free-text `by` the self-prediction check is meant to
+  // distrust.
+  const keys = attestKeys(f, loadKeys());
   const originator =
     (earliest.signature && keys.get(earliest.signature.keyId)?.label) || earliest.by;
   return originator === p.by;
@@ -328,6 +333,16 @@ export function scoreByModel(findings: Finding[]): ModelScore[] {
   for (const f of findings) {
     for (const p of f.predictions) {
       if (!p.commitment || p.priorConfirmed !== undefined) continue;
+      // Do not charge "abandoned" for a seal that could never have scored on its
+      // own merits: a self-forecast (isScorableIn excludes it) or a forecast
+      // about a since-rewritten body (its outcome is no longer checkable).
+      // Revealing either gains nothing, so withholding it is not a dodge and
+      // must not tank the forecaster's Brier — the real over-punishment behind
+      // a best-in-corpus predictor sinking below a worse one. (A no-bodyHash
+      // seal is left counting, deliberately: sealing without binding and then
+      // not revealing is still a dodge — see the ledger regression test.)
+      if (isSelfPrediction(f, p)) continue;
+      if (p.bodyHash && p.bodyHash !== findingBodyHash(f)) continue;
       const sealedAt = new Date(p.at).getTime();
       const settledAfterSeal = f.observations.some((o) => {
         const t = new Date(o.at).getTime();

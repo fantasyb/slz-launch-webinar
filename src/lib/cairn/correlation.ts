@@ -76,18 +76,41 @@ export function forecastsByFinding(findings: Finding[], minPanel = 2): FindingFo
   });
 }
 
-/** Pearson correlation over the findings both predictors forecast. */
+/**
+ * Correlation of two predictors' errors, CONTROLLING FOR THE OUTCOME.
+ *
+ * Error is `prior - actual`, so both series share the `actual` term; its
+ * variance (~0.25 on balanced outcomes) dominates the covariance, and the raw
+ * Pearson r came out strongly positive even for predictors whose priors are
+ * independent noise — so "correlated: a shared blind spot" fired on nothing.
+ * The shared term is removed by residualising within each outcome stratum
+ * (subtract the mean error among rows with the same `actual`, then correlate the
+ * pooled residuals): a partial correlation controlling for `actual`, which is
+ * what "do they err together, BEYOND what the outcome forces" actually asks.
+ */
 export function pairwiseCorrelation(
   rows: FindingForecasts[],
   a: string,
   b: string,
 ): { r: number; n: number } | null {
-  const pairs = rows
-    .filter((r) => r.errors.has(a) && r.errors.has(b))
-    .map((r) => [r.errors.get(a)!, r.errors.get(b)!] as const);
+  const byOutcome = new Map<number, Array<[number, number]>>();
+  for (const r of rows) {
+    if (!r.errors.has(a) || !r.errors.has(b)) continue;
+    const arr = byOutcome.get(r.actual) ?? [];
+    arr.push([r.errors.get(a)!, r.errors.get(b)!]);
+    byOutcome.set(r.actual, arr);
+  }
+  const pairs: Array<[number, number]> = [];
+  for (const arr of byOutcome.values()) {
+    const k = arr.length;
+    const sa = arr.reduce((s, [x]) => s + x, 0) / k;
+    const sb = arr.reduce((s, [, y]) => s + y, 0) / k;
+    for (const [x, y] of arr) pairs.push([x - sa, y - sb]); // deviation within the outcome stratum
+  }
   if (pairs.length < 3) return null;
 
   const n = pairs.length;
+  // Residual means are ~0 by construction, but keep the general form.
   const ma = pairs.reduce((s, [x]) => s + x, 0) / n;
   const mb = pairs.reduce((s, [, y]) => s + y, 0) / n;
   let num = 0, da = 0, db = 0;

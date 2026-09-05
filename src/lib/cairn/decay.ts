@@ -69,9 +69,15 @@ export function confirmationCount(
  * ahead of the clock is not evidence about the past, so it contributes
  * nothing rather than everything.
  */
+/* A small tolerance for clock skew between machines: an observation stamped a
+ * few minutes ahead of the reader's clock is a just-recorded confirmation from a
+ * slightly-fast machine, not a 2099 exploit. Without it, a fresh confirmation is
+ * invisible until the skew elapses (and derivedVerdict reads inconclusive in the
+ * gap). Well short of any horizon a decay attack would need. */
+const SKEW_TOLERANCE_MS = 5 * 60_000;
 function notInFuture(o: Finding['observations'][number], now: Date): boolean {
   const t = new Date(o.at).getTime();
-  return Number.isFinite(t) && t <= now.getTime();
+  return Number.isFinite(t) && t <= now.getTime() + SKEW_TOLERANCE_MS;
 }
 
 export function lastConfirmedAt(f: Finding, now: Date = new Date()): string | null {
