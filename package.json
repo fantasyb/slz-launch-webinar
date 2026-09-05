@@ -71,6 +71,7 @@
     "cairn:sleep": "tsx scripts/sleep.ts",
     "cairn:triage": "tsx scripts/triage.ts",
     "cairn:daemon": "tsx scripts/daemon.ts",
+    "cairn:impact": "tsx scripts/impact.ts",
     "cairn:seal": "tsx scripts/seal.ts",
     "cairn:project": "tsx scripts/project.ts"
   },
