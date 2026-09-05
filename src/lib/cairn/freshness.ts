@@ -95,7 +95,22 @@ export function freshness(): Freshness {
     const gitDir = git(['rev-parse', '--git-dir']);
     if (gitDir) {
       const abs = path.isAbsolute(gitDir) ? gitDir : path.join(cairnHome(), gitDir);
-      sinceFetchDays = (Date.now() - fs.statSync(path.join(abs, 'FETCH_HEAD')).mtimeMs) / DAY;
+      /*
+       * FETCH_HEAD's mtime is when the last fetch happened. `git clone` never
+       * creates FETCH_HEAD, so a freshly-cloned, fully-current corpus reported
+       * "last fetch: never" and nagged. Fall back to packed-refs / HEAD, both
+       * written at clone time — a sensible "when did we last sync" for a clone
+       * that has never fetched.
+       */
+      const candidates = ['FETCH_HEAD', 'packed-refs', 'HEAD'];
+      for (const name of candidates) {
+        try {
+          sinceFetchDays = (Date.now() - fs.statSync(path.join(abs, name)).mtimeMs) / DAY;
+          break;
+        } catch {
+          /* try the next fallback */
+        }
+      }
     }
   } catch {
     sinceFetchDays = null;

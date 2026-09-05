@@ -31,7 +31,7 @@
  *
  * Nothing here mutates. It produces a proposal.
  */
-import type { Finding } from './schema';
+import { environmentSignature, type Finding } from './schema';
 import { confidence } from './decay';
 
 export type Rule = 'union' | 'safer' | 'judged' | 'keep';
@@ -78,8 +78,11 @@ export function proposeSurvivor(existing: Finding, incoming: Finding): Decision[
       'A duplicate is evidence the finding is real; confidence and scope both key on it.',
   });
 
+  // Use the SAME environment identity the scorer (decay) uses — lowercased,
+  // runtime-aware, arch defaulted. `${os}/${arch}` disagreed with it, so
+  // {os:'Linux'} and {os:'linux'} counted as two environments here and one there.
   const envs = new Set(
-    obs.filter((o) => o.environment).map((o) => `${o.environment!.os}/${o.environment!.arch}`),
+    obs.filter((o) => o.environment).map((o) => environmentSignature(o.environment!)),
   );
   if (envs.size > 1) {
     out.push({
@@ -163,9 +166,14 @@ export function proposeSurvivor(existing: Finding, incoming: Finding): Decision[
    */
   const now = new Date();
   const existingConfidence = confidence(existing, now);
-  const incomingSeen = incoming.observations?.[0]?.at;
+  const incomingConfidence = confidence(incoming, now);
+  // The latest observation, not observations[0] (which is the FIRST) — and the
+  // incoming account must actually be fresher: prefer it only when its own
+  // confidence exceeds the decayed existing one, else an older duplicate could
+  // "supersede" a finding just because the existing one had decayed.
+  const incomingSeen = (incoming.observations ?? []).map((o) => o.at).sort().at(-1);
   const staleExisting = existingConfidence < DECAYED;
-  if (staleExisting && incomingSeen) {
+  if (staleExisting && incomingSeen && incomingConfidence > existingConfidence) {
     out.push({
       field: '__supersede',
       rule: 'safer',

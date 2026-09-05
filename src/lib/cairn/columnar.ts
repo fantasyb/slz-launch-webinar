@@ -110,6 +110,11 @@ const FORMAT_VERSION = 2;
 const align = (n: number, to: number) => (n % to === 0 ? 0 : to - (n % to));
 
 export function serialize(ix: Omit<ColumnarIndex, 'builtAt'> & { builtAt?: number }): Buffer {
+  // The dictionary is newline-joined, so a term or command containing a newline
+  // would shift every id after it on read. Refuse rather than emit a corrupt index.
+  if (ix.terms.some((t) => t.includes('\n')) || ix.commands.some((c) => c.includes('\n'))) {
+    throw new Error('columnar: a term or command contains a newline; cannot serialize');
+  }
   const header: Header = {
     v: FORMAT_VERSION,
     fingerprint: ix.fingerprint,
@@ -208,6 +213,18 @@ export function deserialize(buf: Buffer, expectFingerprint?: string): ColumnarIn
     off += header.dictBytes;
     const cmdDict = buf.subarray(off, off + header.cmdDictBytes).toString('utf8');
     const commands = header.cmdDictBytes === 0 ? [] : cmdDict.split('\n');
+
+    /*
+     * Trailing dictionaries are read by byte length, and subarray CLIPS silently
+     * on a short file — so a truncated write used to deserialize as a "valid"
+     * index with fewer terms than the header claims, and retrieval then indexed
+     * undefined term ids and dropped postings, returning fewer hits until the
+     * fingerprint changed. Refuse a file whose dictionaries do not match the
+     * header (rebuild instead of serving a corrupt index).
+     */
+    if (off + header.cmdDictBytes !== buf.length) return null; // truncated or trailing garbage
+    if (header.dictBytes > 0 && terms.length !== header.nTerms) return null;
+    if (header.cmdDictBytes > 0 && commands.length !== header.nCommands) return null;
 
     return {
       fingerprint: header.fingerprint,

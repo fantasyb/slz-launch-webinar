@@ -43,6 +43,7 @@ import type { Finding, Observation } from './schema';
 import { environmentSignature } from './schema';
 import { verifyObservation, bodyHashForObservation } from './signing';
 import { loadKeys } from './keys';
+import { attestKeys } from './decay';
 
 /**
  * Who observed this, for joining observations across findings.
@@ -54,7 +55,10 @@ import { loadKeys } from './keys';
  */
 function attesterOf(f: Finding, o: Observation): { id: string; signed: boolean } | null {
   if (o.signature) {
-    const keys = loadKeys();
+    // The finding's own carried keys (federated) first, else local — matching
+    // decay's verifier. Verifying against local keys alone made every
+    // upstream-signed federated observation fail and degrade to `by:<label>`.
+    const keys = attestKeys(f, loadKeys());
     if (verifyObservation(f.id, o, keys, bodyHashForObservation(f, o)) === 'signed') {
       return { id: `key:${o.signature.keyId}`, signed: true };
     }

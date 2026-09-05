@@ -143,9 +143,13 @@ export function environmentCount(f: Finding, now: Date = new Date()): number {
  * the class of bug rather than an instance: correctness no longer depends on
  * every present and future caller remembering to thread an argument.
  */
-type Keyed = Finding & { keys?: Map<string, KeyRecord> };
+export type Keyed = Finding & { keys?: Map<string, KeyRecord> };
 
-function attestKeys(f: Finding, fallback: Map<string, KeyRecord>): Map<string, KeyRecord> {
+/** The keys an observation on `f` should verify against: the finding's own carried
+ * set (federated) if present, else the local fallback. Exported so every verifier
+ * uses the same rule (graph.ts verified against local keys only, so an
+ * upstream-signed federated observation always failed). */
+export function attestKeys(f: Finding, fallback: Map<string, KeyRecord>): Map<string, KeyRecord> {
   return (f as Keyed).keys ?? fallback;
 }
 

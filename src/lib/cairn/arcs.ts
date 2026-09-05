@@ -59,15 +59,24 @@ export function arcId(key: string, failing: string): string {
 }
 
 export function readArcs(): ArcRecord[] {
+  let raw: string;
   try {
-    return fs
-      .readFileSync(arcsFile(), 'utf8')
-      .split('\n')
-      .filter(Boolean)
-      .map((l) => JSON.parse(l) as ArcRecord);
+    raw = fs.readFileSync(arcsFile(), 'utf8');
   } catch {
-    return [];
+    return []; // no arcs file yet
   }
+  // Parse per line: a single torn line (a crash mid-append) must not discard
+  // every mute and re-offer every arc — the exact nag the mute exists to stop.
+  const out: ArcRecord[] = [];
+  for (const line of raw.split('\n')) {
+    if (!line.trim()) continue;
+    try {
+      out.push(JSON.parse(line) as ArcRecord);
+    } catch {
+      /* skip the torn line, keep the rest */
+    }
+  }
+  return out;
 }
 
 export function recordArc(r: Omit<ArcRecord, 'at'>): ArcRecord {
