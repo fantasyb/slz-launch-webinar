@@ -67,6 +67,18 @@ function opts(name: string): string[] {
   return out;
 }
 
+/*
+ * Which servers to put behind the gateway. Repeatable and/or comma-separated:
+ * `--only sf-all` wraps just that one (start narrow, widen once it is trusted);
+ * `--exclude legacy-http` leaves that one direct. --only, when given, is the
+ * whole allowlist; --exclude subtracts. Naming a server in --only also asserts
+ * "wrap it even without a token in its config", the override for an auth-free
+ * HTTP server the OAuth heuristic would otherwise leave alone.
+ */
+const splitList = (xs: string[]) => new Set(xs.flatMap((x) => x.split(',').map((s) => s.trim()).filter(Boolean)));
+const WRAP_ONLY = splitList(opts('only'));
+const WRAP_EXCLUDE = splitList(opts('exclude'));
+
 const HOME = process.env.HOME || os.homedir();
 const expand = (p: string) => (p.startsWith('~') ? path.join(HOME, p.slice(1)) : path.resolve(p));
 
@@ -333,6 +345,16 @@ interface ServerEntry {
   [k: string]: unknown;
 }
 const isStdio = (e: ServerEntry) => typeof e.command === 'string' && e.command.length > 0;
+const isHttp = (e: ServerEntry) => typeof (e as { url?: unknown }).url === 'string' && ((e as { url: string }).url).length > 0;
+/* An HTTP server whose config carries no auth header is probably an OAuth-login
+ * server. The gateway can carry a bearer token or API key (it forwards the
+ * headers) but cannot yet run an OAuth redirect flow, so wrapping such a server
+ * would break it. Leave those direct unless the operator names one in --only,
+ * which asserts it needs no auth. */
+const httpHasAuth = (e: ServerEntry) => {
+  const h = (e as { headers?: Record<string, unknown> }).headers;
+  return !!h && typeof h === 'object' && Object.keys(h).length > 0;
+};
 /* Ownership by BASENAME, not the exact PROXY_BIN path: a wrapper written by an
  * earlier/moved/second checkout (a different absolute path) must still be
  * recognised as ours, or it gets wrapped AGAIN and the stash is overwritten with
@@ -352,7 +374,18 @@ function wrapServers(file: string, home: string): WrapSummary {
     if (name === MCP_NAME) continue; // never wrap our own pull server
     const entry = servers[name];
     if (isWrappedByUs(entry)) { summary.already.push(name); continue; }
-    if (!isStdio(entry)) { summary.skipped.push({ name, why: 'not a stdio server (url/http) — cannot be wrapped this way' }); continue; }
+    // Selection: --only is the allowlist when given; --exclude subtracts.
+    if (WRAP_ONLY.size && !WRAP_ONLY.has(name)) { summary.skipped.push({ name, why: 'not in --only' }); continue; }
+    if (WRAP_EXCLUDE.has(name)) { summary.skipped.push({ name, why: 'named in --exclude' }); continue; }
+    // Transport: stdio and HTTP are both wrappable; anything else is neither.
+    if (!isStdio(entry) && !isHttp(entry)) { summary.skipped.push({ name, why: 'neither a stdio (command) nor an http (url) server — cannot be wrapped' }); continue; }
+    // An HTTP server with no token in its config likely uses OAuth login, which
+    // the gateway can't carry yet; wrapping it would break it. Leave it direct
+    // unless --only names it (the operator asserting it needs no auth).
+    if (isHttp(entry) && !isStdio(entry) && !httpHasAuth(entry) && !WRAP_ONLY.has(name)) {
+      summary.skipped.push({ name, why: 'http server with no auth header — may use OAuth login (not yet supported); left direct. Wrap it with --only ' + name + ' if it needs no auth.' });
+      continue;
+    }
     if (name.includes('/') || name.includes('\\') || name.includes('..')) {
       summary.skipped.push({ name, why: 'server name is not a safe filename — refusing to write its stash' });
       continue;

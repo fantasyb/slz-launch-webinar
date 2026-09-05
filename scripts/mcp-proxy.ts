@@ -89,9 +89,17 @@ import { standing } from '../src/lib/cairn/decay';
 
 interface UpstreamSpec {
   name: string;
-  command: string;
-  args: string[];
+  /** A stdio upstream: the command to spawn. Mutually exclusive with `url`. */
+  command?: string;
+  args?: string[];
   env?: Record<string, string>;
+  /** An HTTP upstream: the URL to dial. Auth rides in `headers` (a bearer token
+   * or API key); OAuth-redirect servers need an authProvider and are not yet
+   * wrapped — see spawn(). Mutually exclusive with `command`. */
+  url?: string;
+  headers?: Record<string, string>;
+  /** Which HTTP transport: Streamable HTTP (default) or the legacy SSE. */
+  transport?: 'http' | 'sse';
 }
 
 function usage(): never {
@@ -136,13 +144,23 @@ function parseArgs(argv: string[]): UpstreamSpec[] {
     } else if (argv[i] === '--config') {
       const file = argv[++i];
       if (!file) usage();
+      type Entry = {
+        command?: string; args?: string[]; env?: Record<string, string>;
+        url?: string; headers?: Record<string, string>; type?: string; transport?: string;
+      };
       const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as {
-        mcpServers?: Record<string, { command: string; args?: string[]; env?: Record<string, string> }>;
-        servers?: Record<string, { command: string; args?: string[]; env?: Record<string, string> }>;
+        mcpServers?: Record<string, Entry>;
+        servers?: Record<string, Entry>;
       };
       for (const [name, s] of Object.entries(raw.mcpServers ?? raw.servers ?? {})) {
-        if (!s?.command) continue;
-        specs.push({ name, command: s.command, args: s.args ?? [], env: s.env });
+        if (s?.command) {
+          specs.push({ name, command: s.command, args: s.args ?? [], env: s.env });
+        } else if (s?.url) {
+          // An HTTP/SSE upstream. `type`/`transport` may say 'sse'; default to
+          // Streamable HTTP, which is what current MCP servers speak.
+          const t = String(s.type ?? s.transport ?? '').toLowerCase();
+          specs.push({ name, url: s.url, headers: s.headers, transport: t === 'sse' ? 'sse' : 'http' });
+        }
       }
     }
   }
@@ -791,15 +809,61 @@ interface Upstream {
 /** Lifted from the SDK's 60s: a long-running tool must not fail only because it was proxied. */
 const FORWARD = { timeout: 10 * 60 * 1000, resetTimeoutOnProgress: true } as const;
 
-async function spawn(up: Upstream, onNotification: (u: Upstream, method: string, params: unknown) => void): Promise<void> {
-  const client = new Client({ name: 'cairn-proxy', version: '0.2.0' }, { capabilities: {} });
-  const transport = new StdioClientTransport({
-    command: up.spec.command,
-    args: up.spec.args,
-    env: { ...(process.env as Record<string, string>), ...(up.spec.env ?? {}) },
+/**
+ * Open the transport to an upstream — a spawned stdio process, or a dialed HTTP
+ * connection. The client side of a wrapped server is always local stdio (the
+ * proxy is launched as a command); only THIS, the upstream side, differs, so a
+ * URL server and a command server are identical to everything downstream — the
+ * finding injection, the ledger, the resonance all work on MCP messages, not on
+ * how the bytes arrive. Header/token auth rides in requestInit.headers; an
+ * OAuth-redirect server (no token in the config) needs an authProvider we do
+ * not supply yet, so it fails to connect here and the gateway reports it dead
+ * rather than pretending — see the install, which warns before wrapping one.
+ */
+async function upstreamTransport(spec: UpstreamSpec) {
+  if (spec.url) {
+    const url = new URL(spec.url);
+    const requestInit = spec.headers ? { headers: spec.headers } : undefined;
+    if (spec.transport === 'sse') {
+      const { SSEClientTransport } = await import('@modelcontextprotocol/sdk/client/sse.js');
+      return new SSEClientTransport(url, requestInit ? { requestInit } : undefined);
+    }
+    const { StreamableHTTPClientTransport } = await import('@modelcontextprotocol/sdk/client/streamableHttp.js');
+    return new StreamableHTTPClientTransport(url, requestInit ? { requestInit } : undefined);
+  }
+  return new StdioClientTransport({
+    command: spec.command!,
+    args: spec.args ?? [],
+    env: { ...(process.env as Record<string, string>), ...(spec.env ?? {}) },
     stderr: 'inherit',
   });
-  await client.connect(transport);
+}
+
+/** Connecting to a local stdio child fails fast; dialing an HTTP server can hang
+ * (an unreachable host, a proxy that stalls, a 401 the transport does not reject
+ * promptly). Bound the connect so a bad upstream becomes a prompt dead-upstream
+ * — an error result the caller can read — rather than a tool call that hangs the
+ * agent for the forward timeout. */
+const CONNECT_TIMEOUT_MS = Math.max(1000, Number(process.env.CAIRN_CONNECT_TIMEOUT_MS) || 20_000);
+
+async function spawn(up: Upstream, onNotification: (u: Upstream, method: string, params: unknown) => void): Promise<void> {
+  const client = new Client({ name: 'cairn-proxy', version: '0.2.0' }, { capabilities: {} });
+  const transport = await upstreamTransport(up.spec);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      client.connect(transport),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`connect timed out after ${CONNECT_TIMEOUT_MS / 1000}s`)), CONNECT_TIMEOUT_MS);
+      }),
+    ]);
+  } catch (e) {
+    // Do not leak the half-open transport when the connect failed or timed out.
+    try { await transport.close(); } catch { /* already gone */ }
+    throw e;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
   up.client = client;
   up.caps = client.getServerCapabilities() ?? {};
   up.instructions = client.getInstructions();
