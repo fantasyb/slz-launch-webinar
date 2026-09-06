@@ -147,7 +147,22 @@ export async function runCommand(
   return runCheckCommand(id, command, timeoutMs);
 }
 
+/**
+ * A finding recorded by an agent/tenant over the gateway carries a
+ * caller-controlled `check.command`. It must NOT run on the operator's box until
+ * an operator vouches for it — a SIGNED operator observation (an observation
+ * carrying a signature). Until then its check is skipped, not executed: this is
+ * the guard against a tenant planting a command that runs when the operator (or
+ * an agent following CLAUDE.md) verifies the corpus.
+ */
+export function isOperatorPromoted(f: Finding): boolean {
+  return (f.observations ?? []).some((o) => (o as { signature?: unknown }).signature != null);
+}
+
 async function runCheck(f: Finding, timeoutMs: number): Promise<Confirmation> {
+  if (f.agentRecorded && !isOperatorPromoted(f)) {
+    return { id: f.id, fired: 'skipped', detail: 'recorded by an agent and not yet promoted by a signed operator observation — its check is not executed (see EXECUTION.md)', exitCode: null, ms: 0 };
+  }
   return runCheckCommand(f.id, f.check.command, timeoutMs);
 }
 

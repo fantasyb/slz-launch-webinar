@@ -408,6 +408,9 @@
           ],
           "default": "private"
         },
+        "agentRecorded": {
+          "type": "boolean"
+        },
         "status": {
           "type": "string",
           "enum": [

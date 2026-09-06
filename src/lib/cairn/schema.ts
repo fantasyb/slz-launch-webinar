@@ -419,6 +419,14 @@ export const FindingSchema = z.object({
    * other way is publishing somebody's org data.
    */
   visibility: z.enum(['private', 'shared']).default('private'),
+  /**
+   * Recorded by an agent/tenant over the gateway (not the operator's own CLI).
+   * Its `check.command` is caller-controlled shell, so it is NEVER executed by
+   * cairn:doctor/verify/gate on the operator's box until an operator promotes it
+   * (a signed operator observation). This is the guard against a tenant planting
+   * a command that runs when the operator verifies the corpus.
+   */
+  agentRecorded: z.boolean().optional(),
   status: z.enum(['active', 'retired']).default('active'),
   retiredReason: z.string().optional(),
 

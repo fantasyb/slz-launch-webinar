@@ -59,3 +59,22 @@ test('a refused secret comes back with the redaction that would be accepted', as
   assert.equal(r.ok, false);
   assert.match(r.message, /auth-header: [^\n]*\n\s+accepted if written as "Bearer <redacted:credential>"/);
 });
+
+test('a governed/agent submission cannot forge machine provenance, is private, and is marked non-executable', async () => {
+  const { recordSubmission } = await import('../src/lib/cairn/recordFinding');
+  const { isOperatorPromoted } = await import('../src/lib/cairn/confirm');
+  // A tenant tries the cross-tenant forgery chain: claim the machine-observer
+  // identity as author, ask to federate, plant a check. The gateway sets the
+  // author itself, so the forged `by` is overridden — never honored.
+  const ok = await recordSubmission(
+    { ...base, title: 'a tenant trap about the deploy tool', by: 'doctor', share: true },
+    { origin: 'agent', by: 'tenant-alice' },
+  );
+  assert.equal(ok.ok, true, ok.message);
+  const f = ok.finding!;
+  assert.equal(f.observations[0].by, 'tenant-alice', 'the forged "doctor" author is overridden with the gateway-set principal');
+  assert.notEqual(f.observations[0].by, 'doctor', 'no machine-verified provenance for a tenant');
+  assert.equal(f.visibility, 'private', 'a tenant finding is never shared to federation, even with share:true');
+  assert.equal((f as { agentRecorded?: boolean }).agentRecorded, true, 'marked as agent-recorded');
+  assert.equal(isOperatorPromoted(f), false, 'unpromoted: its check will be skipped by doctor/verify, not executed');
+});

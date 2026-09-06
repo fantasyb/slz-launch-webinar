@@ -17,6 +17,7 @@ import fs from 'fs';
 import path from 'path';
 import { FindingSchema, type Finding } from './schema';
 import { SubmissionSchema, normalise, likelyDuplicates, slugify, readsAsProse } from './submission';
+import { MACHINE_OBSERVER } from './attest';
 import { scanExecutable, scanInjection, scanSensitive, draftSurface, redact } from './safety';
 import type { ZodIssue } from 'zod';
 import { checkFlaws } from './checkquality';
@@ -139,8 +140,14 @@ export async function recordSubmission(
   raw: unknown,
   opts: { by?: string; origin?: 'human' | 'agent'; force?: boolean } = {},
 ): Promise<RecordOutcome> {
-  const withBy = typeof raw === 'object' && raw !== null && opts.by && !(raw as Record<string, unknown>).by
-    ? { ...(raw as Record<string, unknown>), by: opts.by }
+  // For an AGENT submission (a model over MCP, incl. a governed tenant) the
+  // author is set by the gateway, never by the caller: a tenant that supplies
+  // `by: "doctor"` would otherwise seed a machine-verified observation and forge
+  // provenance into every other tenant's context. Force opts.by; a human CLI
+  // keeps its own `by`.
+  const rawObj = typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>) : null;
+  const withBy = rawObj && opts.by
+    ? { ...rawObj, by: opts.origin === 'agent' ? opts.by : (rawObj.by ?? opts.by) }
     : raw;
   const parsed = SubmissionSchema.safeParse(withBy);
   if (!parsed.success) {
@@ -158,9 +165,9 @@ export async function recordSubmission(
    * operator's own CLI (origin != agent) is trusted to use their label.
    */
   if (opts.origin === 'agent' && data.by) {
-    const reserved = [...loadKeys().values()].some((k) => k.label === data.by);
+    const reserved = data.by === MACHINE_OBSERVER || [...loadKeys().values()].some((k) => k.label === data.by);
     if (reserved) {
-      return { ok: false, message: `"${data.by}" is a signing identity on this machine and cannot be used as an agent \`by\`. Use your own model or agent id.` };
+      return { ok: false, message: `"${data.by}" is a reserved identity on this machine (a signing key, or the machine-observer label) and cannot be used as an agent \`by\`. Use your own model or agent id.` };
     }
   }
 
@@ -254,6 +261,14 @@ export async function recordSubmission(
     return { ok: false, message: `The finding did not validate after normalisation:\n${checked.error.issues.map((i) => `  ${i.path.join('.')}: ${i.message}`).join('\n')}` };
   }
   const finding = checked.data;
+
+  // A tenant-authored finding is never federated and is marked non-executable:
+  // its check is tenant-controlled shell and must not run on the operator's box
+  // (via cairn:doctor/verify) until an operator promotes it. See EXECUTION.md.
+  if (opts.origin === 'agent') {
+    (finding as Record<string, unknown>).visibility = 'private';
+    (finding as Record<string, unknown>).agentRecorded = true;
+  }
 
   let gateNote = '';
   if (finding.check.absentWhen && !finding.check.manual) {
