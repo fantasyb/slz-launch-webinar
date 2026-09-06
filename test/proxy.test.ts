@@ -438,6 +438,45 @@ test('several upstreams share one tool list, and a finding still finds its tool'
 });
 
 /**
+ * The gateway-wide owner maps are ROUTING, shared by every session. A read must
+ * not depend on this session having listed first (a governed peer may have
+ * listed a narrower view, wiping the shared map), and an unknown prompt name
+ * must not force a full fan-out re-list on every get (Fable-6 #12).
+ */
+test('a resource reads with a cold owner map, and an unknown prompt is cached without poisoning a real one (Fable-6 #12)', async () => {
+  const home = corpus();
+  const cfg = path.join(home, 'mcp.json');
+  fs.writeFileSync(cfg, JSON.stringify({
+    mcpServers: {
+      alpha: { command: 'node', args: [FIXTURE, '--name', 'alpha'] },
+      beta: { command: 'node', args: [FIXTURE, '--name', 'beta'] },
+    },
+  }));
+  const s = new Session(home, ['--config', cfg]);
+  try {
+    await s.init();
+    // Read WITHOUT a preceding resources/list: the owner map is cold, so the read
+    // path must re-resolve the owner itself rather than depend on a prior list.
+    const read = await s.request('resources/read', { uri: 'fixture://doc' });
+    assert.ok(!read.error, `a resource must read with a cold owner map: ${JSON.stringify(read.error)}`);
+    const contents = (read.result as { contents: { text: string }[] }).contents;
+    assert.ok(contents.some((c) => c.text.includes('resource body text from upstream')), 'the resource body is returned');
+
+    // An unknown prompt name is refused; asking again is still a clean refusal
+    // (the negative cache short-circuits the second fan-out) ...
+    const miss1 = await s.request('prompts/get', { name: 'no__such__prompt', arguments: {} });
+    assert.ok(miss1.error, 'an unknown prompt name is refused');
+    const miss2 = await s.request('prompts/get', { name: 'no__such__prompt', arguments: {} });
+    assert.ok(miss2.error, 'a repeat of the unknown name stays a clean refusal');
+    // ... and the negative cache does NOT poison a real prompt the client then asks for.
+    const hit = await s.request('prompts/get', { name: 'alpha__greet', arguments: {} });
+    assert.ok(!hit.error, 'a valid prompt still resolves after an unknown one was cached');
+    const msgs = (hit.result as { messages: { content: { text: string } }[] }).messages;
+    assert.ok(msgs.some((m) => m.content.text.includes('prompt body text from upstream')), 'the real prompt body is returned');
+  } finally { await s.close(); }
+});
+
+/**
  * A finding banked mid-session must reach the tool list before the next
  * decision, not the next session. The proxy fingerprints the corpus and
  * tells the client the list changed.

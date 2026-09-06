@@ -1509,6 +1509,24 @@ async function main() {
     if (unknownToolCache.size >= UNKNOWN_TOOL_CACHE_MAX) unknownToolCache.clear(); // simplest bound: drop the whole cache
     unknownToolCache.set(name, Date.now() + UNKNOWN_TOOL_TTL_MS);
   };
+  /*
+   * The same negative cache for unknown PROMPT names. GetPrompt re-lists every
+   * reachable upstream when a name is not in promptOwner, so a client spraying
+   * random prompt names would turn each cheap get into a full fan-out re-list
+   * (Fable-6 #12). Remember a name that stayed unresolved after a re-list, for a
+   * short TTL; any prompts/list_changed clears it.
+   */
+  const unknownPromptCache = new Map<string, number>(); // name -> expiry ms
+  const isKnownUnknownPrompt = (name: string): boolean => {
+    const exp = unknownPromptCache.get(name);
+    if (exp === undefined) return false;
+    if (Date.now() > exp) { unknownPromptCache.delete(name); return false; }
+    return true;
+  };
+  const rememberUnknownPrompt = (name: string): void => {
+    if (unknownPromptCache.size >= UNKNOWN_TOOL_CACHE_MAX) unknownPromptCache.clear();
+    unknownPromptCache.set(name, Date.now() + UNKNOWN_TOOL_TTL_MS);
+  };
 
   /**
    * NOTICE, RECORD, NEVER ENFORCE. Every complete look at an upstream's tool
@@ -1821,7 +1839,7 @@ async function main() {
     // the unknown-name negative cache — a name that did not exist may now — then
     // debounce the expensive re-list + client relay instead of doing them here.
     if (method === 'notifications/tools/list_changed') { toolOwner.clear(); unknownToolCache.clear(); scheduleListChangedFlush(up, method); return; }
-    if (method === 'notifications/prompts/list_changed') { promptOwner.clear(); scheduleListChangedFlush(up, method); return; }
+    if (method === 'notifications/prompts/list_changed') { promptOwner.clear(); unknownPromptCache.clear(); scheduleListChangedFlush(up, method); return; }
     if (method === 'notifications/resources/list_changed') { resourceOwner.clear(); templateOwner.clear(); scheduleListChangedFlush(up, method); return; }
     // Defang the one notification that carries free upstream text to the model.
     let outParams = (params ?? {}) as Record<string, unknown>;
@@ -2632,42 +2650,50 @@ async function main() {
     if (capabilities.resources) {
       const withResources = () => alive().filter((u) => u.caps.resources);
 
-      // A governed principal only sees resources on servers its role may reach.
-      const reachable = () => withResources().filter((u) => mayReachServer(session, u));
-
       server.setRequestHandler(ListResourcesRequestSchema, async () => {
-        resourceOwner.clear();
+        // The owner map is GATEWAY-WIDE routing shared by every session, but a role
+        // reveals to the CLIENT only its reachable servers. Build the FULL map from
+        // every alive server (so a restricted tenant's list cannot wipe entries a
+        // broader tenant's ReadResource depends on — Fable-6 #12), and RETURN only
+        // the reachable subset. Fill a local map across the awaits, then swap it in
+        // synchronously at the end: clearing the shared map before an await leaves a
+        // window where a concurrent session sees a half-built map.
+        const owned = new Map<string, Upstream>();
         const resources: Array<Record<string, unknown>> = [];
-        for (const up of reachable()) {
+        for (const up of withResources()) {
+          const show = mayReachServer(session, up);
           let cursor: string | undefined;
           const seen = new Set<string>();
           for (let pg = 0; ; pg++) {
             let page;
             try { page = await up.client!.listResources({ cursor }, FORWARD); } catch { break; }
-            for (const r of page.resources) { resourceOwner.set(r.uri, up); resources.push(defangDescribable(r as Record<string, unknown>)); }
+            for (const r of page.resources) { owned.set(r.uri, up); if (show) resources.push(defangDescribable(r as Record<string, unknown>)); }
             cursor = page.nextCursor;
             if (!cursor || seen.has(cursor) || pg + 1 >= MAX_LIST_PAGES) break; // bound a runaway/looping paginator
             seen.add(cursor);
           }
         }
+        resourceOwner.clear(); for (const [k, v] of owned) resourceOwner.set(k, v); // atomic swap
         return { resources };
       });
 
       server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => {
-        templateOwner.clear();
+        const owned = new Map<string, Upstream>();
         const resourceTemplates: Array<Record<string, unknown>> = [];
-        for (const up of reachable()) {
+        for (const up of withResources()) {
+          const show = mayReachServer(session, up);
           let cursor: string | undefined;
           const seen = new Set<string>();
           for (let pg = 0; ; pg++) {
             let page;
             try { page = await up.client!.listResourceTemplates({ cursor }, FORWARD); } catch { break; }
-            for (const t of page.resourceTemplates) { templateOwner.set(t.uriTemplate, up); resourceTemplates.push(defangDescribable(t as Record<string, unknown>)); }
+            for (const t of page.resourceTemplates) { owned.set(t.uriTemplate, up); if (show) resourceTemplates.push(defangDescribable(t as Record<string, unknown>)); }
             cursor = page.nextCursor;
             if (!cursor || seen.has(cursor) || pg + 1 >= MAX_LIST_PAGES) break; // bound a runaway/looping paginator
             seen.add(cursor);
           }
         }
+        templateOwner.clear(); for (const [k, v] of owned) templateOwner.set(k, v); // atomic swap
         return { resourceTemplates };
       });
 
@@ -2680,12 +2706,29 @@ async function main() {
        */
       async function ownerOf(uri: string): Promise<Upstream[]> {
         const gate = (ups: Upstream[]) => ups.filter((u) => mayReachServer(session, u));
-        const exact = resourceOwner.get(uri);
-        if (exact?.alive) return gate([exact]);
-        for (const [tpl, up] of templateOwner) {
-          const prefix = tpl.split('{')[0];
-          if (prefix && uri.startsWith(prefix) && up.alive) return gate([up]);
+        const lookup = (): Upstream | null => {
+          const exact = resourceOwner.get(uri);
+          if (exact?.alive) return exact;
+          for (const [tpl, up] of templateOwner) {
+            const prefix = tpl.split('{')[0];
+            if (prefix && uri.startsWith(prefix) && up.alive) return up;
+          }
+          return null;
+        };
+        let up = lookup();
+        // Cold or stale shared map (another session listed a narrower view, or the
+        // resource appeared since the last list): re-list this session's OWN
+        // reachable servers before giving up, so a broader tenant is never denied a
+        // resource it may reach just because a restricted tenant listed last
+        // (Fable-6 #12). Mirrors GetPrompt's lazy re-list.
+        if (!up) {
+          for (const u of withResources().filter((u) => mayReachServer(session, u))) {
+            try { const page = await u.client!.listResources({}, FORWARD); for (const r of page.resources) resourceOwner.set(r.uri, u); } catch { /* skip */ }
+            try { const page = await u.client!.listResourceTemplates({}, FORWARD); for (const t of page.resourceTemplates) templateOwner.set(t.uriTemplate, u); } catch { /* skip */ }
+          }
+          up = lookup();
         }
+        if (up) return gate([up]);
         return governed(session) ? [] : withResources(); // no blind fan-out for a governed principal
       }
 
@@ -2733,9 +2776,12 @@ async function main() {
 
     if (capabilities.prompts) {
       server.setRequestHandler(ListPromptsRequestSchema, async () => {
-        promptOwner.clear();
+        // Complete map from every alive prompt server, returned filtered to this
+        // role; swapped in synchronously at the end (Fable-6 #12), same as resources.
+        const owned = new Map<string, { up: Upstream; raw: string }>();
         const prompts: Array<Record<string, unknown>> = [];
-        for (const up of alive().filter((u) => u.caps.prompts && mayReachServer(session, u))) {
+        for (const up of alive().filter((u) => u.caps.prompts)) {
+          const show = mayReachServer(session, up);
           let cursor: string | undefined;
           const seen = new Set<string>();
           for (let pg = 0; ; pg++) {
@@ -2743,22 +2789,33 @@ async function main() {
             try { page = await up.client!.listPrompts({ cursor }, FORWARD); } catch { break; }
             for (const p of page.prompts) {
               const name = expose(up, p.name);
-              promptOwner.set(name, { up, raw: p.name });
-              prompts.push(defangDescribable({ ...p, name }));
+              owned.set(name, { up, raw: p.name });
+              if (show) prompts.push(defangDescribable({ ...p, name }));
             }
             cursor = page.nextCursor;
             if (!cursor || seen.has(cursor) || pg + 1 >= MAX_LIST_PAGES) break; // bound a runaway/looping paginator
             seen.add(cursor);
           }
         }
+        promptOwner.clear(); for (const [k, v] of owned) promptOwner.set(k, v); // atomic swap
         return { prompts };
       });
 
       server.setRequestHandler(GetPromptRequestSchema, async (req, extra) => {
         let owner = promptOwner.get(req.params.name);
         if (!owner) {
-          /* Lists are fetched lazily; a client may ask for a prompt before listing. */
-          for (const up of alive().filter((u) => u.caps.prompts && mayReachServer(session, u))) {
+          // A name that stayed unknown after a recent re-list is refused straight
+          // away, so spraying random prompt names cannot force a full fan-out
+          // re-list per call (Fable-6 #12).
+          if (isKnownUnknownPrompt(req.params.name)) throw new Error(`no upstream offers a prompt named "${req.params.name}"`);
+          /* Lists are fetched lazily; a client may ask for a prompt before listing.
+           * Re-list ALL alive prompt servers into the shared map (not just this
+           * role's reachable set): the map is gateway-wide routing, and the negative
+           * cache below must only remember a name that is genuinely absent
+           * EVERYWHERE — never one merely unreachable for this tenant, which would
+           * poison the shared cache for a tenant that CAN reach it (Fable-6 #12).
+           * Reachability is still enforced at the owner gate just below. */
+          for (const up of alive().filter((u) => u.caps.prompts)) {
             try {
               const page = await up.client!.listPrompts({}, FORWARD);
               for (const p of page.prompts) promptOwner.set(expose(up, p.name), { up, raw: p.name });
@@ -2766,7 +2823,10 @@ async function main() {
           }
           owner = promptOwner.get(req.params.name);
         }
-        if (!owner) throw new Error(`no upstream offers a prompt named "${req.params.name}"`);
+        // Genuinely absent everywhere (the re-list above spanned all alive servers):
+        // safe to remember gateway-wide. A role-denied prompt is NOT cached here — it
+        // resolves an owner and is refused by the reachability gate below instead.
+        if (!owner) { rememberUnknownPrompt(req.params.name); throw new Error(`no upstream offers a prompt named "${req.params.name}"`); }
         if (!mayReachServer(session, owner.up)) {
           audit(session, 'deny', owner.up.spec.name, '(prompt:get)', req.params.name);
           throw new Error(`cairn-proxy: not permitted to use prompt "${req.params.name}"`);
