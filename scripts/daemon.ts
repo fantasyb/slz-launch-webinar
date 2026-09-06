@@ -113,7 +113,19 @@ function maybeVerifyAudit(): void {
     // archived segments (and a checkpoint) even when the live file was just
     // deleted, and a DELETION of the live log is exactly what verify must catch.
     // verify returns ok on a genuinely-fresh dir (no segments, no checkpoints).
-    if (!fs.existsSync(path.join(dir, 'audit.jsonl')) && !fs.existsSync(path.join(dir, 'audit.segments.jsonl')) && !fs.existsSync(path.join(dir, 'head.json'))) return;
+    // Include the anchor files in the existence test, and — critically — if this
+    // daemon has ANCHORED before (in-memory, unerasable), a dir with NO audit state
+    // is a full wipe (rm audit/*), not a fresh box: alarm rather than short-circuit
+    // (red-team audit gap 2).
+    const anyState = ['audit.jsonl', 'audit.segments.jsonl', 'head.json', 'anchors.jsonl', 'anchors.shipped']
+      .some((f) => fs.existsSync(path.join(dir, f)));
+    if (!anyState) {
+      if (lastDaemonAnchor) {
+        process.stderr.write('cairn:daemon AUDIT ALARM — all audit state disappeared since I last anchored; the log was wiped (possible tampering).\n');
+        try { fs.writeFileSync(marker, JSON.stringify({ at: new Date().toISOString(), detail: 'all audit state gone since last daemon anchor', expectedAnchorHash: lastDaemonAnchor.anchorHash }, null, 2) + '\n'); } catch { /* best-effort */ }
+      }
+      return; // genuinely fresh (never anchored) — nothing to verify yet
+    }
     // On-box liveness monitor: it holds no off-box anchors, so it bridges DECLARED
     // offloads (offloadArchive marked them, boundary shipped off-box) instead of
     // false-alarming on every legitimate offload (Fable-6 #2). Undeclared absence
@@ -169,10 +181,15 @@ function maybeVerifyAudit(): void {
     // rewritten log into a fresh genesis-rooted anchor chain and ship it off-box.
     if (lastDaemonAnchor) {
       const disk = readAnchors(dir);
-      const tip = disk.length ? disk[disk.length - 1] : null;
-      if (!tip || tip.anchorHash !== lastDaemonAnchor.anchorHash) {
-        process.stderr.write('cairn:daemon AUDIT ALARM — the anchor log was deleted or replaced since I last wrote it; refusing to re-anchor (possible tampering).\n');
-        try { fs.writeFileSync(marker, JSON.stringify({ at: new Date().toISOString(), detail: 'anchor log deleted/replaced since last daemon anchor', expectedAnchorHash: lastDaemonAnchor.anchorHash }, null, 2) + '\n'); } catch { /* best-effort */ }
+      // PRESENT, not TIP: require the anchor we last wrote to still be in the
+      // (chain-verified) anchor list — deletion or replacement is the tamper we
+      // guard against. Requiring it to be the LAST anchor false-alarmed whenever an
+      // operator legitimately ran `cairn:audit-log anchor`/`rotate` (another process
+      // appended a real anchor), then halted anchoring for the daemon's life,
+      // silently widening the unanchored window (red-team audit gap 5).
+      if (!disk.some((a) => a.anchorHash === lastDaemonAnchor!.anchorHash)) {
+        process.stderr.write('cairn:daemon AUDIT ALARM — the anchor I last wrote is gone from the anchor log; refusing to re-anchor (possible tampering).\n');
+        try { fs.writeFileSync(marker, JSON.stringify({ at: new Date().toISOString(), detail: 'last daemon anchor deleted/replaced', expectedAnchorHash: lastDaemonAnchor.anchorHash }, null, 2) + '\n'); } catch { /* best-effort */ }
         return;
       }
     }

@@ -603,6 +603,14 @@ export function shipAnchors(dir: string): void {
   let cursor = '';
   try { cursor = fs.readFileSync(shippedCursor(dir), 'utf8').trim(); } catch { /* nothing shipped yet */ }
   const at = cursor ? anchors.findIndex((a) => a.anchorHash === cursor) : -1;
+  // A cursor that names an anchor NO LONGER in the log means the anchor log was
+  // truncated below what was already shipped. Re-shipping from index 0 would push a
+  // second, conflicting chain off-box (confusing the operator's verify) — refuse
+  // and drop an alarm instead (red-team audit gap 3). verifyAudit flags the same.
+  if (cursor && at === -1) {
+    try { fs.writeFileSync(shipAlarm(dir), JSON.stringify({ at: new Date().toISOString(), detail: 'shipped cursor names an anchor absent from the log — refusing to re-ship a conflicting chain (possible tampering)' }) + '\n'); } catch { /* best-effort */ }
+    return;
+  }
   const pending = anchors.slice(at + 1);
   for (const a of pending) {
     if (!shipOne(a, cmd)) {
@@ -898,6 +906,28 @@ export function verifyAudit(dir: string, opts: { against?: { seq: number; hash: 
   // the log first had the opposite order and fired spurious truncation alarms.
   const anchors = readAnchors(dir);
   const sc = readHeadSidecar(dir);
+
+  // STRICT anchor parse (red-team audit gap 3): readAnchors DROPS a malformed line,
+  // so corrupting the last anchor line reads exactly like deleting it — silently.
+  // A non-empty anchor line that is not a JSON object is tampering, not a skip.
+  try {
+    const rawAnchorLines = fs.readFileSync(anchorFile(dir), 'utf8').split('\n').filter(Boolean);
+    for (let i = 0; i < rawAnchorLines.length; i++) {
+      let parsed: unknown;
+      try { parsed = JSON.parse(rawAnchorLines[i]); } catch { return { ok: false, entries: 0, detail: `the anchor log has a malformed line (#${i + 1}) — anchors were tampered with` }; }
+      if (!isObj(parsed)) return { ok: false, entries: 0, detail: `the anchor log has a non-object line (#${i + 1}) — anchors were tampered with` };
+    }
+  } catch { /* no anchor file yet — nothing shipped, nothing to check */ }
+  // The shipped cursor names the last anchor pushed OFF-box. It is only ever
+  // advanced to an anchor that exists in anchors.jsonl, so a non-empty cursor whose
+  // anchor is no longer present means the anchor log was truncated below what was
+  // already shipped — detectable even without the off-box copy in hand (gap 3).
+  try {
+    const cursor = fs.readFileSync(shippedCursor(dir), 'utf8').trim();
+    if (cursor && !anchors.some((a) => a.anchorHash === cursor)) {
+      return { ok: false, entries: 0, detail: 'the anchor log was truncated below the shipped cursor — an already-shipped anchor is gone (tampering)' };
+    }
+  } catch { /* no cursor — off-box shipping not in use */ }
 
   // What the chain must match at a given seq. Conflicting expectations at one seq
   // are the STRONGEST tamper signal the design has (a real and a forged anchor,

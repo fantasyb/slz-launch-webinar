@@ -507,6 +507,35 @@ test('a non-object JSON line (a bare null) is CHAIN BROKEN, not an uncaught thro
   assert.match(v!.detail ?? '', /not a JSON object/);
 });
 
+test('a corrupted anchor line or a truncation below the shipped cursor is caught (red-team audit gap 3)', () => {
+  const dir = freshDir();
+  process.env.CAIRN_AUDIT_ANCHOR_CMD = 'cat > /dev/null'; // ships each anchor, advancing the cursor
+  try {
+    for (let i = 0; i < 4; i++) appendAudit(dir, { principal: 'a', decision: 'call', server: 's', tool: `t${i}` });
+    anchorHead(dir); // anchor #1, shipped
+    appendAudit(dir, { principal: 'a', decision: 'call', server: 's', tool: 't5' });
+    anchorHead(dir); // anchor #2, shipped — cursor names it
+    _resetAuditCache();
+    assert.equal(verifyAudit(dir).ok, true, 'the clean log verifies');
+    const af = pathReal.join(dir, 'anchors.jsonl');
+    const lines = fsReal.readFileSync(af, 'utf8').split('\n').filter(Boolean);
+    // Corrupting the last anchor line reads like deleting it to the lenient reader;
+    // strict parse treats it as tampering.
+    fsReal.writeFileSync(af, lines.slice(0, -1).concat('this is not json').join('\n') + '\n');
+    _resetAuditCache();
+    const vCorrupt = verifyAudit(dir);
+    assert.equal(vCorrupt.ok, false, 'a corrupted anchor line is tampering');
+    assert.match(vCorrupt.detail ?? '', /malformed line|non-object line/);
+    // Truncate the anchor log to a valid PREFIX (drop anchor #2) — but the shipped
+    // cursor still names #2, which is now gone: a truncation below what was shipped.
+    fsReal.writeFileSync(af, lines.slice(0, 1).join('\n') + '\n');
+    _resetAuditCache();
+    const vTrunc = verifyAudit(dir);
+    assert.equal(vTrunc.ok, false, 'truncation below the shipped cursor is caught');
+    assert.match(vTrunc.detail ?? '', /truncated below the shipped cursor/);
+  } finally { delete process.env.CAIRN_AUDIT_ANCHOR_CMD; }
+});
+
 test('an off-box archive with an interior anchor still verifies after it is offloaded (Fable-5)', () => {
   const dir = freshDir();
   process.env.CAIRN_AUDIT_ANCHOR_CMD = 'cat > /dev/null';
