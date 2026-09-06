@@ -18,7 +18,7 @@ import pathReal from 'path';
 import { createHash } from 'crypto';
 import {
   authenticate, authorize, tokenHash, bearerToken, LOCAL_ADMIN,
-  appendAudit, verifyAudit, readAudit, _resetAuditCache, readOrgPolicy, anchorHead, readAnchors,
+  appendAudit, verifyAudit, readAudit, _resetAuditCache, readOrgPolicy, anchorHead, readAnchors, rotateAudit,
   type OrgPolicy,
 } from '../src/lib/cairn/enterprise';
 
@@ -384,6 +384,51 @@ test('concurrent processes appending to one log produce an intact chain (the cro
   const entries = readAudit(dir);
   assert.equal(entries.length, N * each, `every append landed (${entries.length} of ${N * each})`);
   assert.deepEqual(entries.map((e) => e.seq), Array.from({ length: N * each }, (_, i) => i + 1), 'seqs are contiguous 1..n with no collision');
+});
+
+test('rotation archives the live segment and the chain continues, verifiably, across the boundary', () => {
+  const dir = freshDir();
+  process.env.CAIRN_AUDIT_ANCHOR_CMD = 'cat > /dev/null';
+  try {
+    for (let i = 0; i < 4; i++) appendAudit(dir, { principal: 'a', decision: 'call', server: 's', tool: `pre${i}` });
+    const preAnchor = anchorHead(dir)!; // an anchor for seq 4, saved off-box
+    const external = { seq: preAnchor.seq, hash: preAnchor.hash };
+
+    const rot = rotateAudit(dir);
+    assert.equal(rot.ok, true, rot.detail);
+    assert.equal(rot.fromSeq, 1);
+    assert.equal(rot.toSeq, 4);
+    assert.ok(fsReal.existsSync(pathReal.join(dir, rot.archived!)), 'the archive file exists');
+    assert.ok(!fsReal.existsSync(pathReal.join(dir, 'audit.jsonl')), 'the live file was archived away');
+
+    // Right after rotation the live segment is empty, but the pre-rotation anchor
+    // (for an archived seq) must NOT read as truncation, and verify is clean.
+    _resetAuditCache();
+    assert.equal(verifyAudit(dir).ok, true, 'a freshly rotated (empty) live segment verifies');
+    assert.equal(verifyAudit(dir, { against: [external] }).ok, true, 'a pre-rotation anchor is archived, not "truncated"');
+
+    // Appends continue the chain: seq 5, prevHash = seq 4's hash.
+    appendAudit(dir, { principal: 'a', decision: 'call', server: 's', tool: 'post0' });
+    appendAudit(dir, { principal: 'a', decision: 'call', server: 's', tool: 'post1' });
+    _resetAuditCache();
+    const v = verifyAudit(dir, { against: [external] });
+    assert.equal(v.ok, true, `the continued chain verifies: ${v.detail ?? ''}`);
+    const seqs = readAudit(dir).map((e) => e.seq);
+    assert.deepEqual(seqs, [5, 6], 'seq is monotonic across the rotation boundary, not reset to 1');
+  } finally { delete process.env.CAIRN_AUDIT_ANCHOR_CMD; }
+});
+
+test('rotation refuses to archive a broken log', () => {
+  const dir = freshDir();
+  for (let i = 0; i < 3; i++) appendAudit(dir, { principal: 'a', decision: 'call', server: 's', tool: `t${i}` });
+  const file = pathReal.join(dir, 'audit.jsonl');
+  const lines = fsReal.readFileSync(file, 'utf8').split('\n').filter(Boolean);
+  const e = JSON.parse(lines[1]); e.tool = 'EVIL'; lines[1] = JSON.stringify(e);
+  fsReal.writeFileSync(file, lines.join('\n') + '\n');
+  _resetAuditCache();
+  const rot = rotateAudit(dir);
+  assert.equal(rot.ok, false, 'a broken log is not archived');
+  assert.ok(fsReal.existsSync(file), 'and the live file is left in place for investigation');
 });
 
 test('a write failure never throws out of appendAudit (a broken log must not break a call)', () => {

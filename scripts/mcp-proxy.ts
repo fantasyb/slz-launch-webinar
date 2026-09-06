@@ -2142,10 +2142,18 @@ async function main() {
          * text an agent produces.
          */
         observe(callRecord(req.params.name, args), [], isError ? 'mcp-proxy:error' : 'mcp-proxy:call', ctx);
-        if (isError) session.holes.set(req.params.name, { args, output: ownText, at: new Date().toISOString() });
+        // The hole → auto-draft loop captures a governed tenant's own call args and
+        // upstream output into drafts the daemon feeds to a shell-capable triage
+        // agent. That is a personal, single-tenant convenience; on a governed
+        // multi-tenant gateway it is a cross-tenant channel into the operator's
+        // triage context, so it is switched off there. Governed tenants author
+        // findings through cairn_record instead, which is authorized, attributed,
+        // and marked non-executable. Personal/ungoverned sessions keep the loop.
+        const autoDraft = !governed(session);
+        if (isError && autoDraft) session.holes.set(req.params.name, { args, output: ownText, at: new Date().toISOString() });
         let note = annotate(session, req.params.name, about, isError, args, ownText);
-        if (!isError) note += draftFor(session, req.params.name, args);
-        if (!isError && !degraded()) note += contradictionFor(session, req.params.name, args, ownText);
+        if (!isError && autoDraft) note += draftFor(session, req.params.name, args);
+        if (!isError && autoDraft && !degraded()) note += contradictionFor(session, req.params.name, args, ownText);
         /*
          * FIRST CONTACT. `instructions` is the right place for the index and
          * not every client honours it; a result is read by all of them. So the

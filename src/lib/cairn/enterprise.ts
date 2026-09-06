@@ -364,12 +364,27 @@ function appendChained(dir: string, e: SpillRow): void {
  * from a bounded tail so an append does not cost a full-file read. Also reports
  * whether the file ends in a newline (so an append after a crash-truncated line
  * does not fuse onto it) and its size. */
+/* The head carried across a ROTATION. When the live audit file is archived and a
+ * fresh one started, this holds {seq, hash} of the last entry in the archived
+ * segment, so the next append CONTINUES the chain (seq monotonic, prevHash
+ * linked) instead of restarting at genesis. Written only by rotateAudit — a bare
+ * empty file with NO carry is genesis, so a malicious truncation-to-empty cannot
+ * masquerade as a rotation (verify still catches it via the sidecar/anchors). */
+const carryFile = (dir: string) => path.join(dir, 'audit.carry.json');
+function readCarry(dir: string): { seq: number; hash: string } | null {
+  try { const c = JSON.parse(fs.readFileSync(carryFile(dir), 'utf8')); return typeof c.seq === 'number' && typeof c.hash === 'string' ? c : null; } catch { return null; }
+}
+
 function diskHead(dir: string): { seq: number; hash: string; endsWithNL: boolean; empty: boolean } {
   try {
     const fd = fs.openSync(auditFile(dir), 'r');
     try {
       const size = fs.fstatSync(fd).size;
-      if (size === 0) return { seq: 0, hash: GENESIS, endsWithNL: true, empty: true };
+      if (size === 0) {
+        // Fresh file: continue from a rotation carry if one exists, else genesis.
+        const carry = readCarry(dir);
+        return carry ? { seq: carry.seq, hash: carry.hash, endsWithNL: true, empty: true } : { seq: 0, hash: GENESIS, endsWithNL: true, empty: true };
+      }
       const want = Math.min(65536, size);
       const buf = Buffer.alloc(want);
       fs.readSync(fd, buf, 0, want, size - want);
@@ -381,7 +396,9 @@ function diskHead(dir: string): { seq: number; hash: string; endsWithNL: boolean
       return { seq: h?.seq ?? 0, hash: h?.hash ?? GENESIS, endsWithNL, empty: false };
     } finally { fs.closeSync(fd); }
   } catch {
-    return { seq: 0, hash: GENESIS, endsWithNL: true, empty: true };
+    // No file at all: continue from a rotation carry if present, else genesis.
+    const carry = readCarry(dir);
+    return carry ? { seq: carry.seq, hash: carry.hash, endsWithNL: true, empty: true } : { seq: 0, hash: GENESIS, endsWithNL: true, empty: true };
   }
 }
 
@@ -571,6 +588,53 @@ export interface AuditVerdict {
   detail?: string;
 }
 
+export interface RotateResult {
+  ok: boolean;
+  archived?: string;
+  fromSeq?: number;
+  toSeq?: number;
+  detail?: string;
+}
+
+/**
+ * Rotate the live audit segment: archive audit.jsonl to a self-describing file,
+ * and carry the head so the new segment CONTINUES the chain (seq monotonic,
+ * prevHash linked) rather than restarting at genesis — which keeps every existing
+ * anchor valid and lets verify follow the boundary. Refuses to rotate a log that
+ * does not verify (never archive a broken chain), and takes a final anchor of the
+ * head first so the boundary itself is checkpointed off-box. Bounds the live file
+ * so appends and the tail read stay cheap however long the gateway runs.
+ */
+export function rotateAudit(dir: string): RotateResult {
+  // Anchor the current head BEFORE the rotation lock (anchorHead takes its own
+  // lock; it also refuses a broken log, so this doubles as the pre-check).
+  const finalAnchor = anchorHead(dir);
+  const r = withAuditLock(dir, (): RotateResult => {
+    foldSpills(dir);
+    const v = verifyAudit(dir);
+    if (!v.ok) return { ok: false, detail: `refusing to rotate a broken log: ${v.detail}` };
+    let lines: string[];
+    try { lines = fs.readFileSync(auditFile(dir), 'utf8').split('\n').filter(Boolean); } catch { return { ok: false, detail: 'no live segment to rotate' }; }
+    if (!lines.length) return { ok: false, detail: 'the live segment is empty — nothing to rotate' };
+    let first: AuditEntry | null = null;
+    for (const l of lines) { try { first = JSON.parse(l) as AuditEntry; break; } catch { /* skip a corrupt leading line */ } }
+    const tail = diskHead(dir);
+    if (!first || tail.seq === 0) return { ok: false, detail: 'could not read the segment boundary' };
+    const archive = path.join(dir, `audit.${first.seq}-${tail.seq}.jsonl`);
+    fs.renameSync(auditFile(dir), archive);
+    // Carry the head so the next append continues the chain from tail.seq+1.
+    fs.writeFileSync(carryFile(dir), JSON.stringify({ seq: tail.seq, hash: tail.hash }));
+    // A manifest of archived segments, for an --all-segments walk later.
+    try { fs.appendFileSync(path.join(dir, 'audit.segments.jsonl'), JSON.stringify({ file: path.basename(archive), firstSeq: first.seq, lastSeq: tail.seq, firstPrevHash: first.prevHash, lastHash: tail.hash, at: new Date().toISOString() }) + '\n'); } catch { /* manifest is a convenience */ }
+    heads.set(dir, { seq: tail.seq, hash: tail.hash });
+    return { ok: true, archived: path.basename(archive), fromSeq: first.seq, toSeq: tail.seq };
+  });
+  if (!r.locked) return { ok: false, detail: 'could not take the audit lock to rotate' };
+  const out = r.value!;
+  if (out.ok && finalAnchor) shipAnchors(dir); // make sure the boundary anchor is shipped off-box
+  return out;
+}
+
 /** Re-walk the chain and confirm every hash. Detects any edit, deletion, or
  * reordering of committed entries — and, via the head sidecar and the anchors,
  * a whole-file rewrite or a tail truncation that the in-file chain alone cannot
@@ -612,18 +676,29 @@ export function verifyAudit(dir: string, opts: { against?: { seq: number; hash: 
   if (sc && typeof sc.seq === 'number' && typeof sc.hash === 'string') expect(sc.seq, sc.hash, 'head sidecar');
   if (conflict) return { ok: false, entries: 0, detail: conflict };
 
+  // Rotation: the CURRENT segment may start mid-chain. The carry names the last
+  // entry of the archived segment, so this segment begins at carry.seq+1 with
+  // prevHash carry.hash. A checkpoint for a seq BELOW the base is in an archive —
+  // not truncation, and not checkable against this file (archived integrity is
+  // covered by the off-box anchors and an --all-segments walk).
+  const carry = readCarry(dir);
+  const baseSeq = carry ? carry.seq + 1 : 1;
+  const basePrev = carry ? carry.hash : GENESIS;
+  const archived = (seq: number) => seq < baseSeq;
+
   let lines: string[];
   try {
     lines = fs.readFileSync(auditFile(dir), 'utf8').split('\n').filter(Boolean);
   } catch {
-    // No log — but a checkpoint that expects entries means they were all removed.
-    for (const [seq] of expectAtSeq) if (seq > 0) return { ok: false, entries: 0, detail: `no audit log, but a checkpoint exists for seq ${seq} — the log was deleted` };
+    // No live segment (or freshly rotated). A checkpoint ABOVE the archived
+    // boundary that we cannot account for means entries were removed.
+    for (const [seq] of expectAtSeq) if (seq > 0 && !archived(seq)) return { ok: false, entries: 0, detail: `no live audit segment, but a checkpoint exists for seq ${seq} — the log was deleted` };
     return { ok: true, entries: 0, detail: 'no audit log yet' };
   }
 
-  let prev = GENESIS;
-  let expectedSeq = 1;
-  let lastSeq = 0;
+  let prev = basePrev;
+  let expectedSeq = baseSeq;
+  let lastSeq = baseSeq - 1;
   for (let i = 0; i < lines.length; i++) {
     let e: AuditEntry;
     try { e = JSON.parse(lines[i]) as AuditEntry; } catch { return { ok: false, entries: i, brokenAt: i + 1, detail: 'line is not JSON' }; }
@@ -639,9 +714,11 @@ export function verifyAudit(dir: string, opts: { against?: { seq: number; hash: 
   }
 
   // A truncation drops the TAIL, which still verifies clean above. A checkpoint
-  // (anchor, external, or sidecar) for a seq beyond the current end catches it.
+  // (anchor, external, or sidecar) for a seq in THIS segment beyond the current
+  // end catches it. Archived-seq checkpoints are skipped (they are not in this
+  // file by design).
   for (const [seq] of expectAtSeq) {
-    if (seq > lastSeq) return { ok: false, entries: lines.length, detail: `the log ends at seq ${lastSeq} but a published checkpoint exists for seq ${seq} — entries were truncated` };
+    if (!archived(seq) && seq > lastSeq) return { ok: false, entries: lines.length, detail: `the log ends at seq ${lastSeq} but a published checkpoint exists for seq ${seq} — entries were truncated` };
   }
 
   return { ok: true, entries: lines.length };

@@ -26,7 +26,7 @@
 import fs from 'fs';
 import path from 'path';
 import { cairnHome } from '../src/lib/cairn/home';
-import { readAudit, verifyAudit, anchorHead, loadAnchorFile } from '../src/lib/cairn/enterprise';
+import { readAudit, verifyAudit, anchorHead, loadAnchorFile, rotateAudit } from '../src/lib/cairn/enterprise';
 
 const argv = process.argv.slice(2);
 const cmd = argv[0] ?? 'view';
@@ -69,6 +69,15 @@ if (cmd === 'verify') {
   console.error(`cairn:audit-log — CHAIN BROKEN${v.brokenAt ? ` at line ${v.brokenAt}` : ''}: ${v.detail}`);
   console.error('  An entry was edited, deleted, reordered, or truncated after it was written. The log is no longer trustworthy from that point on.');
   process.exit(1);
+}
+
+if (cmd === 'rotate') {
+  const r = rotateAudit(dir);
+  if (!r.ok) { console.error(`cairn:audit-log — not rotated: ${r.detail}`); process.exit(1); }
+  console.log(`cairn:audit-log — rotated: archived seq ${r.fromSeq}–${r.toSeq} to ${r.archived}.`);
+  console.log('  The chain continues in a fresh audit.jsonl from the next entry; existing anchors stay valid.');
+  console.log('  Move the archive off-box for retention; the live segment stays small.');
+  process.exit(0);
 }
 
 if (cmd === 'anchor') {
@@ -116,5 +125,5 @@ if (cmd === 'view') {
   process.exit(0);
 }
 
-console.error(`cairn:audit-log: unknown command "${cmd}". Use: view | verify | anchor | export`);
+console.error(`cairn:audit-log: unknown command "${cmd}". Use: view | verify | anchor | rotate | export`);
 process.exit(1);

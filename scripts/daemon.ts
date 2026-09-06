@@ -22,7 +22,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { selfUpdate, describeUpdate, repoRoot } from '../src/lib/cairn/selfUpdate';
-import { verifyAudit, anchorHead, readAnchors } from '../src/lib/cairn/enterprise';
+import { verifyAudit, anchorHead, readAnchors, rotateAudit } from '../src/lib/cairn/enterprise';
 
 const argv = process.argv.slice(2);
 function opt(name: string): string | undefined {
@@ -130,6 +130,26 @@ function maybeVerifyAudit(): void {
       const a = anchorHead(dir);
       if (a) { lastDaemonAnchor = { seq: a.seq, anchorHash: a.anchorHash }; process.stderr.write(`cairn:daemon audit anchored at seq ${a.seq}\n`); }
     } catch (e) { process.stderr.write(`cairn:daemon audit anchor failed (ignored): ${(e as Error).message}\n`); }
+    // Auto-rotate when the live segment grows past the threshold, so appends and
+    // the tail read stay cheap however long the gateway runs. The chain continues
+    // across the boundary (anchors stay valid); the archive is left for offload.
+    // Disable with CAIRN_AUDIT_ROTATE_BYTES=0.
+    const rotateBytes = (() => { const n = Number(process.env.CAIRN_AUDIT_ROTATE_BYTES); return Number.isFinite(n) ? n : 100 * 1024 * 1024; })();
+    if (rotateBytes > 0) {
+      try {
+        const size = fs.existsSync(path.join(dir, 'audit.jsonl')) ? fs.statSync(path.join(dir, 'audit.jsonl')).size : 0;
+        if (size > rotateBytes) {
+          const rot = rotateAudit(dir);
+          if (rot.ok) {
+            // Rotation took a final boundary anchor; keep our in-memory H4 pointer
+            // aligned with the on-disk anchor tip so the deletion check stays sound.
+            const tip = readAnchors(dir).slice(-1)[0];
+            if (tip) lastDaemonAnchor = { seq: tip.seq, anchorHash: tip.anchorHash };
+            process.stderr.write(`cairn:daemon rotated audit log: archived seq ${rot.fromSeq}-${rot.toSeq} to ${rot.archived}\n`);
+          }
+        }
+      } catch (e) { process.stderr.write(`cairn:daemon audit rotate failed (ignored): ${(e as Error).message}\n`); }
+    }
     return;
   }
   process.stderr.write(
