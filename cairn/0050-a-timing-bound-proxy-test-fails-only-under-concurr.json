@@ -24,10 +24,10 @@
     }
   ],
   "check": {
-    "command": "node -e 'const s=require(\"fs\").readFileSync(\"test/proxy.test.ts\",\"utf8\");const m=/progress is relayed to the client under its own token[\\s\\S]*?const deadline = Date\\.now\\(\\) \\+ \\d+000;[\\s\\S]*?while \\(Date\\.now\\(\\) < deadline/.test(s);console.log(m?\"wall-clock deadline present (load-sensitive)\":\"no wall-clock deadline (deterministic wait)\");process.exit(m?0:1);'",
-    "confirmedIf": "exit 0, printing 'wall-clock deadline present (load-sensitive)' — the test still gates the relayed notification on a fixed wall-clock deadline, so a concurrent-load run can still flake it.",
-    "refutedIf": "exit 1: the test no longer waits on a wall-clock deadline (rewritten to await the notification deterministically), so the load-sensitive shape is gone.",
-    "absentWhen": "the test is run in isolation, where there is no concurrent load to push the round-trip past the deadline.",
+    "command": "node -e 'const s=require(\"fs\").readFileSync(\"test/proxy.test.ts\",\"utf8\");const blk=(s.split(\"progress is relayed to the client under its own token\")[2]||s.split(\"progress is relayed to the client under its own token\")[1]||\"\").slice(0,1600);const usesEvent=/await s\\.waitForNotification/.test(blk);const pollsHere=/Date\\.now\\(\\) < deadline/.test(blk);const genFailsafe=/waitForNotification\\(pred: \\(m: Msg\\) => boolean, timeoutMs = 60_000\\)/.test(s);const robust=usesEvent&&!pollsHere&&genFailsafe;console.log(robust?\"event-based wait with a generous (>=60s) failsafe — robust under starvation\":\"fragile wait in the progress test (wall-clock poll or tight failsafe) — load-sensitive\");process.exit(robust?1:0);'",
+    "confirmedIf": "exit 0: the progress test still polls a wall-clock deadline OR its notification/request failsafe is tight (<=30s), so a CPU-starved spawned gateway under concurrent-suite load can still miss the wall — the flake reproduces.",
+    "refutedIf": "exit 1: the test awaits the notification by event AND its failsafe timeouts are generous (>=60s), so a slow-but-arriving relay under load still passes; only a truly missing notification fails.",
+    "absentWhen": "the test is run in isolation, where there is no concurrent load to starve the spawned gateway.",
     "manual": false
   },
   "provenance": "firsthand",
@@ -55,6 +55,18 @@
         "arch": "x64",
         "runtime": "node v22.22.2",
         "note": "After making the notification wait event-driven in test/proxy.test.ts."
+      }
+    },
+    {
+      "at": "2026-09-06T14:20:00.000Z",
+      "by": "claude-opus-4-8",
+      "verdict": "confirmed",
+      "note": "CORRECTION: the refutation above was premature. The event-based wait was necessary but NOT sufficient, and the original diagnosis ('wall-clock deadline') was incomplete. Re-running three suites concurrently reproduced it: 'not ok - a long call's progress is relayed', error 'no notification matched in 20000ms', duration 21909ms — the event wait's 20s FAILSAFE was still too tight. The real mechanism is spawn-starvation: node --test runs files concurrently, each spawn-based test launches `npx tsx scripts/mcp-proxy.ts` (heavy: npx resolution + TS compile per child), and under enough concurrent children the relayed progress notification legitimately takes >20s to arrive. The durable fix is not a different wait STYLE but a generous FAILSAFE: the event wait resolves the instant the notification lands (healthy run ~2s), so the timeout only fires when it never comes — widened to 60s (and the request round-trip failsafe to 60s). Verified: 3 concurrent full suites, 0 failures on this test, where the same 3x load failed it reliably at 20s. Lesson for the next such test: an integration test that spawns a real child and waits on an async event must (a) wait on the event, not a wall-clock poll, AND (b) size the failsafe for a starved box, not a quiet one. The deeper root cause (npx-tsx spawn cost) would be better killed by spawning a prebuilt CLI, which remains open.",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node v22.22.2",
+        "note": "Reproduced by running 3 full `tsx --test test/*.test.ts` suites in parallel; fixed by 60s failsafe timeouts and re-verified under the same 3x load."
       }
     }
   ],

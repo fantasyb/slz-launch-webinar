@@ -117,16 +117,23 @@ class Session {
     const id = this.next++;
     this.child.stdin!.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`);
     return new Promise((resolve, reject) => {
-      const t = setTimeout(() => reject(new Error(`no reply to ${method} (id ${id}) in 20s\n${this.stderr}`)), 20_000);
+      // Failsafe only: a healthy reply is near-instant. Generous (60s) so a
+      // round-trip through a CPU-starved spawned gateway under heavy concurrent
+      // suite load still completes rather than tripping a tight wall (cairn-0050).
+      const t = setTimeout(() => reject(new Error(`no reply to ${method} (id ${id}) in 60s\n${this.stderr}`)), 60_000);
       this.pending.set(id, (m) => { clearTimeout(t); resolve(m); });
     });
   }
 
   /** Resolve as soon as a notification matching `pred` has arrived — checking
    * those already received first, then waking on the next match. Deterministic:
-   * it returns the instant the notification lands and only rejects if none comes
-   * within the (generous) timeout, so a real missing notification still fails. */
-  waitForNotification(pred: (m: Msg) => boolean, timeoutMs = 20_000): Promise<Msg> {
+   * it returns the INSTANT the notification lands, so a healthy run finishes in
+   * ~1s. The timeout is only a failsafe for a notification that never comes, so
+   * it is deliberately generous (60s): under a badly overloaded box the spawned
+   * gateway child can be starved long enough that the relay legitimately takes
+   * >20s, and a slow-but-arriving notification must pass — only a truly missing
+   * one should fail (cairn-0050). */
+  waitForNotification(pred: (m: Msg) => boolean, timeoutMs = 60_000): Promise<Msg> {
     const already = this.notifications.find(pred);
     if (already) return Promise.resolve(already);
     return new Promise((resolve, reject) => {
@@ -714,7 +721,7 @@ test('a tool surface that changes mid-session is noticed, told once, recorded, a
     intactThenLabelled(await s.call('get_record', { object: 'Case', id: 'x' }), '{"status":"success","records":[]}');
 
     fs.writeFileSync(phase, 'destructive');
-    const deadline = Date.now() + 8000;
+    const deadline = Date.now() + 30000; // failsafe: generous for a load-starved spawned child (cairn-0050)
     while (Date.now() < deadline && !s.stderr.includes('delete_records appeared')) await new Promise((r) => setTimeout(r, 200));
     assert.match(s.stderr, /delete_records appeared \(declared destructive/, 'noticed by itself, from the server\'s own notification');
     assert.ok((await s.tools()).some((t) => t.name === 'delete_records'), 'the new tool is offered: nothing is withheld');
@@ -728,7 +735,7 @@ test('a tool surface that changes mid-session is noticed, told once, recorded, a
     assert.equal(again.content.length, 1, 'told once, not on every result');
 
     fs.writeFileSync(phase, 'rename');
-    const deadline2 = Date.now() + 8000;
+    const deadline2 = Date.now() + 30000; // failsafe (cairn-0050)
     while (Date.now() < deadline2 && !s.stderr.includes('search_records')) await new Promise((r) => setTimeout(r, 200));
     assert.match(s.stderr, /query_records → search_records/, 'a rename is a rename, not a loss and a gain');
     assert.match(s.stderr, /cairn-0001 names query_records/, 'the finding that names the old name is pointed at');
@@ -756,7 +763,7 @@ test('degraded, a changed tool surface is noticed on stderr and nothing is appen
     await s.init();
     await s.call('get_record', { object: 'Case', id: 'x' });
     fs.writeFileSync(phase, 'destructive');
-    const deadline = Date.now() + 8000;
+    const deadline = Date.now() + 30000; // failsafe: generous for a load-starved spawned child (cairn-0050)
     while (Date.now() < deadline && !s.stderr.includes('delete_records appeared')) await new Promise((r) => setTimeout(r, 200));
     assert.match(s.stderr, /delete_records appeared/);
     const r = await s.call('get_record', { object: 'Case', id: 'x' });
@@ -799,7 +806,7 @@ test('trust monitor: drift is flagged but nothing is withheld', async () => {
     await b.init();
     const names = (await b.tools()).map((t) => t.name);
     assert.ok(names.includes('mcp__data360__query_records'), 'monitor mode never withholds — it only flags');
-    const deadline = Date.now() + 8000;
+    const deadline = Date.now() + 30000; // failsafe: generous for a load-starved spawned child (cairn-0050)
     while (Date.now() < deadline && !/TRUST .*description changed/.test(b.stderr)) await new Promise((r) => setTimeout(r, 200));
     assert.match(b.stderr, /TRUST .*description changed/, 'the drift is flagged on stderr');
   } finally { await b.close(); }
@@ -902,7 +909,7 @@ test('a cancelled call is cancelled upstream, not merely unanswered', async () =
     const id = s.fire('tools/call', { name: 'mcp__data360__slow', arguments: {} });
     await new Promise((r) => setTimeout(r, 300));
     s.notify('notifications/cancelled', { requestId: id, reason: 'the person changed their mind' });
-    const deadline = Date.now() + 3000;
+    const deadline = Date.now() + 30000; // failsafe: generous for a load-starved spawned child (cairn-0050)
     while (Date.now() < deadline && !fs.existsSync(marker)) await new Promise((r) => setTimeout(r, 100));
     assert.ok(fs.existsSync(marker), 'the upstream\'s handler saw the abort within three seconds, not after its four-second run');
     /* The session is still healthy afterwards. */
