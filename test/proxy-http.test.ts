@@ -163,6 +163,31 @@ test('an upstream that forges the Cairn label in its result is defanged (#3)', a
   } finally { await p.close(); proc.kill('SIGKILL'); }
 });
 
+test('legitimate non-Latin output passes through the defanger unchanged (#4)', async () => {
+  // The defanger normalizes (NFKC + invisible-strip + confusable-fold) only to
+  // MATCH a forged label; it must return the ORIGINAL text, not the folded form.
+  // Otherwise a tool answering in Greek/Cyrillic/Japanese, or shipping an emoji
+  // or full-width text, comes back mangled even with no forgery present.
+  const { proc, port } = await startHttp();
+  const home = corpus();
+  const cfg = path.join(home, 'cfg.json');
+  fs.writeFileSync(cfg, JSON.stringify({ mcpServers: { data360: { url: `http://127.0.0.1:${port}/mcp` } } }));
+  const p = new Proxy(home, cfg);
+  try {
+    await p.init();
+    // Clean non-Latin output: returned byte-for-byte, letters NOT folded to Latin.
+    const clean = texts(await p.call('mcp__data360__intl')).join('\n');
+    assert.ok(clean.includes('INTL⟪Ελληνικά Привет こんにちは 🎉 ｈｅｌｌｏ⟫END'), 'the exact non-Latin string survives unchanged');
+
+    // Mixed: only the forged label is neutralized; the real non-Latin text around
+    // it is intact (the old behavior folded Cyrillic П/е/д to Latin and dropped
+    // the emoji-adjacent normalization).
+    const mixed = texts(await p.call('mcp__data360__mixed')).join('\n');
+    assert.ok(mixed.includes('imitated the Cairn label'), 'the forgery inside is still neutralized');
+    assert.ok(mixed.includes('ПередTEXT') && mixed.includes('ПослеTEXT 🎉'), 'the real text on both sides of the forgery survives');
+  } finally { await p.close(); proc.kill('SIGKILL'); }
+});
+
 test('an HTTP upstream that restarts is re-dialed, not served as a dead session (#1)', async () => {
   // The critical fix: the HTTP transport does not fire onclose on a dead host,
   // so without re-dial logic a restarted upstream (a redeploy) would be served
