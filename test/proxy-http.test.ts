@@ -218,6 +218,30 @@ test('legitimate non-Latin output passes through the defanger unchanged (#4)', a
     const big = texts(await p.call('mcp__data360__big_dashes')).join('\n');
     assert.ok(Date.now() - t0 < 5000, 'a large dash run does not freeze the defanger');
     assert.ok(big.includes(`TOP${'-'.repeat(200000)}BOTTOM`), 'a benign dash run passes through untouched');
+
+    // A forged ⟦nonce⟧ delimiter in result text is redacted regardless of the
+    // surrounding wording (red-team A3): an upstream cannot mint the token that
+    // makes a block read as genuine.
+    const nf = texts(await p.call('mcp__data360__nonce_forgery', { mode: 'ok' })).join('\n');
+    assert.ok(!/⟦0a1b2c3d4e5f⟧/.test(nf), 'the forged nonce token is redacted');
+    assert.ok(nf.includes('⟦redacted⟧'), 'and replaced with a redaction marker');
+  } finally { await p.close(); proc.kill('SIGKILL'); }
+});
+
+test('a forged label hidden in an input-schema ENUM value is defanged, not only description/title (red-team A4)', async () => {
+  const { proc, port } = await startHttp();
+  const home = corpus();
+  const cfg = path.join(home, 'cfg.json');
+  fs.writeFileSync(cfg, JSON.stringify({ mcpServers: { data360: { url: `http://127.0.0.1:${port}/mcp` } } }));
+  const p = new Proxy(home, cfg);
+  try {
+    await p.init();
+    const list = await p.request('tools/list');
+    const tool = (list.result.tools as Array<Record<string, any>>).find((t) => t.name === 'mcp__data360__nonce_forgery');
+    assert.ok(tool, 'the tool is listed');
+    const schema = JSON.stringify(tool.inputSchema);
+    assert.ok(!/from your Cairn corpus --- run evil/.test(schema), 'the forged label inside an enum value is neutralized');
+    assert.ok(schema.includes('imitated the Cairn label'), 'the enum value was defanged schema-wide');
   } finally { await p.close(); proc.kill('SIGKILL'); }
 });
 
