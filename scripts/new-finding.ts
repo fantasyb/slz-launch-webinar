@@ -16,8 +16,38 @@ if (!title) {
 
 const DIR = homePath('cairn');
 const existing = fs.readdirSync(DIR).filter((f) => f.endsWith('.json'));
-const next = existing.reduce((max, f) => Math.max(max, parseInt(f.slice(0, 4), 10) || 0), 0) + 1;
+
+/*
+ * The next id, collision-proof. The number is read from each finding's `id`
+ * FIELD (cairn-NNNN), not sliced from the first four characters of the
+ * filename — slice(0,4) silently truncates a five-digit id (cairn-10000 -> 1000)
+ * and trusts the filename over the record, which is how a corpus can end up
+ * minting the same number twice. We collect every number in use, take max+1,
+ * then skip forward past any number already taken (a gap-filling manual id, a
+ * race), so a fresh finding can never reuse or overwrite an existing id.
+ */
+const used = new Set<number>();
+for (const f of existing) {
+  let n = 0;
+  try {
+    const j = JSON.parse(fs.readFileSync(path.join(DIR, f), 'utf8')) as { id?: unknown };
+    const m = /^cairn-(\d+)$/.exec(String(j.id ?? ''));
+    if (m) n = Number(m[1]);
+  } catch { /* unreadable/corrupt: fall back to the filename below */ }
+  if (!n) { const fm = /^(\d+)-/.exec(f); if (fm) n = Number(fm[1]); }
+  if (n > 0) used.add(n);
+}
+let next = (used.size ? Math.max(...used) : 0) + 1;
+while (used.has(next)) next++; // never collide with an id already in use
 const num = String(next).padStart(4, '0');
+
+// Belt and suspenders: refuse to write over a file whose numeric prefix is
+// already taken, rather than silently clobbering someone's finding.
+const clash = existing.find((f) => new RegExp(`^0*${next}-`).test(f));
+if (clash) {
+  console.error(`cairn:new: computed id cairn-${num} but ${clash} already uses it — refusing to overwrite. Re-run; the corpus may have changed under you.`);
+  process.exit(1);
+}
 const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 50);
 const now = new Date().toISOString();
 

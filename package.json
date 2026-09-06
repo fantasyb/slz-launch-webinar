@@ -27,7 +27,7 @@
     "cairn:draft": "tsx scripts/draft.ts",
     "cairn:hooks": "git config core.hooksPath .githooks && echo \"pre-commit hook enabled\"",
     "pretest": "npm run cairn:build-cli",
-    "test": "tsx --test test/*.test.ts",
+    "test": "tsx --test --test-concurrency=2 test/*.test.ts",
     "cairn:promote": "tsx scripts/promote.ts",
     "cairn:match": "tsx scripts/match.ts",
     "cairn:find": "node bin/cairn-find.js",

@@ -80,6 +80,18 @@
         "runtime": "node v22.22.2",
         "note": "4 CPUs. Fix = built-launcher spawns (bin/cairn-proxy.js) + parallelized pretest build + 120s failsafe."
       }
+    },
+    {
+      "at": "2026-09-06T16:00:00.000Z",
+      "by": "claude-opus-4-8",
+      "verdict": "refuted",
+      "note": "Final belt-and-suspenders: `npm test` now caps intra-run parallelism with --test-concurrency=2, so within a single run (the real pre-commit/CI case) at most two spawn-heavy test files run at once — the stampede that starves a child cannot form. Cost measured at ~11s on a green full run (1m14s vs 1m03s uncapped), which the requester accepted in exchange for the guarantee. Layered with the cheap built-launcher spawns and the 120s event-wait failsafe, a single run is now robust by three independent mechanisms. NOTE the honest ceiling: running MULTIPLE `npm test` invocations at once still oversubscribes the box (the cap governs one invocation, not the machine), so a deliberate N-parallel-suites stress can still starve a child past any wall — that is a property of spawn-based integration tests under unbounded load, not a defect, and it is not a real workflow.",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node v22.22.2",
+        "note": "4 CPUs. --test-concurrency=2 added to the npm test script."
+      }
     }
   ],
   "status": "active",
