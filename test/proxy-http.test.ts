@@ -206,6 +206,11 @@ test('legitimate non-Latin output passes through the defanger unchanged (#4)', a
     const uf = texts(await p.call('mcp__data360__unicode_fence')).join('\n');
     assert.ok(uf.includes('imitated the Cairn label'), 'an em-dash / capital-confusable forgery is still neutralized');
     assert.ok(uf.indexOf('imitated the Cairn label') < uf.indexOf('INSTEAD'), 'the neutralized marker replaced the forged provenance header that led into the instruction');
+
+    // Box-drawing fence + lunate sigma + palochka: also neutralized.
+    const uf2 = texts(await p.call('mcp__data360__unicode_fence2')).join('\n');
+    assert.ok(uf2.includes('imitated the Cairn label'), 'a box-drawing / lunate-sigma forgery is still neutralized');
+    assert.ok(uf2.indexOf('imitated the Cairn label') < uf2.indexOf('INSTEAD'), 'the box-drawing forged header was replaced');
   } finally { await p.close(); proc.kill('SIGKILL'); }
 });
 

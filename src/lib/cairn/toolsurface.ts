@@ -101,14 +101,16 @@ function nameTokens(name: string): string[] {
 const NAME_CONFUSABLES: Record<string, string> = {
   а: 'a', е: 'e', о: 'o', р: 'p', с: 'c', у: 'y', х: 'x', і: 'i', ѕ: 's', м: 'm', н: 'h', т: 't', к: 'k', в: 'b', д: 'd', г: 'r',
   ο: 'o', α: 'a', ε: 'e', ρ: 'p', υ: 'u', χ: 'x', κ: 'k', ν: 'v', ι: 'i', ϲ: 'c', τ: 't',
+  // Final/lunate sigma, shha, palochka, dotless i, Armenian look-alikes.
+  ς: 'c', һ: 'h', ӏ: 'l', ı: 'i', ո: 'n', ս: 'u', ա: 'a', օ: 'o', ց: 'g',
   // Capitals fold to Latin CAPITALS so a leading look-alike letter still starts a
   // camelCase token (Дelete → Delete → delete), rather than lower-casing to a
   // non-Latin letter and slipping the write heuristic/denyTools match (Fable-6 #14).
   А: 'A', Е: 'E', О: 'O', Р: 'P', С: 'C', У: 'Y', Х: 'X', І: 'I', Ѕ: 'S', М: 'M', Н: 'H', Т: 'T', К: 'K', В: 'B', Д: 'D', Г: 'R',
-  Ο: 'O', Α: 'A', Ε: 'E', Ρ: 'P', Υ: 'Y', Χ: 'X', Κ: 'K', Ν: 'N', Ι: 'I', Ϲ: 'C', Τ: 'T', Β: 'B', Η: 'H', Μ: 'M',
+  Ο: 'O', Α: 'A', Ε: 'E', Ρ: 'P', Υ: 'Y', Χ: 'X', Κ: 'K', Ν: 'N', Ι: 'I', Ϲ: 'C', Τ: 'T', Β: 'B', Η: 'H', Μ: 'M', Һ: 'H', Ӏ: 'L',
 };
 export function foldName(name: string): string {
-  return name.normalize('NFKC').replace(/[\p{Cf}\p{Mn}]/gu, '').replace(/[Ͱ-ϿЀ-ӿ]/g, (c) => NAME_CONFUSABLES[c] ?? c);
+  return name.normalize('NFKC').replace(/[\p{Cf}\p{Mn}]/gu, '').replace(/[Ā-ɏͰ-ϿЀ-ӿ԰-֏]/g, (c) => NAME_CONFUSABLES[c] ?? c);
 }
 /**
  * Does this name read as a write? Folded first (so a look-alike verb cannot
@@ -119,7 +121,19 @@ export function foldName(name: string): string {
  * later write verb) are writes.
  */
 export function readsAsWrite(name: string): boolean {
-  const tokens = nameTokens(foldName(name)).map((t) => t.toLowerCase());
+  const folded = foldName(name);
+  // FAIL CLOSED on a residual non-Latin LETTER. The confusable table catches the
+  // look-alikes we know, but a letter from an un-tabled script (Armenian ո, a
+  // palochka ӏ, a dotless ı, a lunate sigma ϲ) survives folding and then acts as a
+  // TOKEN SEPARATOR in nameTokens — splitting a verb (`deӏete` → de|ete) so its
+  // prefix never matches. Rather than chase every script, treat any name that
+  // still carries a non-ASCII letter after folding as a write: a read-only role
+  // then refuses it unless an operator override permits it. This makes the table
+  // an accuracy aid, not the security boundary (Fable-6 #14 follow-up). A tool
+  // genuinely named in another script should declare readOnlyHint, which wins
+  // before this heuristic is ever consulted.
+  if (/[^\x00-\x7f]/.test(folded.replace(/[^\p{L}]/gu, ''))) return true;
+  const tokens = nameTokens(folded).map((t) => t.toLowerCase());
   if (!tokens.length) return false;
   const isWrite = (t: string) => WRITE_TOKEN2.test(t) || WRITE_TOKEN2.test(stripAffix(t)) || EXACT_WRITE.has(t) || EXACT_WRITE.has(stripAffix(t));
   if (!tokens.some(isWrite)) return false;

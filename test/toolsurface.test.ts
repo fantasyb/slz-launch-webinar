@@ -68,6 +68,26 @@ test('the classifier resists Unicode look-alikes, compound names, and affixes (F
   }
 });
 
+test('a residual non-Latin letter after folding fails closed under a read-only role (Fable-6 #14 follow-up)', () => {
+  // Look-alikes from scripts the table does not enumerate (palochka ӏ, Armenian ո,
+  // dotless ı, shha һ) survive the fold and would otherwise act as TOKEN
+  // SEPARATORS, splitting a write verb so its prefix never matches. A name that
+  // still carries a non-ASCII letter after folding is treated as a write — the
+  // table is an accuracy aid, not the security boundary.
+  for (const name of ['deӏete_file', 'ԝrite_config', 'remoѵe_user', 'ԁrop_table', 'wipe_соӏumn', '検索_delete']) {
+    assert.equal(classify({ name }).permitted, false, `${name} carries an un-folded look-alike and must fail closed`);
+  }
+  // Folds that DO resolve to ASCII are unaffected: `wipe_соӏumn` (Cyrillic с/о +
+  // palochka) folds to `wipe_column` — still a write for the ordinary reason, not
+  // the residual-letter rule — while an all-ASCII read stays a read.
+  assert.equal(classify({ name: 'list_items' }).permitted, true, 'an ASCII read is untouched');
+  // A non-Latin name that CONTRADICTS a read-only declaration is flagged for a
+  // person (the same "both facts" rule as a Latin write-verb under readOnlyHint),
+  // rather than silently trusted — the safe direction for a look-alike.
+  const c = classify({ name: '検索_all', annotations: { readOnlyHint: true } });
+  assert.equal(c.permitted, false, 'a non-Latin name under a read-only hint is flagged, not auto-permitted');
+});
+
 test('an override permits an excluded tool and is carried with the reason it overruled', () => {
   const c = classify({ name: 'update_thing' }, { overrides: { update_thing: 'refreshes a cached read model only' } });
   assert.equal(c.permitted, true);
