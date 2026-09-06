@@ -211,6 +211,13 @@ test('legitimate non-Latin output passes through the defanger unchanged (#4)', a
     const uf2 = texts(await p.call('mcp__data360__unicode_fence2')).join('\n');
     assert.ok(uf2.includes('imitated the Cairn label'), 'a box-drawing / lunate-sigma forgery is still neutralized');
     assert.ok(uf2.indexOf('imitated the Cairn label') < uf2.indexOf('INSTEAD'), 'the box-drawing forged header was replaced');
+
+    // A 200K-dash run with no label returns fast (linear scan, not quadratic
+    // backtracking — a hang would time this test out) and byte-for-byte unchanged.
+    const t0 = Date.now();
+    const big = texts(await p.call('mcp__data360__big_dashes')).join('\n');
+    assert.ok(Date.now() - t0 < 5000, 'a large dash run does not freeze the defanger');
+    assert.ok(big.includes(`TOP${'-'.repeat(200000)}BOTTOM`), 'a benign dash run passes through untouched');
   } finally { await p.close(); proc.kill('SIGKILL'); }
 });
 

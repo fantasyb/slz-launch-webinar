@@ -261,8 +261,14 @@ function maybeSelfUpdate(): void {
     // branch would otherwise get persistent code execution as the operator on a
     // governed deployment. A governed gateway never fast-forwards to an
     // unverified commit even if CAIRN_UPDATE_REQUIRE_SIGNED was left unset.
-    const governed = (() => { try { return readOrgPolicy().status === 'ok'; } catch { return false; } })();
-    r = selfUpdate(governed ? { requireSigned: true } : {});
+    // Require a signed update unless the policy is genuinely ABSENT (status
+    // 'none'). A read ERROR (a torn or permission-broken policy) must fail CLOSED —
+    // treating it as ungoverned would silently drop the signing requirement and
+    // fast-forward an unsigned commit exactly when the policy cannot be read
+    // (red-team self-update 2.1). The rest of the gateway already fails closed on
+    // 'error'; the daemon must too.
+    const requireSigned = (() => { try { return readOrgPolicy().status !== 'none'; } catch { return true; } })();
+    r = selfUpdate(requireSigned ? { requireSigned: true } : {});
   } catch (e) {
     process.stderr.write(`cairn:daemon self-update threw (ignored): ${(e as Error).message}\n`);
     return;

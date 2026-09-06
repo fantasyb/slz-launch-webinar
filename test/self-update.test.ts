@@ -192,8 +192,11 @@ test('the verifier always anchors trust, and a governed daemon forces signing', 
   assert.match(src, /const minTrust = requested === 'ultimate' \? 'ultimate' : 'fully'/, 'and is clamped to the two safe levels (marginal/never cannot weaken it)');
 
   // On a governed box, signing is mandatory regardless of the env default: the
-  // daemon auto-updates unattended and re-runs the installer.
+  // daemon auto-updates unattended and re-runs the installer. It fails CLOSED —
+  // signing is required unless the policy is genuinely ABSENT (status 'none'); a
+  // read error must not silently drop the requirement (red-team self-update 2.1).
   const daemon = fs.readFileSync(path.join(process.cwd(), 'scripts', 'daemon.ts'), 'utf8');
-  assert.match(daemon, /readOrgPolicy\(\)\.status === 'ok'/, 'the daemon detects an org policy');
-  assert.match(daemon, /selfUpdate\(governed \? \{ requireSigned: true \} : \{\}\)/, 'and forces requireSigned when governed');
+  assert.match(daemon, /readOrgPolicy\(\)\.status !== 'none'/, 'the daemon requires signing unless the policy is absent');
+  assert.match(daemon, /catch \{ return true; \}/, 'a policy read error fails closed (requires signing)');
+  assert.match(daemon, /selfUpdate\(requireSigned \? \{ requireSigned: true \} : \{\}\)/, 'and forces requireSigned accordingly');
 });
