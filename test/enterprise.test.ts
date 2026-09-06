@@ -94,6 +94,29 @@ test('an allowServers list is a strict allowlist', () => {
   assert.equal(authorize(p, s, 'stripe', { name: 'query' }).allowed, false, 'a server not on the allowlist is denied');
 });
 
+test('denyTools matches a Unicode look-alike name, not just the exact bytes (Fable-6 #3)', () => {
+  const p = policy({ roles: { ops: { denyTools: ['delete_repo'] } } });
+  const o = { id: 'o', role: 'ops' };
+  assert.equal(authorize(p, o, 'gh', { name: 'delete_repo' }).allowed, false, 'the exact name is denied');
+  assert.equal(authorize(p, o, 'gh', { name: 'dеlete_repo' }).allowed, false, 'a Cyrillic-е look-alike is denied too');
+  assert.equal(authorize(p, o, 'gh', { name: 'DELETE_REPO' }).allowed, false, 'case does not evade');
+});
+
+test('readOnlyStrict denies any tool not declared readOnlyHint:true (Fable-6 #3)', () => {
+  const p = policy({ roles: { viewer: { readOnlyStrict: true } } });
+  const v = { id: 'v', role: 'viewer' };
+  // A tool the server DECLARES read-only is allowed.
+  assert.equal(authorize(p, v, 'sf', { name: 'get_thing', annotations: { readOnlyHint: true } }).allowed, true);
+  // Everything else is denied — an unannotated read-looking name (which plain
+  // readOnly would allow), and a write-declared tool.
+  assert.equal(authorize(p, v, 'sf', { name: 'list_things' }).allowed, false, 'unannotated is denied under strict');
+  assert.equal(authorize(p, v, 'sf', { name: 'get_thing' }).allowed, false, 'even a read-looking name needs the annotation');
+  assert.equal(authorize(p, v, 'sf', { name: 'x', annotations: { readOnlyHint: false } }).allowed, false, 'a write-declared tool is denied');
+  // Plain readOnly (non-strict) still trusts a read-looking name.
+  const p2 = policy({ roles: { viewer: { readOnly: true } } });
+  assert.equal(authorize(p2, v, 'sf', { name: 'list_things' }).allowed, true, 'non-strict readOnly allows a read-looking name');
+});
+
 test('read-only denies a write, by declaration or by name, and permits a read', () => {
   const p = policy();
   assert.equal(authorize(p, alice, 'sf', { name: 'query_records' }).allowed, true, 'a read-looking name passes');

@@ -50,6 +50,22 @@ test('common write verbs are caught, and a leading read verb keeps a read a read
   }
 });
 
+test('the classifier resists Unicode look-alikes, compound names, and affixes (Fable-6 #3)', () => {
+  // A look-alike or full-width write verb is folded before matching, so it cannot
+  // evade: Cyrillic е in dеlete, full-width ｄｅｌｅｔｅ.
+  for (const name of ['dеlete_repo', 'ｄｅｌｅｔｅ_all']) {
+    assert.equal(classify({ name }).permitted, false, `${name} folds to a write`);
+  }
+  // Compound and affixed writes a read-only role must not be handed:
+  for (const name of ['get_or_create_customer', 'find_and_replace', 'read_write_file', 'getOrCreateUser', 'migrate_db', 'checkout_branch', 'store_secret', 'sign_transaction', 'fetch_and_sign', 'redeploy_stack', 'reinstall_pkg', 'undelete_item', 'login_user', 'browser_click']) {
+    assert.equal(classify({ name }).permitted, false, `${name} reads as a write`);
+  }
+  // And these stay reads (the fold/affix/exact-verb logic must not over-match):
+  for (const name of ['get_signature', 'get_opener', 'design_review', 'decode_token', 'return_policy', 'list_bookings', 'get_closed_prs', 'lookup_marker', 'resource_list', 'get_region']) {
+    assert.equal(classify({ name }).permitted, true, `${name} is a read`);
+  }
+});
+
 test('an override permits an excluded tool and is carried with the reason it overruled', () => {
   const c = classify({ name: 'update_thing' }, { overrides: { update_thing: 'refreshes a cached read model only' } });
   assert.equal(c.permitted, true);

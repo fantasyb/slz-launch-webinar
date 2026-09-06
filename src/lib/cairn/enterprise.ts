@@ -29,7 +29,7 @@ import path from 'path';
 import { createHash, randomBytes } from 'crypto';
 import { execFileSync } from 'child_process';
 import { homePath } from './home';
-import { readsAsWrite, type Annotations } from './toolsurface';
+import { readsAsWrite, foldName, type Annotations } from './toolsurface';
 
 /* ---- policy ------------------------------------------------------------- */
 
@@ -47,8 +47,16 @@ export interface Role {
   denyServers?: string[];
   /** Exposed tool names this role may never call. */
   denyTools?: string[];
-  /** Deny any write-looking tool (create/update/delete/deploy/…). */
+  /** Deny any write-looking tool (create/update/delete/deploy/…) by name/annotation. */
   readOnly?: boolean;
+  /**
+   * Fail-closed read-only: deny ANY tool not explicitly declared readOnlyHint:true.
+   * The name heuristic (readOnly) is best-effort and a hostile server controls its
+   * own tool names; strict mode does not trust the name at all, so an unannotated
+   * or write-declared tool is denied. Use this where the read-only boundary is a
+   * real control rather than a convenience.
+   */
+  readOnlyStrict?: boolean;
 }
 
 export interface OrgPolicy {
@@ -203,12 +211,21 @@ export function authorize(
   // (`github__delete_repo`), which is the exposed one, while the gateway routes
   // by the raw one; a mismatch there is a deny that silently does nothing.
   if (role.denyTools?.length) {
-    const denied = new Set(role.denyTools.map((t) => t.toLowerCase()));
-    const candidates = [tool.name, ...(tool.aliases ?? [])].map((n) => n.toLowerCase());
+    // Folded, not just lower-cased: a hostile server naming its tool `dеlete_repo`
+    // (Cyrillic е) or spacing it out must not slip past an operator's denylist.
+    const fold = (n: string) => foldName(n).toLowerCase();
+    const denied = new Set(role.denyTools.map(fold));
+    const candidates = [tool.name, ...(tool.aliases ?? [])].map(fold);
     const hit = candidates.find((c) => denied.has(c));
     if (hit) return { allowed: false, reason: `role "${principal.role}" is denied tool "${tool.name}"` };
   }
-  if (role.readOnly) {
+  if (role.readOnlyStrict) {
+    // Do not trust the name at all: allow ONLY a tool the server itself declares
+    // read-only. An unannotated or write-declared tool is denied.
+    if (tool.annotations?.readOnlyHint !== true) {
+      return { allowed: false, reason: `role "${principal.role}" is strict read-only; "${tool.name}" is not declared readOnlyHint:true` };
+    }
+  } else if (role.readOnly) {
     const declaredWrite = tool.annotations?.readOnlyHint === false || tool.annotations?.destructiveHint === true;
     const namedWrite = readsAsWrite(tool.name);
     if (declaredWrite || namedWrite) return { allowed: false, reason: `role "${principal.role}" is read-only; "${tool.name}" reads as a write` };

@@ -68,23 +68,59 @@ const WRITE_VERBS = 'create|update|delete|upsert|execute|insert|remove|write|mod
   // leading-read-verb guard below keeps these from misreading a plain read
   // (list_orders, get_address, set-topped nouns) as a write.
   + '|add|set|save|submit|cancel|start|stop|close|open|resolve|mark|reply|comment|clear|restore|copy|clone|sync|launch|schedule|pause|resume|accept|complete|register|notify|dispatch|append|lock|unlock|regenerate|pay|order|book|make|generate';
-const WRITE_TOKEN = new RegExp(`^(?:${WRITE_VERBS})`, 'i');
+// Fable-6: more high-value, low-collision action verbs. Kept OFF the prefix list
+// are verbs that collide with a common read noun as a prefix (e.g. 'sign' would
+// flag 'design'); those go in EXACT_WRITE below, matched as whole tokens only.
+const WRITE_VERBS2 = `${WRITE_VERBS}|replace|migrate|checkout|login|logout|store|pull|click|navigate|sudo|kubectl|ssh|scp|rm|mv|cp|dd|mkfs|withdraw|deposit|checkin|redeem`;
+const WRITE_TOKEN2 = new RegExp(`^(?:${WRITE_VERBS2})`, 'i');
+// Whole-token write verbs — including collision-prone ones (sign, close, open,
+// order, book, pay, add, set, mark) that must NOT be prefix-matched (they hide in
+// design/closed/opener/orders/booking/payment/address/settings/marker). As an
+// exact token they are unambiguous actions.
+const EXACT_WRITE = new Set(`${WRITE_VERBS2}|sign|approve`.split('|'));
 // A name whose FIRST token is one of these reads as a read whatever follows:
-// list_orders, get_address, search_bookmarks are reads even though a later
-// token (orders, address, bookmarks) begins with a write verb. This is what
-// lets the write list grow to catch add_comment / set_status / close_issue
-// without turning every get_/list_ tool into a false write.
+// list_orders, get_address, search_bookmarks are reads even though a later token
+// prefix-collides with a write verb.
 const READ_VERBS = /^(?:get|list|read|search|query|find|describe|fetch|show|view|count|check|status|lookup|scan|head|exists|inspect|preview|browse)$/i;
+// A conjunction inside the name means it is a COMPOUND action, so a leading read
+// verb no longer governs: get_or_create, find_and_replace, fetch_then_run.
+const CONJUNCTION = /^(?:or|and|then|plus)$/i;
+// Strip a leading re/un affix before verb matching so redeploy -> deploy,
+// reinstall -> install, undelete -> delete are caught. Only re/un (not de, which
+// collides: design -> sign), and only when a real verb remains.
+const stripAffix = (t: string): string => t.replace(/^(?:re|un)(?=[a-z]{3})/i, '');
 /** Split a tool name into word tokens on separators and camelCase boundaries. */
 function nameTokens(name: string): string[] {
   return name.replace(/([a-z0-9])([A-Z])/g, '$1 $2').split(/[^A-Za-z0-9]+/).filter(Boolean);
 }
-/** Does this name read as a write? A leading read verb (get/list/…) settles it
- * as a read; otherwise any token that begins with a write verb makes it a write. */
+// Fold a name so a look-alike or spaced-out write verb cannot evade the match:
+// NFKC, drop format/combining chars, map the common Cyrillic/Greek confusables to
+// Latin. `dеlete` (Cyrillic е) and `ｄｅｌｅｔｅ` (full-width) both fold to `delete`.
+// Case is PRESERVED so camelCase tokenisation still works; callers lower-case
+// per token. Used for both the write heuristic and denyTools matching.
+const NAME_CONFUSABLES: Record<string, string> = {
+  а: 'a', е: 'e', о: 'o', р: 'p', с: 'c', у: 'y', х: 'x', і: 'i', ѕ: 's', м: 'm', н: 'h', т: 't', к: 'k', в: 'b', д: 'd', г: 'r',
+  ο: 'o', α: 'a', ε: 'e', ρ: 'p', υ: 'u', χ: 'x', κ: 'k', ν: 'v', ι: 'i', ϲ: 'c', τ: 't',
+};
+export function foldName(name: string): string {
+  return name.normalize('NFKC').replace(/[\p{Cf}\p{Mn}]/gu, '').replace(/[Ͱ-ϿЀ-ӿ]/g, (c) => NAME_CONFUSABLES[c] ?? c);
+}
+/**
+ * Does this name read as a write? Folded first (so a look-alike verb cannot
+ * evade). A write token (prefix-matched, re/un affix stripped) makes it a write,
+ * UNLESS the name is a SIMPLE read — a leading read verb, no conjunction, and no
+ * later token that is EXACTLY a write verb. So list_orders/get_address stay reads,
+ * while get_or_create (conjunction), read_write_file and fetch_and_sign (an exact
+ * later write verb) are writes.
+ */
 export function readsAsWrite(name: string): boolean {
-  const tokens = nameTokens(name);
-  if (tokens.length && READ_VERBS.test(tokens[0])) return false;
-  return tokens.some((t) => WRITE_TOKEN.test(t));
+  const tokens = nameTokens(foldName(name)).map((t) => t.toLowerCase());
+  if (!tokens.length) return false;
+  const isWrite = (t: string) => WRITE_TOKEN2.test(t) || WRITE_TOKEN2.test(stripAffix(t)) || EXACT_WRITE.has(t) || EXACT_WRITE.has(stripAffix(t));
+  if (!tokens.some(isWrite)) return false;
+  const laterExactWrite = tokens.slice(1).some((t) => EXACT_WRITE.has(t) || EXACT_WRITE.has(stripAffix(t)));
+  const simpleRead = READ_VERBS.test(tokens[0]) && !tokens.some((t) => CONJUNCTION.test(t)) && !laterExactWrite;
+  return !simpleRead;
 }
 /** @deprecated Substring-matches; use readsAsWrite. Kept for callers that test raw names. */
 export const WRITE_LOOKING = new RegExp(WRITE_VERBS, 'i');
