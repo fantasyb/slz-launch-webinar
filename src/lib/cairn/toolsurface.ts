@@ -28,6 +28,10 @@ export interface ToolShape {
   properties: string[];
   /** Full sha256 over the canonical input schema, so a change in a nested type is seen without diffing JSON. Full width, not truncated: this hash gates a security decision (the trust pin), so a birthday collision must be infeasible, not merely unlikely. */
   schemaHash: string;
+  /** The tool's display `title` — model-read prose, so a change post-approval is a rug-pull just like a description change. Optional in a pin written before it was covered. */
+  title?: string;
+  /** Full sha256 over the canonical OUTPUT schema. Also model-read (nested descriptions, enums), and unbounded, so it is pinned on the same footing as the input schema. Optional in an older pin. */
+  outputSchemaHash?: string;
 }
 
 function canonical(v: unknown): string {
@@ -38,6 +42,11 @@ function canonical(v: unknown): string {
   return JSON.stringify(v);
 }
 
+/** The hash of "no schema", so a pin written before outputSchema was covered
+ * (field absent) compares equal to a live tool that has no output schema — only a
+ * tool that actually HAS an output schema then needs a one-time re-approval. */
+export const EMPTY_SCHEMA_HASH = createHash('sha256').update(canonical({})).digest('hex');
+
 export function shapeOf(tool: Tool): ToolShape {
   const props = (tool.inputSchema as { properties?: Record<string, unknown> } | undefined)?.properties;
   return {
@@ -46,6 +55,8 @@ export function shapeOf(tool: Tool): ToolShape {
     annotations: (tool.annotations as Annotations | undefined) ?? null,
     properties: props ? Object.keys(props).sort() : [],
     schemaHash: createHash('sha256').update(canonical(tool.inputSchema ?? {})).digest('hex'),
+    title: (tool as { title?: string }).title ?? '',
+    outputSchemaHash: createHash('sha256').update(canonical((tool as { outputSchema?: unknown }).outputSchema ?? {})).digest('hex'),
   };
 }
 
@@ -233,9 +244,17 @@ export function diffSurface(before: ToolShape[], after: ToolShape[]): SurfaceCha
   const out: SurfaceChange[] = [];
   const vanished = before.filter((t) => !now.has(t.name));
   const appeared = after.filter((t) => !was.has(t.name));
+  // Missing pin fields (a pin written before title/outputSchema were covered)
+  // read as their empty-equivalent, so an old pin does not false-alarm on a tool
+  // that has no title / no output schema — only one that actually has them.
+  const titleOf = (s: ToolShape) => s.title ?? '';
+  const outHashOf = (s: ToolShape) => s.outputSchemaHash ?? EMPTY_SCHEMA_HASH;
   const paired = new Set<string>();
   for (const v of vanished) {
-    const twin = appeared.find((a) => !paired.has(a.name) && a.schemaHash === v.schemaHash && a.description === v.description && annot(a.annotations) === annot(v.annotations));
+    // A rename must match the FULL model-read surface — schema, description,
+    // annotations, AND title + output schema — or a rug-pull could relabel a tool
+    // AND change its title/output prose while hiding as a clean rename.
+    const twin = appeared.find((a) => !paired.has(a.name) && a.schemaHash === v.schemaHash && a.description === v.description && annot(a.annotations) === annot(v.annotations) && titleOf(a) === titleOf(v) && outHashOf(a) === outHashOf(v));
     if (twin) {
       paired.add(twin.name);
       out.push({ kind: 'renamed', tool: v.name, to: twin.name, detail: `${v.name} → ${twin.name} (same schema and description)` });
@@ -264,6 +283,15 @@ export function diffSurface(before: ToolShape[], after: ToolShape[]): SurfaceCha
     }
     if (b.description !== t.description) {
       out.push({ kind: 'description', tool: t.name, detail: `${t.name}: description changed` });
+    }
+    // title and outputSchema are model-read and were NOT pinned before — a change
+    // in either is a post-approval rug-pull, reported under the same blocking
+    // kinds as a description / input-schema change (red-team C1).
+    if (titleOf(b) !== titleOf(t)) {
+      out.push({ kind: 'description', tool: t.name, detail: `${t.name}: title changed` });
+    }
+    if (outHashOf(b) !== outHashOf(t)) {
+      out.push({ kind: 'schema', tool: t.name, detail: `${t.name}: output schema changed` });
     }
   }
   return out;
