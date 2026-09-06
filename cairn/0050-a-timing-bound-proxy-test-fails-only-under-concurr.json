@@ -44,6 +44,18 @@
         "runtime": "node v22.22.2",
         "note": "Full suite via the pre-commit hook (node --test over test/), which spawns many tsx child gateways concurrently."
       }
+    },
+    {
+      "at": "2026-09-06T13:40:00.000Z",
+      "by": "claude-opus-4-8",
+      "verdict": "refuted",
+      "note": "Fixed at the source rather than lived with: the test harness gained an event-based waitForNotification, and this test (plus the sibling 'a finding banked mid-session reaches the tool list') now awaits the relayed notification the instant it lands instead of polling a wall-clock deadline. The load-sensitive shape the check greps for is gone, so the check now refutes — correctly: this specific test can no longer flake under concurrent load. It flaked twice more in this session's pre-commit (not ok 226, then 227) before the fix, each passing in isolation, which is what prompted the durable fix. The general lesson stands for the NEXT such test: a spawned-child test that waits a fixed wall-clock deadline for an async event will flake under concurrent suite load; await the event.",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node v22.22.2",
+        "note": "After making the notification wait event-driven in test/proxy.test.ts."
+      }
     }
   ],
   "status": "active",

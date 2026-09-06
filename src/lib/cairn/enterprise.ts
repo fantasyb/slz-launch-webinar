@@ -265,10 +265,23 @@ function pidAlive(pid: number): boolean {
   try { process.kill(pid, 0); return true; } catch (e) { return (e as NodeJS.ErrnoException).code === 'EPERM'; }
 }
 
+/*
+ * How stale a lock's mtime may be before a LIVE-pid holder is still considered
+ * abandoned. A pid that is dead breaks immediately regardless; this bounds only
+ * the "the process is alive but wedged" case. The default is generous (15s)
+ * because every hold is short — appends are one write, and rotation is a rename
+ * plus a small write. The one hold that can run long is the verifyAudit done
+ * under the lock in anchorHead/rotateAudit when there are many archived
+ * segments to re-walk; a synchronous hold cannot heartbeat its own mtime (no
+ * async yield point to fire a timer), so rather than a fake heartbeat we let an
+ * operator with a large corpus widen the window via CAIRN_AUDIT_LOCK_STALE_MS.
+ */
+const LOCK_STALE_MS = Math.max(2_000, Number(process.env.CAIRN_AUDIT_LOCK_STALE_MS) || 15_000);
+
 /**
  * Break a lock only when its holder is provably gone: the pid written in it is
- * dead, OR its mtime is more than 15s off from now in EITHER direction (a
- * crashed holder, or a clock-skewed/future mtime that a one-sided check would
+ * dead, OR its mtime is more than LOCK_STALE_MS off from now in EITHER direction
+ * (a crashed holder, or a clock-skewed/future mtime that a one-sided check would
  * treat as fresh forever). The break is atomic — rename to a unique tombstone,
  * then unlink it — so exactly one racer wins and a live holder is never removed.
  */
@@ -278,7 +291,7 @@ function tryBreakStaleLock(lp: string): boolean {
   try { const st = fs.statSync(lp); mtimeMs = st.mtimeMs; content = fs.readFileSync(lp, 'utf8'); } catch { return false; }
   const pid = Number(content.split(':')[0]);
   const skew = Math.abs(Date.now() - mtimeMs);
-  if (pidAlive(pid) && skew < 15_000) return false; // a live, recent holder — leave it
+  if (pidAlive(pid) && skew < LOCK_STALE_MS) return false; // a live, recent holder — leave it
   try {
     const tomb = `${lp}.${process.pid}.${Date.now()}.stale`;
     fs.renameSync(lp, tomb); // only one racer's rename of THIS inode succeeds
@@ -520,6 +533,23 @@ export function shipAnchors(dir: string): void {
 }
 
 /**
+ * Has this anchor been shipped off-box? True when the shipped cursor names this
+ * anchor or a LATER one (a concurrent anchor may have shipped after it). Used to
+ * gate rotation: archiving a segment is only safe once the boundary that pins it
+ * is off-box, because a deleted archive is then detectable only via that anchor.
+ */
+function anchorShipped(dir: string, anchor: Anchor): boolean {
+  let cursor = '';
+  try { cursor = fs.readFileSync(shippedCursor(dir), 'utf8').trim(); } catch { return false; }
+  if (!cursor) return false;
+  if (cursor === anchor.anchorHash) return true;
+  const anchors = readAnchors(dir);
+  const ci = anchors.findIndex((a) => a.anchorHash === cursor);
+  const ai = anchors.findIndex((a) => a.anchorHash === anchor.anchorHash);
+  return ci !== -1 && ai !== -1 && ci >= ai;
+}
+
+/**
  * Checkpoint the current chain head as an anchor. Refuses to anchor a log that
  * does not verify (never certify a broken chain), folds spilled rows first, and
  * writes the anchor under the lock — then ships OUTSIDE the lock. Returns the
@@ -602,6 +632,16 @@ export function rotateAudit(dir: string): RotateResult {
   // lock; it also refuses a broken log, so this doubles as the pre-check). The
   // boundary must be pinned off-box, so refuse to rotate if the ship failed.
   const finalAnchor = anchorHead(dir);
+  // When off-box anchoring is configured, the boundary anchor MUST be shipped
+  // off-box before we archive: once the live segment becomes an archive file, a
+  // deleted archive is detectable only via an off-box anchor pinning its
+  // boundary (a local anchor cannot bridge it — the adversary has box write). So
+  // if the ship did not land, refuse to rotate rather than silently trade away
+  // that detectability; the operator fixes CAIRN_AUDIT_ANCHOR_CMD and retries.
+  if (process.env.CAIRN_AUDIT_ANCHOR_CMD) {
+    if (!finalAnchor) return { ok: false, detail: 'refusing to rotate: could not anchor the head off-box first (the log is broken or empty)' };
+    if (!anchorShipped(dir, finalAnchor)) return { ok: false, detail: `refusing to rotate: the boundary anchor (seq ${finalAnchor.seq}) did not ship off-box — CAIRN_AUDIT_ANCHOR_CMD failed. Fix it and retry; without it a later deletion of this archive could not be detected.` };
+  }
   const r = withAuditLock(dir, (): RotateResult => {
     foldSpills(dir);
     const v = verifyAudit(dir);

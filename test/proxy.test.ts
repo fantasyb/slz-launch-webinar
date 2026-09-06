@@ -68,6 +68,7 @@ class Session {
   private next = 1;
   private buf = '';
   notifications: Msg[] = [];
+  private notifWaiters: Array<{ pred: (m: Msg) => boolean; resolve: (m: Msg) => void }> = [];
   stderr = '';
   /** Resolves with the exit code when the proxy process ends. */
   exited: Promise<number | null>;
@@ -99,6 +100,14 @@ class Session {
           this.pending.delete(m.id);
         } else if (m.method) {
           this.notifications.push(m);
+          // Wake anyone awaiting a matching notification, the instant it lands —
+          // no polling against a wall-clock deadline, which flakes under the
+          // concurrent full-suite load that starves this spawned child (cairn-0050).
+          if (this.notifWaiters.length) {
+            const remaining: typeof this.notifWaiters = [];
+            for (const w of this.notifWaiters) { if (w.pred(m)) w.resolve(m); else remaining.push(w); }
+            this.notifWaiters = remaining;
+          }
         }
       }
     });
@@ -110,6 +119,23 @@ class Session {
     return new Promise((resolve, reject) => {
       const t = setTimeout(() => reject(new Error(`no reply to ${method} (id ${id}) in 20s\n${this.stderr}`)), 20_000);
       this.pending.set(id, (m) => { clearTimeout(t); resolve(m); });
+    });
+  }
+
+  /** Resolve as soon as a notification matching `pred` has arrived — checking
+   * those already received first, then waking on the next match. Deterministic:
+   * it returns the instant the notification lands and only rejects if none comes
+   * within the (generous) timeout, so a real missing notification still fails. */
+  waitForNotification(pred: (m: Msg) => boolean, timeoutMs = 20_000): Promise<Msg> {
+    const already = this.notifications.find(pred);
+    if (already) return Promise.resolve(already);
+    return new Promise((resolve, reject) => {
+      const res = (m: Msg) => { clearTimeout(t); resolve(m); };
+      const t = setTimeout(() => {
+        this.notifWaiters = this.notifWaiters.filter((w) => w.resolve !== res);
+        reject(new Error(`no notification matched in ${timeoutMs}ms\n${this.stderr}`));
+      }, timeoutMs);
+      this.notifWaiters.push({ pred, resolve: res });
     });
   }
 
@@ -417,11 +443,9 @@ test('a finding banked mid-session reaches the tool list and the client is told'
     assert.equal(tools.find((t) => t.name === 'mcp__data360__unrelated')!.description, 'Something nothing is recorded about');
 
     bank(home, '0002-late.json', 'cairn-0002', 'banked mid-session: the unrelated tool drops the last page', 'mcp__data360__unrelated');
-    const deadline = Date.now() + 8000;
-    while (Date.now() < deadline && !s.notifications.some((n) => n.method === 'notifications/tools/list_changed')) {
-      await new Promise((r) => setTimeout(r, 200));
-    }
-    assert.ok(s.notifications.some((n) => n.method === 'notifications/tools/list_changed'), 'the client must be told the list changed');
+    // Await the list_changed the instant it arrives, not on a wall-clock poll
+    // that flakes under concurrent load (cairn-0050).
+    await s.waitForNotification((n) => n.method === 'notifications/tools/list_changed');
 
     tools = await s.tools();
     assert.match(tools.find((t) => t.name === 'mcp__data360__unrelated')!.description!, /drops the last page/);
@@ -896,26 +920,21 @@ test('a long call\'s progress is relayed to the client under its own token', asy
   const s = single(corpus());
   try {
     await s.init();
-    const before = s.notifications.filter((n) => n.method === 'notifications/progress').length;
     const r = await s.request('tools/call', {
       name: 'mcp__data360__progressing',
       arguments: {},
       _meta: { progressToken: 'client-token-42' },
     });
     assert.ok(!r.error, 'the call itself succeeds');
-    // 8s, not 3s: under full-suite parallel load the spawn + round-trip + notification
-    // can outrun a tight deadline, which flaked pre-commit though it passes alone.
-    const deadline = Date.now() + 8000;
-    let progress: Msg | undefined;
-    while (Date.now() < deadline && !progress) {
-      progress = s.notifications
-        .slice(before)
-        .find((n) => n.method === 'notifications/progress'
-          && (n.params as { progressToken?: unknown })?.progressToken === 'client-token-42');
-      if (!progress) await new Promise((r) => setTimeout(r, 50));
-    }
-    assert.ok(progress, 'the client received a progress notification carrying its own token');
-    const p = progress!.params as { progress?: number; total?: number };
+    // Await the relayed notification by its own unique token, resolving the
+    // instant it lands rather than polling a wall-clock deadline — the deadline
+    // form flaked under concurrent full-suite load that starves this spawned
+    // child (cairn-0050). The token is unique to this call, so an earlier call's
+    // progress can never match.
+    const progress = await s.waitForNotification((n) =>
+      n.method === 'notifications/progress'
+      && (n.params as { progressToken?: unknown })?.progressToken === 'client-token-42');
+    const p = progress.params as { progress?: number; total?: number };
     assert.equal(p.progress, 1, 'the upstream\'s progress value is relayed, not invented');
     assert.equal(p.total, 2, 'and its total');
   } finally { await s.close(); }

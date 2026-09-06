@@ -477,6 +477,30 @@ test('rotation refuses to archive a broken log', () => {
   assert.ok(fsReal.existsSync(file), 'and the live file is left in place for investigation');
 });
 
+test('with off-box anchoring configured, rotation refuses if the boundary anchor did not ship (M9)', () => {
+  const dir = freshDir();
+  // A ship command that always fails: the boundary anchor cannot be pinned
+  // off-box, so archiving the live segment would make a later deletion of that
+  // archive undetectable. Rotation must refuse rather than trade that away.
+  process.env.CAIRN_AUDIT_ANCHOR_CMD = 'false';
+  try {
+    for (let i = 0; i < 4; i++) appendAudit(dir, { principal: 'a', decision: 'call', server: 's', tool: `t${i}` });
+    const rot = rotateAudit(dir);
+    assert.equal(rot.ok, false, 'rotation is refused when the boundary anchor did not ship');
+    assert.match(rot.detail ?? '', /did not ship off-box/);
+    assert.ok(fsReal.existsSync(pathReal.join(dir, 'audit.jsonl')), 'the live segment is left intact');
+    assert.ok(!fsReal.existsSync(pathReal.join(dir, 'audit.segments.jsonl')), 'nothing was archived');
+
+    // Once the ship command works, the same rotation goes through.
+    process.env.CAIRN_AUDIT_ANCHOR_CMD = 'cat > /dev/null';
+    _resetAuditCache();
+    const rot2 = rotateAudit(dir);
+    assert.equal(rot2.ok, true, rot2.detail);
+    _resetAuditCache();
+    assert.equal(verifyAudit(dir).ok, true, 'the rotated log still verifies');
+  } finally { delete process.env.CAIRN_AUDIT_ANCHOR_CMD; }
+});
+
 test('a write failure never throws out of appendAudit (a broken log must not break a call)', () => {
   // Point the audit dir at a path whose parent is a file, so mkdir/append fail.
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'cairn-audit-'));
