@@ -96,7 +96,13 @@ export function attest(raw: unknown, opts: { by?: string; via?: string; keyId?: 
   const rawFinding = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, unknown>;
   const key = opts.keyId ? reloadKeys().get(opts.keyId) : undefined;
   const privFile = opts.keyId ? homePath('.cairn-secrets', `${opts.keyId}.key`) : null;
-  const signable = !!(key && privFile && fs.existsSync(privFile));
+  // origin:'agent' — the caller is a MODEL, never the operator. It must NOT sign,
+  // because a signature is what isOperatorPromoted() reads to make an
+  // agent-recorded finding's check EXECUTABLE. Letting a model self-sign an
+  // observation would let a hostile upstream drive the model to record a malicious
+  // check.command and then promote it into execution (red-team creative #2).
+  // Operator promotion is an explicit human/CLI act, not a model side effect.
+  const signable = !!(key && privFile && fs.existsSync(privFile)) && opts.origin !== 'agent';
   /*
    * A caller-supplied (model) `by` must not claim a reserved identity — the
    * machine-observer label (which makes verification read as "verified by its

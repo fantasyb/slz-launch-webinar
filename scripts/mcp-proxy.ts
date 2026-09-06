@@ -502,13 +502,18 @@ const defangUpstream = (text: string): string => {
     const ls = m.index, le = ls + m[0].length;
     if (m[0].length === 0) { LABEL_ONLY.lastIndex++; continue; }
     // Only a FENCED label reads as one of our blocks. A fence is a run of >=2
-    // dashes at most 40 non-newline chars before the label, on the SAME line
-    // (a fence cannot cross a newline). Scan back over that bounded window only.
-    const lineStart = folded.lastIndexOf('\n', ls - 1) + 1;
+    // dashes at most 40 non-newline chars before the label, on the SAME line (a
+    // fence cannot cross a newline). Scan back over that bounded window ONLY — never
+    // compute a line start with lastIndexOf, which scans to the previous newline PER
+    // LABEL and is O(labels x line length): 80k labels on one line froze for ~23s,
+    // worse than the ReDoS this replaced (red-team verification 1a). Stopping the
+    // scan the moment we see a newline bounds it to the fence window.
     let g = ls, gap = 0, fenceStart = -1;
-    while (g > lineStart && gap <= 40) {
-      if (folded[g - 1] === '-') {
-        let d = g; while (d > lineStart && folded[d - 1] === '-') d--;
+    while (g > 0 && gap <= 40) {
+      const ch = folded[g - 1];
+      if (ch === '\n') break; // a fence cannot cross a newline
+      if (ch === '-') {
+        let d = g; while (d > 0 && folded[d - 1] === '-') d--; // one dash run, scanned once
         if (g - d >= 2) { fenceStart = d; break; } // a >=2 dash run is the fence
         g = d; gap += 1; // a lone dash is just a gap char; keep scanning back
       } else { g--; gap++; }
