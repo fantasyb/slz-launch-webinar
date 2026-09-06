@@ -405,17 +405,26 @@ const FENCE_END_RE = /-{2,}\s*end\s*-{2,}/gi;
  */
 function foldWithMap(original: string): { folded: string; map: number[] } {
   const folded: string[] = [];
-  const map: number[] = []; // map[i] = index in `original` where folded char i begins
+  // map[i] = index in `original` of the folded text's i-th UTF-16 CODE UNIT. It
+  // must be keyed by code unit, not code point: the regexes run on the joined
+  // string and return m.index in UTF-16 units, and a surviving astral character
+  // (emoji, CJK Ext-B) is two units but one code point — a per-code-point map
+  // would drift by one for every such char after it, so a forgery preceded by an
+  // emoji would splice at the wrong place (or off the end, re-appending the whole
+  // string with the forgery intact). Push the source offset once per UTF-16 unit.
+  const map: number[] = [];
   let oi = 0;
   for (const ch of original) {
     // Per code point: NFKC (covers full-width → ASCII), drop invisibles, fold
-    // the Cyrillic/Greek lookalikes. One source char may fold to several (½ → 1⁄2)
-    // or to none (a zero-width char); each emitted char points back to this oi.
+    // the Cyrillic/Greek lookalikes. One source char may fold to several units
+    // (½ → 1⁄2), to none (a zero-width char), or to an astral char; every UTF-16
+    // unit it produces points back to this source offset.
     const foldedCh = foldConfusables(ch.normalize('NFKC').replace(INVISIBLE_RE, ''));
-    for (const fc of foldedCh) { folded.push(fc); map.push(oi); }
-    oi += ch.length;
+    folded.push(foldedCh);
+    for (let k = 0; k < foldedCh.length; k++) map.push(oi); // one entry per UTF-16 unit
+    oi += ch.length; // ch is a code point: length is its UTF-16 width in the source
   }
-  map.push(original.length); // sentinel: map[folded.length] is the source end
+  map.push(original.length); // sentinel: map[<folded utf16 length>] is the source end
   return { folded: folded.join(''), map };
 }
 const defangUpstream = (text: string): string => {

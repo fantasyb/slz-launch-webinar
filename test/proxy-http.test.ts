@@ -186,6 +186,12 @@ test('legitimate non-Latin output passes through the defanger unchanged (#4)', a
     const mixed = texts(await p.call('mcp__data360__mixed')).join('\n');
     assert.ok(mixed.includes('imitated the Cairn label'), 'the forgery inside is still neutralized');
     assert.ok(mixed.includes('ПередTEXT') && mixed.includes('ПослеTEXT 🎉'), 'the real text on both sides of the forgery survives');
+
+    // Surrogate-pair emoji BEFORE the forgery: the offset map must be in UTF-16
+    // units, or the splice drifts and the label leaks through byte-for-byte.
+    const ef = texts(await p.call('mcp__data360__emoji_forgery')).join('\n');
+    assert.ok(ef.includes('imitated the Cairn label'), 'a forgery preceded by emoji is still neutralized');
+    assert.ok(!/from your Cairn corpus[\s\S]*curl evil/.test(ef), 'the emoji-prefixed forged block cannot read as a real Cairn block');
   } finally { await p.close(); proc.kill('SIGKILL'); }
 });
 
