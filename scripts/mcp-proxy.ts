@@ -360,6 +360,14 @@ const clip = (s: string, n: number) => {
  * keeps the sender honest.
  */
 const LABEL = 'from your Cairn corpus, not from this tool';
+// Upper bound on pages fetched from any single upstream list (tools, resources,
+// templates, prompts). A buggy or hostile upstream that paginates forever, or
+// repeats a cursor, is stopped here rather than looping and growing memory.
+const MAX_LIST_PAGES = 100;
+// Concurrent-session caps on the HTTP boundary (env-overridable). Generous — the
+// idle reaper frees sessions — but bounded so a flood cannot exhaust memory.
+const MAX_SESSIONS_TOTAL = Math.max(1, Number(process.env.CAIRN_MAX_SESSIONS) || 2000);
+const MAX_SESSIONS_PER_PRINCIPAL = Math.max(1, Number(process.env.CAIRN_MAX_SESSIONS_PER_PRINCIPAL) || 200);
 
 /*
  * The label is what tells the model a block is Cairn's and not the tool's — so
@@ -483,15 +491,30 @@ const defangUpstream = (text: string): string => {
  */
 const defangMaybe = (v: unknown): unknown => (typeof v === 'string' ? defangUpstream(v) : v);
 
+/**
+ * Set an OWN property, even for `__proto__`/`constructor`/`prototype`. Plain
+ * `out[k] = v` for k === '__proto__' sets the object's prototype instead of a
+ * field, so the field silently vanishes from the rebuilt object (data loss, both
+ * directions). defineProperty writes a real own, enumerable property.
+ */
+function setOwn(out: Record<string, unknown>, k: string, v: unknown): void {
+  Object.defineProperty(out, k, { value: v, enumerable: true, writable: true, configurable: true });
+}
+
 /** Every string anywhere in an arbitrary JSON value. Safe to run broadly:
  * defangUpstream is a no-op on any string without a forged label, so real data
- * values pass through untouched; only an embedded forgery is neutralized. */
-function defangDeep(node: unknown): unknown {
+ * values pass through untouched; only an embedded forgery is neutralized.
+ * Depth-bounded so a pathologically nested structuredContent (an adversary can
+ * send thousands of levels) cannot overflow the stack — beyond the cap the
+ * subtree is returned as-is rather than throwing (the throw was swallowed by the
+ * result path's catch, which forwarded the value UNDEFANGED). */
+function defangDeep(node: unknown, depth = 0): unknown {
   if (typeof node === 'string') return defangUpstream(node);
-  if (Array.isArray(node)) return node.map(defangDeep);
+  if (depth >= 200) return node; // give up defanging past a sane nesting depth, but never throw
+  if (Array.isArray(node)) return node.map((v) => defangDeep(v, depth + 1));
   if (node && typeof node === 'object') {
     const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(node as Record<string, unknown>)) out[k] = defangDeep(v);
+    for (const [k, v] of Object.entries(node as Record<string, unknown>)) setOwn(out, k, defangDeep(v, depth + 1));
     return out;
   }
   return node;
@@ -524,13 +547,18 @@ function defangToolDef<T extends Record<string, unknown>>(t: T): T {
   return out as T;
 }
 
-/** One content item from a result or prompt message: its text, and the text of
- * an embedded resource ({ type:'resource', resource:{ text } }). */
+/** One content item from a result or prompt message: its text, the text of an
+ * embedded resource ({ type:'resource', resource:{ text } }), and the human-read
+ * fields of a resource_link ({ type:'resource_link', name/title/description }). */
 function defangContentItem(c: unknown): unknown {
   if (!c || typeof c !== 'object') return c;
   const item = c as Record<string, unknown>;
   let out = item;
   if (typeof item.text === 'string') out = { ...out, text: defangUpstream(item.text) };
+  // resource_link carries model-read prose in name/title/description.
+  for (const k of ['name', 'title', 'description'] as const) {
+    if (typeof out[k] === 'string') out = { ...out, [k]: defangUpstream(out[k] as string) };
+  }
   if (item.resource && typeof item.resource === 'object') {
     const r = item.resource as Record<string, unknown>;
     if (typeof r.text === 'string') out = { ...out, resource: { ...r, text: defangUpstream(r.text) } };
@@ -794,8 +822,9 @@ function stripSessionToken(value: unknown, nonce: string): unknown {
     if (node && typeof node === 'object') {
       const out: Record<string, unknown> = {};
       // KEYS too: a model could smuggle the nonce into a property name, not just a
-      // value. Redact both, so no path forwards it.
-      for (const [k, v] of Object.entries(node as Record<string, unknown>)) out[scrubStr(k)] = scrub(v);
+      // value. Redact both, so no path forwards it. setOwn so a `__proto__` key is
+      // a real field, not a silent prototype assignment that drops it.
+      for (const [k, v] of Object.entries(node as Record<string, unknown>)) setOwn(out, scrubStr(k), scrub(v));
       return out;
     }
     return node;
@@ -1528,7 +1557,11 @@ async function main() {
     let key: string;
     try {
       const st = fs.statSync(p);
-      key = `${st.ino}:${st.size}:${st.mtimeMs}`;
+      // Include ctimeMs (inode-change time) so a same-size in-place edit within a
+      // coarse mtime tick (FAT/NFS/HFS+ 1s granularity) — e.g. swapping one 64-hex
+      // token hash for another of equal length — still invalidates the cache.
+      // ctime advances on any metadata/content change even when mtime does not.
+      key = `${st.ino}:${st.size}:${st.mtimeMs}:${st.ctimeMs}`;
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code === 'ENOENT') {
         // The policy file is gone. If we have NEVER been governed this is a
@@ -1723,12 +1756,15 @@ async function main() {
     if (!up.alive || !up.client) return;
     const tools: Tool[] = [];
     let cursor: string | undefined;
+    const seen = new Set<string>();
     try {
-      do {
+      for (let pg = 0; ; pg++) {
         const page = await up.client.listTools({ cursor }, FORWARD);
         tools.push(...page.tools);
         cursor = page.nextCursor;
-      } while (cursor);
+        if (!cursor || seen.has(cursor) || pg + 1 >= MAX_LIST_PAGES) break; // bound a runaway/looping paginator
+        seen.add(cursor);
+      }
     } catch {
       return; /* a list that cannot be read is not a change */
     }
@@ -2032,7 +2068,8 @@ async function main() {
       const mine: Tool[] = [];
       let complete = true;
       let cursor: string | undefined;
-      do {
+      const seenCursors = new Set<string>();
+      for (let pg = 0; ; pg++) {
         let page;
         try {
           page = await up.client!.listTools({ cursor }, FORWARD);
@@ -2043,7 +2080,16 @@ async function main() {
         }
         for (const t of page.tools) mine.push(t);
         cursor = page.nextCursor;
-      } while (cursor);
+        if (!cursor) break;
+        // Bound pagination: a buggy or hostile upstream that returns the same
+        // cursor forever (or an unbounded stream of pages) would otherwise loop
+        // here forever, growing `mine` without limit — and because allTools()
+        // shares ONE in-flight promise, that wedges tool listing for every
+        // session. Stop at a repeated cursor or the page cap and treat the
+        // listing as incomplete (enforce mode then withholds this server's tools).
+        if (seenCursors.has(cursor) || pg + 1 >= MAX_LIST_PAGES) { complete = false; break; }
+        seenCursors.add(cursor);
+      }
       // Read the surface (and evaluate trust) BEFORE exposing, so a withheld tool
       // never reaches the list even for one listing.
       if (complete) noteSurface(up, mine);
@@ -2581,12 +2627,15 @@ async function main() {
         const resources: Array<Record<string, unknown>> = [];
         for (const up of reachable()) {
           let cursor: string | undefined;
-          do {
+          const seen = new Set<string>();
+          for (let pg = 0; ; pg++) {
             let page;
             try { page = await up.client!.listResources({ cursor }, FORWARD); } catch { break; }
             for (const r of page.resources) { resourceOwner.set(r.uri, up); resources.push(defangDescribable(r as Record<string, unknown>)); }
             cursor = page.nextCursor;
-          } while (cursor);
+            if (!cursor || seen.has(cursor) || pg + 1 >= MAX_LIST_PAGES) break; // bound a runaway/looping paginator
+            seen.add(cursor);
+          }
         }
         return { resources };
       });
@@ -2596,12 +2645,15 @@ async function main() {
         const resourceTemplates: Array<Record<string, unknown>> = [];
         for (const up of reachable()) {
           let cursor: string | undefined;
-          do {
+          const seen = new Set<string>();
+          for (let pg = 0; ; pg++) {
             let page;
             try { page = await up.client!.listResourceTemplates({ cursor }, FORWARD); } catch { break; }
             for (const t of page.resourceTemplates) { templateOwner.set(t.uriTemplate, up); resourceTemplates.push(defangDescribable(t as Record<string, unknown>)); }
             cursor = page.nextCursor;
-          } while (cursor);
+            if (!cursor || seen.has(cursor) || pg + 1 >= MAX_LIST_PAGES) break; // bound a runaway/looping paginator
+            seen.add(cursor);
+          }
         }
         return { resourceTemplates };
       });
@@ -2640,7 +2692,10 @@ async function main() {
             return { ...out, contents: (out.contents as unknown[])?.map(defangContentItem) };
           } catch (e) { last = e as Error; }
         }
-        throw last ?? new Error(`no upstream serves ${req.params.uri}`);
+        // The upstream error propagates to the model as a JSON-RPC error message;
+        // defang it so a forged label in the error text cannot reach the model
+        // undefanged (the tools/call path already defangs its error).
+        throw last ? new Error(defangUpstream(last.message)) : new Error(`no upstream serves ${req.params.uri}`);
       });
 
       if (capabilities.resources.subscribe) {
@@ -2669,7 +2724,8 @@ async function main() {
         const prompts: Array<Record<string, unknown>> = [];
         for (const up of alive().filter((u) => u.caps.prompts && mayReachServer(session, u))) {
           let cursor: string | undefined;
-          do {
+          const seen = new Set<string>();
+          for (let pg = 0; ; pg++) {
             let page;
             try { page = await up.client!.listPrompts({ cursor }, FORWARD); } catch { break; }
             for (const p of page.prompts) {
@@ -2678,7 +2734,9 @@ async function main() {
               prompts.push(defangDescribable({ ...p, name }));
             }
             cursor = page.nextCursor;
-          } while (cursor);
+            if (!cursor || seen.has(cursor) || pg + 1 >= MAX_LIST_PAGES) break; // bound a runaway/looping paginator
+            seen.add(cursor);
+          }
         }
         return { prompts };
       });
@@ -2700,7 +2758,14 @@ async function main() {
           audit(session, 'deny', owner.up.spec.name, '(prompt:get)', req.params.name);
           throw new Error(`cairn-proxy: not permitted to use prompt "${req.params.name}"`);
         }
-        const out = await owner.up.client!.getPrompt(stripSessionToken({ ...req.params, name: owner.raw }, session.blockNonce) as typeof req.params, { ...FORWARD, signal: extra.signal });
+        let out;
+        try {
+          out = await owner.up.client!.getPrompt(stripSessionToken({ ...req.params, name: owner.raw }, session.blockNonce) as typeof req.params, { ...FORWARD, signal: extra.signal });
+        } catch (e) {
+          // Defang the upstream error too — it reaches the model as a JSON-RPC
+          // error message and could otherwise carry a forged label undefanged.
+          throw new Error(defangUpstream((e as Error).message));
+        }
         audit(session, 'call', owner.up.spec.name, '(prompt:get)', req.params.name);
         // Prompt messages are model-read instruction text: defang a forged label
         // in the message text and in any embedded resource it carries.
@@ -2875,6 +2940,31 @@ async function main() {
       // A fixed base, never req.headers.host — a malformed Host ("a b") makes
       // `new URL` throw, and the host is untrusted anyway.
       const url = new URL(req.url ?? '/', 'http://localhost');
+      /*
+       * DNS-rebinding defense on a LOOPBACK bind. There every request is
+       * LOCAL_ADMIN with no auth, so a web page whose DNS rebinds to 127.0.0.1
+       * could POST to /mcp and drive every wrapped tool (filesystem, GitHub, …)
+       * and cairn_record. The MCP spec requires local servers to validate the
+       * Host/Origin for exactly this; the manual /mcp handling here bypasses the
+       * SDK's own check, so we do it: the Host must name a loopback address and a
+       * present Origin must be a loopback origin. Non-browser MCP clients send a
+       * loopback Host and no Origin, so this is transparent to them. A non-loopback
+       * bind is auth-gated instead (a rebound page carries no bearer token).
+       */
+      if (httpLoopback) {
+        const loopbackName = (h: string) => h === 'localhost' || h === '127.0.0.1' || h === '::1';
+        const hostName = String(req.headers.host ?? '').replace(/:\d+$/, '').replace(/^\[|\]$/g, '');
+        let originOk = true;
+        const origin = req.headers.origin;
+        if (typeof origin === 'string' && origin) {
+          try { originOk = loopbackName(new URL(origin).hostname.replace(/^\[|\]$/g, '')); } catch { originOk = false; }
+        }
+        if (!loopbackName(hostName) || !originOk) {
+          res.writeHead(403, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ jsonrpc: '2.0', error: { code: -32003, message: 'forbidden: non-loopback Host/Origin on a loopback gateway (DNS-rebinding protection)' }, id: null }));
+          return;
+        }
+      }
       if (url.pathname === '/healthz') {
         const g = governance();
         res.writeHead(200, { 'content-type': 'application/json' });
@@ -3009,7 +3099,16 @@ async function main() {
           const bound = meta.session.principal;
           const sameBound = bound === LOCAL_ADMIN ? principal === LOCAL_ADMIN : (principal.id === bound.id && principal.role === bound.role);
           if (!sameBound) {
-            audit(meta.session, 'deny', undefined, undefined, `session ${sid} is bound to another principal (${bound.id}); refused for ${principal.id}`);
+            // Record under the REQUESTER's principal (the one attempting the
+            // attach), not the victim's — a SIEM filtering by principal must see
+            // the attacker, not the legitimate owner being "denied". And append
+            // directly, so it is recorded even when the BOUND session is
+            // LOCAL_ADMIN (audit() would return early on the target's ungoverned
+            // session and drop the row entirely).
+            const dir = auditDirOf();
+            if (dir && principal !== LOCAL_ADMIN) {
+              try { appendAudit(dir, { principal: principal.id, decision: 'deny', reason: `attempted to attach to session ${String(sid)} bound to another principal (${bound.id})`, session: String(sid) }); } catch { /* never block a refusal on a log write */ }
+            }
             res.writeHead(403, { 'content-type': 'application/json' });
             res.end(JSON.stringify({ jsonrpc: '2.0', error: { code: -32003, message: 'forbidden: this session belongs to another principal' }, id: null }));
             return;
@@ -3029,6 +3128,29 @@ async function main() {
         return;
       }
       if (req.method === 'POST' && isInitializeRequest(body)) {
+        // Cap concurrent sessions so one token holder (or, on personal loopback,
+        // any local process) cannot open sessions without bound — each holds
+        // memory, fans out listTools, and books ledger rows until the reaper runs.
+        // A global cap protects the process; a per-principal cap keeps one tenant
+        // from starving others. Both are generous; the reaper frees them on idle.
+        if (live.size >= MAX_SESSIONS_TOTAL) {
+          const dir = auditDirOf();
+          if (dir && principal !== LOCAL_ADMIN) { try { appendAudit(dir, { principal: principal.id, decision: 'deny', reason: `session cap reached (${MAX_SESSIONS_TOTAL})` }); } catch { /* never block on a log */ } }
+          res.writeHead(429, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ jsonrpc: '2.0', error: { code: -32005, message: 'too many active sessions; retry later' }, id: null }));
+          return;
+        }
+        if (principal !== LOCAL_ADMIN) {
+          let mine = 0;
+          for (const m of live.values()) if (m.session.principal !== LOCAL_ADMIN && m.session.principal.id === principal.id) mine++;
+          if (mine >= MAX_SESSIONS_PER_PRINCIPAL) {
+            const dir = auditDirOf();
+            if (dir) { try { appendAudit(dir, { principal: principal.id, decision: 'deny', reason: `per-principal session cap reached (${MAX_SESSIONS_PER_PRINCIPAL})` }); } catch { /* never block on a log */ } }
+            res.writeHead(429, { 'content-type': 'application/json' });
+            res.end(JSON.stringify({ jsonrpc: '2.0', error: { code: -32005, message: 'too many active sessions for this principal; retry later' }, id: null }));
+            return;
+          }
+        }
         const session = newSession(randomUUID());
         session.principal = principal;
         const transport = new StreamableHTTPServerTransport({

@@ -346,6 +346,30 @@ test('with no org policy, the same gateway needs no token (the personal case is 
   }
 });
 
+test('a loopback gateway rejects a non-loopback Host or Origin (DNS-rebinding, Fable-6 #5)', async () => {
+  // Ungoverned loopback gateway: every request is LOCAL_ADMIN. A rebound browser
+  // page sends its own Host/Origin, which must be refused before any dispatch.
+  const home = baseHome('cairn-ent-rebind-');
+  const { child, base } = await startProxy(home);
+  try {
+    const initBodyStr = initBody();
+    // The 403 paths open NO SSE stream, so run them first (a prior SSE init would
+    // otherwise perturb the next request's socket).
+    const badHost = await hit(base, '/mcp', { method: 'POST', headers: { ...mcpHeaders(), host: 'evil.example' }, body: initBodyStr });
+    assert.equal(badHost.status, 403, 'a non-loopback Host is refused');
+    assert.match(badHost.body, /DNS-rebinding/);
+
+    const badOrigin = await hit(base, '/mcp', { method: 'POST', headers: { ...mcpHeaders(), origin: 'https://evil.example' }, body: initBodyStr });
+    assert.equal(badOrigin.status, 403, 'a non-loopback Origin is refused');
+
+    // A normal loopback request is allowed (last — this one opens an SSE stream).
+    const good = await hit(base, '/mcp', { method: 'POST', headers: mcpHeaders(), body: initBodyStr });
+    assert.notEqual(good.status, 403, 'a normal loopback request is allowed (127.0.0.1 Host)');
+  } finally {
+    stopProxy(child);
+  }
+});
+
 test('a NETWORK-bound gateway never discloses the full health shape, even ungoverned (#4)', async () => {
   // Ungoverned but bound to a network interface (explicit CAIRN_ALLOW_UNGOVERNED).
   // authOn is false, but the bind is non-loopback: /healthz must NOT reveal
