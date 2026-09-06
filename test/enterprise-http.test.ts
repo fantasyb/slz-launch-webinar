@@ -151,7 +151,10 @@ test('a governed gateway rejects an unauthenticated request at the door, audits 
     const auditDir = path.join(home, 'audit');
     const entries = readAudit(auditDir);
     const authFails = entries.filter((e) => e.decision === 'auth-fail');
-    assert.ok(authFails.length >= 2, `each rejected attempt is one auth-fail row (got ${authFails.length})`);
+    // Anonymous auth failures are coalesced (≤1/sec) to stop an unauthenticated
+    // flood from growing the log — so the two rapid refusals may be one row that
+    // carries the suppressed count, not two rows.
+    assert.ok(authFails.length >= 1, `the rejected attempts are recorded (got ${authFails.length})`);
     assert.equal(verifyAudit(auditDir).ok, true, 'the audit chain verifies');
 
     // The valid token is accepted (the transport answers 200 with a session).

@@ -26,7 +26,7 @@
  */
 import fs from 'fs';
 import path from 'path';
-import { createHash } from 'crypto';
+import { createHash, randomBytes } from 'crypto';
 import { execFileSync } from 'child_process';
 import { homePath } from './home';
 import { WRITE_LOOKING, type Annotations } from './toolsurface';
@@ -257,21 +257,100 @@ function chainHash(prevHash: string, e: Omit<AuditEntry, 'prevHash' | 'hash'>): 
 const lockPath = (dir: string) => path.join(dir, 'audit.lock');
 const sleepMs = (ms: number) => { try { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); } catch { /* no SAB: skip the wait */ } };
 
-function withAuditLock<T>(dir: string, fn: () => T): T {
+/** Is this pid a live process? EPERM means it exists but we can't signal it. */
+function pidAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try { process.kill(pid, 0); return true; } catch (e) { return (e as NodeJS.ErrnoException).code === 'EPERM'; }
+}
+
+/**
+ * Break a lock only when its holder is provably gone: the pid written in it is
+ * dead, OR its mtime is more than 15s off from now in EITHER direction (a
+ * crashed holder, or a clock-skewed/future mtime that a one-sided check would
+ * treat as fresh forever). The break is atomic — rename to a unique tombstone,
+ * then unlink it — so exactly one racer wins and a live holder is never removed.
+ */
+function tryBreakStaleLock(lp: string): boolean {
+  let content = '';
+  let mtimeMs = Date.now();
+  try { const st = fs.statSync(lp); mtimeMs = st.mtimeMs; content = fs.readFileSync(lp, 'utf8'); } catch { return false; }
+  const pid = Number(content.split(':')[0]);
+  const skew = Math.abs(Date.now() - mtimeMs);
+  if (pidAlive(pid) && skew < 15_000) return false; // a live, recent holder — leave it
+  try {
+    const tomb = `${lp}.${process.pid}.${Date.now()}.stale`;
+    fs.renameSync(lp, tomb); // only one racer's rename of THIS inode succeeds
+    fs.unlinkSync(tomb);
+    return true;
+  } catch { return false; } // someone else already broke/renamed it: just retry the loop
+}
+
+/**
+ * Run `fn` holding an exclusive lock over the audit dir. Returns whether the
+ * lock was actually acquired. On failure (a filesystem that cannot lock, or
+ * sustained contention past the deadline) it returns `{ locked: false }` and
+ * does NOT run `fn` — the caller SPILLS the row instead (see appendAudit), so a
+ * seq/hash is never computed off an unlocked, racing head. That is the fix for
+ * the collisions the old "just proceed unlocked" fallback produced: two writers
+ * off one disk tail computed the same seq and broke the chain permanently.
+ */
+function withAuditLock<T>(dir: string, fn: () => T): { locked: boolean; value?: T } {
   const lp = lockPath(dir);
-  const deadline = Date.now() + 2000;
-  let fd: number | undefined;
+  const token = `${process.pid}:${randomBytes(6).toString('hex')}`;
+  const deadline = Date.now() + 3000;
   for (;;) {
-    try { fd = fs.openSync(lp, 'wx'); break; } // atomic exclusive create
-    catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') { return fn(); } // can't lock at all: don't drop the row
-      // Break a stale lock (a process that crashed holding it).
-      try { if (Date.now() - fs.statSync(lp).mtimeMs > 5000) { fs.unlinkSync(lp); continue; } } catch { continue; }
-      if (Date.now() > deadline) return fn(); // sustained contention: proceed unlocked rather than block the call
-      sleepMs(5);
+    try {
+      const fd = fs.openSync(lp, 'wx'); // atomic exclusive create
+      try { fs.writeSync(fd, token); } finally { fs.closeSync(fd); }
+      break;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') return { locked: false }; // cannot lock here at all
+      if (tryBreakStaleLock(lp)) continue;
+      if (Date.now() > deadline) return { locked: false }; // contended too long: spill, never append unlocked
+      sleepMs(10);
     }
   }
-  try { return fn(); } finally { try { fs.closeSync(fd!); fs.unlinkSync(lp); } catch { /* already released */ } }
+  try { return { locked: true, value: fn() }; }
+  finally { try { if (fs.readFileSync(lp, 'utf8') === token) fs.unlinkSync(lp); } catch { /* broken/replaced by a stale-breaker: leave it */ } }
+}
+
+/* A row that could not be written under the lock is SPILLED to a per-process
+ * file (plain JSON, no seq, no chain) and folded into the chain — in order,
+ * under the lock — by the next writer that does hold it. Nothing is lost, and no
+ * seq is ever assigned without the lock. */
+const spillPath = (dir: string) => path.join(dir, `audit.spill.${process.pid}.jsonl`);
+type SpillRow = { at?: string; principal: string; decision: AuditDecision; server?: string; tool?: string; reason?: string; session?: string; agent?: string };
+function spillRow(dir: string, e: SpillRow): void {
+  try { fs.appendFileSync(spillPath(dir), JSON.stringify({ ...e, at: e.at ?? new Date().toISOString() }) + '\n'); }
+  catch (err) { process.stderr.write(`cairn-proxy: could not spill audit entry: ${(err as Error).message}\n`); }
+}
+/** Fold every process's spilled rows into the chain. MUST run under the lock. */
+function foldSpills(dir: string): void {
+  let files: string[];
+  try { files = fs.readdirSync(dir).filter((f) => f.startsWith('audit.spill.') && f.endsWith('.jsonl')); } catch { return; }
+  for (const f of files.sort()) {
+    const fp = path.join(dir, f);
+    let rows: SpillRow[];
+    try { rows = fs.readFileSync(fp, 'utf8').split('\n').filter(Boolean).flatMap((l) => { try { return [JSON.parse(l) as SpillRow]; } catch { return []; } }); } catch { continue; }
+    for (const r of rows) appendChained(dir, r);
+    try { fs.unlinkSync(fp); } catch { /* another folder took it */ }
+  }
+}
+
+/** The raw chained append. MUST run under the lock: it reads the true disk head
+ * and writes exactly one entry. */
+function appendChained(dir: string, e: SpillRow): void {
+  const tail = diskHead(dir);
+  const seq = tail.seq + 1;
+  const partial = { seq, at: e.at ?? new Date().toISOString(), principal: e.principal, decision: e.decision, server: e.server, tool: e.tool, reason: e.reason, session: e.session, agent: e.agent };
+  const hash = chainHash(tail.hash, partial);
+  const entry: AuditEntry = { ...partial, prevHash: tail.hash, hash };
+  // A crash-truncated tail line has no trailing newline; start on a fresh line
+  // so our valid entry is not fused onto the garbage.
+  const lead = !tail.empty && !tail.endsWithNL ? '\n' : '';
+  fs.appendFileSync(auditFile(dir), lead + JSON.stringify(entry) + '\n');
+  writeHeadSidecar(dir, { seq, hash, at: entry.at });
+  heads.set(dir, { seq, hash });
 }
 
 /** The chain head as it is ON DISK right now — the last parseable entry, read
@@ -324,19 +403,11 @@ function readHeadSidecar(dir: string): { seq: number; hash: string; at: string }
 export function appendAudit(dir: string, e: { at?: string; principal: string; decision: AuditDecision; server?: string; tool?: string; reason?: string; session?: string; agent?: string }): void {
   try {
     fs.mkdirSync(dir, { recursive: true });
-    withAuditLock(dir, () => {
-      const tail = diskHead(dir); // true head under the lock, so concurrent processes never interleave off a stale seq
-      const seq = tail.seq + 1;
-      const partial = { seq, at: e.at ?? new Date().toISOString(), principal: e.principal, decision: e.decision, server: e.server, tool: e.tool, reason: e.reason, session: e.session, agent: e.agent };
-      const hash = chainHash(tail.hash, partial);
-      const entry: AuditEntry = { ...partial, prevHash: tail.hash, hash };
-      // A crash-truncated tail line has no trailing newline; start on a fresh
-      // line so our valid entry is not fused onto the garbage.
-      const lead = !tail.empty && !tail.endsWithNL ? '\n' : '';
-      fs.appendFileSync(auditFile(dir), lead + JSON.stringify(entry) + '\n');
-      writeHeadSidecar(dir, { seq, hash, at: entry.at });
-      heads.set(dir, { seq, hash });
+    const r = withAuditLock(dir, () => {
+      foldSpills(dir);        // bring any spilled rows into the chain first, in order
+      appendChained(dir, e);  // then our own, off the true disk head
     });
+    if (!r.locked) spillRow(dir, e); // could not lock: keep the row, fold it later — never append unlocked
   } catch (err) {
     process.stderr.write(`cairn-proxy: could not write audit entry: ${(err as Error).message}\n`);
   }
@@ -373,36 +444,112 @@ export function readAnchors(dir: string): Anchor[] {
   } catch { return []; }
 }
 
-function shipAnchor(a: Anchor): void {
-  const cmd = process.env.CAIRN_AUDIT_ANCHOR_CMD;
-  if (!cmd) return;
+/**
+ * Load an OFF-BOX copy of an anchor file, verify its own chain integrity, and
+ * return its (seq, hash) checkpoints for `verifyAudit(..., { against })`. This is
+ * how an operator checks the live log against the full anchor chain they saved
+ * elsewhere — stronger than a single `--against seq:hash`, because it also
+ * confirms the off-box chain itself was not tampered and catches truncation at
+ * any anchored seq.
+ */
+export function loadAnchorFile(file: string): { ok: boolean; pairs: { seq: number; hash: string }[]; detail?: string } {
+  let anchors: Anchor[];
+  try { anchors = fs.readFileSync(file, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l) as Anchor); }
+  catch (e) { return { ok: false, pairs: [], detail: `cannot read anchor file: ${(e as Error).message}` }; }
+  let prev = GENESIS;
+  for (let i = 0; i < anchors.length; i++) {
+    const a = anchors[i];
+    if (a.prevAnchorHash !== prev || anchorChainHash(prev, { seq: a.seq, hash: a.hash, at: a.at }) !== a.anchorHash) {
+      return { ok: false, pairs: [], detail: `the anchor file's own chain is broken at anchor #${i + 1} — the off-box copy was tampered with` };
+    }
+    prev = a.anchorHash;
+  }
+  return { ok: true, pairs: anchors.map((a) => ({ seq: a.seq, hash: a.hash })) };
+}
+
+const shippedCursor = (dir: string) => path.join(dir, 'anchors.shipped');
+const shipAlarm = (dir: string) => path.join(dir, 'anchors.ship-alarm');
+
+function shipOne(a: Anchor, cmd: string): boolean {
   try {
-    execFileSync('/bin/sh', ['-c', cmd], { input: JSON.stringify(a) + '\n', timeout: 10_000, stdio: ['pipe', 'ignore', 'ignore'] });
+    // killSignal SIGKILL so the timeout is REAL — a ship command that ignores
+    // SIGTERM cannot hold us past the bound (SIGTERM alone is only requested).
+    execFileSync('/bin/sh', ['-c', cmd], { input: JSON.stringify(a) + '\n', timeout: 10_000, killSignal: 'SIGKILL', stdio: ['pipe', 'ignore', 'ignore'] });
+    return true;
   } catch (err) {
-    process.stderr.write(`cairn: audit anchor ship failed (kept locally): ${(err as Error).message}\n`);
+    process.stderr.write(`cairn: audit anchor ship failed (kept locally, will retry): ${(err as Error).message}\n`);
+    return false;
   }
 }
 
-/** Checkpoint the current chain head as an anchor: chain it, append it, and ship
- * it off-box. Returns the anchor, or null when there is nothing to anchor or the
- * head is already anchored. Runs under the same lock as append. */
+/**
+ * Ship every anchor past the shipped cursor, in order, OUTSIDE the lock. A
+ * transient outage no longer leaves a permanent hole: the cursor advances only
+ * on success, so the next call re-ships from where it stopped. A sustained
+ * failure drops a marker the daemon/CLI can surface. Runs the ship command,
+ * which may be slow — which is exactly why it must not hold the audit lock
+ * (that would stall every gateway append behind it).
+ */
+export function shipAnchors(dir: string): void {
+  const cmd = process.env.CAIRN_AUDIT_ANCHOR_CMD;
+  if (!cmd) return;
+  const anchors = readAnchors(dir);
+  if (!anchors.length) return;
+  let cursor = '';
+  try { cursor = fs.readFileSync(shippedCursor(dir), 'utf8').trim(); } catch { /* nothing shipped yet */ }
+  const at = cursor ? anchors.findIndex((a) => a.anchorHash === cursor) : -1;
+  const pending = anchors.slice(at + 1);
+  for (const a of pending) {
+    if (!shipOne(a, cmd)) {
+      try { fs.writeFileSync(shipAlarm(dir), JSON.stringify({ at: new Date().toISOString(), unshipped: pending.length, sinceSeq: a.seq }) + '\n'); } catch { /* best-effort */ }
+      return; // stop at the first failure; keep order; retry next call
+    }
+    try { fs.writeFileSync(shippedCursor(dir), a.anchorHash); } catch { /* cursor is an optimization; a re-ship is harmless */ }
+  }
+  try { if (fs.existsSync(shipAlarm(dir))) fs.unlinkSync(shipAlarm(dir)); } catch { /* best-effort */ }
+}
+
+/**
+ * Checkpoint the current chain head as an anchor. Refuses to anchor a log that
+ * does not verify (never certify a broken chain), folds spilled rows first, and
+ * writes the anchor under the lock — then ships OUTSIDE the lock. Returns the
+ * anchor, or null when there is nothing to anchor, the head is already anchored,
+ * or the log is broken.
+ */
 export function anchorHead(dir: string): Anchor | null {
   try {
     fs.mkdirSync(dir, { recursive: true });
-    return withAuditLock(dir, () => {
+    const r = withAuditLock(dir, (): Anchor | { skip: string } | null => {
+      foldSpills(dir);
+      // Never anchor a broken log: an anchor of a forgery launders it into the
+      // trust root. Verify under the lock so no append moves the head first.
+      const v = verifyAudit(dir);
+      if (!v.ok) return { skip: `refusing to anchor a broken log: ${v.detail}` };
       const tail = diskHead(dir);
       if (tail.empty || tail.seq === 0) return null;
       const existing = readAnchors(dir);
-      const prevAnchorHash = existing.length ? existing[existing.length - 1].anchorHash : GENESIS;
-      if (existing.length && existing[existing.length - 1].seq === tail.seq && existing[existing.length - 1].hash === tail.hash) return existing[existing.length - 1]; // head unchanged since last anchor
+      // Defense in depth against laundering: if we have EVER shipped an anchor (a
+      // ship cursor exists) but the anchor log is now gone, someone deleted it —
+      // refuse to start a fresh genesis-rooted chain over a possibly-rewritten
+      // log, which would re-anchor and ship a forgery as the new trust root.
+      if (!existing.length) {
+        try { if (fs.existsSync(shippedCursor(dir))) return { skip: 'anchors.jsonl is gone but a ship cursor exists — refusing to re-anchor (possible tampering)' }; } catch { /* ignore */ }
+      }
+      const last = existing.length ? existing[existing.length - 1] : null;
+      const prevAnchorHash = last ? last.anchorHash : GENESIS;
+      if (last && last.seq === tail.seq && last.hash === tail.hash) return last; // head unchanged since last anchor
       const at = new Date().toISOString();
       const anchor: Anchor = { seq: tail.seq, hash: tail.hash, at, prevAnchorHash, anchorHash: anchorChainHash(prevAnchorHash, { seq: tail.seq, hash: tail.hash, at }) };
       let lead = '';
       try { const b = fs.readFileSync(anchorFile(dir)); if (b.length && b[b.length - 1] !== 0x0a) lead = '\n'; } catch { /* no file yet */ }
       fs.appendFileSync(anchorFile(dir), lead + JSON.stringify(anchor) + '\n');
-      shipAnchor(anchor);
       return anchor;
     });
+    if (!r.locked || r.value == null) return null; // contended, or nothing to anchor
+    const out = r.value;
+    if ('skip' in out) { process.stderr.write(`cairn: ${out.skip}\n`); return null; }
+    shipAnchors(dir); // outside the lock: a slow ship never blocks appends
+    return out;
   } catch (err) {
     process.stderr.write(`cairn: could not write audit anchor: ${(err as Error).message}\n`);
     return null;
@@ -425,27 +572,47 @@ export interface AuditVerdict {
  * attacker): each is `{ seq, hash }` from a `cairn:audit-log anchor` they saved
  * elsewhere. */
 export function verifyAudit(dir: string, opts: { against?: { seq: number; hash: string }[] } = {}): AuditVerdict {
-  let lines: string[];
-  try {
-    lines = fs.readFileSync(auditFile(dir), 'utf8').split('\n').filter(Boolean);
-  } catch {
-    return { ok: true, entries: 0, detail: 'no audit log yet' };
-  }
-
-  // What the chain must match: local anchors (verified as a chain first), any
-  // externally-held anchors, and the head sidecar. Keyed by seq → expected hash.
-  const expectAtSeq = new Map<number, string>();
+  // Read the cross-checks (anchors + head sidecar) BEFORE the log. Both are
+  // written strictly AFTER the log line they describe, so a log read taken
+  // afterwards is always at least as advanced — which means a concurrent append
+  // can never make a clean log look "truncated" (the false-alarm race). Reading
+  // the log first had the opposite order and fired spurious truncation alarms.
   const anchors = readAnchors(dir);
+  const sc = readHeadSidecar(dir);
+
+  // What the chain must match at a given seq. Conflicting expectations at one seq
+  // are the STRONGEST tamper signal the design has (a real and a forged anchor,
+  // or a rewritten sidecar) — never resolve them "last wins"; fail.
+  const expectAtSeq = new Map<number, string>();
+  let conflict: string | undefined;
+  const expect = (seq: number, hash: string, source: string): void => {
+    const cur = expectAtSeq.get(seq);
+    if (cur !== undefined && cur !== hash) { conflict = conflict ?? `two checkpoints disagree at seq ${seq} (${source} vs an earlier one) — one is forged`; return; }
+    expectAtSeq.set(seq, hash);
+  };
+
+  // Local anchor chain: verify its own integrity first, then adopt each expectation.
   let prevA = GENESIS;
   for (let i = 0; i < anchors.length; i++) {
     const a = anchors[i];
     if (a.prevAnchorHash !== prevA || anchorChainHash(prevA, { seq: a.seq, hash: a.hash, at: a.at }) !== a.anchorHash) {
       return { ok: false, entries: 0, detail: `the anchor log is inconsistent at anchor #${i + 1} — anchors were tampered with` };
     }
-    expectAtSeq.set(a.seq, a.hash);
+    expect(a.seq, a.hash, 'local anchor');
     prevA = a.anchorHash;
   }
-  for (const ext of opts.against ?? []) expectAtSeq.set(ext.seq, ext.hash);
+  for (const ext of opts.against ?? []) expect(ext.seq, ext.hash, 'external anchor');
+  if (sc && typeof sc.seq === 'number' && typeof sc.hash === 'string') expect(sc.seq, sc.hash, 'head sidecar');
+  if (conflict) return { ok: false, entries: 0, detail: conflict };
+
+  let lines: string[];
+  try {
+    lines = fs.readFileSync(auditFile(dir), 'utf8').split('\n').filter(Boolean);
+  } catch {
+    // No log — but a checkpoint that expects entries means they were all removed.
+    for (const [seq] of expectAtSeq) if (seq > 0) return { ok: false, entries: 0, detail: `no audit log, but a checkpoint exists for seq ${seq} — the log was deleted` };
+    return { ok: true, entries: 0, detail: 'no audit log yet' };
+  }
 
   let prev = GENESIS;
   let expectedSeq = 1;
@@ -458,23 +625,16 @@ export function verifyAudit(dir: string, opts: { against?: { seq: number; hash: 
     const recomputed = chainHash(prev, { seq: e.seq, at: e.at, principal: e.principal, decision: e.decision, server: e.server, tool: e.tool, reason: e.reason, session: e.session, agent: e.agent });
     if (recomputed !== e.hash) return { ok: false, entries: i, brokenAt: i + 1, detail: 'hash does not match contents (entry was edited)' };
     const anchored = expectAtSeq.get(e.seq);
-    if (anchored !== undefined && anchored !== e.hash) return { ok: false, entries: i, brokenAt: i + 1, detail: `entry at seq ${e.seq} does not match a published anchor — the log was rewritten` };
+    if (anchored !== undefined && anchored !== e.hash) return { ok: false, entries: i, brokenAt: i + 1, detail: `entry at seq ${e.seq} does not match a published checkpoint — the log was rewritten` };
     prev = e.hash;
     lastSeq = e.seq;
     expectedSeq += 1;
   }
 
-  // A truncation drops the TAIL, which still verifies clean above. Catch it two
-  // ways: an anchor (local or external) for a seq beyond the current end, and
-  // the head sidecar recording a seq we no longer reach.
-  for (const [seq, hash] of expectAtSeq) {
-    if (seq > lastSeq) return { ok: false, entries: lines.length, detail: `the log ends at seq ${lastSeq} but a published anchor exists for seq ${seq} — entries were truncated` };
-    void hash;
-  }
-  const sc = readHeadSidecar(dir);
-  if (sc && typeof sc.seq === 'number') {
-    if (sc.seq > lastSeq) return { ok: false, entries: lines.length, detail: `the recorded head is seq ${sc.seq} but the log ends at seq ${lastSeq} — entries were truncated` };
-    if (sc.seq === lastSeq && sc.hash !== prev) return { ok: false, entries: lines.length, detail: 'the recorded head hash does not match the log tail — the log was rewritten' };
+  // A truncation drops the TAIL, which still verifies clean above. A checkpoint
+  // (anchor, external, or sidecar) for a seq beyond the current end catches it.
+  for (const [seq] of expectAtSeq) {
+    if (seq > lastSeq) return { ok: false, entries: lines.length, detail: `the log ends at seq ${lastSeq} but a published checkpoint exists for seq ${seq} — entries were truncated` };
   }
 
   return { ok: true, entries: lines.length };

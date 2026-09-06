@@ -26,7 +26,7 @@
 import fs from 'fs';
 import path from 'path';
 import { cairnHome } from '../src/lib/cairn/home';
-import { readAudit, verifyAudit, anchorHead } from '../src/lib/cairn/enterprise';
+import { readAudit, verifyAudit, anchorHead, loadAnchorFile } from '../src/lib/cairn/enterprise';
 
 const argv = process.argv.slice(2);
 const cmd = argv[0] ?? 'view';
@@ -52,6 +52,14 @@ if (cmd === 'verify') {
       if (Number.isFinite(seq) && h) against.push({ seq, hash: h });
       else { console.error(`cairn:audit-log: --against wants <seq>:<hash>, got "${argv[i + 1]}"`); process.exit(2); }
     }
+  }
+  // --against-file <path>: a full off-box copy of anchors.jsonl. Verify its own
+  // chain, then check the live log against every checkpoint in it.
+  const fileIdx = argv.indexOf('--against-file');
+  if (fileIdx !== -1 && argv[fileIdx + 1]) {
+    const loaded = loadAnchorFile(argv[fileIdx + 1]);
+    if (!loaded.ok) { console.error(`cairn:audit-log: ${loaded.detail}`); process.exit(1); }
+    against.push(...loaded.pairs);
   }
   const v = verifyAudit(dir, against.length ? { against } : {});
   if (v.ok) {

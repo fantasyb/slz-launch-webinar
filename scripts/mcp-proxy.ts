@@ -1278,6 +1278,25 @@ async function main() {
   }
 
   /*
+   * Anonymous auth failures are UNAUTHENTICATED — a flood of tokenless requests
+   * would otherwise grow the audit log without bound (a cheap DoS on disk and on
+   * verify). Coalesce them: at most one row per second, carrying a count of how
+   * many were suppressed in the window, so the signal (someone is hammering the
+   * door) survives without the volume.
+   */
+  let authFailWindow = { since: 0, suppressed: 0 };
+  function auditAuthFail(reason: string | undefined): void {
+    const dir = auditDirOf();
+    if (!dir) return;
+    const now = Date.now();
+    if (now - authFailWindow.since < 1000) { authFailWindow.suppressed++; return; }
+    const suppressed = authFailWindow.suppressed;
+    authFailWindow = { since: now, suppressed: 0 };
+    const detail = suppressed > 0 ? `${reason ?? 'authentication required'} (+${suppressed} more in the last second)` : (reason ?? 'authentication required');
+    try { appendAudit(dir, { principal: 'anonymous', decision: 'auth-fail', reason: detail }); } catch { /* never fatal */ }
+  }
+
+  /*
    * The security check: compare the live surface to the APPROVED one. First
    * sight of a server pins it (trust on first use); after that, a tool whose
    * description, schema, or annotations changed — or a tool that appeared — is
@@ -2405,8 +2424,7 @@ async function main() {
        */
       const gov = governance();
       if (gov.mode === 'error') {
-        const dir = auditDirOf();
-        if (dir) { try { appendAudit(dir, { principal: 'anonymous', decision: 'auth-fail', reason: `policy unusable: ${gov.reason}` }); } catch { /* never fatal */ } }
+        auditAuthFail(`policy unusable: ${gov.reason}`);
         res.writeHead(503, { 'content-type': 'application/json' });
         res.end(JSON.stringify({ jsonrpc: '2.0', error: { code: -32002, message: 'gateway unavailable: org policy is present but unreadable; refusing all requests until it is valid' }, id: null }));
         return;
@@ -2414,8 +2432,7 @@ async function main() {
       const policy = gov.mode === 'governed' ? gov.policy : null;
       const authResult = authenticate(policy, req.headers.authorization);
       if (!authResult.principal) {
-        const dir = auditDirOf();
-        if (dir) { try { appendAudit(dir, { principal: 'anonymous', decision: 'auth-fail', reason: authResult.reason }); } catch { /* never fatal */ } }
+        auditAuthFail(authResult.reason);
         res.writeHead(401, { 'content-type': 'application/json', 'www-authenticate': 'Bearer realm="cairn"' });
         res.end(JSON.stringify({ jsonrpc: '2.0', error: { code: -32001, message: `unauthorized: ${authResult.reason ?? 'authentication required'}` }, id: null }));
         return;

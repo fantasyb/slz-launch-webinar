@@ -22,7 +22,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { selfUpdate, describeUpdate, repoRoot } from '../src/lib/cairn/selfUpdate';
-import { verifyAudit, anchorHead } from '../src/lib/cairn/enterprise';
+import { verifyAudit, anchorHead, readAnchors } from '../src/lib/cairn/enterprise';
 
 const argv = process.argv.slice(2);
 function opt(name: string): string | undefined {
@@ -89,6 +89,10 @@ function parseAuditVerifyInterval(): number {
 }
 const auditVerifyMs = parseAuditVerifyInterval() * 1000;
 let lastAuditVerify = 0; // verify once shortly after boot, then on the interval
+/* The last anchor this daemon process wrote — kept in memory so a file-write
+ * attacker who deletes anchors.jsonl cannot make us silently re-anchor a
+ * rewritten log. Reset only on restart, which is an observable event. */
+let lastDaemonAnchor: { seq: number; anchorHash: string } | null = null;
 function maybeVerifyAudit(): void {
   if (auditVerifyMs === 0 || stopping || !home) return;
   if (lastAuditVerify && Date.now() - lastAuditVerify < auditVerifyMs) return;
@@ -106,14 +110,25 @@ function maybeVerifyAudit(): void {
   if (v.ok) {
     // Intact: clear any stale alarm from a prior break that has since been fixed.
     try { if (fs.existsSync(marker)) fs.unlinkSync(marker); } catch { /* best-effort */ }
+    // H4 defense: the daemon remembers, IN PROCESS, the last anchor it wrote —
+    // memory an attacker with file-write access cannot erase. If the on-disk
+    // anchor log no longer ends with that anchor (deleted or replaced), someone
+    // tampered with it: alarm and REFUSE to re-anchor, so we never launder a
+    // rewritten log into a fresh genesis-rooted anchor chain and ship it off-box.
+    if (lastDaemonAnchor) {
+      const disk = readAnchors(dir);
+      const tip = disk.length ? disk[disk.length - 1] : null;
+      if (!tip || tip.anchorHash !== lastDaemonAnchor.anchorHash) {
+        process.stderr.write('cairn:daemon AUDIT ALARM — the anchor log was deleted or replaced since I last wrote it; refusing to re-anchor (possible tampering).\n');
+        try { fs.writeFileSync(marker, JSON.stringify({ at: new Date().toISOString(), detail: 'anchor log deleted/replaced since last daemon anchor', expectedAnchorHash: lastDaemonAnchor.anchorHash }, null, 2) + '\n'); } catch { /* best-effort */ }
+        return;
+      }
+    }
     // Checkpoint the verified head as an anchor and ship it off-box (if
-    // CAIRN_AUDIT_ANCHOR_CMD is set). This is what turns the log into evidence
-    // against an attacker with write access to the box: an anchor published off
-    // the box cannot be rewritten to match a tampered log. Only anchors a head
-    // that verified clean, so we never certify a broken chain.
+    // CAIRN_AUDIT_ANCHOR_CMD is set). Only anchors a head that verified clean.
     try {
       const a = anchorHead(dir);
-      if (a) process.stderr.write(`cairn:daemon audit anchored at seq ${a.seq}\n`);
+      if (a) { lastDaemonAnchor = { seq: a.seq, anchorHash: a.anchorHash }; process.stderr.write(`cairn:daemon audit anchored at seq ${a.seq}\n`); }
     } catch (e) { process.stderr.write(`cairn:daemon audit anchor failed (ignored): ${(e as Error).message}\n`); }
     return;
   }

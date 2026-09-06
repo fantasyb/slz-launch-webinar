@@ -18,7 +18,7 @@ import pathReal from 'path';
 import { createHash } from 'crypto';
 import {
   authenticate, authorize, tokenHash, bearerToken, LOCAL_ADMIN,
-  appendAudit, verifyAudit, readAudit, _resetAuditCache, readOrgPolicy, anchorHead,
+  appendAudit, verifyAudit, readAudit, _resetAuditCache, readOrgPolicy, anchorHead, readAnchors,
   type OrgPolicy,
 } from '../src/lib/cairn/enterprise';
 
@@ -281,7 +281,69 @@ test('an off-box anchor catches a whole-file rewrite the in-file chain cannot', 
   // WITH the off-box anchor, the rewrite is caught: seq 4 no longer has the anchored hash.
   const v = verifyAudit(dir, { against: [external] });
   assert.equal(v.ok, false, 'the off-box anchor catches the rewrite');
-  assert.match(v.detail ?? '', /anchor/);
+  assert.match(v.detail ?? '', /checkpoint|anchor/);
+});
+
+test('a row that could not be locked is spilled, then folded into the chain by the next writer (H1)', async () => {
+  const dir = freshDir();
+  appendAudit(dir, { principal: 'a', decision: 'call', server: 's', tool: 't0' });
+  // Hold the lock as a LIVE process (our own pid, fresh mtime) so it is not
+  // judged stale: the next append cannot acquire it and must spill, never
+  // compute a seq unlocked.
+  const lp = pathReal.join(dir, 'audit.lock');
+  fsReal.writeFileSync(lp, `${process.pid}:held`);
+  appendAudit(dir, { principal: 'a', decision: 'call', server: 's', tool: 'spilled' });
+  // The spilled row is NOT in the chain yet, but it is not lost.
+  assert.equal(readAudit(dir).length, 1, 'the contended row did not append unlocked');
+  assert.ok(fsReal.readdirSync(dir).some((f) => f.startsWith('audit.spill.')), 'it was spilled');
+  // Release the lock; the next successful append folds the spill in, in order.
+  fsReal.unlinkSync(lp);
+  appendAudit(dir, { principal: 'a', decision: 'call', server: 's', tool: 't2' });
+  const entries = readAudit(dir);
+  assert.deepEqual(entries.map((e) => e.tool), ['t0', 'spilled', 't2'], 'the spilled row is folded in before the new one');
+  assert.equal(verifyAudit(dir).ok, true, 'and the chain is intact — no unlocked seq collision');
+  assert.ok(!fsReal.readdirSync(dir).some((f) => f.startsWith('audit.spill.')), 'the spill file is consumed');
+});
+
+test('conflicting checkpoints for one seq fail verify — never "last wins" (H3)', () => {
+  const dir = freshDir();
+  for (let i = 0; i < 3; i++) appendAudit(dir, { principal: 'a', decision: 'call', server: 's', tool: `t${i}` });
+  const real = anchorHead(dir)!;
+  // A forged external anchor disagreeing at the same seq must fail regardless of order.
+  const forged = { seq: real.seq, hash: 'f'.repeat(64) };
+  const legit = { seq: real.seq, hash: real.hash };
+  assert.equal(verifyAudit(dir, { against: [legit, forged] }).ok, false, 'legit then forged fails');
+  assert.equal(verifyAudit(dir, { against: [forged, legit] }).ok, false, 'forged then legit also fails (not last-wins)');
+  assert.match(verifyAudit(dir, { against: [forged, legit] }).detail ?? '', /disagree/);
+});
+
+test('anchorHead refuses to certify a broken log (M2)', () => {
+  const dir = freshDir();
+  for (let i = 0; i < 3; i++) appendAudit(dir, { principal: 'a', decision: 'call', server: 's', tool: `t${i}` });
+  // Tamper: edit the middle entry's content (hash no longer matches).
+  const file = pathReal.join(dir, 'audit.jsonl');
+  const lines = fsReal.readFileSync(file, 'utf8').split('\n').filter(Boolean);
+  const e = JSON.parse(lines[1]); e.tool = 'EVIL'; lines[1] = JSON.stringify(e);
+  fsReal.writeFileSync(file, lines.join('\n') + '\n');
+  _resetAuditCache();
+  assert.equal(verifyAudit(dir).ok, false, 'the log is broken');
+  assert.equal(anchorHead(dir), null, 'anchorHead refuses to anchor it — no laundering a forgery into the trust root');
+  assert.equal(readAnchors(dir).length, 0, 'nothing was anchored');
+});
+
+test('anchorHead refuses to start a fresh chain after the anchor log is deleted, once shipping has happened (H4)', () => {
+  const dir = freshDir();
+  process.env.CAIRN_AUDIT_ANCHOR_CMD = 'cat > /dev/null'; // a ship that succeeds and consumes stdin
+  try {
+    for (let i = 0; i < 3; i++) appendAudit(dir, { principal: 'a', decision: 'call', server: 's', tool: `t${i}` });
+    const a = anchorHead(dir);
+    assert.ok(a, 'first anchor is written and shipped');
+    assert.ok(fsReal.existsSync(pathReal.join(dir, 'anchors.shipped')), 'a ship cursor now exists');
+    // Attacker deletes the local anchor log (and would rewrite the log).
+    fsReal.unlinkSync(pathReal.join(dir, 'anchors.jsonl'));
+    const a2 = anchorHead(dir);
+    assert.equal(a2, null, 'refuses to re-anchor from genesis — the ship cursor proves anchors existed and were removed');
+  } finally { delete process.env.CAIRN_AUDIT_ANCHOR_CMD; }
 });
 
 test('concurrent processes appending to one log produce an intact chain (the cross-process lock)', async () => {
