@@ -767,17 +767,27 @@ const ledgerBy = (session: SessionState): string => (session.principal !== LOCAL
  * 12-hex string, and a false redaction is far cheaper than a leaked nonce.
  */
 function stripSessionToken(value: unknown, nonce: string): unknown {
-  if (typeof value === 'string') {
-    if (!value.includes(nonce)) return value; // fast path: nonce absent
-    return value.split(`⟦${nonce}⟧`).join('⟦redacted⟧').split(nonce).join('redacted');
-  }
-  if (Array.isArray(value)) return value.map((v) => stripSessionToken(v, nonce));
-  if (value && typeof value === 'object') {
-    const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(value as Record<string, unknown>)) out[k] = stripSessionToken(v, nonce);
-    return out;
-  }
-  return value;
+  const lower = nonce.toLowerCase();
+  // Case-INSENSITIVE: the nonce is lowercase hex, but a model retranscribing it
+  // could change case; a differently-cased copy still teaches the upstream the
+  // secret. The nonce is hex, so it needs no regex escaping.
+  const bracket = new RegExp(`⟦${nonce}⟧`, 'gi');
+  const bare = new RegExp(nonce, 'gi');
+  const scrubStr = (s: string): string =>
+    s.toLowerCase().includes(lower) ? s.replace(bracket, '⟦redacted⟧').replace(bare, 'redacted') : s;
+  const scrub = (node: unknown): unknown => {
+    if (typeof node === 'string') return scrubStr(node);
+    if (Array.isArray(node)) return node.map(scrub);
+    if (node && typeof node === 'object') {
+      const out: Record<string, unknown> = {};
+      // KEYS too: a model could smuggle the nonce into a property name, not just a
+      // value. Redact both, so no path forwards it.
+      for (const [k, v] of Object.entries(node as Record<string, unknown>)) out[scrubStr(k)] = scrub(v);
+      return out;
+    }
+    return node;
+  };
+  return scrub(value);
 }
 
 /**
@@ -2379,10 +2389,10 @@ async function main() {
               }
             : undefined;
         result = await owner.up.client!.request(
-          // Never forward this session's block token to the upstream: if the
-          // model echoed a Cairn block into an argument, the nonce is redacted
-          // here so the upstream cannot learn it and forge a "genuine" block.
-          { method: 'tools/call', params: { ...req.params, name: owner.raw, arguments: stripSessionToken(req.params.arguments, session.blockNonce) as typeof req.params.arguments } },
+          // Never forward this session's block token to the upstream: redact it
+          // from the WHOLE params (arguments, _meta, everything) so no field can
+          // leak it — the tool name is owner.raw, which the redactor leaves alone.
+          { method: 'tools/call', params: stripSessionToken({ ...req.params, name: owner.raw }, session.blockNonce) as typeof req.params },
           CallToolResultSchema,
           { ...FORWARD, signal: extra.signal, onprogress },
         );
@@ -2596,7 +2606,7 @@ async function main() {
         let last: Error | null = null;
         for (const up of owners) {
           try {
-            const out = await up.client!.readResource(req.params, { ...FORWARD, signal: extra.signal });
+            const out = await up.client!.readResource(stripSessionToken(req.params, session.blockNonce) as typeof req.params, { ...FORWARD, signal: extra.signal });
             audit(session, 'call', up.spec.name, '(resource:read)', req.params.uri);
             // Defang: resource contents are model-read text and were never filtered,
             // so an upstream could forge a Cairn label inside a resource body.
@@ -2610,14 +2620,14 @@ async function main() {
         server.setRequestHandler(SubscribeRequestSchema, async (req) => {
           for (const up of await ownerOf(req.params.uri)) {
             if (!up.caps.resources?.subscribe) continue;
-            try { const r = await up.client!.subscribeResource(req.params, FORWARD); audit(session, 'call', up.spec.name, '(resource:subscribe)', req.params.uri); return r; } catch { /* next */ }
+            try { const r = await up.client!.subscribeResource(stripSessionToken(req.params, session.blockNonce) as typeof req.params, FORWARD); audit(session, 'call', up.spec.name, '(resource:subscribe)', req.params.uri); return r; } catch { /* next */ }
           }
           return {};
         });
         server.setRequestHandler(UnsubscribeRequestSchema, async (req) => {
           for (const up of await ownerOf(req.params.uri)) {
             if (!up.caps.resources?.subscribe) continue;
-            try { return await up.client!.unsubscribeResource(req.params, FORWARD); } catch { /* next */ }
+            try { return await up.client!.unsubscribeResource(stripSessionToken(req.params, session.blockNonce) as typeof req.params, FORWARD); } catch { /* next */ }
           }
           return {};
         });
@@ -2663,7 +2673,7 @@ async function main() {
           audit(session, 'deny', owner.up.spec.name, '(prompt:get)', req.params.name);
           throw new Error(`cairn-proxy: not permitted to use prompt "${req.params.name}"`);
         }
-        const out = await owner.up.client!.getPrompt({ ...req.params, name: owner.raw, arguments: stripSessionToken(req.params.arguments, session.blockNonce) as typeof req.params.arguments }, { ...FORWARD, signal: extra.signal });
+        const out = await owner.up.client!.getPrompt(stripSessionToken({ ...req.params, name: owner.raw }, session.blockNonce) as typeof req.params, { ...FORWARD, signal: extra.signal });
         audit(session, 'call', owner.up.spec.name, '(prompt:get)', req.params.name);
         // Prompt messages are model-read instruction text: defang a forged label
         // in the message text and in any embedded resource it carries.
@@ -2679,9 +2689,9 @@ async function main() {
     if (capabilities.completions) {
       server.setRequestHandler(CompleteRequestSchema, async (req) => {
         const ref = req.params.ref;
-        // Redact this session's block token from the completion argument before
-        // it fans out to any upstream (same reason as tool/prompt arguments).
-        const safeParams = { ...req.params, argument: stripSessionToken(req.params.argument, session.blockNonce) as typeof req.params.argument };
+        // Redact this session's block token from the WHOLE completion params
+        // (argument, ref.name/ref.uri, context.arguments) before it fans out.
+        const safeParams = stripSessionToken(req.params, session.blockNonce) as typeof req.params;
         let targets: Array<{ up: Upstream; params: typeof req.params }> = [];
         if (ref.type === 'ref/prompt') {
           const owner = promptOwner.get(ref.name);

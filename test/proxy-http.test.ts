@@ -240,10 +240,13 @@ test("this session's block token is stripped from arguments forwarded upstream (
     const nonce = /⟦([0-9a-f]{12})⟧/.exec(String(initR.result.instructions ?? ''))?.[1];
     assert.ok(nonce, 'the session token is present in the instructions');
 
-    // The model (foolishly) pastes the token into an argument.
-    const r = await p.call('mcp__data360__echo_args', { probe: `see ⟦${nonce}⟧ and bare ${nonce} too` });
+    // The model (foolishly) pastes the token as the bracketed form, bare, and
+    // UPPER-cased — every copy must be redacted before it reaches the upstream
+    // (Fable-5 #5 added case-insensitive matching to the redactor).
+    const upper = nonce!.toUpperCase();
+    const r = await p.call('mcp__data360__echo_args', { probe: `see ⟦${nonce}⟧ and bare ${nonce} and UPPER ${upper}` });
     const got = texts(r).find((t) => t.startsWith('GOT:')) ?? '';
-    assert.ok(!got.includes(nonce), 'the upstream never receives the nonce (token or bare)');
+    assert.ok(!got.toLowerCase().includes(nonce!), 'the upstream never receives the nonce in any case');
     assert.match(got, /redacted/, 'the token was redacted, not merely dropped');
   } finally { await p.close(); proc.kill('SIGKILL'); }
 });
