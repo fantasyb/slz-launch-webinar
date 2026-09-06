@@ -168,6 +168,11 @@ test('list_changed is coalesced and unknown tool names are negatively cached', (
   assert.match(src, /rememberUnknownTool\(req\.params\.name\);/, 'a name still unknown after a re-list is cached');
   // And the cache is invalidated when the surface changes.
   assert.match(src, /toolOwner\.clear\(\); unknownToolCache\.clear\(\);/, 'a tools list_changed clears the negative cache');
+
+  // Concurrent re-lists are deduped: a burst of distinct unknown names rides one
+  // in-flight fan-out, not one per caller.
+  assert.match(src, /let allToolsInFlight: Promise<Tool\[\]> \| null = null;/, 'there is a shared in-flight re-list');
+  assert.match(src, /if \(allToolsInFlight\) return allToolsInFlight;/, 'concurrent callers share the one re-list');
 });
 
 /*

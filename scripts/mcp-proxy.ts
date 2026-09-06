@@ -2004,7 +2004,21 @@ async function main() {
     ...(anyCap('completions') ? { completions: {} } : {}),
   };
 
-  async function allTools(): Promise<Tool[]> {
+  /*
+   * Dedupe concurrent re-lists. An unknown tool name triggers a full fan-out
+   * listTools across every upstream; a burst of distinct unknown names (or many
+   * clients re-listing at once) would otherwise run that fan-out once PER caller,
+   * each with its own pagination and trust re-evaluation. Share one in-flight
+   * promise so concurrent callers ride a single re-list; the negative cache
+   * bounds the REPEAT cost, this bounds the CONCURRENT cost.
+   */
+  let allToolsInFlight: Promise<Tool[]> | null = null;
+  function allTools(): Promise<Tool[]> {
+    if (allToolsInFlight) return allToolsInFlight;
+    allToolsInFlight = doAllTools().finally(() => { allToolsInFlight = null; });
+    return allToolsInFlight;
+  }
+  async function doAllTools(): Promise<Tool[]> {
     /* Build ownership into a LOCAL map and swap it in synchronously at the end.
      * Clearing the shared toolOwner up front and repopulating it across awaits
      * (pagination) left it incomplete mid-listing, so a concurrent CallTool or a
