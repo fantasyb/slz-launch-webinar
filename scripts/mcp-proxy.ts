@@ -1977,7 +1977,15 @@ async function main() {
         // a surface-refresh signal, not upstream content, so it always relays.
         const sess = serverSession.get(server);
         const contentful = method === 'notifications/message' || method === 'notifications/resources/updated';
-        if (contentful && sess && governed(sess) && !mayReachServer(sess, up)) continue;
+        if (contentful && sess && governed(sess)) {
+          if (!mayReachServer(sess, up)) continue;
+          // One upstream client serves EVERY tenant, so a log line cannot be
+          // attributed to the tenant whose call produced it — and it "often quotes
+          // request details". Broadcasting it to every reachable tenant leaks one
+          // tenant's activity to another (red-team #3). Drop upstream logs to a
+          // governed session; the operator still sees them on the gateway's stderr.
+          if (method === 'notifications/message') continue;
+        }
         void server.notification({ method, params: outParams });
       } catch {
         /* a notification that cannot be relayed is dropped, never fatal */
