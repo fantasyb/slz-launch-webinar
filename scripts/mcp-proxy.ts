@@ -1311,7 +1311,20 @@ async function main() {
       const st = fs.statSync(p);
       key = `${st.ino}:${st.size}:${st.mtimeMs}`;
     } catch (e) {
-      if ((e as NodeJS.ErrnoException).code === 'ENOENT') return { mode: 'ungoverned' };
+      if ((e as NodeJS.ErrnoException).code === 'ENOENT') {
+        // The policy file is gone. If we have NEVER been governed this is a
+        // genuine personal install — ungoverned is correct. But once a gateway
+        // has served under a policy, a vanished file is not a downgrade signal:
+        // deleting it (a botched deploy, or an adversary with box write who
+        // cannot forge a token but can unlink a file) would otherwise switch
+        // auth, RBAC and audit off silently. We NEVER downgrade a governed
+        // gateway to ungoverned; keep serving last-good and say so loudly.
+        // Re-enabling ungoverned mode is an operator decision that takes a
+        // restart, not a file deletion.
+        if (!lastGoodPolicy) return { mode: 'ungoverned' };
+        if (Date.now() - lastGovWarn > 30_000) { process.stderr.write(`cairn-proxy: ORG POLICY MISSING — ${orgPolicyPath()} was removed while the gateway is governed. Serving on the last valid policy; restart to go ungoverned intentionally.\n`); lastGovWarn = Date.now(); }
+        return { mode: 'governed', policy: lastGoodPolicy };
+      }
       // The file exists but stat failed (permission, race): if we were ever
       // governed, keep governing on last-good; otherwise fail closed.
       return lastGoodPolicy ? { mode: 'governed', policy: lastGoodPolicy } : { mode: 'error', reason: `policy cannot be stat'd: ${(e as Error).message}` };
@@ -2543,6 +2556,9 @@ async function main() {
   /* Never let the reaper alone hold the process open. */
   reaper.unref?.();
   const host = process.env.CAIRN_HTTP_HOST || '127.0.0.1';
+  // A loopback bind exempts the gateway from the ENFORCED-auth requirement, at
+  // startup and on every request; computed once, used in both places.
+  const httpLoopback = host === '127.0.0.1' || host === '::1' || host === 'localhost';
   /*
    * Last-resort net: this gateway is a passenger and must never crash the
    * vehicle. Node 22 exits the process on an unhandled rejection, and a hosted
@@ -2621,6 +2637,23 @@ async function main() {
         return;
       }
       const policy = gov.mode === 'governed' ? gov.policy : null;
+      /*
+       * The startup guard that refuses a non-loopback bind without ENFORCED auth
+       * is not a one-time check: governance is re-read on every request, so the
+       * same condition can arise AFTER startup — an operator (or an adversary
+       * with box write who cannot forge a token) edits the live policy to
+       * auth.required:false, or the policy is otherwise no longer enforcing. On a
+       * network interface that is exactly the open, unauthenticated, unaudited
+       * gateway the startup guard exists to stop, so we re-run it here and fail
+       * closed (503) rather than serve. CAIRN_ALLOW_UNGOVERNED=1 is the same
+       * explicit escape hatch honored at startup; a loopback bind is exempt.
+       */
+      if (!httpLoopback && process.env.CAIRN_ALLOW_UNGOVERNED !== '1' && !(policy && policy.auth.required)) {
+        auditAuthFail('non-loopback bind lost ENFORCED auth (policy missing or auth.required:false)');
+        res.writeHead(503, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ jsonrpc: '2.0', error: { code: -32002, message: 'gateway unavailable: a network-bound gateway requires enforced authentication; refusing all requests until the org policy enforces auth' }, id: null }));
+        return;
+      }
       const authResult = authenticate(policy, req.headers.authorization);
       if (!authResult.principal) {
         auditAuthFail(authResult.reason);
@@ -2742,8 +2775,7 @@ async function main() {
     // A non-loopback bind demands ENFORCED auth, not merely a policy file: a
     // policy with auth.required:false on a network interface is exactly the open,
     // unauthenticated, unaudited gateway this guard exists to stop.
-    const loopback = host === '127.0.0.1' || host === '::1' || host === 'localhost';
-    if (!loopback && !authEnforced && process.env.CAIRN_ALLOW_UNGOVERNED !== '1') {
+    if (!httpLoopback && !authEnforced && process.env.CAIRN_ALLOW_UNGOVERNED !== '1') {
       process.stderr.write(`cairn-proxy: refusing to start — binding a non-loopback host (${host}) without ENFORCED auth means an open, unauthenticated, unaudited tool gateway.${startupGov.mode === 'governed' ? ' The policy exists but auth.required is false — set it true.' : ' Add a policy (cairn:org init-policy --require-auth).'} Or set CAIRN_ALLOW_UNGOVERNED=1 if that is truly intended.\n`);
       process.exit(1);
     }

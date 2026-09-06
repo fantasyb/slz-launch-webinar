@@ -54,12 +54,12 @@ function governedHome(): string {
 }
 
 /** Start the proxy in HTTP mode; resolve with base URL once it reports listening. */
-function startProxy(home: string): Promise<{ child: ChildProcess; base: string }> {
+function startProxy(home: string, env: Record<string, string> = {}): Promise<{ child: ChildProcess; base: string }> {
   // detached so we can kill the whole process group — `npx tsx` spawns a
   // grandchild node that would otherwise keep our inherited stdio pipes open.
   const child = spawn('npx', ['tsx', 'scripts/mcp-proxy.ts', '--server', `node ${FIXTURE}`, '--http', '0'], {
     cwd: REPO,
-    env: { ...process.env, CAIRN_HOME: home } as NodeJS.ProcessEnv,
+    env: { ...process.env, CAIRN_HOME: home, ...env } as NodeJS.ProcessEnv,
     stdio: ['ignore', 'pipe', 'pipe'],
     detached: true,
   });
@@ -69,7 +69,9 @@ function startProxy(home: string): Promise<{ child: ChildProcess; base: string }
     child.stderr!.on('data', (d) => {
       buf += String(d);
       const m = /listening on (http:\/\/[^/]+)\/mcp/.exec(buf);
-      if (m) { clearTimeout(t); resolve({ child, base: m[1] }); }
+      // A wildcard bind (0.0.0.0/::) reports the bind host but is reached over
+      // loopback; rewrite the base so the test connects to a routable address.
+      if (m) { clearTimeout(t); resolve({ child, base: m[1].replace('0.0.0.0', '127.0.0.1').replace('[::]', '127.0.0.1') }); }
     });
     child.on('error', reject);
   });
@@ -216,6 +218,68 @@ test('a governed gateway refuses to START if its policy is present but corrupt (
     });
     assert.equal(code, 1, 'the gateway exits rather than serving with an unusable policy');
     assert.match(err, /policy is present but unusable|refusing to start/, 'and says why');
+  } finally {
+    stopProxy(child);
+  }
+});
+
+test('a governed gateway does not downgrade to ungoverned when its policy file is deleted at runtime', async () => {
+  // The invariant: once a gateway has served under a policy, a vanished policy
+  // file is NOT a signal to turn auth/RBAC/audit off. Deleting the file (a
+  // botched deploy, or an adversary with box write who cannot forge a token)
+  // must not silently open the door — the gateway keeps enforcing on last-good.
+  const home = governedHome();
+  const { child, base } = await startProxy(home);
+  try {
+    // Governed: no token is a 401.
+    const before = await hit(base, '/mcp', { method: 'POST', headers: mcpHeaders(), body: initBody() });
+    assert.equal(before.status, 401, 'governed at the start — no token is refused');
+
+    // The policy file vanishes.
+    fs.rmSync(path.join(home, 'org-policy.json'));
+
+    // Still governed: an unauthenticated request is STILL refused, not served.
+    const afterNoAuth = await hit(base, '/mcp', { method: 'POST', headers: mcpHeaders(), body: initBody() });
+    assert.equal(afterNoAuth.status, 401, 'a deleted policy must not turn auth off — still 401');
+
+    // And the last-good policy still recognizes a valid token.
+    const afterAuth = await hit(base, '/mcp', { method: 'POST', headers: mcpHeaders(TOKEN), body: initBody() });
+    assert.equal(afterAuth.status, 200, 'the last-good policy still accepts a valid token');
+  } finally {
+    stopProxy(child);
+  }
+});
+
+test('a network-bound gateway fails closed (503) if its policy stops enforcing auth at runtime', async () => {
+  // The startup guard refuses a non-loopback bind without ENFORCED auth. That
+  // check is not one-time: an operator (or an adversary with box write who
+  // cannot forge a token) can edit the LIVE policy to auth.required:false, which
+  // on a network interface is the open, unauthenticated gateway the guard exists
+  // to stop. Governance is re-read per request, so the guard re-runs and refuses.
+  const home = governedHome();
+  const { child, base } = await startProxy(home, { CAIRN_HTTP_HOST: '0.0.0.0' });
+  try {
+    // Enforced auth on a non-loopback bind: a missing token is a 401 (this path
+    // opens no SSE stream, so it leaves no socket to perturb the next request).
+    const before = await hit(base, '/mcp', { method: 'POST', headers: mcpHeaders(), body: initBody() });
+    assert.equal(before.status, 401, 'auth is enforced at the start — no token is refused');
+
+    // The live policy is weakened to auth.required:false (still valid JSON).
+    fs.writeFileSync(
+      path.join(home, 'org-policy.json'),
+      JSON.stringify({
+        auth: { required: false },
+        principals: { [tokenHash(TOKEN)]: { id: 'alice', role: 'readonly' } },
+        roles: { readonly: { readOnly: true } },
+      }),
+    );
+
+    // On a network bind that no longer enforces auth: fail closed, even WITH a
+    // valid token — the point is that ANY request would now be unauthenticated,
+    // so the guard refuses before it authenticates or dispatches anything.
+    const after = await hit(base, '/mcp', { method: 'POST', headers: mcpHeaders(TOKEN), body: initBody() });
+    assert.equal(after.status, 503, 'a non-loopback bind that stops enforcing auth refuses to serve');
+    assert.match(after.body, /enforced authentication|unavailable/, 'the body says why');
   } finally {
     stopProxy(child);
   }
