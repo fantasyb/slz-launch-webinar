@@ -82,13 +82,17 @@ const WRITE_VERBS = 'create|update|delete|upsert|execute|insert|remove|write|mod
 // Fable-6: more high-value, low-collision action verbs. Kept OFF the prefix list
 // are verbs that collide with a common read noun as a prefix (e.g. 'sign' would
 // flag 'design'); those go in EXACT_WRITE below, matched as whole tokens only.
-const WRITE_VERBS2 = `${WRITE_VERBS}|replace|migrate|checkout|login|logout|store|pull|click|navigate|sudo|kubectl|ssh|scp|rm|mv|cp|dd|mkfs|withdraw|deposit|checkin|redeem`;
+const WRITE_VERBS2 = `${WRITE_VERBS}|replace|migrate|checkout|login|logout|store|pull|click|navigate|sudo|kubectl|ssh|scp|rm|mv|cp|dd|mkfs|withdraw|deposit|checkin|redeem`
+  // Red-team B2: common destructive verbs a read-only role must catch. Prefix-safe
+  // (no read noun starts with them); `del` is prefix-unsafe (delegate/deliver/delta)
+  // so it goes in EXACT_WRITE below as a whole token only.
+  + '|nuke|zap|obliterate|overwrite|wipeout|annihilate|evict|deprovision|deregister|unlink|detach|disconnect|shutdown';
 const WRITE_TOKEN2 = new RegExp(`^(?:${WRITE_VERBS2})`, 'i');
 // Whole-token write verbs — including collision-prone ones (sign, close, open,
 // order, book, pay, add, set, mark) that must NOT be prefix-matched (they hide in
 // design/closed/opener/orders/booking/payment/address/settings/marker). As an
 // exact token they are unambiguous actions.
-const EXACT_WRITE = new Set(`${WRITE_VERBS2}|sign|approve`.split('|'));
+const EXACT_WRITE = new Set(`${WRITE_VERBS2}|sign|approve|del`.split('|'));
 // A name whose FIRST token is one of these reads as a read whatever follows:
 // list_orders, get_address, search_bookmarks are reads even though a later token
 // prefix-collides with a write verb.

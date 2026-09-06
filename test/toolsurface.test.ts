@@ -48,6 +48,14 @@ test('common write verbs are caught, and a leading read verb keeps a read a read
   for (const name of ['list_orders', 'get_address', 'search_bookmarks', 'get_settings', 'list_payments', 'get_market_data', 'describe_instances', 'view_orders', 'count_comments']) {
     assert.equal(classify({ name }).permitted, true, `${name} is a read (leading read verb wins)`);
   }
+  // Red-team B2: common destructive verbs a read-only role must catch, with no
+  // over-match of a read that merely contains one (get_expired_items stays a read).
+  for (const name of ['nuke_cache', 'zap_repo', 'overwrite_file', 'del_file', 'obliterate_all', 'evict_key', 'shutdown_server', 'deprovision_host']) {
+    assert.equal(classify({ name }).permitted, false, `${name} reads as a write`);
+  }
+  for (const name of ['get_expired_items', 'list_delta', 'get_delegate', 'view_deliveries']) {
+    assert.equal(classify({ name }).permitted, true, `${name} is a read (a write verb is only a substring)`);
+  }
 });
 
 test('the classifier resists Unicode look-alikes, compound names, and affixes (Fable-6 #3)', () => {

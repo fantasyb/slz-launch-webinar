@@ -227,7 +227,10 @@ export function authorize(
     }
   } else if (role.readOnly) {
     const declaredWrite = tool.annotations?.readOnlyHint === false || tool.annotations?.destructiveHint === true;
-    const namedWrite = readsAsWrite(tool.name);
+    // Classify the RAW name too, not only the exposed `server__raw` one: otherwise
+    // a server NAMED with a read verb (e.g. `search`) makes its leading token a read
+    // and masks a raw write tool whose verb only prefix-matches (red-team #7).
+    const namedWrite = [tool.name, ...(tool.aliases ?? [])].some((n) => readsAsWrite(n));
     if (declaredWrite || namedWrite) return { allowed: false, reason: `role "${principal.role}" is read-only; "${tool.name}" reads as a write` };
   }
   return { allowed: true, reason: 'permitted by role' };
