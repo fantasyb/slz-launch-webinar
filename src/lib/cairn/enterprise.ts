@@ -365,10 +365,10 @@ function tryBreakStaleLock(lp: string): boolean {
  * the collisions the old "just proceed unlocked" fallback produced: two writers
  * off one disk tail computed the same seq and broke the chain permanently.
  */
-function withAuditLock<T>(dir: string, fn: () => T): { locked: boolean; value?: T } {
+function withAuditLock<T>(dir: string, fn: () => T, maxWaitMs = 3000): { locked: boolean; value?: T } {
   const lp = lockPath(dir);
   const token = `${process.pid}:${randomBytes(6).toString('hex')}`;
-  const deadline = Date.now() + 3000;
+  const deadline = Date.now() + maxWaitMs;
   for (;;) {
     try {
       const fd = fs.openSync(lp, 'wx'); // atomic exclusive create
@@ -516,10 +516,18 @@ function readHeadSidecar(dir: string): { seq: number; hash: string; at: string }
 export function appendAudit(dir: string, e: { at?: string; principal: string; decision: AuditDecision; server?: string; tool?: string; reason?: string; session?: string; agent?: string }): void {
   try {
     fs.mkdirSync(dir, { recursive: true });
+    // appendAudit runs on the REQUEST path: sleepMs is a synchronous Atomics.wait
+    // that blocks the gateway's event loop, so a long lock hold (the daemon
+    // verifying/anchoring across a big corpus) must NOT make every tenant's call
+    // spin the full 3s. Cap the wait sharply (default 40ms) and SPILL on contention
+    // — the spill/fold machinery folds it into the chain, in order, on the next
+    // uncontended write, so nothing is lost and the loop is never stalled for long
+    // (red-team DoS 1.8). Daemon-side anchorHead/rotateAudit keep the longer wait.
+    const appendWaitMs = Math.max(0, Number(process.env.CAIRN_AUDIT_APPEND_WAIT_MS) || 40);
     const r = withAuditLock(dir, () => {
       foldSpills(dir);        // bring any spilled rows into the chain first, in order
       appendChained(dir, e);  // then our own, off the true disk head
-    });
+    }, appendWaitMs);
     if (!r.locked) spillRow(dir, e); // could not lock: keep the row, fold it later — never append unlocked
   } catch (err) {
     process.stderr.write(`cairn-proxy: could not write audit entry: ${(err as Error).message}\n`);
