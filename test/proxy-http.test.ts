@@ -180,6 +180,12 @@ test('legitimate non-Latin output passes through the defanger unchanged (#4)', a
     const clean = texts(await p.call('mcp__data360__intl')).join('\n');
     assert.ok(clean.includes('INTL⟪Ελληνικά Привет こんにちは 🎉 ｈｅｌｌｏ⟫END'), 'the exact non-Latin string survives unchanged');
 
+    // A bare (unfenced) mention of the label words is NOT a forgery — legitimate
+    // prose (this project's own docs, a "-- end --" in markdown) must survive
+    // whole (Fable-5 #12: bare-phrase matching corrupted real output).
+    const bare = texts(await p.call('mcp__data360__bare_mention')).join('\n');
+    assert.ok(bare.includes('BARE⟪the cairn corpus lives in cairn/*.json; step 3 done -- end -- next⟫END'), 'a bare mention passes through unchanged');
+
     // Mixed: only the forged label is neutralized; the real non-Latin text around
     // it is intact (the old behavior folded Cyrillic П/е/д to Latin and dropped
     // the emoji-adjacent normalization).
