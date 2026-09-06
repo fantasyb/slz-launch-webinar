@@ -22,6 +22,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { selfUpdate, describeUpdate, repoRoot } from '../src/lib/cairn/selfUpdate';
+import { verifyAudit } from '../src/lib/cairn/enterprise';
 
 const argv = process.argv.slice(2);
 function opt(name: string): string | undefined {
@@ -68,6 +69,53 @@ const selfUpdateEnabled = selfUpdateMs > 0 && process.env.CAIRN_DAEMON_SELF_UPDA
 /* Start the clock at boot, so the first check is one interval away — never at
  * startup, which would let an update->exit->restart cycle re-check immediately. */
 let lastSelfUpdate = Date.now();
+
+/*
+ * Auto-verify the enterprise audit chain. Writing the log is already automatic
+ * (the gateway appends every decision); verifying it must be too, or tampering
+ * is caught only when a human remembers to run `cairn:audit-log verify`. The
+ * always-on daemon re-walks the chain on a slow tick and raises a LOUD alarm on
+ * a break — and drops a marker file so `/cairn` and the CLI surface it even
+ * after the log line scrolls. Silent when intact (like self-update up-to-date)
+ * and when there is no log (ungoverned). Never throws.
+ */
+function parseAuditVerifyInterval(): number {
+  const raw = process.env.CAIRN_AUDIT_VERIFY_INTERVAL_SEC;
+  if (raw === undefined || raw === '') return 3600;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) return 3600;
+  if (n === 0) return 0; // explicit disable
+  return Math.max(60, Math.floor(n));
+}
+const auditVerifyMs = parseAuditVerifyInterval() * 1000;
+let lastAuditVerify = 0; // verify once shortly after boot, then on the interval
+function maybeVerifyAudit(): void {
+  if (auditVerifyMs === 0 || stopping || !home) return;
+  if (lastAuditVerify && Date.now() - lastAuditVerify < auditVerifyMs) return;
+  lastAuditVerify = Date.now();
+  const dir = path.join(home, 'audit');
+  const marker = path.join(dir, 'ALARM.json');
+  let v;
+  try {
+    if (!fs.existsSync(path.join(dir, 'audit.jsonl'))) return; // ungoverned / no log: nothing to verify
+    v = verifyAudit(dir);
+  } catch (e) {
+    process.stderr.write(`cairn:daemon audit-verify threw (ignored): ${(e as Error).message}\n`);
+    return;
+  }
+  if (v.ok) {
+    // Intact: clear any stale alarm from a prior break that has since been fixed.
+    try { if (fs.existsSync(marker)) fs.unlinkSync(marker); } catch { /* best-effort */ }
+    return;
+  }
+  process.stderr.write(
+    `cairn:daemon AUDIT ALARM — the tamper-evident log is BROKEN at line ${v.brokenAt}: ${v.detail}. ` +
+      'An entry was edited, deleted, or reordered after it was written. Investigate immediately.\n',
+  );
+  try {
+    fs.writeFileSync(marker, JSON.stringify({ at: new Date().toISOString(), brokenAt: v.brokenAt, detail: v.detail, entries: v.entries }, null, 2) + '\n');
+  } catch { /* the log line is the primary signal; the marker is a convenience */ }
+}
 
 /** Find <repo>/bin/cairn-triage-trigger.js from here, whether run as source (scripts/) or bundle (dist/cli/). */
 function findTrigger(): string {
@@ -178,10 +226,13 @@ function maybeSelfUpdate(): void {
 async function main(): Promise<void> {
   process.stderr.write(
     `cairn:daemon up — triage every ${intervalMs / 1000}s, home ${home ?? '(default)'}` +
-      `, self-update ${selfUpdateEnabled ? `every ${selfUpdateMs / 1000}s` : 'off'}\n`,
+      `, self-update ${selfUpdateEnabled ? `every ${selfUpdateMs / 1000}s` : 'off'}` +
+      `, audit-verify ${auditVerifyMs ? `every ${auditVerifyMs / 1000}s` : 'off'}\n`,
   );
   while (!stopping) {
     await tick();
+    if (stopping) break;
+    maybeVerifyAudit(); // catch audit tampering without a human running verify
     if (stopping) break;
     maybeSelfUpdate();
     if (stopping) break;

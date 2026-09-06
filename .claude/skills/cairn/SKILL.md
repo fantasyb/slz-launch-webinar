@@ -104,9 +104,13 @@ Roles in `org-policy.json`: `allowServers` (strict allowlist), `denyServers`, `d
 
 The audit trail is the other half — every decision the governed gateway makes is one hash-chained JSONL entry:
 
-- **`cairn:audit-log view [--limit N]`** — the most recent decisions (who, what, on which server, allow/deny/auth-fail), and whether the chain is intact.
+- **`cairn:audit-log view [--limit N]`** — the most recent decisions (who, what, on which server, allow/deny/auth-fail, plus the session and client), and whether the chain is intact.
 - **`cairn:audit-log verify`** — re-walk the chain; any edit, deletion, or reorder of a committed entry is detected and the exact line named.
 - **`cairn:audit-log export [--out file]`** — stream the raw JSONL; it IS the SIEM feed.
+
+Verification is automatic, not something a human has to remember: the always-on daemon re-walks the chain on a slow tick (`CAIRN_AUDIT_VERIFY_INTERVAL_SEC`, default hourly) and raises a loud alarm on a break, dropping `CAIRN_HOME/audit/ALARM.json` so `/cairn` and the CLI surface it. If that marker is present, lead with it — the tamper-evident log detected a break, which is a security incident, not a bug to smooth over.
+
+Two postures worth stating plainly when asked: writing the log is automatic (the governed gateway records every decision, no one turns it on) and verifying it is automatic (the daemon), so the audit is part of the always-on system, not a manual step. And a policy that EXISTS but is unreadable or invalid fails **closed** — the gateway refuses (503, or refuses to start) rather than silently reverting to the ungoverned personal mode; governance never turns itself off because a file was mis-saved.
 
 When showing enterprise state, lead with whether the gateway is **governed at all** (is there a policy, is auth required) — an ungoverned gateway has no principals and an empty audit log by design, which is not a fault. `org-policy.json` and `audit/` are local governance state (gitignored on install); they are never corpus content and never leave the machine unless exported.
 

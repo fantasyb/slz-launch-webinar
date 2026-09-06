@@ -83,7 +83,11 @@ test('a finding recorded through the gateway never has its check executed', asyn
   assert.ok(agentBranch !== -1 && agentBranch < policyBranch, 'agent is checked first');
 
   const proxy = fs.readFileSync(path.join(process.cwd(), 'scripts', 'mcp-proxy.ts'), 'utf8');
-  assert.match(proxy, /recordSubmission\(submission, \{ by: session\.agent, origin: 'agent' \}\)/, 'the gateway declares itself');
+  // The security-relevant fact is origin: 'agent' — the gateway declares that
+  // what it records came from a model out of an untrusted tool, so the check is
+  // never executed. (The author `by` is ownBy: the authenticated principal when
+  // governed, the client name otherwise — attribution, not the safety property.)
+  assert.match(proxy, /recordSubmission\(submission, \{ by: ownBy, origin: 'agent' \}\)/, 'the gateway declares itself');
   assert.equal(typeof recordSubmission, 'function');
 });
 

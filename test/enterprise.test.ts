@@ -12,9 +12,12 @@ import assert from 'node:assert/strict';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import fsReal from 'fs';
+import osReal from 'os';
+import pathReal from 'path';
 import {
   authenticate, authorize, tokenHash, bearerToken, LOCAL_ADMIN,
-  appendAudit, verifyAudit, readAudit, _resetAuditCache,
+  appendAudit, verifyAudit, readAudit, _resetAuditCache, readOrgPolicy,
   type OrgPolicy,
 } from '../src/lib/cairn/enterprise';
 
@@ -96,6 +99,57 @@ test('read-only denies a write, by declaration or by name, and permits a read', 
   assert.equal(authorize(p, alice, 'sf', { name: 'delete_records' }).allowed, false, 'a write-looking name is denied');
   assert.equal(authorize(p, alice, 'sf', { name: 'run', annotations: { destructiveHint: true } }).allowed, false, 'a declared-destructive tool is denied');
   assert.equal(authorize(p, alice, 'sf', { name: 'fetch', annotations: { readOnlyHint: false } }).allowed, false, 'a declared-write tool is denied even with a read-looking name');
+  // The hole Fable found at the call site: a tool whose NAME misses the
+  // write-looking word list but DECLARES itself destructive must still be denied
+  // to a read-only role — the annotations must reach authorize, not be dropped.
+  assert.equal(authorize(p, alice, 'sf', { name: 'transfer_funds', annotations: { destructiveHint: true } }).allowed, false, 'a benign-named but declared-destructive tool is denied read-only');
+});
+
+test('denyTools matches the exposed name AND the raw alias, case-folded', () => {
+  const p = policy({ roles: { admin: { denyTools: ['github__Delete_Repo'] } } });
+  // Operator copied the exposed name; the gateway routes by the raw name.
+  assert.equal(authorize(p, bob, 'github', { name: 'github__delete_repo', aliases: ['delete_repo'] }).allowed, false, 'exposed name matches case-insensitively');
+  assert.equal(authorize(p, bob, 'github', { name: 'delete_repo', aliases: ['delete_repo'] }).allowed, true, 'a different tool is unaffected');
+  const p2 = policy({ roles: { admin: { denyTools: ['delete_repo'] } } });
+  assert.equal(authorize(p2, bob, 'github', { name: 'github__delete_repo', aliases: ['delete_repo'] }).allowed, false, 'the raw alias also matches');
+});
+
+test('an expired token is refused', () => {
+  const raw = ['expiring', 'token'].join('-');
+  const past = new Date(Date.now() - 1000).toISOString();
+  const future = new Date(Date.now() + 60_000).toISOString();
+  const expired = policy({ principals: { [tokenHash(raw)]: { id: 'temp', role: 'readonly', expiresAt: past } } });
+  assert.equal(authenticate(expired, `Bearer ${raw}`).principal, null, 'a past expiry is rejected');
+  assert.match(authenticate(expired, `Bearer ${raw}`).reason ?? '', /expired/);
+  const valid = policy({ principals: { [tokenHash(raw)]: { id: 'temp', role: 'readonly', expiresAt: future } } });
+  assert.equal(authenticate(valid, `Bearer ${raw}`).principal?.id, 'temp', 'a future expiry still works');
+});
+
+/* ---- policy loading: fail closed, never open ---------------------------- */
+
+test('a corrupt or unreadable policy loads as error (fail closed), never as none', () => {
+  const dir = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'cairn-pol-'));
+  const file = pathReal.join(dir, 'org-policy.json');
+  const prev = process.env.CAIRN_ORG_POLICY;
+  process.env.CAIRN_ORG_POLICY = file;
+  try {
+    // Absent → none (the personal case).
+    assert.equal(readOrgPolicy().status, 'none', 'no file is the personal case');
+    // Half-written JSON → error, so the gateway can fail closed instead of
+    // treating a corrupt policy as "no policy" and turning every control off.
+    fsReal.writeFileSync(file, '{ "auth": { "required": tru');
+    assert.equal(readOrgPolicy().status, 'error', 'truncated JSON is an error, not none');
+    // auth.required not a boolean → error (a typo must not coincidentally mean off).
+    fsReal.writeFileSync(file, JSON.stringify({ auth: { required: 'true' }, principals: {}, roles: {} }));
+    assert.equal(readOrgPolicy().status, 'error', 'a non-boolean auth.required is an error');
+    // A valid policy → ok.
+    fsReal.writeFileSync(file, JSON.stringify({ auth: { required: true }, principals: {}, roles: {} }));
+    const r = readOrgPolicy();
+    assert.equal(r.status, 'ok');
+    assert.equal(r.status === 'ok' && r.policy.auth.required, true);
+  } finally {
+    if (prev === undefined) delete process.env.CAIRN_ORG_POLICY; else process.env.CAIRN_ORG_POLICY = prev;
+  }
 });
 
 /* ---- audit: the tamper-evident chain ----------------------------------- */
@@ -149,6 +203,36 @@ test('deleting an entry breaks the chain (prevHash no longer matches)', () => {
   const v = verifyAudit(dir);
   assert.equal(v.ok, false, 'a deletion is detected');
   assert.match(v.detail ?? '', /deletion or reorder|out of order/);
+});
+
+test('a partial trailing line does not restart the chain at genesis (crash recovery)', () => {
+  const dir = freshDir();
+  appendAudit(dir, { principal: 'a', decision: 'call', server: 's', tool: 't1' });
+  appendAudit(dir, { principal: 'a', decision: 'call', server: 's', tool: 't2' });
+  // Simulate a crash mid-append: a garbage partial line at the tail.
+  const file = pathReal.join(dir, 'audit.jsonl');
+  fsReal.appendFileSync(file, '{"seq":3,"at":"2026');
+  _resetAuditCache();
+  // The next real append must anchor to entry 2's hash (seq 3), NOT restart at
+  // genesis seq 1 — a second chain would orphan everything before the garbage.
+  appendAudit(dir, { principal: 'a', decision: 'call', server: 's', tool: 't3' });
+  const entries = readAudit(dir);
+  const real = entries.filter((e) => e.tool);
+  assert.equal(real[real.length - 1].seq, 3, 'the recovered append continues the chain at seq 3, not 1');
+  // verify flags the garbage line (corruption IS detected) rather than hiding it.
+  assert.equal(verifyAudit(dir).ok, false, 'the corrupt tail line is reported by verify');
+});
+
+test('session and agent are inside the chain hash (tampering with correlation data is caught)', () => {
+  const dir = freshDir();
+  appendAudit(dir, { principal: 'alice', decision: 'call', server: 'sf', tool: 'query', session: 's1', agent: 'cursor' });
+  assert.equal(verifyAudit(dir).ok, true);
+  const file = pathReal.join(dir, 'audit.jsonl');
+  const e = JSON.parse(fsReal.readFileSync(file, 'utf8').trim());
+  e.session = 's2'; // rewrite the session id, keep the stored hash
+  fsReal.writeFileSync(file, JSON.stringify(e) + '\n');
+  _resetAuditCache();
+  assert.equal(verifyAudit(dir).ok, false, 'editing the session id breaks the hash');
 });
 
 test('a write failure never throws out of appendAudit (a broken log must not break a call)', () => {

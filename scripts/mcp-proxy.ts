@@ -76,7 +76,7 @@ import { recordSubmission } from '../src/lib/cairn/recordFinding';
 import { redactForLedger } from '../src/lib/cairn/safety';
 import { shapeOf, diffSurface, findingNames, type ToolShape, type SurfaceChange } from '../src/lib/cairn/toolsurface';
 import { trustMode, readPin, writePin, evaluateTrust } from '../src/lib/cairn/trust';
-import { loadOrgPolicy, orgPolicyPath, authenticate, authorize, appendAudit, LOCAL_ADMIN, type OrgPolicy, type Principal } from '../src/lib/cairn/enterprise';
+import { readOrgPolicy, orgPolicyPath, authenticate, authorize, appendAudit, LOCAL_ADMIN, type OrgPolicy, type Principal } from '../src/lib/cairn/enterprise';
 import { summarise, detect, type CallSummary } from '../src/lib/cairn/contradiction';
 import { tierOf } from '../src/lib/cairn/brief';
 import { resonates } from '../src/lib/cairn/resonance';
@@ -1170,7 +1170,7 @@ async function main() {
   const servers = new Set<Server>();
 
   /* Owner maps, rebuilt whenever a list is fetched or an upstream says it changed. */
-  const toolOwner = new Map<string, { up: Upstream; raw: string }>();
+  const toolOwner = new Map<string, { up: Upstream; raw: string; annotations?: Tool['annotations'] }>();
   const promptOwner = new Map<string, { up: Upstream; raw: string }>();
   const resourceOwner = new Map<string, Upstream>();
   const templateOwner = new Map<string, Upstream>();
@@ -1205,21 +1205,63 @@ async function main() {
   }
 
   /*
-   * The org policy, reloaded when its file changes (mtime), so a revoked token
-   * or an edited role takes effect on the next request without restarting the
-   * gateway — but without a full JSON parse on every request. A missing file is
-   * the personal case (no governance) and is cached as null.
+   * Governance state, reloaded when the policy file changes — so a revoked token
+   * or an edited role takes effect on the next request without a restart — but
+   * without a full parse per request. Three states, and the difference is the
+   * whole security posture:
+   *
+   *   - `ungoverned`  the file genuinely does not exist. The personal tool.
+   *   - `governed`    a valid policy is in force.
+   *   - `error`       the file EXISTS but is unreadable or invalid. FAIL CLOSED:
+   *                   the gateway refuses every request (503) rather than falling
+   *                   back to ungoverned, which would silently turn auth, RBAC
+   *                   and audit off while the file that turns them on sits right
+   *                   there. Once we have seen a valid policy we keep serving on
+   *                   it (last-good) instead of erroring, so a transient bad save
+   *                   does not take the gateway down — but we NEVER downgrade a
+   *                   governed gateway to ungoverned.
+   *
+   * The cache key is (ino, size, mtimeMs), not mtime alone: `cairn:org` writes by
+   * rename so the inode changes every write, catching two edits within one coarse
+   * mtime tick (a mint then a revoke in the same second) that mtime would miss.
    */
-  let policyCache: { mtimeMs: number; value: OrgPolicy | null } | null = null;
-  function orgPolicy(): OrgPolicy | null {
+  type Governance = { mode: 'ungoverned' } | { mode: 'governed'; policy: OrgPolicy } | { mode: 'error'; reason: string };
+  let lastGoodPolicy: OrgPolicy | null = null;
+  let govCache: { key: string; value: Governance } | null = null;
+  let lastGovWarn = 0;
+  function governance(): Governance {
     const p = orgPolicyPath();
-    if (!p) return null;
-    let mtimeMs: number;
-    try { mtimeMs = fs.statSync(p).mtimeMs; } catch { policyCache = null; return null; }
-    if (policyCache && policyCache.mtimeMs === mtimeMs) return policyCache.value;
-    const value = loadOrgPolicy();
-    policyCache = { mtimeMs, value };
+    if (!p) return { mode: 'ungoverned' };
+    let key: string;
+    try {
+      const st = fs.statSync(p);
+      key = `${st.ino}:${st.size}:${st.mtimeMs}`;
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === 'ENOENT') return { mode: 'ungoverned' };
+      // The file exists but stat failed (permission, race): if we were ever
+      // governed, keep governing on last-good; otherwise fail closed.
+      return lastGoodPolicy ? { mode: 'governed', policy: lastGoodPolicy } : { mode: 'error', reason: `policy cannot be stat'd: ${(e as Error).message}` };
+    }
+    if (govCache && govCache.key === key) return govCache.value;
+    const load = readOrgPolicy();
+    let value: Governance;
+    if (load.status === 'none') value = { mode: 'ungoverned' };
+    else if (load.status === 'ok') { lastGoodPolicy = load.policy; value = { mode: 'governed', policy: load.policy }; }
+    else {
+      // Invalid/corrupt policy: fail closed, or keep last-good if we have one.
+      if (Date.now() - lastGovWarn > 30_000) { process.stderr.write(`cairn-proxy: ORG POLICY ERROR — ${load.reason}. ${lastGoodPolicy ? 'Serving on the last valid policy.' : 'Refusing all requests until it is fixed.'}\n`); lastGovWarn = Date.now(); }
+      value = lastGoodPolicy ? { mode: 'governed', policy: lastGoodPolicy } : { mode: 'error', reason: load.reason };
+    }
+    govCache = { key, value };
     return value;
+  }
+
+  /** The policy in force, or null when ungoverned. Handlers run only for an
+   * already-authenticated request, so an `error` here means keep-last-good
+   * governed; treat a bare null as ungoverned. */
+  function currentPolicy(): OrgPolicy | null {
+    const g = governance();
+    return g.mode === 'governed' ? g.policy : null;
   }
 
   /** Governed = an authenticated, non-local principal under an org policy. The
@@ -1232,7 +1274,7 @@ async function main() {
     if (!governed(session)) return;
     const dir = auditDirOf();
     if (!dir) return;
-    appendAudit(dir, { principal: session.principal.id, decision, server, tool, reason });
+    appendAudit(dir, { principal: session.principal.id, decision, server, tool, reason, session: session.id, agent: session.agent });
   }
 
   /*
@@ -1409,10 +1451,18 @@ async function main() {
     } catch {
       return [];
     }
+    const enforce = trustMode() === 'enforce';
+    const policy = governed(session) ? currentPolicy() : null;
     const lines: string[] = [];
     for (const t of tools) {
       const name = expose(up, t.name);
       if (name === except) continue;
+      // Do not name a tool the caller cannot reach: a trust-withheld tool (the
+      // rug-pull defence would be undone by advertising it) or one this
+      // principal's role is denied (advertising it is reconnaissance for a
+      // by-name call). The index is a convenience, never a capability leak.
+      if (enforce && up.trustBlocked.has(t.name)) continue;
+      if (policy && !authorize(policy, session.principal, up.spec.name, { name, aliases: [t.name], annotations: t.annotations as never }).allowed) continue;
       const about = findingsAbout(up.spec.name, t.name, name, findings, propertyNames(t));
       if (!about.length) continue;
       const a = about[0];
@@ -1547,7 +1597,7 @@ async function main() {
      * (pagination) left it incomplete mid-listing, so a concurrent CallTool or a
      * list_changed clearing it produced `toolOwner.get(name)!` === undefined and
      * a TypeError — the client then saw the wrapped server as having no tools. */
-    const owners = new Map<string, { up: Upstream; raw: string }>();
+    const owners = new Map<string, { up: Upstream; raw: string; annotations?: Tool['annotations'] }>();
     const out: Tool[] = [];
     /* A listing is the moment a dead upstream is missed; try to bring it back first, within its backoff. */
     for (const up of upstreams) if (!up.alive) await ensure(up);
@@ -1575,7 +1625,7 @@ async function main() {
         const name = expose(up, t.name);
         // Always route-known, so a call to a withheld tool gets a clear refusal
         // rather than a generic "no such tool".
-        owners.set(name, { up, raw: t.name });
+        owners.set(name, { up, raw: t.name, annotations: t.annotations });
         if (enforce && up.trustBlocked.has(t.name)) continue; // withhold a changed/unapproved tool from the list
         // Defang any imitation of our label in the upstream's own description
         // before it reaches the model (an HTTP host could forge a Cairn block).
@@ -1689,11 +1739,11 @@ async function main() {
       // governed server's, so they are never filtered here. Ungoverned (personal)
       // sessions skip this whole branch.
       if (governed(session)) {
-        const policy = orgPolicy();
+        const policy = currentPolicy();
         tools = tools.filter((t) => {
           const owner = toolOwner.get(t.name);
           if (!owner) return true; // a gateway-own tool, or one about to be resolved
-          return authorize(policy, session.principal, owner.up.spec.name, { name: owner.raw, annotations: t.annotations as never }).allowed;
+          return authorize(policy, session.principal, owner.up.spec.name, { name: t.name, aliases: [owner.raw], annotations: t.annotations as never }).allowed;
         });
       }
       const { findings } = localFindings();
@@ -1719,6 +1769,33 @@ async function main() {
     server.setRequestHandler(CallToolRequestSchema, async (req, extra) => {
       const args = (req.params.arguments ?? {}) as Record<string, unknown>;
 
+      /*
+       * The gateway's OWN tools are governed too. They were previously exempt,
+       * which let a read-only tenant write findings into the shared corpus — text
+       * that is rendered back into every other tenant's tool descriptions,
+       * results and instructions (a cross-principal prompt-injection channel),
+       * and let it sign a refutation with the operator's key. So a governed
+       * session is authorized here just like an upstream call, and every own-tool
+       * call is audited under a pseudo-server "cairn". Writes (record/observe/
+       * note) read as writes; find reads as a read. Ungoverned sessions skip this.
+       */
+      const isOwnTool = !toolOwner.has(req.params.name) && ['cairn_record', 'cairn_observe', 'cairn_note', 'cairn_find'].includes(req.params.name);
+      if (isOwnTool && governed(session)) {
+        const isWrite = req.params.name !== 'cairn_find';
+        const az = authorize(currentPolicy(), session.principal, 'cairn', { name: req.params.name, annotations: { readOnlyHint: !isWrite, destructiveHint: false } as never });
+        if (!az.allowed) {
+          audit(session, 'deny', 'cairn', req.params.name, az.reason);
+          return textResult(`cairn-proxy: "${req.params.name}" is not permitted — ${az.reason}.`, true);
+        }
+        audit(session, 'call', 'cairn', req.params.name);
+      }
+      /* Attribution and signing for the own tools. For a governed session the
+       * author is the authenticated principal, never the client-chosen agent
+       * name; and a remote tenant must NOT sign with the operator's key, whose
+       * meaning is "this gateway's observations are mine". */
+      const ownBy = governed(session) ? session.principal.id : session.agent;
+      const ownKey = governed(session) ? undefined : process.env.CAIRN_KEY;
+
       /* ---- the gateway's own tools, unless an upstream owns the name ---- */
       if (!toolOwner.has(req.params.name) && req.params.name === 'cairn_record') {
         /*
@@ -1728,7 +1805,7 @@ async function main() {
          * never executed here, whatever this machine's execution policy says.
          */
         const { note: noteId, arc: arcId, ...submission } = args as Record<string, unknown> & { note?: unknown; arc?: unknown };
-        const outcome = await recordSubmission(submission, { by: session.agent, origin: 'agent' });
+        const outcome = await recordSubmission(submission, { by: ownBy, origin: 'agent' });
         if (outcome.ok && typeof arcId === 'string') countArc(arcId, 'bank', session);
         try { observe(`cairn_record ${outcome.ok ? outcome.finding!.id : 'refused'}`, [], 'mcp-proxy:record', { by: session.agent, session: session.id }); } catch { /* never fatal */ }
         let closed = '';
@@ -1741,7 +1818,7 @@ async function main() {
         return textResult(outcome.message + closed, !outcome.ok);
       }
       if (!toolOwner.has(req.params.name) && req.params.name === 'cairn_observe') {
-        const outcome = attest(args, { by: session.agent ?? 'agent', via: `cairn-proxy, client ${session.agent ?? 'unknown'}`, keyId: process.env.CAIRN_KEY });
+        const outcome = attest(args, { by: ownBy ?? 'agent', via: `cairn-proxy, client ${session.agent ?? 'unknown'}`, keyId: ownKey });
         try { observe(`cairn_observe ${String(args.finding ?? '?')} ${outcome.ok ? String(args.verdict) : 'refused'}`, [], `mcp-proxy:observe-${outcome.ok ? String(args.verdict) : 'refused'}`, { by: session.agent, session: session.id }); } catch { /* never fatal */ }
         return textResult(outcome.message, !outcome.ok);
       }
@@ -1758,7 +1835,7 @@ async function main() {
           return textResult(dropped ? `Discarded ${dropped.id}.` : `No open note with id ${args.discard}.`, !dropped);
         }
         const { arc: arcId, ...noteArgs } = args as Record<string, unknown> & { arc?: unknown };
-        const outcome = recordNote(noteArgs, { by: session.agent, session: session.id });
+        const outcome = recordNote(noteArgs, { by: ownBy, session: session.id });
         try { observe(`cairn_note ${outcome.ok ? outcome.note!.id : 'refused'}`, [], 'mcp-proxy:note', { by: session.agent, session: session.id }); } catch { /* never fatal */ }
         if (outcome.ok && typeof arcId === 'string') countArc(arcId, 'bank', session);
         return textResult(outcome.message, !outcome.ok);
@@ -1791,7 +1868,12 @@ async function main() {
        * tool's result — and the org has an audit row for the attempt.
        */
       if (governed(session)) {
-        const az = authorize(orgPolicy(), session.principal, owner.up.spec.name, { name: owner.raw, annotations: undefined });
+        // Real annotations, not undefined: a read-only role must catch a tool
+        // that DECLARES itself destructive even when its name misses the
+        // write-looking word list (transfer_funds, approve_invoice, exec …).
+        // Matched on the exposed name the operator sees, with the raw name as an
+        // alias so a denyTools entry in either form lands.
+        const az = authorize(currentPolicy(), session.principal, owner.up.spec.name, { name: req.params.name, aliases: [owner.raw], annotations: owner.annotations as never });
         if (!az.allowed) {
           audit(session, 'deny', owner.up.spec.name, owner.raw, az.reason);
           return textResult(`cairn-proxy: "${req.params.name}" is not permitted — ${az.reason}.`, true);
@@ -1805,6 +1887,7 @@ async function main() {
        */
       if (trustMode() === 'enforce' && owner.up.trustBlocked.has(owner.raw)) {
         try { observe(`${owner.up.spec.name} ${owner.raw} [trust-withheld]`, [], 'mcp-proxy:trust-withheld', { by: session.agent, session: session.id }); } catch { /* never fatal */ }
+        audit(session, 'deny', owner.up.spec.name, owner.raw, 'trust: tool surface changed since approval (withheld)');
         return textResult(
           `cairn-proxy: "${req.params.name}" is withheld — its definition changed since this server was approved, ` +
             `which is how a tool-poisoning / rug-pull attack looks. Re-approve the server with \`cairn:trust --reapprove ${owner.up.spec.name}\` once you have confirmed the change is legitimate.`,
@@ -1885,6 +1968,7 @@ async function main() {
       } catch (e) {
         if (extra.signal.aborted) {
           try { observe(callRecord(req.params.name, args), [], 'mcp-proxy:cancelled', { by: session.agent, session: session.id }); } catch { /* never fatal */ }
+          audit(session, 'error', owner.up.spec.name, owner.raw, 'cancelled by client');
           return textResult(`cairn-proxy: call to "${req.params.name}" was cancelled by the client`, true);
         }
         /*
@@ -1901,6 +1985,7 @@ async function main() {
          * upstream already flips via onclose, so this is scoped to HTTP.
          */
         if (owner.up.spec.url) owner.up.alive = false;
+        audit(session, 'error', owner.up.spec.name, owner.raw, `transport failure: ${owner.up.lastError}`);
         return textResult(`cairn-proxy: call to "${req.params.name}" failed: ${owner.up.lastError}`, true);
       }
 
@@ -1908,6 +1993,9 @@ async function main() {
         const { findings } = localFindings();
         const about = findingsAbout(owner.up.spec.name, owner.raw, req.params.name, findings, Object.keys(args));
         const isError = result.isError === true;
+        // The outcome, chained after the attempt row: the log must not say a call
+        // succeeded when the tool refused it.
+        if (isError) audit(session, 'error', owner.up.spec.name, owner.raw, 'tool returned an error result');
         const ctx = { by: session.agent, session: session.id };
         const ownText = Array.isArray(result.content)
           ? (result.content as Array<{ type: string; text?: string }>).filter((c) => c.type === 'text').map((c) => c.text ?? '').join('\n')
@@ -2266,20 +2354,37 @@ async function main() {
       // `new URL` throw, and the host is untrusted anyway.
       const url = new URL(req.url ?? '/', 'http://localhost');
       if (url.pathname === '/healthz') {
+        const g = governance();
         res.writeHead(200, { 'content-type': 'application/json' });
-        res.end(JSON.stringify({
+        /*
+         * Health is unauthenticated (a liveness probe must never need a
+         * credential), so a GOVERNED gateway discloses only liveness and its
+         * governance posture — never upstream names or the corpus path, which are
+         * reconnaissance for whoever can reach the port. An ungoverned personal
+         * gateway keeps the fuller shape (there is nothing to protect and it is
+         * loopback by default). `governed`/`auth`/`audit` let an operator confirm
+         * the controls are actually live on the running host.
+         */
+        const base = {
           ok: true,
           sessions: transports.size,
-          /* So an operator can confirm the hardening is live on the running host,
-           * not just in the source: idle sessions are reaped and long calls relay
-           * progress. idleEvictionMs is the window a dropped client is held before
-           * its transport and state are freed. */
-          idleEvictionMs: IDLE_MS,
-          relaysProgress: true,
-          upstreams: upstreams.map((u) => ({ name: u.spec.name, alive: u.alive })),
-          corpus: corpusDir() ?? null,
-          degraded: degraded(),
-        }));
+          governed: g.mode === 'governed',
+          policy: g.mode,
+          auth: g.mode === 'governed' ? g.policy.auth.required : false,
+          audit: g.mode !== 'ungoverned' ? !!auditDirOf() : false,
+        };
+        res.end(JSON.stringify(
+          g.mode === 'governed'
+            ? base
+            : {
+                ...base,
+                idleEvictionMs: IDLE_MS,
+                relaysProgress: true,
+                upstreams: upstreams.map((u) => ({ name: u.spec.name, alive: u.alive })),
+                corpus: corpusDir() ?? null,
+                degraded: degraded(),
+              },
+        ));
         return;
       }
       if (url.pathname !== '/mcp') {
@@ -2293,8 +2398,21 @@ async function main() {
        * mandatory: a missing or unknown token is a 401 and a hash-chained
        * `auth-fail` audit row, before any MCP dispatch. Re-checked on EVERY
        * request, so a revoked token stops working mid-session without a restart.
+       *
+       * First: a policy that EXISTS but is unreadable/invalid fails closed with
+       * 503, never open to ungoverned. governance() never downgrades a gateway
+       * that has been governed.
        */
-      const authResult = authenticate(orgPolicy(), req.headers.authorization);
+      const gov = governance();
+      if (gov.mode === 'error') {
+        const dir = auditDirOf();
+        if (dir) { try { appendAudit(dir, { principal: 'anonymous', decision: 'auth-fail', reason: `policy unusable: ${gov.reason}` }); } catch { /* never fatal */ } }
+        res.writeHead(503, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ jsonrpc: '2.0', error: { code: -32002, message: 'gateway unavailable: org policy is present but unreadable; refusing all requests until it is valid' }, id: null }));
+        return;
+      }
+      const policy = gov.mode === 'governed' ? gov.policy : null;
+      const authResult = authenticate(policy, req.headers.authorization);
       if (!authResult.principal) {
         const dir = auditDirOf();
         if (dir) { try { appendAudit(dir, { principal: 'anonymous', decision: 'auth-fail', reason: authResult.reason }); } catch { /* never fatal */ } }
@@ -2313,7 +2431,26 @@ async function main() {
       const existing = typeof sid === 'string' ? transports.get(sid) : undefined;
       if (existing) {
         const meta = typeof sid === 'string' ? live.get(sid) : undefined;
-        if (meta) { meta.session.lastSeen = Date.now(); meta.session.principal = principal; }
+        if (meta) {
+          /*
+           * A session is BOUND to the principal that initialized it. A different
+           * authenticated principal presenting this session id — a leaked/observed
+           * mcp-session-id — is refused, not silently re-bound: re-binding would
+           * let one tenant attach to another's session (its SSE stream, its
+           * pending calls, its cached failed-call args) and would open an authz
+           * TOCTOU where a concurrent request flips session.principal under a
+           * call in flight. Same principal (id+role) may reconnect freely.
+           */
+          const bound = meta.session.principal;
+          const sameBound = bound === LOCAL_ADMIN ? principal === LOCAL_ADMIN : (principal.id === bound.id && principal.role === bound.role);
+          if (!sameBound) {
+            audit(meta.session, 'deny', undefined, undefined, `session ${sid} is bound to another principal (${bound.id}); refused for ${principal.id}`);
+            res.writeHead(403, { 'content-type': 'application/json' });
+            res.end(JSON.stringify({ jsonrpc: '2.0', error: { code: -32003, message: 'forbidden: this session belongs to another principal' }, id: null }));
+            return;
+          }
+          meta.session.lastSeen = Date.now();
+        }
         await existing.handleRequest(req, res, body);
         return;
       }
@@ -2344,10 +2481,46 @@ async function main() {
       } catch { /* the socket is already gone */ }
     }
   });
+  /*
+   * Startup governance sanity, before we accept a single request. Two failures
+   * are refused rather than served:
+   *   - a policy present but unreadable/invalid: fail closed (never open).
+   *   - governed, but the audit dir cannot be resolved OR cannot be written:
+   *     an enterprise gateway that cannot record its decisions is not one; a
+   *     probe append proves the log works before we depend on it.
+   * And a non-loopback bind with NO policy is a decision that must be explicit —
+   * an open, ungoverned tool gateway on a network interface is refused unless
+   * CAIRN_ALLOW_UNGOVERNED=1 says that is intended.
+   */
+  const startupGov = governance();
+  if (startupGov.mode === 'error') {
+    process.stderr.write(`cairn-proxy: refusing to start — org policy is present but unusable: ${startupGov.reason}. Fix ${orgPolicyPath()} or remove it.\n`);
+    process.exit(1);
+  }
+  if (startupGov.mode === 'governed') {
+    const dir = auditDirOf();
+    if (!dir) {
+      process.stderr.write('cairn-proxy: refusing to start — governed (org policy in force) but no audit directory resolves (CAIRN_HOME). An enterprise gateway must be able to record its decisions.\n');
+      process.exit(1);
+    }
+    try {
+      appendAudit(dir, { principal: 'system', decision: 'allow', reason: 'gateway started; audit log writable' });
+    } catch (e) {
+      process.stderr.write(`cairn-proxy: refusing to start — governed but the audit log is not writable at ${dir}: ${(e as Error).message}\n`);
+      process.exit(1);
+    }
+  } else {
+    const loopback = host === '127.0.0.1' || host === '::1' || host === 'localhost';
+    if (!loopback && process.env.CAIRN_ALLOW_UNGOVERNED !== '1') {
+      process.stderr.write(`cairn-proxy: refusing to start — binding a non-loopback host (${host}) with NO org policy means an open, unauthenticated, unaudited tool gateway. Add a policy (cairn:org init-policy --require-auth), or set CAIRN_ALLOW_UNGOVERNED=1 if that is truly intended.\n`);
+      process.exit(1);
+    }
+  }
+
   await new Promise<void>((resolve) => httpServer.listen(HTTP_PORT!, host, resolve));
   const addr = httpServer.address();
   const port = typeof addr === 'object' && addr ? addr.port : HTTP_PORT;
-  process.stderr.write(`cairn-proxy: listening on http://${host}:${port}/mcp (corpus ${corpusDir() ?? 'none'})\n`);
+  process.stderr.write(`cairn-proxy: listening on http://${host}:${port}/mcp (corpus ${corpusDir() ?? 'none'}, ${startupGov.mode})\n`);
 }
 
 main().catch((e) => {
