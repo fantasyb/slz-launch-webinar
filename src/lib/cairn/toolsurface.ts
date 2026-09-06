@@ -63,15 +63,28 @@ export function shapeOf(tool: Tool): ToolShape {
  * `deploy`, `creates` -> `create`) while dropping the embedded-substring
  * false positives.
  */
-const WRITE_VERBS = 'create|update|delete|upsert|execute|insert|remove|write|modify|destroy|drop|send|post|put|patch|deploy|run|shell|bash|exec|eval|sql|merge|push|approve|reject|transfer|grant|revoke|provision|terminate|restart|reboot|kill|scale|wipe|erase|format|truncate|refund|charge|email|invite|publish|unpublish|install|uninstall|rename|move|chmod|chown|edit|apply|commit|revert|rollback|reset|invoke|trigger|enable|disable|activate|deactivate|assign|unassign|import|upload|purge|flush|archive';
+const WRITE_VERBS = 'create|update|delete|upsert|execute|insert|remove|write|modify|destroy|drop|send|post|put|patch|deploy|run|shell|bash|exec|eval|sql|merge|push|approve|reject|transfer|grant|revoke|provision|terminate|restart|reboot|kill|scale|wipe|erase|format|truncate|refund|charge|email|invite|publish|unpublish|install|uninstall|rename|move|chmod|chown|edit|apply|commit|revert|rollback|reset|invoke|trigger|enable|disable|activate|deactivate|assign|unassign|import|upload|purge|flush|archive'
+  // Added after Fable-5 flagged unannotated writes reaching a read-only role. The
+  // leading-read-verb guard below keeps these from misreading a plain read
+  // (list_orders, get_address, set-topped nouns) as a write.
+  + '|add|set|save|submit|cancel|start|stop|close|open|resolve|mark|reply|comment|clear|restore|copy|clone|sync|launch|schedule|pause|resume|accept|complete|register|notify|dispatch|append|lock|unlock|regenerate|pay|order|book|make|generate';
 const WRITE_TOKEN = new RegExp(`^(?:${WRITE_VERBS})`, 'i');
+// A name whose FIRST token is one of these reads as a read whatever follows:
+// list_orders, get_address, search_bookmarks are reads even though a later
+// token (orders, address, bookmarks) begins with a write verb. This is what
+// lets the write list grow to catch add_comment / set_status / close_issue
+// without turning every get_/list_ tool into a false write.
+const READ_VERBS = /^(?:get|list|read|search|query|find|describe|fetch|show|view|count|check|status|lookup|scan|head|exists|inspect|preview|browse)$/i;
 /** Split a tool name into word tokens on separators and camelCase boundaries. */
 function nameTokens(name: string): string[] {
   return name.replace(/([a-z0-9])([A-Z])/g, '$1 $2').split(/[^A-Za-z0-9]+/).filter(Boolean);
 }
-/** Does any token of this name begin with a write verb? */
+/** Does this name read as a write? A leading read verb (get/list/…) settles it
+ * as a read; otherwise any token that begins with a write verb makes it a write. */
 export function readsAsWrite(name: string): boolean {
-  return nameTokens(name).some((t) => WRITE_TOKEN.test(t));
+  const tokens = nameTokens(name);
+  if (tokens.length && READ_VERBS.test(tokens[0])) return false;
+  return tokens.some((t) => WRITE_TOKEN.test(t));
 }
 /** @deprecated Substring-matches; use readsAsWrite. Kept for callers that test raw names. */
 export const WRITE_LOOKING = new RegExp(WRITE_VERBS, 'i');

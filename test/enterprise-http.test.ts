@@ -331,10 +331,33 @@ test('with no org policy, the same gateway needs no token (the personal case is 
   const home = baseHome('cairn-ent-open-');
   const { child, base } = await startProxy(home);
   try {
+    // Check /healthz FIRST (a plain GET opens no SSE stream that could perturb
+    // the next request's socket): a LOOPBACK personal gateway discloses the
+    // fuller shape, since there is nothing to protect.
+    const health = JSON.parse((await hit(base, '/healthz')).body) as Record<string, unknown>;
+    assert.ok('upstreams' in health && 'corpus' in health, 'the loopback personal gateway shows the full shape');
+
     const ok = await hit(base, '/mcp', { method: 'POST', headers: mcpHeaders(), body: initBody() });
     assert.equal(ok.status, 200, 'no policy means no auth — a bare initialize is accepted');
     // And nothing was audited: an ungoverned gateway keeps no access log.
     assert.equal(readAudit(path.join(home, 'audit')).length, 0, 'the personal gateway writes no audit entries');
+  } finally {
+    stopProxy(child);
+  }
+});
+
+test('a NETWORK-bound gateway never discloses the full health shape, even ungoverned (#4)', async () => {
+  // Ungoverned but bound to a network interface (explicit CAIRN_ALLOW_UNGOVERNED).
+  // authOn is false, but the bind is non-loopback: /healthz must NOT reveal
+  // upstream names, the corpus path, or the session count to the network.
+  const home = baseHome('cairn-ent-netopen-');
+  const { child, base } = await startProxy(home, { CAIRN_HTTP_HOST: '0.0.0.0', CAIRN_ALLOW_UNGOVERNED: '1' });
+  try {
+    const health = JSON.parse((await hit(base, '/healthz')).body) as Record<string, unknown>;
+    assert.equal(health.ok, true, '/healthz still answers liveness');
+    assert.ok(!('upstreams' in health), 'no upstream names on a network bind');
+    assert.ok(!('corpus' in health), 'no corpus path on a network bind');
+    assert.ok(!('sessions' in health), 'no session count on a network bind');
   } finally {
     stopProxy(child);
   }

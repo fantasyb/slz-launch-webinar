@@ -37,6 +37,19 @@ test('a write verb embedded inside a longer word no longer reads as a write (#10
   }
 });
 
+test('common write verbs are caught, and a leading read verb keeps a read a read (Fable-5 #6)', () => {
+  // Fable-5: unannotated writes reached a read-only role because these verbs were
+  // absent. They are now writes...
+  for (const name of ['add_comment', 'set_status', 'submit_form', 'close_issue', 'resolve_thread', 'pay_invoice', 'book_room', 'cancel_order', 'mark_read', 'append_row', 'lock_account']) {
+    assert.equal(classify({ name }).permitted, false, `${name} reads as a write`);
+  }
+  // ...without turning a plain read into a write just because a LATER token
+  // begins with a write verb: a leading get/list/search/… settles it as a read.
+  for (const name of ['list_orders', 'get_address', 'search_bookmarks', 'get_settings', 'list_payments', 'get_market_data', 'describe_instances', 'view_orders', 'count_comments']) {
+    assert.equal(classify({ name }).permitted, true, `${name} is a read (leading read verb wins)`);
+  }
+});
+
 test('an override permits an excluded tool and is carried with the reason it overruled', () => {
   const c = classify({ name: 'update_thing' }, { overrides: { update_thing: 'refreshes a cached read model only' } });
   assert.equal(c.permitted, true);

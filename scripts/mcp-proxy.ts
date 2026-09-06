@@ -1528,7 +1528,16 @@ async function main() {
     if (govCache && govCache.key === key) return govCache.value;
     const load = readOrgPolicy();
     let value: Governance;
-    if (load.status === 'none') value = { mode: 'ungoverned' };
+    if (load.status === 'none') {
+      // The stat above SAW the file, but the read found it gone — deleted in the
+      // gap (a rename-write in flight, or an adversary unlinking it). Same rule as
+      // the ENOENT-at-stat branch: a gateway that has been governed never
+      // downgrades to ungoverned on a vanished file. Only a gateway that was never
+      // governed treats this as the personal case. Without this, the one request
+      // that hit the gap was served ungoverned (no auth/RBAC/audit) and the result
+      // was cached under the stat key until the next stat re-fired ENOENT.
+      value = lastGoodPolicy ? { mode: 'governed', policy: lastGoodPolicy } : { mode: 'ungoverned' };
+    }
     else if (load.status === 'ok') { lastGoodPolicy = load.policy; value = { mode: 'governed', policy: load.policy }; }
     else {
       // Invalid/corrupt policy: fail closed, or keep last-good if we have one.
@@ -2844,12 +2853,15 @@ async function main() {
         // "governed" means auth is actually ENFORCED, not merely that a policy
         // file exists — a policy with auth.required:false governs nothing.
         const authOn = g.mode === 'governed' && g.policy.auth.required;
-        // The governed response is liveness + governance posture ONLY. The live
-        // session count is reconnaissance to whoever can reach the port — it
-        // reveals how many tenants/agents are connected and lets them watch
-        // activity rise and fall — so it is disclosed only on the ungoverned
-        // personal gateway (loopback, nothing to protect), alongside the fuller
-        // operational shape.
+        // The fuller shape (upstream names, corpus path, session count, degraded
+        // reason) is reconnaissance to anyone who can reach the port, so it is
+        // disclosed ONLY on a genuine personal gateway: a LOOPBACK bind that is
+        // ungoverned. Gating on `authOn` alone was wrong — a NETWORK bind whose
+        // policy is in error, or set auth.required:false, or run with
+        // CAIRN_ALLOW_UNGOVERNED, has authOn=false and would have leaked the full
+        // shape to the network even while /mcp correctly 503s. A non-loopback bind
+        // (or any governed/errored state) now always gets the minimal shape.
+        const personal = httpLoopback && g.mode === 'ungoverned';
         const base = {
           ok: true,
           governed: authOn,
@@ -2858,7 +2870,7 @@ async function main() {
           audit: g.mode !== 'ungoverned' ? !!auditDirOf() : false,
         };
         res.end(JSON.stringify(
-          authOn
+          !personal
             ? base
             : {
                 ...base,
