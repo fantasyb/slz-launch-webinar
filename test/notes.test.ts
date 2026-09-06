@@ -44,6 +44,21 @@ test('a note is unreachable by every reader the corpus has', async () => {
   assert.deepEqual(retrieve(minimal.title, searchable, { limit: 5 }), [], 'retrieve cannot return it');
 });
 
+test('origin:agent forces the author, ignoring a caller-supplied by (cross-tenant injection guard)', async () => {
+  const { recordNote, listNotes } = await import('../src/lib/cairn/notes');
+  // A model over the gateway supplies by:"victim-tenant"; origin:'agent' must
+  // overwrite it with the authenticated identity so a note cannot be filed under
+  // another tenant's name (a note is delivered to its author inside a trusted block).
+  const r = recordNote({ ...minimal, title: 'a note that tries to spoof its author', by: 'victim-tenant' }, { by: 'real-caller', origin: 'agent' });
+  assert.equal(r.ok, true, r.message);
+  const byOf = (id: string) => listNotes().find((n) => n.note.id === id)!.note.by;
+  assert.equal(byOf(r.note!.id), 'real-caller', 'the author is the authenticated identity, not the caller-supplied one');
+  // Without origin:'agent' the operator's fill-when-absent path is preserved: a
+  // caller-set by is kept (used by the doctor/local paths), opts.by only fills a gap.
+  const keep = recordNote({ ...minimal, title: 'operator path keeps an explicit by', by: 'explicit-author' }, { by: 'opts-fallback' });
+  assert.equal(byOf(keep.note!.id), 'explicit-author', 'without origin:agent an explicit by is preserved');
+});
+
 test('the secret gate is not tiered', async () => {
   const { recordNote } = await import('../src/lib/cairn/notes');
   const r = recordNote({ ...minimal, evidence: [{ command: 'x', output: 'Authorization: Bearer abcdefghijklmnopqrstuvwxyz0123456789' }] });

@@ -66,8 +66,13 @@ export interface AttestOutcome {
  * distinct confirmers outnumber it two to one. A key is the operator saying
  * "this gateway's observations are mine".
  */
-export function attest(raw: unknown, opts: { by?: string; via?: string; keyId?: string } = {}): AttestOutcome {
-  const withBy = typeof raw === 'object' && raw !== null && opts.by && !(raw as Record<string, unknown>).by
+export function attest(raw: unknown, opts: { by?: string; via?: string; keyId?: string; origin?: 'agent' } = {}): AttestOutcome {
+  // origin:'agent': the caller is a model over the gateway. Its `by` is untrusted
+  // and must not set the author (one tenant could otherwise record an observation
+  // attributed to another, which then shows in every tenant's block). Force `by` to
+  // opts.by (the authenticated principal), overwriting any `by` in the raw args.
+  const forceBy = opts.origin === 'agent' && !!opts.by;
+  const withBy = typeof raw === 'object' && raw !== null && opts.by && (forceBy || !(raw as Record<string, unknown>).by)
     ? { ...(raw as Record<string, unknown>), by: opts.by }
     : raw;
   const parsed = AttestationSchema.safeParse(withBy);
@@ -99,7 +104,9 @@ export function attest(raw: unknown, opts: { by?: string; via?: string; keyId?: 
    * by that key here. Only a `by` the model itself set (raw.by) is untrusted;
    * a code-set opts.by (doctor's own path) is fine.
    */
-  const modelBy = typeof raw === 'object' && raw !== null && typeof (raw as Record<string, unknown>).by === 'string'
+  // Under origin:'agent' the raw `by` was discarded above (forced to opts.by), so
+  // there is no model-chosen identity to police here.
+  const modelBy = opts.origin !== 'agent' && typeof raw === 'object' && raw !== null && typeof (raw as Record<string, unknown>).by === 'string'
     ? String((raw as Record<string, unknown>).by)
     : undefined;
   if (modelBy) {

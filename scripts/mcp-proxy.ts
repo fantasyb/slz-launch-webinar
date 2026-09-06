@@ -2371,7 +2371,11 @@ async function main() {
         return textResult(outcome.message + closed, !outcome.ok);
       }
       if (!toolOwner.has(req.params.name) && req.params.name === 'cairn_observe') {
-        const outcome = attest(args, { by: ownBy ?? 'agent', via: `cairn-proxy, client ${session.agent ?? 'unknown'}`, keyId: ownKey });
+        // origin:'agent' FORCES the author to the authenticated identity: the caller
+        // is a model, and a caller-supplied `by` must never attribute an observation
+        // to ANOTHER tenant (which the note/observation delivery then hands that
+        // tenant inside a trusted block — a cross-tenant injection channel).
+        const outcome = attest(args, { by: ownBy ?? 'agent', origin: 'agent', via: `cairn-proxy, client ${session.agent ?? 'unknown'}`, keyId: ownKey });
         try { observe(`cairn_observe ${String(args.finding ?? '?')} ${outcome.ok ? String(args.verdict) : 'refused'}`, [], `mcp-proxy:observe-${outcome.ok ? String(args.verdict) : 'refused'}`, { by: ledgerBy(session), session: session.id }); } catch { /* never fatal */ }
         return textResult(outcome.message, !outcome.ok);
       }
@@ -2388,7 +2392,9 @@ async function main() {
           return textResult(dropped ? `Discarded ${dropped.id}.` : `No open note with id ${args.discard}.`, !dropped);
         }
         const { arc: arcId, ...noteArgs } = args as Record<string, unknown> & { arc?: unknown };
-        const outcome = recordNote(noteArgs, { by: ownBy, session: session.id });
+        // origin:'agent' forces the author identity (see cairn_observe above): a
+        // caller-supplied `by` must never override the authenticated principal.
+        const outcome = recordNote(noteArgs, { by: ownBy ?? 'agent', origin: 'agent', session: session.id });
         try { observe(`cairn_note ${outcome.ok ? outcome.note!.id : 'refused'}`, [], 'mcp-proxy:note', { by: ledgerBy(session), session: session.id }); } catch { /* never fatal */ }
         if (outcome.ok && typeof arcId === 'string') countArc(arcId, 'bank', session);
         return textResult(outcome.message, !outcome.ok);

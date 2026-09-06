@@ -64,6 +64,18 @@ test('an observation from the gateway is appended unsigned, and a refutation wit
   assert.equal(attest({ finding: 'not-an-id', verdict: 'confirmed' }, { by: 'x' }).ok, false);
 });
 
+test('origin:agent forces the observer identity, ignoring a caller-supplied by (cross-tenant guard)', async () => {
+  const { attest } = await import('../src/lib/cairn/attest');
+  const file = plant('cairn-0104', { observations: [] });
+  // A model over the gateway tries to attribute its observation to another tenant;
+  // origin:'agent' overwrites `by` with the authenticated identity.
+  const r = attest({ finding: 'cairn-0104', verdict: 'refuted', note: 'the call returned rows it should not', by: 'victim-tenant' }, { by: 'real-caller', origin: 'agent', via: 'test' });
+  assert.equal(r.ok, true, r.message);
+  const stored = JSON.parse(fs.readFileSync(file, 'utf8'));
+  assert.equal(stored.observations[0].by, 'real-caller', 'the observer is the authenticated identity, not the caller-supplied one');
+  assert.match(r.message, /by real-caller/);
+});
+
 test('given a key, the gateway signs, and a signed refutation makes the finding contested', async () => {
   const { attest, verificationLine } = await import('../src/lib/cairn/attest');
   const { generateKeypair } = await import('../src/lib/cairn/signing');

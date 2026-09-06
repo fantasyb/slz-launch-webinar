@@ -82,8 +82,15 @@ function ensureDir(): string {
   return d;
 }
 
-export function recordNote(raw: unknown, opts: { by?: string; session?: string } = {}): NoteOutcome {
-  const withBy = typeof raw === 'object' && raw !== null && opts.by && !(raw as Record<string, unknown>).by
+export function recordNote(raw: unknown, opts: { by?: string; session?: string; origin?: 'agent' } = {}): NoteOutcome {
+  // origin:'agent' means the caller is a model over the gateway: its `by` is
+  // untrusted and MUST NOT set the author, or one tenant could file a note
+  // attributed to another (a cross-tenant injection, since a note is delivered to
+  // its author inside a trusted block). Force `by` to the caller-supplied opts.by
+  // (the authenticated principal), overwriting any `by` in the raw args. Absent
+  // origin:'agent', keep the fill-when-absent behavior for the operator's own paths.
+  const forceBy = opts.origin === 'agent' && !!opts.by;
+  const withBy = typeof raw === 'object' && raw !== null && opts.by && (forceBy || !(raw as Record<string, unknown>).by)
     ? { ...(raw as Record<string, unknown>), by: opts.by }
     : raw;
   const parsed = NoteSchema.safeParse(withBy);
