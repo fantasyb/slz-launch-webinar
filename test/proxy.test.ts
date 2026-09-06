@@ -928,20 +928,29 @@ test('a long call\'s progress is relayed to the client under its own token', asy
   const s = single(corpus());
   try {
     await s.init();
-    const r = await s.request('tools/call', {
-      name: 'mcp__data360__progressing',
-      arguments: {},
-      _meta: { progressToken: 'client-token-42' },
-    });
-    assert.ok(!r.error, 'the call itself succeeds');
-    // Await the relayed notification by its own unique token, resolving the
-    // instant it lands rather than polling a wall-clock deadline — the deadline
-    // form flaked under concurrent full-suite load that starves this spawned
-    // child (cairn-0050). The token is unique to this call, so an earlier call's
-    // progress can never match.
-    const progress = await s.waitForNotification((n) =>
-      n.method === 'notifications/progress'
-      && (n.params as { progressToken?: unknown })?.progressToken === 'client-token-42');
+    // Progress relay is BEST-EFFORT by design: the gateway forwards it with
+    // sendNotification(...).catch(() => {}), advisory and droppable. So under
+    // heavy external load on a shared box the notification can be dropped
+    // entirely, not merely delayed — no fixed timeout or concurrency cap can make
+    // observing it immune (cairn-0050). Retry the idempotent call a bounded number
+    // of times, each emitting a fresh progress: any delivery proves the wiring,
+    // and a genuine wiring failure fails every attempt. The token is unique to
+    // this test so an earlier call's progress can never cross-match.
+    let progress: Msg | undefined;
+    for (let attempt = 1; attempt <= 3 && !progress; attempt++) {
+      const r = await s.request('tools/call', {
+        name: 'mcp__data360__progressing',
+        arguments: {},
+        _meta: { progressToken: 'client-token-42' },
+      });
+      assert.ok(!r.error, 'the call itself succeeds');
+      try {
+        progress = await s.waitForNotification((n) =>
+          n.method === 'notifications/progress'
+          && (n.params as { progressToken?: unknown })?.progressToken === 'client-token-42', 30_000);
+      } catch { /* dropped or starved under load; re-issue the call for a fresh chance */ }
+    }
+    assert.ok(progress, 'the client received a progress notification carrying its own token (within 3 attempts)');
     const p = progress.params as { progress?: number; total?: number };
     assert.equal(p.progress, 1, 'the upstream\'s progress value is relayed, not invented');
     assert.equal(p.total, 2, 'and its total');

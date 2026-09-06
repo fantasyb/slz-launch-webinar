@@ -175,6 +175,14 @@ export function selfUpdate(opts: UpdateOptions = {}): UpdateResult {
     if (!branch) return { status: 'skipped', reason: 'detached HEAD and no branch given' };
   }
 
+  // Refuse a remote/branch name that could be a git option (leading '-') or
+  // carry shell/ref metacharacters. execFileSync does not use a shell, so this
+  // is not about shell injection — it is about a name like '--upload-pack=...'
+  // being read as a flag, and about keeping the ref unambiguous.
+  const SAFE_REF = /^[A-Za-z0-9._][A-Za-z0-9._/-]*$/;
+  if (!SAFE_REF.test(remote)) return { status: 'skipped', reason: `unsafe remote name: ${JSON.stringify(remote)}` };
+  if (!SAFE_REF.test(branch)) return { status: 'skipped', reason: `unsafe branch name: ${JSON.stringify(branch)}` };
+
   // Clean tree only. We do not stash or discard the operator's work.
   let dirty = '';
   try {
@@ -184,9 +192,15 @@ export function selfUpdate(opts: UpdateOptions = {}): UpdateResult {
   }
   if (dirty) return { status: 'skipped', reason: 'working tree has local changes' };
 
-  // Fetch the pin. Network failure is a skip, not an error.
+  // Fetch the pin. Network failure is a skip, not an error. Fetch the fully
+  // qualified BRANCH ref (`refs/heads/<branch>`), never the short name: git's
+  // DWIM resolves a short name as `refs/tags/<name>` before `refs/heads/<name>`,
+  // so a tag pushed under the branch's name (tag-push rights are routinely less
+  // protected than branch-push) would otherwise redirect the update to a commit
+  // the attacker chose — and the daemon then rebuilds and re-runs the installer
+  // on it. A branch ref can only ever be the branch.
   try {
-    git(repoDir, ['fetch', '--quiet', remote, branch]);
+    git(repoDir, ['fetch', '--quiet', remote, `refs/heads/${branch}`]);
   } catch (e) {
     return { status: 'skipped', reason: `fetch ${remote} ${branch} failed: ${(e as Error).message.split('\n')[0]}` };
   }

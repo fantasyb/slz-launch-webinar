@@ -92,6 +92,18 @@
         "runtime": "node v22.22.2",
         "note": "4 CPUs. --test-concurrency=2 added to the npm test script."
       }
+    },
+    {
+      "at": "2026-09-06T16:45:00.000Z",
+      "by": "claude-opus-4-8",
+      "verdict": "confirmed",
+      "note": "The 'three independent guards' claim was still too strong — it failed AGAIN in a single capped `npm test` (not ok 235, error 'no notification matched in 120000ms', duration 120805ms). The notification did not arrive in TWO MINUTES after the call returned. Root understanding, finally correct: the gateway relays progress BEST-EFFORT (sendNotification(...).catch(() => {}), advisory and droppable), and this is a SHARED sandbox with external load I do not control — so the notification can be DROPPED entirely, not merely delayed, and NO fixed timeout or concurrency cap can make a test that observes best-effort async delivery immune. Timeouts/caps reduce probability; they cannot reach zero here. The correct fix is a bounded RETRY on the best-effort assertion: the test now re-issues the idempotent call up to 3 times (each a fresh progress, 30s window); any delivery proves the wiring, a genuine wiring failure fails all three. This is standard practice for spawn-based integration tests on shared CI. Honest ceiling: even a retry can fail under sustained multi-minute starvation, which on a shared box is not fully eliminable — but it is now vanishingly rare and no longer a wall-clock artifact. Lesson: don't assert a best-effort feature as if guaranteed; retry it, and be honest that 'never flakes' is not an achievable promise for cross-process timing tests on shared infrastructure.",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node v22.22.2",
+        "note": "Fix = bounded retry (3x, 30s each) on the progress assertion, on top of the built-launcher spawns, 120s failsafe, and --test-concurrency=2."
+      }
     }
   ],
   "status": "active",

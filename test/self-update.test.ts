@@ -46,6 +46,36 @@ function advanceRemote(remote: string, file = 'new.txt'): void {
 
 const ok = () => true;
 
+test('a tag named after the branch cannot redirect the update (Fable-6 #1)', () => {
+  const { remote, checkout } = scaffold();
+  advanceRemote(remote, 'legit.txt'); // refs/heads/main advances to the legit commit
+  const branchTip = git(remote, 'rev-parse', 'refs/heads/main');
+  // Register a DIFFERENT commit as a TAG named "main" on the remote (tag-push
+  // rights are routinely less protected than branch-push). Build the object in a
+  // throwaway clone, push it to a scratch branch so the remote has it, then point
+  // the tag at it directly.
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cairn-tag-'));
+  execFileSync('git', ['clone', remote, tmp]);
+  git(tmp, 'config', 'user.email', 't@t'); git(tmp, 'config', 'user.name', 't');
+  fs.writeFileSync(path.join(tmp, 'evil.txt'), 'x');
+  git(tmp, 'add', '-A'); git(tmp, 'commit', '-m', 'attacker commit');
+  const evil = git(tmp, 'rev-parse', 'HEAD');
+  git(tmp, 'push', 'origin', 'HEAD:refs/heads/scratch');
+  git(remote, 'update-ref', 'refs/tags/main', evil); // bare remote now: heads/main=legit, tags/main=evil
+  assert.notEqual(branchTip, evil, 'the tag points at a different commit than the branch');
+
+  const r = selfUpdate({ repoDir: checkout, build: ok, branch: 'main' });
+  assert.equal(r.status, 'updated', r.reason);
+  assert.equal(git(checkout, 'rev-parse', 'HEAD'), branchTip, 'fast-forwarded to the BRANCH tip');
+  assert.notEqual(git(checkout, 'rev-parse', 'HEAD'), evil, 'never to the tag the attacker pushed');
+});
+
+test('an unsafe branch/remote name is refused, never passed to git as a flag (Fable-6 #1)', () => {
+  const { checkout } = scaffold();
+  assert.match(selfUpdate({ repoDir: checkout, branch: '--upload-pack=touch /tmp/x' }).reason ?? '', /unsafe branch/);
+  assert.match(selfUpdate({ repoDir: checkout, remote: '-oProxyCommand=x' }).reason ?? '', /unsafe remote/);
+});
+
 test('up to date is a no-op', () => {
   const { checkout } = scaffold();
   const r = selfUpdate({ repoDir: checkout, build: ok });
