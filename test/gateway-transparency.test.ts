@@ -138,6 +138,41 @@ test('no ledger row can be unbounded, whatever the caller passes', () => {
 });
 
 /*
+ * A tenant-authored (agentRecorded) finding is delivered only to its author, or
+ * after an operator promotes it with a signed observation — the same gate the
+ * checker uses before it will ever execute one. The risk is a governed,
+ * multi-tenant gateway: principal A records a finding whose reality/workaround
+ * text is theirs to write, and without this gate principal B is handed that
+ * text as if the gateway vouched for it. Delivery is every path that puts
+ * finding text in front of the model: the connect index, the tool-list
+ * descriptions, cairn_find results, and the per-result annotation. The rot
+ * detector at noteSurface is NOT delivery — it writes to operator stderr — so
+ * it stays unfiltered, and this test pins that asymmetry: forget the filter at
+ * one delivery site and a private finding leaks to every tenant.
+ */
+test('every model-delivery path filters findings through deliverableTo', () => {
+  const src = fs.readFileSync(path.join(process.cwd(), 'scripts', 'mcp-proxy.ts'), 'utf8');
+
+  // The gate exists and is the author/operator-promotion check, not a stub.
+  assert.match(src, /function deliverableTo\(session: SessionState, findings: Finding\[\]\): Finding\[\]/, 'the gate is defined');
+  const gate = src.slice(src.indexOf('function deliverableTo'), src.indexOf('function deliverableTo') + 600);
+  assert.match(gate, /if \(!governed\(session\)\) return findings;/, 'ungoverned sessions are unaffected');
+  assert.match(gate, /agentRecorded/, 'only tenant-authored findings are gated');
+  assert.match(gate, /signature/, 'an operator-promoted (signed) finding is delivered');
+
+  // Every model-delivery read of the corpus goes through the gate. If a new
+  // delivery site is added it must too; if one is removed the count drops.
+  const delivered = src.match(/deliverableTo\(session, localFindings\(\)\.findings\)/g) ?? [];
+  assert.equal(delivered.length, 4, 'connect index, tool-list describe, cairn_find, and result annotate all filter');
+
+  // The rot detector reads the corpus RAW: it is operator-facing stderr, never
+  // handed to the model, and it must see every finding including other tenants'.
+  const noteSurface = src.slice(src.indexOf('function noteSurface'), src.indexOf('function noteSurface') + 700);
+  assert.match(noteSurface, /const findings = localFindings\(\)\.findings;/, 'rot detection stays unfiltered');
+  assert.ok(!/deliverableTo/.test(noteSurface), 'the operator path is not gated by tenant delivery rules');
+});
+
+/*
  * The gateway must not apply the CLIENT's half of the tool contract.
  *
  * A tool that declares `outputSchema` and returns plain text is accepted by a

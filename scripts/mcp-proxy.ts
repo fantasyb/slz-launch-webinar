@@ -1354,6 +1354,26 @@ async function main() {
     return authorize(currentPolicy(), session.principal, up.spec.name, { name: '(resource)' }).allowed;
   }
 
+  /**
+   * Which findings may be DELIVERED to this session. A finding recorded by an
+   * agent/tenant over the gateway is authored by one principal and marked
+   * agentRecorded; delivering it to OTHER tenants — inside a block the model is
+   * told to trust — is a cross-tenant injection channel. So on a governed
+   * gateway an agentRecorded finding reaches only its own author, until an
+   * operator PROMOTES it with a signed observation (then everyone sees it, the
+   * same gate that lets its check run). Operator/normal findings, and every
+   * finding on a personal install, are unaffected.
+   */
+  function deliverableTo(session: SessionState, findings: Finding[]): Finding[] {
+    if (!governed(session)) return findings;
+    const me = session.principal.id;
+    return findings.filter((f) => {
+      if (!(f as { agentRecorded?: boolean }).agentRecorded) return true;
+      if ((f.observations ?? []).some((o) => (o as { signature?: unknown }).signature != null)) return true; // operator-promoted
+      return (f.observations?.[0]?.by ?? '') === me; // the author sees their own
+    });
+  }
+
   /** Record one audit decision, if this gateway is governed. Never throws, never
    * blocks a call — a log that cannot be written is loud on stderr (in appendAudit). */
   function audit(session: SessionState, decision: 'call' | 'allow' | 'deny' | 'error', server?: string, tool?: string, reason?: string): void {
@@ -1784,7 +1804,7 @@ async function main() {
 
   /** The instructions a session is handed at connect: the upstreams' own, then the index. */
   async function instructionsFor(session: SessionState): Promise<string> {
-    const findings = localFindings().findings;
+    const findings = deliverableTo(session, localFindings().findings);
     const index: string[] = [];
     for (const up of upstreams) for (const line of await trapIndex(session, up, findings)) index.push(line);
     const programs = programIndex(session, findings, idsIn(index), 'connect-program-index');
@@ -1876,7 +1896,7 @@ async function main() {
           return authorize(policy, session.principal, owner.up.spec.name, { name: t.name, aliases: [owner.raw], annotations: t.annotations as never }).allowed;
         });
       }
-      const { findings } = localFindings();
+      const findings = deliverableTo(session, localFindings().findings);
       let budget = DESCRIPTION_CAP;
       const described = tools.map((t) => {
         const owner = toolOwner.get(t.name)!;
@@ -1976,7 +1996,7 @@ async function main() {
         // load the shared corpus code with a giant string. 4 KB is far past any
         // real query.
         const query = String(args.query ?? '').slice(0, 4096);
-        const { findings } = localFindings();
+        const findings = deliverableTo(session, localFindings().findings);
         let hits: ReturnType<typeof retrieve> = [];
         try { hits = retrieve(query, findings, { limit: 5 }); } catch { /* a corpus problem never reaches the caller */ }
         try { observe(query, hits, 'mcp-proxy:find', { by: session.agent, session: session.id }); } catch { /* never fatal */ }
@@ -2124,7 +2144,7 @@ async function main() {
       }
 
       try {
-        const { findings } = localFindings();
+        const findings = deliverableTo(session, localFindings().findings);
         const about = findingsAbout(owner.up.spec.name, owner.raw, req.params.name, findings, Object.keys(args));
         const isError = result.isError === true;
         // The outcome, chained after the attempt row: the log must not say a call
