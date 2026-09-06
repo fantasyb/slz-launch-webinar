@@ -60,6 +60,31 @@ export interface UpdateOptions {
   /** Report what would happen without changing the tree. Stops before the
    * fast-forward and returns 'skipped' with a "would fast-forward N" reason. */
   dryRun?: boolean;
+  /**
+   * Refuse to apply an update whose target commit is not a VERIFIED signature.
+   * The daemon auto-updates unattended and then re-runs the installer (which
+   * rewrites the operator's MCP config), so whoever can push to the tracked
+   * branch otherwise gets persistent code execution as the operator. With this
+   * on, the target commit must pass `git verify-commit` before any fast-forward.
+   * Defaults from CAIRN_UPDATE_REQUIRE_SIGNED=1 (off by default so a plain dev
+   * checkout is unaffected; enterprise turns it on).
+   */
+  requireSigned?: boolean;
+  /** Path to an SSH allowed-signers file, used as gpg.ssh.allowedSignersFile for
+   * the verification. Defaults from CAIRN_UPDATE_ALLOWED_SIGNERS. */
+  allowedSigners?: string;
+  /** Injectable verifier (tests). Default: `git verify-commit <ref>`. */
+  verify?: (repoDir: string, ref: string) => boolean;
+}
+
+function verifyCommit(repoDir: string, ref: string, allowedSigners?: string): boolean {
+  try {
+    const args = allowedSigners ? ['-c', `gpg.ssh.allowedSignersFile=${allowedSigners}`, 'verify-commit', ref] : ['verify-commit', ref];
+    execFileSync('git', args, { cwd: repoDir, stdio: ['ignore', 'pipe', 'pipe'] });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function git(repoDir: string, args: string[]): string {
@@ -101,6 +126,9 @@ export function selfUpdate(opts: UpdateOptions = {}): UpdateResult {
   const repoDir = opts.repoDir ?? repoRoot();
   const remote = opts.remote ?? 'origin';
   const build = opts.build ?? defaultBuild;
+  const requireSigned = opts.requireSigned ?? process.env.CAIRN_UPDATE_REQUIRE_SIGNED === '1';
+  const allowedSigners = opts.allowedSigners ?? process.env.CAIRN_UPDATE_ALLOWED_SIGNERS;
+  const verify = opts.verify ?? ((dir: string, ref: string) => verifyCommit(dir, ref, allowedSigners));
 
   // Is this a git checkout at all?
   let from: string;
@@ -162,7 +190,14 @@ export function selfUpdate(opts: UpdateOptions = {}): UpdateResult {
 
   // Dry run: everything above is read-only, so report the verdict and stop
   // before the one line that changes the tree.
-  if (opts.dryRun) return { status: 'skipped', from, to: target, advanced: behind, reason: `would fast-forward ${behind} commit(s) (dry run)` };
+  if (opts.dryRun) return { status: 'skipped', from, to: target, advanced: behind, reason: `would fast-forward ${behind} commit(s) (dry run)${requireSigned ? '; signature will be verified first' : ''}` };
+
+  // Signed-update gate: never apply an unverified commit when required. This runs
+  // BEFORE the fast-forward, so an unsigned/untrusted push is refused rather than
+  // built-and-rolled-back — the tree is never moved to it at all.
+  if (requireSigned && !verify(repoDir, target)) {
+    return { status: 'skipped', from, to: target, reason: `refusing to update: ${remote}/${branch}@${target.slice(0, 10)} is not a verified signed commit (CAIRN_UPDATE_REQUIRE_SIGNED is on)` };
+  }
 
   // Fast-forward.
   try {

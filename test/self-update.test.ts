@@ -107,3 +107,30 @@ test('not a git checkout is a clean skip, never a throw', () => {
   assert.equal(r.status, 'skipped');
   assert.match(r.reason!, /not a git checkout/);
 });
+
+test('with signing required, an unverified target is refused before the tree moves', () => {
+  const { remote, checkout, head } = scaffold();
+  advanceRemote(remote);
+  // Inject a verifier that rejects (as `git verify-commit` would on an unsigned
+  // commit): the update must refuse WITHOUT fast-forwarding.
+  const r = selfUpdate({ repoDir: checkout, build: ok, requireSigned: true, verify: () => false });
+  assert.equal(r.status, 'skipped', r.reason);
+  assert.match(r.reason ?? '', /not a verified signed commit/);
+  assert.equal(git(checkout, 'rev-parse', 'HEAD'), head, 'the checkout was not moved to the unverified commit');
+});
+
+test('with signing required, a verified target still fast-forwards', () => {
+  const { remote, checkout } = scaffold();
+  advanceRemote(remote);
+  const r = selfUpdate({ repoDir: checkout, build: ok, requireSigned: true, verify: () => true });
+  assert.equal(r.status, 'updated', r.reason);
+});
+
+test('without signing required, verification is not consulted (default dev flow)', () => {
+  const { remote, checkout } = scaffold();
+  advanceRemote(remote);
+  let called = false;
+  const r = selfUpdate({ repoDir: checkout, build: ok, verify: () => { called = true; return false; } });
+  assert.equal(r.status, 'updated', r.reason);
+  assert.equal(called, false, 'verify is not called unless signing is required');
+});
