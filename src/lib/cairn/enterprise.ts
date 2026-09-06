@@ -281,10 +281,19 @@ function chainHash(prevHash: string, e: Omit<AuditEntry, 'prevHash' | 'hash'>): 
 const lockPath = (dir: string) => path.join(dir, 'audit.lock');
 const sleepMs = (ms: number) => { try { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); } catch { /* no SAB: skip the wait */ } };
 
-/** Is this pid a live process? EPERM means it exists but we can't signal it. */
-function pidAlive(pid: number): boolean {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
-  try { process.kill(pid, 0); return true; } catch (e) { return (e as NodeJS.ErrnoException).code === 'EPERM'; }
+/**
+ * Liveness of the pid written in a lock. 'alive' (signalable, or EPERM = exists
+ * but no permission), 'dead' (invalid pid), or 'unknown'. ESRCH is UNKNOWN, not
+ * dead: two containers sharing a CAIRN_HOME volume are in different pid
+ * namespaces, so a holder alive in ITS namespace throws ESRCH here — treating
+ * that as dead would break a live holder's lock immediately and interleave the
+ * appends. An unknown pid may only be broken on mtime staleness, never eagerly.
+ */
+function pidLiveness(pid: number): 'alive' | 'dead' | 'unknown' {
+  if (!Number.isInteger(pid) || pid <= 0) return 'dead';
+  try { process.kill(pid, 0); return 'alive'; } catch (e) {
+    return (e as NodeJS.ErrnoException).code === 'EPERM' ? 'alive' : 'unknown';
+  }
 }
 
 /*
@@ -301,11 +310,12 @@ function pidAlive(pid: number): boolean {
 const LOCK_STALE_MS = Math.max(2_000, Number(process.env.CAIRN_AUDIT_LOCK_STALE_MS) || 15_000);
 
 /**
- * Break a lock only when its holder is provably gone: the pid written in it is
- * dead, OR its mtime is more than LOCK_STALE_MS off from now in EITHER direction
- * (a crashed holder, or a clock-skewed/future mtime that a one-sided check would
- * treat as fresh forever). The break is atomic — rename to a unique tombstone,
- * then unlink it — so exactly one racer wins and a live holder is never removed.
+ * Break a lock only when its holder is provably gone. An ALIVE pid is never
+ * broken. A DEAD pid (invalid) or a stale/skewed mtime (>LOCK_STALE_MS in either
+ * direction) breaks. An UNKNOWN pid (ESRCH — possibly a live holder in another
+ * pid namespace on a shared volume) is broken ONLY on mtime staleness, never
+ * eagerly — a live cross-namespace holder keeps its mtime fresh. The break is
+ * atomic (rename to a unique tombstone, then unlink) so exactly one racer wins.
  */
 function tryBreakStaleLock(lp: string): boolean {
   let content = '';
@@ -313,7 +323,9 @@ function tryBreakStaleLock(lp: string): boolean {
   try { const st = fs.statSync(lp); mtimeMs = st.mtimeMs; content = fs.readFileSync(lp, 'utf8'); } catch { return false; }
   const pid = Number(content.split(':')[0]);
   const skew = Math.abs(Date.now() - mtimeMs);
-  if (pidAlive(pid) && skew < LOCK_STALE_MS) return false; // a live, recent holder — leave it
+  const live = pidLiveness(pid);
+  if (live === 'alive') return false;              // a live holder — never break
+  if (live === 'unknown' && skew < LOCK_STALE_MS) return false; // maybe live elsewhere, mtime fresh — leave it
   try {
     const tomb = `${lp}.${process.pid}.${Date.now()}.stale`;
     fs.renameSync(lp, tomb); // only one racer's rename of THIS inode succeeds
@@ -357,21 +369,55 @@ function withAuditLock<T>(dir: string, fn: () => T): { locked: boolean; value?: 
  * seq is ever assigned without the lock. */
 const spillPath = (dir: string) => path.join(dir, `audit.spill.${process.pid}.jsonl`);
 type SpillRow = { at?: string; principal: string; decision: AuditDecision; server?: string; tool?: string; reason?: string; session?: string; agent?: string };
+/*
+ * Spill rows are AUTHENTICATED with a per-process key held only in memory.
+ * Without this, a spill file is unauthenticated input that the next legitimate
+ * writer chains into the log with a fresh seq/hash — the one write-to-dir path
+ * that produces UNDETECTABLE forged audit entries (a fake allow, a fake deny to
+ * frame a principal). Because the key never touches disk, an attacker with
+ * file-write access cannot forge a row this process will fold, and a process
+ * only ever folds ITS OWN spills (which it signed). A crashed process's spills
+ * die with its key — unfoldable, so dropped rather than laundered.
+ */
+const SPILL_KEY = randomBytes(32);
+const spillHmac = (row: string): string => createHash('sha256').update(SPILL_KEY).update('\n').update(row).digest('hex');
 function spillRow(dir: string, e: SpillRow): void {
-  try { fs.appendFileSync(spillPath(dir), JSON.stringify({ ...e, at: e.at ?? new Date().toISOString() }) + '\n'); }
-  catch (err) { process.stderr.write(`cairn-proxy: could not spill audit entry: ${(err as Error).message}\n`); }
+  try {
+    const row = JSON.stringify({ ...e, at: e.at ?? new Date().toISOString() });
+    fs.appendFileSync(spillPath(dir), JSON.stringify({ row, hmac: spillHmac(row) }) + '\n');
+  } catch (err) { process.stderr.write(`cairn-proxy: could not spill audit entry: ${(err as Error).message}\n`); }
 }
-/** Fold every process's spilled rows into the chain. MUST run under the lock. */
+/** Fold THIS process's own spilled rows into the chain, verifying each against
+ * the in-memory key. MUST run under the lock. Orphaned spill files from other
+ * (dead) processes are garbage-collected but never folded — they cannot be
+ * authenticated, so folding them would launder unauthenticated input. */
 function foldSpills(dir: string): void {
-  let files: string[];
-  try { files = fs.readdirSync(dir).filter((f) => f.startsWith('audit.spill.') && f.endsWith('.jsonl')); } catch { return; }
-  for (const f of files.sort()) {
-    const fp = path.join(dir, f);
-    let rows: SpillRow[];
-    try { rows = fs.readFileSync(fp, 'utf8').split('\n').filter(Boolean).flatMap((l) => { try { const r = JSON.parse(l); return isObj(r) ? [r as SpillRow] : []; } catch { return []; } }); } catch { continue; }
+  const own = spillPath(dir);
+  try {
+    const rows = fs.readFileSync(own, 'utf8').split('\n').filter(Boolean).flatMap((l) => {
+      try {
+        const rec = JSON.parse(l);
+        if (!isObj(rec) || typeof rec.row !== 'string' || rec.hmac !== spillHmac(rec.row)) return []; // forged or corrupt: drop
+        const r = JSON.parse(rec.row);
+        return isObj(r) ? [r as SpillRow] : [];
+      } catch { return []; }
+    });
     for (const r of rows) appendChained(dir, r);
-    try { fs.unlinkSync(fp); } catch { /* another folder took it */ }
-  }
+    fs.unlinkSync(own);
+  } catch { /* no own spill file, or it vanished: nothing to fold */ }
+  // GC orphaned spill files from OTHER pids that are no longer alive and are
+  // stale — leftovers from crashes. Never fold them; just reclaim the space.
+  try {
+    for (const f of fs.readdirSync(dir)) {
+      const m = /^audit\.spill\.(\d+)\.jsonl$/.exec(f);
+      if (!m || Number(m[1]) === process.pid) continue;
+      const fp = path.join(dir, f);
+      try {
+        const st = fs.statSync(fp);
+        if (pidLiveness(Number(m[1])) !== 'alive' && Date.now() - st.mtimeMs > LOCK_STALE_MS * 4) fs.unlinkSync(fp);
+      } catch { /* raced */ }
+    }
+  } catch { /* dir unreadable */ }
 }
 
 /** The raw chained append. MUST run under the lock: it reads the true disk head
@@ -635,6 +681,9 @@ export interface AuditVerdict {
   /** The 1-based line where the chain first breaks, if any. */
   brokenAt?: number;
   detail?: string;
+  /** Off-loaded archives trusted by an off-box boundary anchor rather than
+   * walked on the box — the interior was not re-hashed here. */
+  bridged?: { file: string; firstSeq: number; lastSeq: number }[];
 }
 
 export interface RotateResult {
@@ -665,14 +714,19 @@ export function rotateAudit(dir: string): RotateResult {
   // lock; it also refuses a broken log, so this doubles as the pre-check). The
   // boundary must be pinned off-box, so refuse to rotate if the ship failed.
   const finalAnchor = anchorHead(dir);
-  // When off-box anchoring is configured, the boundary anchor MUST be shipped
-  // off-box before we archive: once the live segment becomes an archive file, a
-  // deleted archive is detectable only via an off-box anchor pinning its
-  // boundary (a local anchor cannot bridge it — the adversary has box write). So
-  // if the ship did not land, refuse to rotate rather than silently trade away
-  // that detectability; the operator fixes CAIRN_AUDIT_ANCHOR_CMD and retries.
-  if (process.env.CAIRN_AUDIT_ANCHOR_CMD) {
+  // When off-box anchoring is IN USE, the boundary anchor MUST be shipped off-box
+  // before we archive: once the live segment becomes an archive file, a deleted
+  // archive is detectable only via an off-box anchor pinning its boundary (a local
+  // anchor cannot bridge it — the adversary has box write). "In use" is not only
+  // the env var this shell happens to have: a ship cursor on disk means anchors
+  // have been shipped before, so an operator running `cairn:audit-log rotate` from
+  // a shell WITHOUT the cmd must not quietly skip the guard and archive with an
+  // unshippable boundary. If off-box anchoring is in use but the cmd is not
+  // available here, refuse; if it is available but the ship failed, refuse.
+  const offBoxInUse = !!process.env.CAIRN_AUDIT_ANCHOR_CMD || fs.existsSync(shippedCursor(dir));
+  if (offBoxInUse) {
     if (!finalAnchor) return { ok: false, detail: 'refusing to rotate: could not anchor the head off-box first (the log is broken or empty)' };
+    if (!process.env.CAIRN_AUDIT_ANCHOR_CMD) return { ok: false, detail: `refusing to rotate: off-box anchoring is in use (a ship cursor exists) but CAIRN_AUDIT_ANCHOR_CMD is not set in this shell — set it so the boundary anchor can ship, then retry.` };
     if (!anchorShipped(dir, finalAnchor)) return { ok: false, detail: `refusing to rotate: the boundary anchor (seq ${finalAnchor.seq}) did not ship off-box — CAIRN_AUDIT_ANCHOR_CMD failed. Fix it and retry; without it a later deletion of this archive could not be detected.` };
   }
   const r = withAuditLock(dir, (): RotateResult => {
@@ -780,6 +834,7 @@ export function verifyAudit(dir: string, opts: { against?: { seq: number; hash: 
   // boundary to trust — the live segment's first entry chains from the archived
   // head via a real marker entry, and each archive must chain from the previous.
   const matched = new Set<number>();
+  const bridged: { file: string; firstSeq: number; lastSeq: number }[] = []; // archives trusted by an off-box boundary anchor, not walked
   const st = { prev: GENESIS, expectedSeq: 1, lastSeq: 0 };
   const walk = (lines: string[], where: string): AuditVerdict | null => {
     for (let i = 0; i < lines.length; i++) {
@@ -831,6 +886,7 @@ export function verifyAudit(dir: string, opts: { against?: { seq: number; hash: 
       // determined by the boundary chain the external anchor pins, so mark every
       // expected seq in the segment's range as matched (bridged, not re-verified).
       for (const [seq] of expectAtSeq) if (seq >= seg.firstSeq && seq <= seg.lastSeq) matched.add(seq);
+      bridged.push({ file: seg.file, firstSeq: seg.firstSeq, lastSeq: seg.lastSeq });
       st.prev = seg.lastHash; st.expectedSeq = seg.lastSeq + 1; st.lastSeq = seg.lastSeq;
     }
   }
@@ -847,7 +903,13 @@ export function verifyAudit(dir: string, opts: { against?: { seq: number; hash: 
   }
 
   if (st.lastSeq === 0) return { ok: true, entries: 0, detail: 'no audit log yet' };
-  return { ok: true, entries: st.lastSeq };
+  // Distinguish "walked and hash-checked" from "trusted by an off-box boundary
+  // anchor" (an offloaded archive): the operator should know an interior range was
+  // not re-hashed on the box, only pinned at its boundary.
+  const detail = bridged.length
+    ? `bridged ${bridged.length} off-loaded archive(s) via off-box anchors: ${bridged.map((b) => `${b.file} (seq ${b.firstSeq}-${b.lastSeq})`).join(', ')}`
+    : undefined;
+  return { ok: true, entries: st.lastSeq, bridged, detail };
 }
 
 export function readAudit(dir: string, limit?: number): AuditEntry[] {

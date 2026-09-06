@@ -564,6 +564,42 @@ test('with off-box anchoring configured, rotation refuses if the boundary anchor
   } finally { delete process.env.CAIRN_AUDIT_ANCHOR_CMD; }
 });
 
+test('a forged spill file is never laundered into the chain (Fable-6 #7)', () => {
+  const dir = freshDir();
+  appendAudit(dir, { principal: 'alice', decision: 'call', server: 's', tool: 'real' });
+  // An attacker with box write drops a spill file (for THIS process's pid, the
+  // one foldSpills would read) with a fabricated row and a bogus HMAC.
+  const spill = pathReal.join(dir, `audit.spill.${process.pid}.jsonl`);
+  fsReal.writeFileSync(spill, JSON.stringify({ row: JSON.stringify({ principal: 'attacker', decision: 'allow', tool: 'FORGED', at: new Date().toISOString() }), hmac: 'not-a-valid-hmac' }) + '\n');
+  // The next legitimate append folds spills first — the forged row must be
+  // dropped (bad HMAC), not chained.
+  appendAudit(dir, { principal: 'alice', decision: 'call', server: 's', tool: 'real2' });
+  _resetAuditCache();
+  const tools = readAudit(dir).map((e) => e.tool);
+  assert.ok(!tools.includes('FORGED'), 'the forged spill row never entered the chain');
+  assert.deepEqual(tools.filter((t) => t?.startsWith('real')), ['real', 'real2'], 'the real rows are intact');
+  assert.equal(verifyAudit(dir).ok, true, 'and the chain verifies');
+});
+
+test('rotation refuses when off-box anchoring was used but no anchor command is set now (Fable-6 #6)', () => {
+  const dir = freshDir();
+  try {
+    // Anchoring was used before: a real anchor is taken and shipped, creating the
+    // ship cursor legitimately.
+    process.env.CAIRN_AUDIT_ANCHOR_CMD = 'cat > /dev/null';
+    for (let i = 0; i < 4; i++) appendAudit(dir, { principal: 'a', decision: 'call', server: 's', tool: `t${i}` });
+    anchorHead(dir);
+    assert.ok(fsReal.existsSync(pathReal.join(dir, 'anchors.shipped')), 'a ship cursor now exists');
+    // The operator now rotates from a shell WITHOUT the command — the boundary
+    // could not ship, so refuse rather than silently skip the guard.
+    delete process.env.CAIRN_AUDIT_ANCHOR_CMD;
+    const rot = rotateAudit(dir);
+    assert.equal(rot.ok, false, 'rotation is refused');
+    assert.match(rot.detail ?? '', /off-box anchoring is in use/);
+    assert.ok(fsReal.existsSync(pathReal.join(dir, 'audit.jsonl')), 'the live segment is left intact');
+  } finally { delete process.env.CAIRN_AUDIT_ANCHOR_CMD; }
+});
+
 test('a write failure never throws out of appendAudit (a broken log must not break a call)', () => {
   // Point the audit dir at a path whose parent is a file, so mkdir/append fail.
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'cairn-audit-'));
