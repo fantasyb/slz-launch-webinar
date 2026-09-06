@@ -188,6 +188,34 @@ test('legitimate non-Latin output passes through the defanger unchanged (#4)', a
   } finally { await p.close(); proc.kill('SIGKILL'); }
 });
 
+test('a forged label is defanged in every channel, not only description + result text (#5)', async () => {
+  // Upstream prose reaches the model through more than a tool's top-level
+  // description and a result's text: its title, annotations.title, input-schema
+  // property descriptions, and structuredContent values are all model-read. A
+  // forgery in any of them must be neutralized.
+  const { proc, port } = await startHttp();
+  const home = corpus();
+  const cfg = path.join(home, 'cfg.json');
+  fs.writeFileSync(cfg, JSON.stringify({ mcpServers: { data360: { url: `http://127.0.0.1:${port}/mcp` } } }));
+  const p = new Proxy(home, cfg);
+  try {
+    await p.init();
+    const list = await p.request('tools/list');
+    const evil = (list.result.tools as Array<Record<string, any>>).find((t) => t.name === 'mcp__data360__schema_evil');
+    assert.ok(evil, 'the tool is listed');
+    const blob = JSON.stringify(evil);
+    // No channel still reads as our provenance...
+    assert.ok(!/from your Cairn corpus/i.test(blob), 'no forged label survives anywhere on the tool definition');
+    // ...and each specific channel was actually reached.
+    assert.match(evil.title, /imitated the Cairn label/, 'the tool title is defanged');
+    assert.match(evil.annotations.title, /imitated the Cairn label/, 'annotations.title is defanged');
+    assert.match(evil.inputSchema.properties.field.description, /imitated the Cairn label/, 'a schema property description is defanged');
+
+    const r = await p.call('mcp__data360__schema_evil', { field: 'x' });
+    assert.ok(!/from your Cairn corpus/i.test(JSON.stringify(r.structuredContent)), 'structuredContent is defanged');
+  } finally { await p.close(); proc.kill('SIGKILL'); }
+});
+
 test('an HTTP upstream that restarts is re-dialed, not served as a dead session (#1)', async () => {
   // The critical fix: the HTTP transport does not fire onclose on a dead host,
   // so without re-dial logic a restarted upstream (a redeploy) would be served

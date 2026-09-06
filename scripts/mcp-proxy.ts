@@ -448,6 +448,85 @@ const defangUpstream = (text: string): string => {
   return out + text.slice(cursor);
 };
 
+/*
+ * A forged Cairn label reaches the model through every channel that carries
+ * upstream PROSE, not only a tool's top-level description and a tool result's
+ * text. These helpers defang the rest of that surface — tool titles and input/
+ * output schema descriptions, embedded-resource text inside results and prompts,
+ * resource/prompt/template list metadata, and forwarded upstream error strings —
+ * so there is no unfiltered path left for "--- from your Cairn corpus ---" to
+ * arrive dressed as our provenance. Each is defensive-only: it rewrites nothing
+ * unless a forgery is actually present (defangUpstream returns its input
+ * untouched otherwise), and never touches structural keys (names, uris, types).
+ */
+const defangMaybe = (v: unknown): unknown => (typeof v === 'string' ? defangUpstream(v) : v);
+
+/** Every string anywhere in an arbitrary JSON value. Safe to run broadly:
+ * defangUpstream is a no-op on any string without a forged label, so real data
+ * values pass through untouched; only an embedded forgery is neutralized. */
+function defangDeep(node: unknown): unknown {
+  if (typeof node === 'string') return defangUpstream(node);
+  if (Array.isArray(node)) return node.map(defangDeep);
+  if (node && typeof node === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(node as Record<string, unknown>)) out[k] = defangDeep(v);
+    return out;
+  }
+  return node;
+}
+
+/** Every `description`/`title` string nested anywhere in a JSON Schema. */
+function defangSchema(node: unknown): unknown {
+  if (Array.isArray(node)) return node.map(defangSchema);
+  if (node && typeof node === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(node as Record<string, unknown>)) {
+      out[k] = (k === 'description' || k === 'title') ? defangMaybe(v) : defangSchema(v);
+    }
+    return out;
+  }
+  return node;
+}
+
+/** A tool definition: description, title, annotations.title, and its schemas. */
+function defangToolDef<T extends Record<string, unknown>>(t: T): T {
+  const out: Record<string, unknown> = { ...t };
+  out.description = defangMaybe(out.description);
+  out.title = defangMaybe(out.title);
+  if (out.inputSchema && typeof out.inputSchema === 'object') out.inputSchema = defangSchema(out.inputSchema);
+  if (out.outputSchema && typeof out.outputSchema === 'object') out.outputSchema = defangSchema(out.outputSchema);
+  if (out.annotations && typeof out.annotations === 'object') {
+    const a = out.annotations as Record<string, unknown>;
+    if (typeof a.title === 'string') out.annotations = { ...a, title: defangUpstream(a.title) };
+  }
+  return out as T;
+}
+
+/** One content item from a result or prompt message: its text, and the text of
+ * an embedded resource ({ type:'resource', resource:{ text } }). */
+function defangContentItem(c: unknown): unknown {
+  if (!c || typeof c !== 'object') return c;
+  const item = c as Record<string, unknown>;
+  let out = item;
+  if (typeof item.text === 'string') out = { ...out, text: defangUpstream(item.text) };
+  if (item.resource && typeof item.resource === 'object') {
+    const r = item.resource as Record<string, unknown>;
+    if (typeof r.text === 'string') out = { ...out, resource: { ...r, text: defangUpstream(r.text) } };
+  }
+  return out;
+}
+
+/** List metadata (a resource, template, or prompt row): its human-read fields. */
+function defangDescribable<T extends Record<string, unknown>>(o: T): T {
+  const out: Record<string, unknown> = { ...o };
+  out.description = defangMaybe(out.description);
+  out.title = defangMaybe(out.title);
+  if (Array.isArray(out.arguments)) {
+    out.arguments = out.arguments.map((a) => (a && typeof a === 'object' ? defangDescribable(a as Record<string, unknown>) : a));
+  }
+  return out as T;
+}
+
 /**
  * A finding is a prior, and a prior is only as good as when it was last
  * checked. So the note says what its standing rests on -- verified by a
@@ -1833,9 +1912,11 @@ async function main() {
         // rather than a generic "no such tool".
         owners.set(name, { up, raw: t.name, annotations: t.annotations });
         if (enforce && up.trustBlocked.has(t.name)) continue; // withhold a changed/unapproved tool from the list
-        // Defang any imitation of our label in the upstream's own description
-        // before it reaches the model (an HTTP host could forge a Cairn block).
-        out.push({ ...t, name, description: t.description ? defangUpstream(t.description) : t.description });
+        // Defang any imitation of our label in the upstream's own tool
+        // definition before it reaches the model (an HTTP host could forge a
+        // Cairn block) — description, title, annotations.title, and every
+        // description/title nested in its input/output schema.
+        out.push(defangToolDef({ ...t, name }));
       }
     }
     // Atomic swap: no await between clear and repopulate, so no other task ever
@@ -1887,7 +1968,7 @@ async function main() {
      * corpus. (With a single upstream the process has already exited.)
      */
     for (const u of upstreams.filter((x) => !x.alive)) {
-      upstreamOwn.push(`## cairn-proxy\nUpstream "${u.spec.name}" did not start (${u.lastError ?? 'unknown'}). Its tools are absent from this list; a restart is attempted on each tools/list.`);
+      upstreamOwn.push(`## cairn-proxy\nUpstream "${u.spec.name}" did not start (${defangUpstream(u.lastError ?? 'unknown')}). Its tools are absent from this list; a restart is attempted on each tools/list.`);
     }
     /*
      * Degraded: the upstreams' own instructions, and not a word of ours.
@@ -2108,7 +2189,7 @@ async function main() {
         );
       }
       if (!(await ensure(owner.up))) {
-        return textResult(`cairn-proxy: upstream "${owner.up.spec.name}" is not running (${owner.up.lastError ?? 'unknown'})${retryHint(owner.up)}`, true);
+        return textResult(`cairn-proxy: upstream "${owner.up.spec.name}" is not running (${defangUpstream(owner.up.lastError ?? 'unknown')})${retryHint(owner.up)}`, true);
       }
       // The call is permitted, trusted and routable: record it. This is the row
       // an audit asks for — who called what, on which server, when — hash-chained
@@ -2199,7 +2280,7 @@ async function main() {
          */
         if (owner.up.spec.url) owner.up.alive = false;
         audit(session, 'error', owner.up.spec.name, owner.raw, `transport failure: ${owner.up.lastError}`);
-        return textResult(`cairn-proxy: call to "${req.params.name}" failed: ${owner.up.lastError}`, true);
+        return textResult(`cairn-proxy: call to "${req.params.name}" failed: ${defangUpstream(owner.up.lastError ?? '')}`, true);
       }
 
       try {
@@ -2306,8 +2387,12 @@ async function main() {
         // block in a tool result is a prompt-injection dressed as our provenance.
         // Then append our own (trusted) note, which is never touched.
         if (Array.isArray(result.content)) {
-          result.content = (result.content as Array<{ type: string; text?: string }>).map((c) =>
-            c.type === 'text' && typeof c.text === 'string' ? { ...c, text: defangUpstream(c.text) } : c) as typeof result.content;
+          result.content = (result.content as unknown[]).map(defangContentItem) as typeof result.content;
+        }
+        // structuredContent is model-read too: an upstream that returns an output
+        // schema can smuggle a forged label into any string value it carries.
+        if (result.structuredContent && typeof result.structuredContent === 'object') {
+          result.structuredContent = defangDeep(result.structuredContent) as typeof result.structuredContent;
         }
         if (note) {
           const content = Array.isArray(result.content) ? result.content : [];
@@ -2335,7 +2420,7 @@ async function main() {
           do {
             let page;
             try { page = await up.client!.listResources({ cursor }, FORWARD); } catch { break; }
-            for (const r of page.resources) { resourceOwner.set(r.uri, up); resources.push(r); }
+            for (const r of page.resources) { resourceOwner.set(r.uri, up); resources.push(defangDescribable(r as Record<string, unknown>)); }
             cursor = page.nextCursor;
           } while (cursor);
         }
@@ -2350,7 +2435,7 @@ async function main() {
           do {
             let page;
             try { page = await up.client!.listResourceTemplates({ cursor }, FORWARD); } catch { break; }
-            for (const t of page.resourceTemplates) { templateOwner.set(t.uriTemplate, up); resourceTemplates.push(t); }
+            for (const t of page.resourceTemplates) { templateOwner.set(t.uriTemplate, up); resourceTemplates.push(defangDescribable(t as Record<string, unknown>)); }
             cursor = page.nextCursor;
           } while (cursor);
         }
@@ -2388,7 +2473,7 @@ async function main() {
             audit(session, 'call', up.spec.name, '(resource:read)', req.params.uri);
             // Defang: resource contents are model-read text and were never filtered,
             // so an upstream could forge a Cairn label inside a resource body.
-            return { ...out, contents: (out.contents as Array<Record<string, unknown>>)?.map((c) => (typeof c.text === 'string' ? { ...c, text: defangUpstream(c.text) } : c)) };
+            return { ...out, contents: (out.contents as unknown[])?.map(defangContentItem) };
           } catch (e) { last = e as Error; }
         }
         throw last ?? new Error(`no upstream serves ${req.params.uri}`);
@@ -2426,7 +2511,7 @@ async function main() {
             for (const p of page.prompts) {
               const name = expose(up, p.name);
               promptOwner.set(name, { up, raw: p.name });
-              prompts.push({ ...p, name });
+              prompts.push(defangDescribable({ ...p, name }));
             }
             cursor = page.nextCursor;
           } while (cursor);
@@ -2453,9 +2538,10 @@ async function main() {
         }
         const out = await owner.up.client!.getPrompt({ ...req.params, name: owner.raw }, { ...FORWARD, signal: extra.signal });
         audit(session, 'call', owner.up.spec.name, '(prompt:get)', req.params.name);
-        // Prompt messages are model-read instruction text: defang a forged label.
-        const messages = (out.messages as Array<{ content?: { type?: string; text?: string } }> | undefined)?.map((m) =>
-          m.content && typeof m.content.text === 'string' ? { ...m, content: { ...m.content, text: defangUpstream(m.content.text) } } : m,
+        // Prompt messages are model-read instruction text: defang a forged label
+        // in the message text and in any embedded resource it carries.
+        const messages = (out.messages as Array<{ content?: unknown }> | undefined)?.map((m) =>
+          m.content ? { ...m, content: defangContentItem(m.content) } : m,
         );
         return messages ? { ...out, messages } : out;
       });
