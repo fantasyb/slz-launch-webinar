@@ -1541,6 +1541,25 @@ async function main() {
     if (unknownPromptCache.size >= UNKNOWN_TOOL_CACHE_MAX) unknownPromptCache.clear();
     unknownPromptCache.set(name, Date.now() + UNKNOWN_TOOL_TTL_MS);
   };
+  /*
+   * And the same for unknown RESOURCE URIs. ownerOf re-lists every alive resource
+   * server when a URI has no reachable owner, so a client spraying random
+   * `resources/read`/`subscribe` URIs would turn each cheap request into a full
+   * fan-out re-list (Fable-7 follow-up to #12 — the read path grew a re-list but
+   * not the cache the prompt path already had). Remember a URI that no server owns
+   * at all after a COMPLETE re-list; any resources/list_changed clears it.
+   */
+  const unknownResourceCache = new Map<string, number>(); // uri -> expiry ms
+  const isKnownUnknownResource = (uri: string): boolean => {
+    const exp = unknownResourceCache.get(uri);
+    if (exp === undefined) return false;
+    if (Date.now() > exp) { unknownResourceCache.delete(uri); return false; }
+    return true;
+  };
+  const rememberUnknownResource = (uri: string): void => {
+    if (unknownResourceCache.size >= UNKNOWN_TOOL_CACHE_MAX) unknownResourceCache.clear();
+    unknownResourceCache.set(uri, Date.now() + UNKNOWN_TOOL_TTL_MS);
+  };
 
   /**
    * NOTICE, RECORD, NEVER ENFORCE. Every complete look at an upstream's tool
@@ -1854,7 +1873,7 @@ async function main() {
     // debounce the expensive re-list + client relay instead of doing them here.
     if (method === 'notifications/tools/list_changed') { toolOwner.clear(); unknownToolCache.clear(); scheduleListChangedFlush(up, method); return; }
     if (method === 'notifications/prompts/list_changed') { promptOwner.clear(); unknownPromptCache.clear(); scheduleListChangedFlush(up, method); return; }
-    if (method === 'notifications/resources/list_changed') { resourceOwner.clear(); templateOwner.clear(); scheduleListChangedFlush(up, method); return; }
+    if (method === 'notifications/resources/list_changed') { resourceOwner.clear(); templateOwner.clear(); unknownResourceCache.clear(); scheduleListChangedFlush(up, method); return; }
     // Defang the one notification that carries free upstream text to the model.
     let outParams = (params ?? {}) as Record<string, unknown>;
     if (method === 'notifications/message' && outParams && typeof outParams.data === 'string') {
@@ -2737,18 +2756,29 @@ async function main() {
         // role listed), so testing the raw lookup for emptiness would skip the
         // re-list and wrongly deny — gate, then decide (Fable-6 #12 follow-up).
         let ups = gate(lookup());
-        // No reachable owner yet: re-list this session's OWN reachable servers
-        // before giving up, so a broader tenant is never denied a resource it may
-        // reach just because a peer listed a narrower view (or nobody has listed).
-        // Paginates like the list handlers so a resource on a later page is not missed.
-        if (!ups.length) {
-          for (const u of withResources().filter((u) => mayReachServer(session, u))) {
+        // No reachable owner yet: re-list before giving up, so a broader tenant is
+        // never denied a resource it may reach just because a peer listed a narrower
+        // view (or nobody has listed). But a spray of unknown URIs must not turn each
+        // read into a full fan-out re-list — remember a URI no server owns at all and
+        // refuse it straight away for a short TTL (Fable-7 follow-up to #12). Re-list
+        // ALL alive servers (not just reachable) so "unknown" means absent EVERYWHERE:
+        // a URI merely on a denied server is found (and stays deniable by the gate),
+        // never negatively cached in a way that would poison a tenant that can reach
+        // it. Reachability is still enforced by the gate on the result.
+        if (!ups.length && !isKnownUnknownResource(uri)) {
+          let complete = true;
+          for (const u of withResources()) {
             let cursor: string | undefined; const seen = new Set<string>();
-            for (let pg = 0; ; pg++) { let page; try { page = await u.client!.listResources({ cursor }, FORWARD); } catch { break; } for (const r of page.resources) addOwner(resourceOwner, r.uri, u); cursor = page.nextCursor; if (!cursor || seen.has(cursor) || pg + 1 >= MAX_LIST_PAGES) break; seen.add(cursor); }
+            for (let pg = 0; ; pg++) { let page; try { page = await u.client!.listResources({ cursor }, FORWARD); } catch { complete = false; break; } for (const r of page.resources) addOwner(resourceOwner, r.uri, u); cursor = page.nextCursor; if (!cursor) break; if (seen.has(cursor) || pg + 1 >= MAX_LIST_PAGES) { complete = false; break; } seen.add(cursor); }
             cursor = undefined; seen.clear();
-            for (let pg = 0; ; pg++) { let page; try { page = await u.client!.listResourceTemplates({ cursor }, FORWARD); } catch { break; } for (const t of page.resourceTemplates) addOwner(templateOwner, t.uriTemplate, u); cursor = page.nextCursor; if (!cursor || seen.has(cursor) || pg + 1 >= MAX_LIST_PAGES) break; seen.add(cursor); }
+            for (let pg = 0; ; pg++) { let page; try { page = await u.client!.listResourceTemplates({ cursor }, FORWARD); } catch { complete = false; break; } for (const t of page.resourceTemplates) addOwner(templateOwner, t.uriTemplate, u); cursor = page.nextCursor; if (!cursor) break; if (seen.has(cursor) || pg + 1 >= MAX_LIST_PAGES) { complete = false; break; } seen.add(cursor); }
           }
-          ups = gate(lookup());
+          const all = lookup();
+          ups = gate(all);
+          // Only cache a URI that NO alive server owns (not one merely unreachable
+          // for this tenant) and only when the re-list actually saw every server's
+          // every page — else a later page or a flaky server could own it.
+          if (!all.length && complete) rememberUnknownResource(uri);
         }
         if (ups.length) return ups;
         return governed(session) ? [] : withResources(); // no blind fan-out for a governed principal

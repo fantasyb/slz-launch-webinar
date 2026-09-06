@@ -766,14 +766,20 @@ export function rotateAudit(dir: string): RotateResult {
     // failure would leave an archive verify cannot find — a false CHAIN BROKEN on
     // the very next check, since the live marker's prevHash chains from a head
     // that then appears nowhere.
-    // Capture the manifest length before the append so a rename failure below can
-    // ROLL BACK the entry — otherwise a phantom manifest record for an archive that
-    // was never created would make every later verify a false CHAIN BROKEN.
+    // Capture the manifest length before the append so a later failure can ROLL
+    // BACK the entry (or a partial append) — otherwise a phantom or half-written
+    // manifest record makes every later verify a false CHAIN BROKEN. Only ENOENT
+    // (no manifest yet) is a real "length 0"; any other stat error must NOT collapse
+    // to 0, or a later rollback could truncate the whole manifest.
     let manifestLenBefore = 0;
-    try { manifestLenBefore = fs.statSync(segmentsFile(dir)).size; } catch { manifestLenBefore = 0; }
+    try { manifestLenBefore = fs.statSync(segmentsFile(dir)).size; } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') return { ok: false, detail: `could not read the segment manifest before rotating: ${(e as Error).message}` }; }
     try {
       fs.appendFileSync(segmentsFile(dir), JSON.stringify({ file: archiveName, firstSeq: first.seq, lastSeq: tail.seq, firstPrevHash: first.prevHash, lastHash: tail.hash } as Segment) + '\n');
     } catch (e) {
+      // A partial append (ENOSPC mid-write) would leave a torn trailing line the
+      // next append concatenates onto, silently losing a later segment. Truncate
+      // back to the pre-append length so the manifest is exactly what it was.
+      try { fs.truncateSync(segmentsFile(dir), manifestLenBefore); } catch { /* best-effort rollback */ }
       return { ok: false, detail: `could not record the segment manifest; left the live log intact: ${(e as Error).message}` };
     }
     try {
@@ -857,11 +863,12 @@ export function offloadArchive(dir: string, file: string): OffloadResult {
     // is atomic (tmp + rename), so a concurrent unlocked verify never reads a
     // truncated manifest and a crash mid-write never corrupts it.
     const next = segs.map((s, i) => (i === idx ? { ...s, offloaded: true } : s));
+    const tmp = path.join(dir, `.segments.${process.pid}.tmp`);
     try {
-      const tmp = path.join(dir, `.segments.${process.pid}.tmp`);
       fs.writeFileSync(tmp, next.map((s) => JSON.stringify(s)).join('\n') + '\n');
       fs.renameSync(tmp, segmentsFile(dir));
     } catch (e) {
+      try { fs.unlinkSync(tmp); } catch { /* nothing to clean up */ }
       return { ok: false, detail: `could not update the manifest; nothing removed: ${(e as Error).message}` };
     }
     try { fs.unlinkSync(local); } catch (e) {

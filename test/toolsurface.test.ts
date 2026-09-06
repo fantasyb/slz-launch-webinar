@@ -86,6 +86,16 @@ test('a residual non-Latin letter after folding fails closed under a read-only r
   // rather than silently trusted — the safe direction for a look-alike.
   const c = classify({ name: '検索_all', annotations: { readOnlyHint: true } });
   assert.equal(c.permitted, false, 'a non-Latin name under a read-only hint is flagged, not auto-permitted');
+  // But ACCENTED / extended LATIN is not a confusable attack — foldName's NFKD
+  // strips diacritics and the table folds non-decomposing letters (ø, ß, å) to
+  // ASCII, so a legitimately accented read name stays a read and is not needlessly
+  // failed closed (Fable-7 follow-up to #14).
+  for (const name of ['get_café', 'list_niños', 'größe_report', 'blåbær_view', 'find_señor', 'naïve_lookup']) {
+    assert.equal(classify({ name }).permitted, true, `${name} is an accented read, not a write`);
+  }
+  // ...while an accented WRITE verb still folds to the verb and is a write.
+  assert.equal(classify({ name: 'delète_user' }).permitted, false, 'an accented write verb is still a write');
+  assert.equal(classify({ name: 'créate_report' }).permitted, false, 'créate folds to create — a write');
 });
 
 test('an override permits an excluded tool and is carried with the reason it overruled', () => {

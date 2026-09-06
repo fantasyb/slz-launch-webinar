@@ -473,6 +473,16 @@ test('a resource reads with a cold owner map, and an unknown prompt is cached wi
     assert.ok(!hit.error, 'a valid prompt still resolves after an unknown one was cached');
     const msgs = (hit.result as { messages: { content: { text: string } }[] }).messages;
     assert.ok(msgs.some((m) => m.content.text.includes('prompt body text from upstream')), 'the real prompt body is returned');
+
+    // The RESOURCE negative cache behaves the same: an unknown URI is refused,
+    // repeats stay refused (no per-request fan-out re-list), and it does not poison
+    // a real resource the client reads afterwards (Fable-7 follow-up to #12).
+    const rMiss1 = await s.request('resources/read', { uri: 'nowhere://nope' });
+    assert.ok(rMiss1.error, 'an unknown resource URI is refused');
+    const rMiss2 = await s.request('resources/read', { uri: 'nowhere://nope' });
+    assert.ok(rMiss2.error, 'a repeat of the unknown URI stays refused');
+    const rHit = await s.request('resources/read', { uri: 'fixture://doc' });
+    assert.ok(!rHit.error, 'a real resource still reads after an unknown one was cached');
   } finally { await s.close(); }
 });
 

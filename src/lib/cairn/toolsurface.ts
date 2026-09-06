@@ -103,6 +103,11 @@ const NAME_CONFUSABLES: Record<string, string> = {
   ο: 'o', α: 'a', ε: 'e', ρ: 'p', υ: 'u', χ: 'x', κ: 'k', ν: 'v', ι: 'i', ϲ: 'c', τ: 't',
   // Final/lunate sigma, shha, palochka, dotless i, Armenian look-alikes.
   ς: 'c', һ: 'h', ӏ: 'l', ı: 'i', ո: 'n', ս: 'u', ա: 'a', օ: 'o', ց: 'g',
+  // Non-decomposing extended-Latin letters (NFKD leaves these, unlike é/ñ/ü):
+  // fold to their ASCII base so a legitimate name (größe, blåbær) stays a read
+  // rather than tripping the residual-non-Latin fail-closed, AND a write verb
+  // hidden with one (deløte) still resolves to the verb (Fable-7 follow-up to #14).
+  ø: 'o', Ø: 'O', æ: 'ae', Æ: 'AE', œ: 'oe', Œ: 'OE', ß: 'ss', þ: 'th', Þ: 'TH', ð: 'd', Ð: 'D', đ: 'd', Đ: 'D', ł: 'l', Ł: 'L', ħ: 'h', ĸ: 'k', ŋ: 'n', ſ: 's', å: 'a', Å: 'A',
   // Capitals fold to Latin CAPITALS so a leading look-alike letter still starts a
   // camelCase token (Дelete → Delete → delete), rather than lower-casing to a
   // non-Latin letter and slipping the write heuristic/denyTools match (Fable-6 #14).
@@ -110,7 +115,13 @@ const NAME_CONFUSABLES: Record<string, string> = {
   Ο: 'O', Α: 'A', Ε: 'E', Ρ: 'P', Υ: 'Y', Χ: 'X', Κ: 'K', Ν: 'N', Ι: 'I', Ϲ: 'C', Τ: 'T', Β: 'B', Η: 'H', Μ: 'M', Һ: 'H', Ӏ: 'L',
 };
 export function foldName(name: string): string {
-  return name.normalize('NFKC').replace(/[\p{Cf}\p{Mn}]/gu, '').replace(/[Ā-ɏͰ-ϿЀ-ӿ԰-֏]/g, (c) => NAME_CONFUSABLES[c] ?? c);
+  // NFKD (compatibility DECOMPOSITION) so a precomposed accented Latin letter
+  // splits into base + combining mark; stripping the marks then leaves plain ASCII
+  // (é→e, ñ→n, ü→u). This keeps a legitimately accented read name (get_données) an
+  // ASCII read instead of tripping the residual-non-Latin fail-closed in
+  // readsAsWrite, while a genuine non-Latin script (Cyrillic, Greek, Armenian) has
+  // no ASCII decomposition and still folds via the table or fails closed.
+  return name.normalize('NFKD').replace(/[\p{Cf}\p{Mn}]/gu, '').replace(/[À-ɏͰ-ϿЀ-ӿ԰-֏]/g, (c) => NAME_CONFUSABLES[c] ?? c);
 }
 /**
  * Does this name read as a write? Folded first (so a look-alike verb cannot
@@ -126,12 +137,15 @@ export function readsAsWrite(name: string): boolean {
   // look-alikes we know, but a letter from an un-tabled script (Armenian ո, a
   // palochka ӏ, a dotless ı, a lunate sigma ϲ) survives folding and then acts as a
   // TOKEN SEPARATOR in nameTokens — splitting a verb (`deӏete` → de|ete) so its
-  // prefix never matches. Rather than chase every script, treat any name that
-  // still carries a non-ASCII letter after folding as a write: a read-only role
-  // then refuses it unless an operator override permits it. This makes the table
-  // an accuracy aid, not the security boundary (Fable-6 #14 follow-up). A tool
-  // genuinely named in another script should declare readOnlyHint, which wins
-  // before this heuristic is ever consulted.
+  // prefix never matches. Rather than chase every script, treat any name that still
+  // carries a non-ASCII letter after folding as a write. This makes the table an
+  // accuracy aid, not the security boundary (Fable-6 #14 follow-up). The effect is
+  // strict: a read-only role (enterprise authorize) denies on this alone, and
+  // classify() flags it even under a readOnlyHint (the "both facts, a person
+  // decides" rule) — so a tool with a genuinely non-Latin name that NFKD cannot
+  // reduce to ASCII needs an explicit allow (a readOnlyStrict exception, or an
+  // override) to be callable by a read-only principal. Accented Latin (é, ñ, ü) is
+  // NOT caught: foldName's NFKD strips the diacritic to base ASCII first.
   if (/[^\x00-\x7f]/.test(folded.replace(/[^\p{L}]/gu, ''))) return true;
   const tokens = nameTokens(folded).map((t) => t.toLowerCase());
   if (!tokens.length) return false;
