@@ -1,0 +1,51 @@
+{
+  "id": "cairn-0050",
+  "title": "A timing-bound proxy test fails only under concurrent full-suite load, passes in isolation",
+  "claim": "test/proxy.test.ts's 'a long call's progress is relayed to the client under its own token' asserts a progress notification arrives before a wall-clock deadline; because each such test spawns a real proxy child (npx tsx) and the whole suite runs those children concurrently under node --test, the round-trip can outrun the deadline under load, so the test goes red even though the relay works — and the same test passes every time it is run alone.",
+  "kind": "trap",
+  "subject": {
+    "name": "node --test (test/proxy.test.ts progress-relay test)",
+    "ecosystem": "npm",
+    "versions": "*"
+  },
+  "scope": "environment-specific",
+  "appliesTo": "This repository's test suite when the full suite runs concurrently (pre-commit, CI, `node --test test/`), on a machine loaded enough that a spawned tsx child + SSE round-trip can exceed the test's wall-clock deadline. Not seen when the test runs in isolation.",
+  "tags": ["testing", "flake", "timing", "proxy", "node-test", "concurrency"],
+  "cost": "minutes",
+  "expectation": "A green test in isolation and a red one in the full run means the code under test is broken and the diff that preceded it caused the failure.",
+  "reality": "The failure is a load artifact, not a defect: the test waits a fixed wall-clock deadline for a progress notification relayed through a spawned proxy child, and under the concurrent suite the round-trip sometimes lands after the deadline. Re-running the one test alone passes deterministically. A prior session already bumped the deadline 3s -> 8s for exactly this and it can still flake under heavy load.",
+  "mechanism": "The test spawns a real gateway over stdio (npx tsx) and drives it with raw JSON-RPC, then polls s.notifications until Date.now() passes a fixed deadline. node --test runs the suite's tests concurrently, so dozens of tsx children compete for CPU and the event loop; process startup + the upstream call + the SSE notification relay can then exceed the deadline. Alone there is no contention and it always arrives in time.",
+  "workaround": "Before treating this test's red as a real regression, re-run it in isolation: `npx tsx --test --test-name-pattern=\"progress is relayed to the client under its own token\" test/proxy.test.ts`. If it passes there, the full-suite failure is load, not your change — do not chase it, and do not weaken the assertion. The durable fix is to wait on the notification event rather than a wall-clock deadline (or raise concurrency isolation for spawning tests), not a bigger timeout.",
+  "evidence": [
+    {
+      "command": "npx tsx --test --test-name-pattern=\"a long call's progress is relayed\" test/proxy.test.ts",
+      "output": "ok 1 - a long call's progress is relayed to the client under its own token\n# pass 1  # fail 0",
+      "note": "The same test that reported `not ok 226` under the full pre-commit suite (# pass 396 # fail 1) passes deterministically when run alone."
+    }
+  ],
+  "check": {
+    "command": "node -e 'const s=require(\"fs\").readFileSync(\"test/proxy.test.ts\",\"utf8\");const m=/progress is relayed to the client under its own token[\\s\\S]*?const deadline = Date\\.now\\(\\) \\+ \\d+000;[\\s\\S]*?while \\(Date\\.now\\(\\) < deadline/.test(s);console.log(m?\"wall-clock deadline present (load-sensitive)\":\"no wall-clock deadline (deterministic wait)\");process.exit(m?0:1);'",
+    "confirmedIf": "exit 0, printing 'wall-clock deadline present (load-sensitive)' — the test still gates the relayed notification on a fixed wall-clock deadline, so a concurrent-load run can still flake it.",
+    "refutedIf": "exit 1: the test no longer waits on a wall-clock deadline (rewritten to await the notification deterministically), so the load-sensitive shape is gone.",
+    "absentWhen": "the test is run in isolation, where there is no concurrent load to push the round-trip past the deadline.",
+    "manual": false
+  },
+  "provenance": "firsthand",
+  "halfLifeDays": 180,
+  "observations": [
+    {
+      "at": "2026-09-06T13:05:00.000Z",
+      "by": "claude-opus-4-8",
+      "verdict": "confirmed",
+      "note": "Hit during pre-commit while committing an unrelated gateway change: the full suite reported `not ok 226 - a long call's progress is relayed to the client under its own token` (# pass 396 # fail 1). Re-running that one test alone passed on the first try. The test already carries an 8s deadline (bumped from 3s in a prior session for this same flake) and still went red under the concurrent suite.",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node v22.22.2",
+        "note": "Full suite via the pre-commit hook (node --test over test/), which spawns many tsx child gateways concurrently."
+      }
+    }
+  ],
+  "status": "active",
+  "createdAt": "2026-09-06T13:05:00.000Z"
+}

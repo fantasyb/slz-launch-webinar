@@ -73,13 +73,31 @@ export interface UpdateOptions {
   /** Path to an SSH allowed-signers file, used as gpg.ssh.allowedSignersFile for
    * the verification. Defaults from CAIRN_UPDATE_ALLOWED_SIGNERS. */
   allowedSigners?: string;
+  /**
+   * Minimum GPG ownertrust for a signature to count, passed as
+   * gpg.minTrustLevel. `git verify-commit` on a GPG signature otherwise accepts
+   * ANY key in the keyring that produced a valid signature, regardless of
+   * whether the operator trusts it — so a key imported for any reason (or one an
+   * adversary slipped into the keyring) can sign a malicious update and pass.
+   * Defaults from CAIRN_UPDATE_MIN_TRUST, else 'fully'. Only 'ultimate'/'fully'
+   * are safe; the option exists so an operator can raise it to 'ultimate'.
+   */
+  minTrust?: string;
   /** Injectable verifier (tests). Default: `git verify-commit <ref>`. */
   verify?: (repoDir: string, ref: string) => boolean;
 }
 
-function verifyCommit(repoDir: string, ref: string, allowedSigners?: string): boolean {
+function verifyCommit(repoDir: string, ref: string, allowedSigners?: string, minTrust = 'fully'): boolean {
   try {
-    const args = allowedSigners ? ['-c', `gpg.ssh.allowedSignersFile=${allowedSigners}`, 'verify-commit', ref] : ['verify-commit', ref];
+    // gpg.minTrustLevel gates GPG signatures by ownertrust (a valid signature
+    // from an untrusted key no longer passes); gpg.ssh.allowedSignersFile does
+    // the equivalent for SSH signatures, and SSH verification requires it — so a
+    // signed SSH commit with no allow-list configured fails closed. Both are set
+    // whenever we have them; a signature type without its trust anchor is
+    // rejected, never waved through.
+    const args = ['-c', `gpg.minTrustLevel=${minTrust}`];
+    if (allowedSigners) args.push('-c', `gpg.ssh.allowedSignersFile=${allowedSigners}`);
+    args.push('verify-commit', ref);
     execFileSync('git', args, { cwd: repoDir, stdio: ['ignore', 'pipe', 'pipe'] });
     return true;
   } catch {
@@ -128,7 +146,8 @@ export function selfUpdate(opts: UpdateOptions = {}): UpdateResult {
   const build = opts.build ?? defaultBuild;
   const requireSigned = opts.requireSigned ?? process.env.CAIRN_UPDATE_REQUIRE_SIGNED === '1';
   const allowedSigners = opts.allowedSigners ?? process.env.CAIRN_UPDATE_ALLOWED_SIGNERS;
-  const verify = opts.verify ?? ((dir: string, ref: string) => verifyCommit(dir, ref, allowedSigners));
+  const minTrust = opts.minTrust ?? process.env.CAIRN_UPDATE_MIN_TRUST ?? 'fully';
+  const verify = opts.verify ?? ((dir: string, ref: string) => verifyCommit(dir, ref, allowedSigners, minTrust));
 
   // Is this a git checkout at all?
   let from: string;

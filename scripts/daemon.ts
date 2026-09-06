@@ -22,7 +22,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { selfUpdate, describeUpdate, repoRoot } from '../src/lib/cairn/selfUpdate';
-import { verifyAudit, anchorHead, readAnchors, rotateAudit } from '../src/lib/cairn/enterprise';
+import { verifyAudit, anchorHead, readAnchors, rotateAudit, readOrgPolicy } from '../src/lib/cairn/enterprise';
 
 const argv = process.argv.slice(2);
 function opt(name: string): string | undefined {
@@ -240,7 +240,14 @@ function maybeSelfUpdate(): void {
   lastSelfUpdate = Date.now();
   let r;
   try {
-    r = selfUpdate();
+    // Under an org policy, a signed target is MANDATORY regardless of the env
+    // default: this box auto-updates unattended and re-runs the installer (which
+    // rewrites the operator's MCP config), so whoever can push to the tracked
+    // branch would otherwise get persistent code execution as the operator on a
+    // governed deployment. A governed gateway never fast-forwards to an
+    // unverified commit even if CAIRN_UPDATE_REQUIRE_SIGNED was left unset.
+    const governed = (() => { try { return readOrgPolicy().status === 'ok'; } catch { return false; } })();
+    r = selfUpdate(governed ? { requireSigned: true } : {});
   } catch (e) {
     process.stderr.write(`cairn:daemon self-update threw (ignored): ${(e as Error).message}\n`);
     return;

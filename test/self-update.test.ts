@@ -134,3 +134,35 @@ test('without signing required, verification is not consulted (default dev flow)
   assert.equal(r.status, 'updated', r.reason);
   assert.equal(called, false, 'verify is not called unless signing is required');
 });
+
+test('with signing required, the DEFAULT verifier (real git verify-commit) refuses an unsigned commit', () => {
+  const { remote, checkout, head } = scaffold();
+  advanceRemote(remote); // an ordinary, unsigned commit
+  // No injected verify: this exercises the real verifyCommit -> git verify-commit
+  // path. An unsigned commit has no signature to verify, so it is refused and the
+  // tree never moves. (A validly-signed-but-untrusted commit is refused too, by
+  // gpg.minTrustLevel; that needs a GPG keyring to stage and is asserted
+  // structurally below.)
+  const build = () => { throw new Error('build must never run: the tree must not move to an unverified commit'); };
+  const r = selfUpdate({ repoDir: checkout, requireSigned: true, build });
+  assert.equal(r.status, 'skipped', r.reason);
+  assert.match(r.reason ?? '', /not a verified signed commit/);
+  assert.equal(git(checkout, 'rev-parse', 'HEAD'), head, 'the unsigned commit was never fast-forwarded to');
+});
+
+test('the verifier always anchors trust, and a governed daemon forces signing', () => {
+  // git verify-commit accepts ANY valid signature in the keyring unless trust is
+  // pinned: gpg.minTrustLevel gates GPG by ownertrust, and an SSH allow-signers
+  // file gates SSH (and is mandatory for SSH verification at all). The verifier
+  // must always pass the trust anchor, or a key merely present in the keyring
+  // could sign a malicious update.
+  const src = fs.readFileSync(path.join(process.cwd(), 'src', 'lib', 'cairn', 'selfUpdate.ts'), 'utf8');
+  assert.match(src, /gpg\.minTrustLevel=\$\{minTrust\}/, 'every verify passes gpg.minTrustLevel');
+  assert.match(src, /const minTrust = opts\.minTrust \?\? process\.env\.CAIRN_UPDATE_MIN_TRUST \?\? 'fully'/, 'minTrust defaults to a trusted level, overridable');
+
+  // On a governed box, signing is mandatory regardless of the env default: the
+  // daemon auto-updates unattended and re-runs the installer.
+  const daemon = fs.readFileSync(path.join(process.cwd(), 'scripts', 'daemon.ts'), 'utf8');
+  assert.match(daemon, /readOrgPolicy\(\)\.status === 'ok'/, 'the daemon detects an org policy');
+  assert.match(daemon, /selfUpdate\(governed \? \{ requireSigned: true \} : \{\}\)/, 'and forces requireSigned when governed');
+});
