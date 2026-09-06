@@ -924,9 +924,28 @@ async function upstreamTransport(spec: UpstreamSpec) {
   return new StdioClientTransport({
     command: spec.command!,
     args: spec.args ?? [],
-    env: { ...(process.env as Record<string, string>), ...(spec.env ?? {}) },
+    // A wrapped stdio server is third-party code. It used to inherit the
+    // gateway's ENTIRE environment — including CAIRN_KEY (the operator's signing
+    // identity) and any cloud/API credentials in the shell that launched us. Drop
+    // Cairn's own control vars and anything credential-shaped; a server's own
+    // secrets come from its declared `env`, which is re-applied last.
+    env: { ...scrubUpstreamEnv(), ...(spec.env ?? {}) },
     stderr: 'inherit',
   });
+}
+
+/** The environment a wrapped stdio server may inherit: everything EXCEPT Cairn's
+ * control vars and credential-named variables. What a server legitimately needs
+ * is declared in its own `env` (re-applied over this), so nothing it requires is
+ * lost — only the ambient secrets it should never have seen. */
+function scrubUpstreamEnv(): Record<string, string> {
+  const DROP = /^(CAIRN_KEY|CAIRN_ORG_POLICY|CAIRN_SESSION|CAIRN_AGENT)$|token|secret|password|passwd|credential|api[_-]?key|(^|_)key$|private/i;
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(process.env)) {
+    if (typeof v !== 'string' || DROP.test(k)) continue;
+    out[k] = v;
+  }
+  return out;
 }
 
 /** Dialing an HTTP server can hang (an unreachable host, a proxy that stalls, a
@@ -1910,7 +1929,7 @@ async function main() {
         let closed = '';
         if (outcome.ok) {
           try {
-            const done = finishNotes(outcome.finding!, typeof noteId === 'string' ? noteId : undefined);
+            const done = finishNotes(outcome.finding!, typeof noteId === 'string' ? noteId : undefined, governed(session) ? session.principal.id : undefined);
             if (done.length) closed = `\nFinished note${done.length > 1 ? 's' : ''} ${done.map((n) => n.id).join(', ')}.`;
           } catch { /* a note that cannot be closed is not a failed record */ }
         }
@@ -1929,7 +1948,7 @@ async function main() {
           return textResult(counted ? `Dismissed ${args.dismiss} as ${as}; not offered again for ${as === 'my-mistake' ? 'a week' : 'ninety days'}.` : `No offered arc with id ${args.dismiss}.`, !counted);
         }
         if (typeof args.discard === 'string') {
-          const dropped = discardNote(args.discard);
+          const dropped = discardNote(args.discard, governed(session) ? session.principal.id : undefined);
           try { observe(`cairn_note discard ${args.discard}`, [], 'mcp-proxy:note-discarded', { by: session.agent, session: session.id }); } catch { /* never fatal */ }
           return textResult(dropped ? `Discarded ${dropped.id}.` : `No open note with id ${args.discard}.`, !dropped);
         }
@@ -2164,7 +2183,10 @@ async function main() {
         if (!degraded() && !session.notesOffered.has(req.params.name)) {
           session.notesOffered.add(req.params.name);
           let open: ReturnType<typeof openNotesFor> = [];
-          try { open = openNotesFor(namesFor(owner.up.spec.name, owner.raw, req.params.name)).filter((n) => n.session !== session.id); } catch { /* never fatal */ }
+          // On a governed gateway, only ever offer back THIS principal's own
+          // notes (a note carries the failing call's args/output — another
+          // tenant's is not this tenant's to see).
+          try { open = openNotesFor(namesFor(owner.up.spec.name, owner.raw, req.params.name), new Date(), governed(session) ? session.principal.id : undefined).filter((n) => n.session !== session.id); } catch { /* never fatal */ }
           if (open.length) {
             const now = new Date();
             note +=

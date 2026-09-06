@@ -25,6 +25,7 @@
  */
 import fs from 'fs';
 import path from 'path';
+import { createHash } from 'crypto';
 import { diffSurface, type ToolShape, type SurfaceChange } from './toolsurface';
 
 export type TrustMode = 'off' | 'monitor' | 'enforce';
@@ -52,7 +53,12 @@ export interface Pin {
 
 const safeName = (s: string) => s.replace(/[^A-Za-z0-9_.-]+/g, '_') || 'server';
 export function pinPath(server: string, trustDir: string): string {
-  return path.join(trustDir, `${safeName(server)}.json`);
+  // A short hash of the RAW server name disambiguates pins whose sanitized names
+  // collide ("a/b" and "a_b" both sanitize to "a_b") — otherwise one server's
+  // approval could be read as another's, defeating the pin. The readable prefix
+  // stays for humans browsing the dir.
+  const tag = createHash('sha256').update(server).digest('hex').slice(0, 8);
+  return path.join(trustDir, `${safeName(server)}.${tag}.json`);
 }
 
 export function readPin(server: string, trustDir: string): Pin | null {

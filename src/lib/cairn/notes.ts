@@ -143,11 +143,17 @@ export function listNotes(now = new Date()): Array<{ note: Note; file: string; s
   return readAll().map((n) => ({ ...n, state: n.note.status === 'open' ? (isAbandoned(n.note, now) ? 'abandoned' : 'open') : n.note.status }));
 }
 
-/** Open notes about a tool, by any of the names the tool goes by, that a later session may be offered. */
-export function openNotesFor(toolNames: string[], now = new Date()): Note[] {
+/**
+ * Open notes about a tool, by any of the names the tool goes by, that a later
+ * session may be offered. `by` scopes them to one author: on a MULTI-TENANT
+ * gateway a note carries the failing call's own args and output, so it must only
+ * ever be offered back to the principal who wrote it — never to another tenant
+ * as "you left an unfinished note". Omit `by` for the single-user case.
+ */
+export function openNotesFor(toolNames: string[], now = new Date(), by?: string): Note[] {
   const names = new Set(toolNames.map((n) => n.toLowerCase()));
   return listNotes(now)
-    .filter((n) => n.state === 'open' && names.has(n.note.tool.toLowerCase()))
+    .filter((n) => n.state === 'open' && names.has(n.note.tool.toLowerCase()) && (by === undefined || n.note.by === by))
     .map((n) => n.note);
 }
 
@@ -159,7 +165,13 @@ function update(id: string, patch: Partial<Note>): Note | null {
   return note;
 }
 
-export function discardNote(id: string): Note | null {
+export function discardNote(id: string, by?: string): Note | null {
+  // On a governed gateway a tenant may only discard its OWN note, never another
+  // principal's (which would let one tenant delete another's work).
+  if (by !== undefined) {
+    const hit = readAll().find((n) => n.note.id === id);
+    if (!hit || hit.note.by !== by) return null;
+  }
   return update(id, { status: 'discarded', closedAt: new Date().toISOString() });
 }
 
@@ -169,11 +181,12 @@ export function discardNote(id: string): Note | null {
  * same trap, so a note finished without naming itself does not linger as a
  * stub beside the finding it became.
  */
-export function finishNotes(finding: { id: string; title: string; triggers?: string[] }, noteId?: string): Note[] {
+export function finishNotes(finding: { id: string; title: string; triggers?: string[] }, noteId?: string, by?: string): Note[] {
   const closed: Note[] = [];
   const now = new Date().toISOString();
   for (const { note } of readAll()) {
     if (note.status !== 'open') continue;
+    if (by !== undefined && note.by !== by) continue; // only close your own notes on a governed gateway
     const named = noteId !== undefined && note.id === noteId;
     const sameTool = (finding.triggers ?? []).some((t) => t.trim().toLowerCase().split(/\s+/)[0] === note.tool.toLowerCase());
     /* likelyDuplicates reads tags and subject; a caller may hand in less than a full finding. */
