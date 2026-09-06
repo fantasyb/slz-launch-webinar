@@ -887,7 +887,7 @@ export function offloadArchive(dir: string, file: string): OffloadResult {
  * operator is holding OFF the box (the real defense against a box-level
  * attacker): each is `{ seq, hash }` from a `cairn:audit-log anchor` they saved
  * elsewhere. */
-export function verifyAudit(dir: string, opts: { against?: { seq: number; hash: string }[]; trustDeclaredOffload?: boolean } = {}): AuditVerdict {
+export function verifyAudit(dir: string, opts: { against?: { seq: number; hash: string }[]; trustDeclaredOffload?: boolean; offloaded?: string[] } = {}): AuditVerdict {
   // Read the cross-checks (anchors + head sidecar) BEFORE the log. Both are
   // written strictly AFTER the log line they describe, so a log read taken
   // afterwards is always at least as advanced — which means a concurrent append
@@ -992,15 +992,34 @@ export function verifyAudit(dir: string, opts: { against?: { seq: number; hash: 
       // — can vouch for it, and that path still demands the true external anchor.
       const boundary = externalAt.get(seg.lastSeq);
       const externallyPinned = boundary !== undefined && boundary === seg.lastHash;
-      if (!externallyPinned) {
-        const declaredOffload = opts.trustDeclaredOffload === true && seg.offloaded === true
+      const namedOffloaded = opts.offloaded?.includes(seg.file) ?? false;
+      let bridgeOk: boolean;
+      let why: string;
+      if (opts.trustDeclaredOffload === true) {
+        // LIVENESS (daemon/anchorHead/rotateAudit): no off-box anchors to pass, so
+        // bridge a DECLARED offload with a shipped boundary anchor. This can be
+        // fabricated by a box-write attacker reusing a real shipped anchor as the
+        // boundary of a segment that never existed — so the daemon does NOT trust
+        // this alone: it alarms on a NOVEL bridge and refuses to anchor (audit
+        // gap 1), and the authoritative check below never runs in this mode.
+        bridgeOk = seg.offloaded === true
           && (() => { const a = anchors.find((x) => x.seq === seg.lastSeq && x.hash === seg.lastHash); return !!a && anchorShipped(dir, a); })();
-        if (!declaredOffload) {
-          return { ok: false, entries: st.lastSeq, detail: seg.offloaded
-            ? `archive ${seg.file} (seq ${seg.firstSeq}-${seg.lastSeq}) is declared offloaded but no shipped off-box anchor pins its boundary — its history cannot be verified here`
-            : `archive ${seg.file} (seq ${seg.firstSeq}-${seg.lastSeq}) is not present and no off-box anchor pins its boundary — its history cannot be verified` };
-        }
+        why = seg.offloaded
+          ? `archive ${seg.file} (seq ${seg.firstSeq}-${seg.lastSeq}) is declared offloaded but no shipped off-box anchor pins its boundary`
+          : `archive ${seg.file} (seq ${seg.firstSeq}-${seg.lastSeq}) is not present and is not declared offloaded`;
+      } else {
+        // AUTHORITATIVE (operator, `verify --against`): an off-box anchor must pin
+        // the boundary AND the operator must have NAMED this file offloaded
+        // (`--offloaded`). Pinning alone is not consent: an attacker chooses which
+        // genuine shipped anchor to fabricate an "offloaded" segment over, so only
+        // the operator — who knows what they actually moved off-box — can vouch for
+        // an absent archive (audit gap 1).
+        bridgeOk = externallyPinned && namedOffloaded;
+        why = !externallyPinned
+          ? `archive ${seg.file} (seq ${seg.firstSeq}-${seg.lastSeq}) is not present and no off-box anchor pins its boundary — its history cannot be verified`
+          : `archive ${seg.file} (seq ${seg.firstSeq}-${seg.lastSeq}) is absent and its boundary is externally pinned, but it was not declared offloaded — name it with --offloaded if you moved it off-box, else this is a deletion`;
       }
+      if (!bridgeOk) return { ok: false, entries: st.lastSeq, detail: why };
       if (st.expectedSeq !== seg.firstSeq || st.prev !== seg.firstPrevHash) return { ok: false, entries: st.lastSeq, detail: `archive ${seg.file} does not link to the previous segment` };
       // The off-box anchor pins this segment's boundary and it links to the prior
       // segment, so its endpoints are trusted. Any checkpoint that falls INSIDE

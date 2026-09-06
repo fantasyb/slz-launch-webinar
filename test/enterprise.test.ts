@@ -519,11 +519,19 @@ test('an off-box archive with an interior anchor still verifies after it is offl
     // The operator holds the FULL off-box anchor chain (seq 4 interior + seq 5 boundary).
     const offbox = readAnchors(dir).map((a) => ({ seq: a.seq, hash: a.hash }));
     assert.ok(offbox.some((p) => p.seq === 4) && offbox.some((p) => p.seq === 5), 'both anchors were taken');
-    // Offload the archive off the box, then verify against the full off-box chain.
+    // Offload the archive off the box, then verify against the full off-box chain,
+    // NAMING the offloaded archive (the operator declares what they moved off-box;
+    // an absent archive not named is a deletion — audit gap 1).
     fsReal.rmSync(pathReal.join(dir, rot.archived!));
     _resetAuditCache();
-    const v = verifyAudit(dir, { against: offbox });
-    assert.equal(v.ok, true, `a correctly-offloaded archive must not false-alarm: ${v.detail ?? ''}`);
+    const v = verifyAudit(dir, { against: offbox, offloaded: [rot.archived!] });
+    assert.equal(v.ok, true, `a correctly-offloaded, NAMED archive must not false-alarm: ${v.detail ?? ''}`);
+    // But the SAME off-box anchors without naming it is a deletion: pinning alone
+    // is not consent (an attacker picks which anchor to fabricate a segment over).
+    _resetAuditCache();
+    const unnamed = verifyAudit(dir, { against: offbox });
+    assert.equal(unnamed.ok, false, 'an absent archive that the operator did not declare offloaded is a deletion');
+    assert.match(unnamed.detail ?? '', /not declared offloaded|--offloaded/);
   } finally { delete process.env.CAIRN_AUDIT_ANCHOR_CMD; }
 });
 
@@ -554,10 +562,11 @@ test('a declared offload keeps anchoring and rotation working; an undeclared del
     assert.equal(rot2.ok, true, `rotation is NOT permanently disabled by an offload: ${rot2.detail ?? ''}`);
 
     // The operator's authoritative check still re-verifies the offloaded range
-    // against the REAL off-box anchor — the declared flag alone does not satisfy it.
+    // against the REAL off-box anchor, and requires the operator to NAME the
+    // offloaded archive — the declared flag alone does not satisfy it (audit gap 1).
     _resetAuditCache();
-    const vAuth = verifyAudit(dir, { against: offbox });
-    assert.equal(vAuth.ok, true, `authoritative verify with off-box anchors passes: ${vAuth.detail ?? ''}`);
+    const vAuth = verifyAudit(dir, { against: offbox, offloaded: [archive] });
+    assert.equal(vAuth.ok, true, `authoritative verify with off-box anchors + named offload passes: ${vAuth.detail ?? ''}`);
 
     // And an UNDECLARED deletion of an on-box archive is still a hard failure, even
     // for the lenient liveness check — offload is a declaration, not a free pass.

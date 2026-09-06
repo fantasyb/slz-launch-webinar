@@ -2,7 +2,7 @@
  * cairn:audit-log — read and verify the gateway's tamper-evident decision log.
  *
  *   CAIRN_HOME=~/pilot npm run cairn:audit-log -- view [--limit 50]
- *   CAIRN_HOME=~/pilot npm run cairn:audit-log -- verify [--against <seq>:<hash>]
+ *   CAIRN_HOME=~/pilot npm run cairn:audit-log -- verify [--against <seq>:<hash>] [--against-file <anchors>] [--offloaded <archive>]
  *   CAIRN_HOME=~/pilot npm run cairn:audit-log -- anchor
  *   CAIRN_HOME=~/pilot npm run cairn:audit-log -- rotate
  *   CAIRN_HOME=~/pilot npm run cairn:audit-log -- offload <archive.jsonl>
@@ -63,7 +63,14 @@ if (cmd === 'verify') {
     if (!loaded.ok) { console.error(`cairn:audit-log: ${loaded.detail}`); process.exit(1); }
     against.push(...loaded.pairs);
   }
-  const v = verifyAudit(dir, against.length ? { against } : {});
+  // --offloaded <archive> (repeatable): archives you deliberately moved off-box.
+  // An absent archive is bridged (its boundary trusted from an off-box anchor)
+  // ONLY when you name it here — pinning alone is not consent, because an attacker
+  // chooses which genuine anchor to fabricate an "offloaded" segment over. An
+  // absent archive you do NOT name is treated as a deletion (audit gap 1).
+  const offloaded: string[] = [];
+  for (let i = 0; i < argv.length; i++) if (argv[i] === '--offloaded' && argv[i + 1]) offloaded.push(argv[i + 1]);
+  const v = verifyAudit(dir, { ...(against.length ? { against } : {}), ...(offloaded.length ? { offloaded } : {}) });
   if (v.ok) {
     console.log(`cairn:audit-log — chain intact: ${v.entries} entr${v.entries === 1 ? 'y' : 'ies'} verified${against.length ? `, matches ${against.length} external anchor(s)` : ''}${v.detail ? ` (${v.detail})` : ''}.`);
     process.exit(0);

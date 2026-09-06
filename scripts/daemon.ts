@@ -93,6 +93,14 @@ let lastAuditVerify = 0; // verify once shortly after boot, then on the interval
  * attacker who deletes anchors.jsonl cannot make us silently re-anchor a
  * rewritten log. Reset only on restart, which is an observable event. */
 let lastDaemonAnchor: { seq: number; anchorHash: string } | null = null;
+/* The set of declared-offload bridges this daemon has ACKNOWLEDGED. Seeded from
+ * the first tick (the on-disk state at boot is trusted; the operator's off-box
+ * verify is the authority for it). A bridge that appears LATER — a box-write
+ * attacker fabricating an "offloaded" segment over a genuine shipped anchor to
+ * delete history (audit gap 1) — is novel, and the daemon refuses to anchor over
+ * it (which would launder the forged head off-box) until an operator acknowledges. */
+let ackBridges: Set<string> | null = null;
+let bridgeMarkerMine = false; // this process raised the bridge-review marker
 function maybeVerifyAudit(): void {
   if (auditVerifyMs === 0 || stopping || !home) return;
   if (lastAuditVerify && Date.now() - lastAuditVerify < auditVerifyMs) return;
@@ -129,6 +137,31 @@ function maybeVerifyAudit(): void {
     // on-box liveness, so surface which ranges were bridged rather than re-hashed,
     // so an operator can reconcile them against the off-box anchors they hold.
     if (v.bridged?.length) process.stderr.write(`cairn:daemon audit ${v.detail}\n`);
+    // NOVEL-BRIDGE guard (audit gap 1). A declared-offload bridge that appears
+    // after boot may be a fabricated "offloaded" segment planted over a genuine
+    // shipped anchor to delete history — which the on-box check cannot tell from a
+    // real offload. Refuse to anchor/rotate over it (never launder a forged head
+    // off-box) until an operator, having checked their off-box anchors, removes the
+    // review marker. A legitimate CLI offload trips this exactly once.
+    const bridgeMarker = path.join(dir, 'BRIDGE-REVIEW.json');
+    const curBridges = new Set((v.bridged ?? []).map((b) => b.file));
+    if (ackBridges === null) {
+      ackBridges = curBridges; // first tick trusts the on-disk state
+    } else {
+      const novel = [...curBridges].filter((f) => !ackBridges!.has(f));
+      if (novel.length) {
+        if (bridgeMarkerMine && !fs.existsSync(bridgeMarker)) {
+          ackBridges = curBridges; bridgeMarkerMine = false; // operator acknowledged
+        } else {
+          if (!bridgeMarkerMine) {
+            try { fs.writeFileSync(bridgeMarker, JSON.stringify({ at: new Date().toISOString(), novelOffloadedArchives: novel, detail: 'a declared-offload bridge appeared that this daemon did not observe at startup. Verify it was a legitimate offload against your OFF-BOX anchors, then remove this file to acknowledge. Anchoring and rotation are paused until then.' }, null, 2) + '\n'); } catch { /* best-effort */ }
+            bridgeMarkerMine = true;
+          }
+          process.stderr.write(`cairn:daemon AUDIT ALARM — a new off-loaded archive appeared (${novel.join(', ')}); refusing to anchor until acknowledged (remove ${bridgeMarker}).\n`);
+          return; // do NOT anchor or rotate this tick
+        }
+      }
+    }
     // H4 defense: the daemon remembers, IN PROCESS, the last anchor it wrote —
     // memory an attacker with file-write access cannot erase. If the on-disk
     // anchor log no longer ends with that anchor (deleted or replaced), someone
