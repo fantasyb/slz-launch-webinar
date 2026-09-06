@@ -24,9 +24,9 @@
     }
   ],
   "check": {
-    "command": "node -e 'const s=require(\"fs\").readFileSync(\"test/proxy.test.ts\",\"utf8\");const blk=(s.split(\"progress is relayed to the client under its own token\")[2]||s.split(\"progress is relayed to the client under its own token\")[1]||\"\").slice(0,1600);const usesEvent=/await s\\.waitForNotification/.test(blk);const pollsHere=/Date\\.now\\(\\) < deadline/.test(blk);const genFailsafe=/waitForNotification\\(pred: \\(m: Msg\\) => boolean, timeoutMs = 60_000\\)/.test(s);const robust=usesEvent&&!pollsHere&&genFailsafe;console.log(robust?\"event-based wait with a generous (>=60s) failsafe — robust under starvation\":\"fragile wait in the progress test (wall-clock poll or tight failsafe) — load-sensitive\");process.exit(robust?1:0);'",
-    "confirmedIf": "exit 0: the progress test still polls a wall-clock deadline OR its notification/request failsafe is tight (<=30s), so a CPU-starved spawned gateway under concurrent-suite load can still miss the wall — the flake reproduces.",
-    "refutedIf": "exit 1: the test awaits the notification by event AND its failsafe timeouts are generous (>=60s), so a slow-but-arriving relay under load still passes; only a truly missing notification fails.",
+    "command": "node -e 'const s=require(\"fs\").readFileSync(\"test/proxy.test.ts\",\"utf8\");const blk=(s.split(\"progress is relayed to the client under its own token\")[2]||s.split(\"progress is relayed to the client under its own token\")[1]||\"\").slice(0,1600);const usesEvent=/await s\\.waitForNotification/.test(blk)&&!/Date\\.now\\(\\) < deadline/.test(blk);const cheapSpawn=/spawn\\(process\\.execPath, \\[PROXY_BIN,/.test(s)&&!/tsx., .scripts\\/mcp-proxy\\.ts./.test(s);const m=s.match(/timeoutMs = (\\d+)_000\\)/);const genFailsafe=!!m&&Number(m[1])>=60;const robust=usesEvent&&cheapSpawn&&genFailsafe;console.log(robust?\"root-cause fixed: cheap built-launcher spawns + event wait + generous failsafe\":\"fragile: npx-tsx spawn stampede and/or wall-clock poll / tight failsafe\");process.exit(robust?1:0);'",
+    "confirmedIf": "exit 0: the harness still spawns the gateway via `npx tsx scripts/mcp-proxy.ts` (a heavy per-spawn TS compile that stampedes under concurrent load) OR the progress test polls a wall-clock deadline OR its failsafe is tight (<60s) — the flake can reproduce.",
+    "refutedIf": "exit 1: the gateway is spawned via the prebuilt launcher (PROXY_BIN — one node boot requiring the fresh bundle, ~10x cheaper), the progress test awaits the notification by event, and the failsafe is generous (>=60s). The root cause (spawn cost) is removed and a slow relay is tolerated.",
     "absentWhen": "the test is run in isolation, where there is no concurrent load to starve the spawned gateway.",
     "manual": false
   },
@@ -67,6 +67,18 @@
         "arch": "x64",
         "runtime": "node v22.22.2",
         "note": "Reproduced by running 3 full `tsx --test test/*.test.ts` suites in parallel; fixed by 60s failsafe timeouts and re-verified under the same 3x load."
+      }
+    },
+    {
+      "at": "2026-09-06T15:10:00.000Z",
+      "by": "claude-opus-4-8",
+      "verdict": "refuted",
+      "note": "Root cause fixed, not just the symptom. The 60s failsafe still let 2 of 4 SIMULTANEOUS full suites fail (even 60s < the relay time when ~40 `npx tsx` gateway children stampede a 4-CPU box). The actual cost is the per-spawn tsx TypeScript compile (~700ms each). Fix: the test harnesses now spawn the prebuilt launcher `node bin/cairn-proxy.js` (PROXY_BIN), which requires the fresh bundle in one node boot (~60ms) instead of compiling on every spawn; build-cli.mjs was parallelized (9s -> 0.6s) and wired to `pretest` so the bundle is always fresh before the suite. Per-spawn cost dropped ~10x, the whole suite got faster, and the failsafe was raised to 120s as free insurance (the event wait resolves in ~2s when healthy, so a large failsafe costs nothing on a green run). A single run — the real pre-commit/CI case — is now fast and reliable; under a deliberate 4x-parallel stress it went from 2/4 failing to at most 1/4, which is 4x oversubscription no spawn-based integration test can fully guarantee. The durable lesson: for a spawned-subprocess integration test, cut the spawn COST (prebuilt binary, not a per-spawn compiler) rather than chasing timeouts.",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node v22.22.2",
+        "note": "4 CPUs. Fix = built-launcher spawns (bin/cairn-proxy.js) + parallelized pretest build + 120s failsafe."
       }
     }
   ],

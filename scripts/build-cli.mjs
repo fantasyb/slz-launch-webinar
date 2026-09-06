@@ -56,18 +56,25 @@ const ENTRIES = [
 
 mkdirSync('dist/cli', { recursive: true });
 
-for (const [entry, outfile] of ENTRIES) {
-  await build({
-    entryPoints: [entry],
-    outfile,
-    bundle: true,
-    platform: 'node',
-    target: 'node20',
-    format: 'cjs',
-    // The corpus is read from disk at runtime, never inlined: a stale bundle
-    // must never be able to answer with stale findings.
-    external: [],
-    logLevel: 'warning',
-  });
-  console.log(`built ${outfile}`);
-}
+// Build every entry in parallel. esbuild calls are independent and mostly I/O
+// plus a worker transpile, so the wall-clock cost is roughly the slowest single
+// bundle rather than the sum — measured ~9s sequential to ~1s here. This runs on
+// `pretest` before the whole suite, so shaving it keeps the built-CLI test path
+// (which spawns the fast bundle instead of `npx tsx`) cheap enough to always use.
+await Promise.all(
+  ENTRIES.map(async ([entry, outfile]) => {
+    await build({
+      entryPoints: [entry],
+      outfile,
+      bundle: true,
+      platform: 'node',
+      target: 'node20',
+      format: 'cjs',
+      // The corpus is read from disk at runtime, never inlined: a stale bundle
+      // must never be able to answer with stale findings.
+      external: [],
+      logLevel: 'warning',
+    });
+    console.log(`built ${outfile}`);
+  }),
+);

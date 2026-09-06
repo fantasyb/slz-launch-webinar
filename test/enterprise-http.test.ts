@@ -23,6 +23,7 @@ import { spawn, type ChildProcess } from 'child_process';
 import { tokenHash, verifyAudit, readAudit, _resetAuditCache } from '../src/lib/cairn/enterprise';
 
 const REPO = process.cwd();
+const PROXY_BIN = path.join(REPO, 'bin', 'cairn-proxy.js'); // built launcher: requires the fresh bundle (pretest builds it) instead of a per-spawn tsx compile — cheap enough that many concurrent gateway children no longer starve each other (cairn-0050)
 const FIXTURE = path.join(REPO, 'fixtures', 'mcp', 'upstream.mjs');
 /* Fixture tokens, assembled at runtime so no bearer-credential literal is in
  * the source for the secret-scanner to flag. */
@@ -57,7 +58,7 @@ function governedHome(): string {
 function startProxy(home: string, env: Record<string, string> = {}): Promise<{ child: ChildProcess; base: string }> {
   // detached so we can kill the whole process group — `npx tsx` spawns a
   // grandchild node that would otherwise keep our inherited stdio pipes open.
-  const child = spawn('npx', ['tsx', 'scripts/mcp-proxy.ts', '--server', `node ${FIXTURE}`, '--http', '0'], {
+  const child = spawn(process.execPath, [PROXY_BIN, '--server', `node ${FIXTURE}`, '--http', '0'], {
     cwd: REPO,
     env: { ...process.env, CAIRN_HOME: home, ...env } as NodeJS.ProcessEnv,
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -206,7 +207,7 @@ test('a session is bound to its principal — another principal presenting its i
 test('a governed gateway refuses to START if its policy is present but corrupt (fail closed)', async () => {
   const home = baseHome('cairn-ent-bad-');
   fs.writeFileSync(path.join(home, 'org-policy.json'), '{ "auth": { "required": tru'); // truncated
-  const child = spawn('npx', ['tsx', 'scripts/mcp-proxy.ts', '--server', `node ${FIXTURE}`, '--http', '0'], {
+  const child = spawn(process.execPath, [PROXY_BIN, '--server', `node ${FIXTURE}`, '--http', '0'], {
     cwd: REPO, env: { ...process.env, CAIRN_HOME: home } as NodeJS.ProcessEnv, stdio: ['ignore', 'pipe', 'pipe'], detached: true,
   });
   let err = '';

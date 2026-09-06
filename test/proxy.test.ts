@@ -28,6 +28,7 @@ import path from 'path';
 import { spawn, type ChildProcess } from 'child_process';
 
 const REPO = process.cwd();
+const PROXY_BIN = path.join(REPO, 'bin', 'cairn-proxy.js'); // built launcher: requires the fresh bundle (pretest builds it) instead of a per-spawn tsx compile — cheap enough that many concurrent gateway children no longer starve each other (cairn-0050)
 const FIXTURE = path.join(REPO, 'fixtures', 'mcp', 'upstream.mjs');
 
 type Msg = { id?: number; method?: string; params?: unknown; result?: unknown; error?: unknown };
@@ -79,7 +80,7 @@ class Session {
     delete env.CAIRN_AGENT;
     /* Cast: this project augments ProcessEnv with a required NODE_ENV, which
      * a copy with two variables deleted deliberately does not carry. */
-    this.child = spawn('npx', ['tsx', 'scripts/mcp-proxy.ts', ...args], {
+    this.child = spawn(process.execPath, [PROXY_BIN, ...args], {
       cwd: REPO,
       env: env as NodeJS.ProcessEnv,
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -120,7 +121,7 @@ class Session {
       // Failsafe only: a healthy reply is near-instant. Generous (60s) so a
       // round-trip through a CPU-starved spawned gateway under heavy concurrent
       // suite load still completes rather than tripping a tight wall (cairn-0050).
-      const t = setTimeout(() => reject(new Error(`no reply to ${method} (id ${id}) in 60s\n${this.stderr}`)), 60_000);
+      const t = setTimeout(() => reject(new Error(`no reply to ${method} (id ${id}) in 120s\n${this.stderr}`)), 120_000);
       this.pending.set(id, (m) => { clearTimeout(t); resolve(m); });
     });
   }
@@ -133,7 +134,7 @@ class Session {
    * gateway child can be starved long enough that the relay legitimately takes
    * >20s, and a slow-but-arriving notification must pass — only a truly missing
    * one should fail (cairn-0050). */
-  waitForNotification(pred: (m: Msg) => boolean, timeoutMs = 60_000): Promise<Msg> {
+  waitForNotification(pred: (m: Msg) => boolean, timeoutMs = 120_000): Promise<Msg> {
     const already = this.notifications.find(pred);
     if (already) return Promise.resolve(already);
     return new Promise((resolve, reject) => {
@@ -587,7 +588,7 @@ test('hosted over HTTP, two clients are two sessions: each gets its own first co
   const env: Record<string, string | undefined> = { ...process.env, CAIRN_HOME: home };
   delete env.CAIRN_SESSION;
   delete env.CAIRN_AGENT;
-  const child = spawn('npx', ['tsx', 'scripts/mcp-proxy.ts', '--server', `node ${FIXTURE}`, '--http', '0'], {
+  const child = spawn(process.execPath, [PROXY_BIN, '--server', `node ${FIXTURE}`, '--http', '0'], {
     cwd: REPO, env: env as NodeJS.ProcessEnv, stdio: ['pipe', 'pipe', 'pipe'],
   });
   let stderr = '';

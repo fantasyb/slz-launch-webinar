@@ -18,6 +18,7 @@ import path from 'path';
 import { spawn, type ChildProcess } from 'child_process';
 
 const REPO = process.cwd();
+const PROXY_BIN = path.join(REPO, 'bin', 'cairn-proxy.js'); // built launcher: requires the fresh bundle (pretest builds it) instead of a per-spawn tsx compile — cheap enough that many concurrent gateway children no longer starve each other (cairn-0050)
 const HTTP_FIXTURE = path.join(REPO, 'fixtures', 'mcp', 'http-upstream.mjs');
 const TOOL = 'mcp__data360__query_records';
 /* A fixture token, assembled at runtime so no bearer-credential literal appears
@@ -76,7 +77,7 @@ class Proxy {
   constructor(home: string, configFile: string) {
     const env: Record<string, string | undefined> = { ...process.env, CAIRN_HOME: home };
     delete env.CAIRN_SESSION; delete env.CAIRN_AGENT;
-    this.child = spawn('npx', ['tsx', 'scripts/mcp-proxy.ts', '--config', configFile], { cwd: REPO, env: env as NodeJS.ProcessEnv, stdio: ['pipe', 'pipe', 'pipe'] });
+    this.child = spawn(process.execPath, [PROXY_BIN, '--config', configFile], { cwd: REPO, env: env as NodeJS.ProcessEnv, stdio: ['pipe', 'pipe', 'pipe'] });
     this.child.stderr!.on('data', (d) => { this.stderr += String(d); });
     this.child.stdout!.on('data', (d) => {
       this.buf += String(d);
@@ -284,7 +285,7 @@ test('an unreachable/unauthorized HTTP upstream fails to start — never a fabri
   const home = corpus();
   const cfg = path.join(home, 'cfg.json');
   fs.writeFileSync(cfg, JSON.stringify({ mcpServers: { data360: { url: `http://127.0.0.1:${port}/mcp` } } })); // no headers
-  const child = spawn('npx', ['tsx', 'scripts/mcp-proxy.ts', '--config', cfg], {
+  const child = spawn(process.execPath, [PROXY_BIN, '--config', cfg], {
     cwd: REPO,
     env: { ...process.env, CAIRN_HOME: home, CAIRN_CONNECT_TIMEOUT_MS: '2000' } as NodeJS.ProcessEnv,
     stdio: ['pipe', 'pipe', 'pipe'],
