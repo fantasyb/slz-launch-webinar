@@ -101,6 +101,11 @@ function nameTokens(name: string): string[] {
 const NAME_CONFUSABLES: Record<string, string> = {
   а: 'a', е: 'e', о: 'o', р: 'p', с: 'c', у: 'y', х: 'x', і: 'i', ѕ: 's', м: 'm', н: 'h', т: 't', к: 'k', в: 'b', д: 'd', г: 'r',
   ο: 'o', α: 'a', ε: 'e', ρ: 'p', υ: 'u', χ: 'x', κ: 'k', ν: 'v', ι: 'i', ϲ: 'c', τ: 't',
+  // Capitals fold to Latin CAPITALS so a leading look-alike letter still starts a
+  // camelCase token (Дelete → Delete → delete), rather than lower-casing to a
+  // non-Latin letter and slipping the write heuristic/denyTools match (Fable-6 #14).
+  А: 'A', Е: 'E', О: 'O', Р: 'P', С: 'C', У: 'Y', Х: 'X', І: 'I', Ѕ: 'S', М: 'M', Н: 'H', Т: 'T', К: 'K', В: 'B', Д: 'D', Г: 'R',
+  Ο: 'O', Α: 'A', Ε: 'E', Ρ: 'P', Υ: 'Y', Χ: 'X', Κ: 'K', Ν: 'N', Ι: 'I', Ϲ: 'C', Τ: 'T', Β: 'B', Η: 'H', Μ: 'M',
 };
 export function foldName(name: string): string {
   return name.normalize('NFKC').replace(/[\p{Cf}\p{Mn}]/gu, '').replace(/[Ͱ-ϿЀ-ӿ]/g, (c) => NAME_CONFUSABLES[c] ?? c);

@@ -397,10 +397,23 @@ const MAX_SESSIONS_PER_PRINCIPAL = Math.max(1, Number(process.env.CAIRN_MAX_SESS
 // legitimate combining accent in real output is never lost.
 const INVISIBLE_RE = /[\p{Cf}\p{Mn}]/gu;
 const CONFUSABLES: Record<string, string> = {
+  // Lowercase Cyrillic/Greek look-alikes.
   'а': 'a', 'е': 'e', 'о': 'o', 'р': 'p', 'с': 'c', 'у': 'y', 'х': 'x', 'і': 'i', 'ѕ': 's', 'м': 'm', 'н': 'h', 'т': 't', 'к': 'k',
-  'ο': 'o', 'α': 'a', 'ε': 'e', 'ρ': 'p', 'υ': 'u', 'χ': 'x', 'κ': 'k', 'ν': 'v',
+  'ο': 'o', 'α': 'a', 'ε': 'e', 'ρ': 'p', 'υ': 'u', 'χ': 'x', 'κ': 'k', 'ν': 'v', 'ι': 'i', 'τ': 't',
+  // Uppercase look-alikes fold to lowercase Latin — the label match is
+  // case-insensitive, so an upstream that writes "Сairn"/"СAIRN" with Cyrillic or
+  // Greek CAPITALS (which NFKC leaves non-Latin, and the lowercase-only table
+  // missed) no longer slips a forged label past the defang (Fable-6 #14).
+  'А': 'a', 'Е': 'e', 'О': 'o', 'Р': 'p', 'С': 'c', 'У': 'y', 'Х': 'x', 'І': 'i', 'Ѕ': 's', 'М': 'm', 'Н': 'h', 'Т': 't', 'К': 'k', 'В': 'b',
+  'Ο': 'o', 'Α': 'a', 'Ε': 'e', 'Ρ': 'p', 'Υ': 'y', 'Χ': 'x', 'Κ': 'k', 'Ν': 'n', 'Ι': 'i', 'Τ': 't', 'Β': 'b', 'Η': 'h', 'Μ': 'm',
 };
-const foldConfusables = (s: string): string => s.replace(/[Ͱ-ϿЀ-ӿ]/g, (ch) => CONFUSABLES[ch] ?? ch);
+// Dash-like code points an upstream could fence with instead of ASCII "-":
+// NFKC folds full-width/small hyphen-minus to "-", but leaves the em/en dash,
+// horizontal bar, figure dash, hyphens, and the math minus non-ASCII — so a
+// fence made of "——" would evade the ASCII-hyphen FENCE_LABEL_RE. Fold them all
+// to "-" for MATCHING only (Fable-6 #14).
+const DASH_LIKE_RE = /[‐-―⁃−⸺⸻﹘]/g;
+const foldConfusables = (s: string): string => s.replace(/[Ͱ-ϿЀ-ӿ]/g, (ch) => CONFUSABLES[ch] ?? ch).replace(DASH_LIKE_RE, '-');
 // Only a FENCED label reads as one of our blocks. The model is told to trust a
 // block ONLY if it carries this session's ⟦nonce⟧, so a forgery is already
 // ignored on that basis — the defang is belt-and-suspenders against the

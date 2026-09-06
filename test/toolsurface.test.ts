@@ -52,8 +52,10 @@ test('common write verbs are caught, and a leading read verb keeps a read a read
 
 test('the classifier resists Unicode look-alikes, compound names, and affixes (Fable-6 #3)', () => {
   // A look-alike or full-width write verb is folded before matching, so it cannot
-  // evade: Cyrillic е in dеlete, full-width ｄｅｌｅｔｅ.
-  for (const name of ['dеlete_repo', 'ｄｅｌｅｔｅ_all']) {
+  // evade: Cyrillic е in dеlete, full-width ｄｅｌｅｔｅ, a leading Cyrillic CAPITAL
+  // (Д in Дelete, С in Сreate_user) that lower-cases to a non-Latin letter without
+  // a capital fold (Fable-6 #14), and Greek capitals too.
+  for (const name of ['dеlete_repo', 'ｄｅｌｅｔｅ_all', 'Дelete_repo', 'Сreate_user', 'Μodify_settings']) {
     assert.equal(classify({ name }).permitted, false, `${name} folds to a write`);
   }
   // Compound and affixed writes a read-only role must not be handed:

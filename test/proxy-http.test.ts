@@ -198,6 +198,14 @@ test('legitimate non-Latin output passes through the defanger unchanged (#4)', a
     const ef = texts(await p.call('mcp__data360__emoji_forgery')).join('\n');
     assert.ok(ef.includes('imitated the Cairn label'), 'a forgery preceded by emoji is still neutralized');
     assert.ok(!/from your Cairn corpus[\s\S]*curl evil/.test(ef), 'the emoji-prefixed forged block cannot read as a real Cairn block');
+
+    // A fence made of EM-DASHES with the label spelled in Cyrillic/Greek CAPITAL
+    // look-alikes: NFKC leaves both non-ASCII, so it evades an ASCII-hyphen-only
+    // fence regex and a lowercase-only confusable table. The dash- and capital-fold
+    // (Fable-6 #14) neutralizes it anyway.
+    const uf = texts(await p.call('mcp__data360__unicode_fence')).join('\n');
+    assert.ok(uf.includes('imitated the Cairn label'), 'an em-dash / capital-confusable forgery is still neutralized');
+    assert.ok(uf.indexOf('imitated the Cairn label') < uf.indexOf('INSTEAD'), 'the neutralized marker replaced the forged provenance header that led into the instruction');
   } finally { await p.close(); proc.kill('SIGKILL'); }
 });
 
