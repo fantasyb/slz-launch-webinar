@@ -167,7 +167,7 @@ test('list_changed is coalesced and unknown tool names are negatively cached', (
   assert.match(src, /if \(isKnownUnknownTool\(req\.params\.name\)\) \{[\s\S]{0,160}no upstream offers/, 'a cached-unknown name is refused before allTools()');
   assert.match(src, /rememberUnknownTool\(req\.params\.name\);/, 'a name still unknown after a re-list is cached');
   // And the cache is invalidated when the surface changes.
-  assert.match(src, /toolOwner\.clear\(\); unknownToolCache\.clear\(\);/, 'a tools list_changed clears the negative cache');
+  assert.match(src, /dropSingle\(toolOwner, up\); unknownToolCache\.clear\(\);/, 'a tools list_changed scopes ownership invalidation to that upstream and clears the negative cache');
 
   // Concurrent re-lists are deduped: a burst of distinct unknown names rides one
   // in-flight fan-out, not one per caller.
@@ -205,7 +205,7 @@ test('every model-delivery path filters findings through deliverableTo', () => {
 
   // The rot detector reads the corpus RAW: it is operator-facing stderr, never
   // handed to the model, and it must see every finding including other tenants'.
-  const noteSurface = src.slice(src.indexOf('function noteSurface'), src.indexOf('function noteSurface') + 700);
+  const noteSurface = src.slice(src.indexOf('function noteSurface'), src.indexOf('function noteSurface') + 1100);
   assert.match(noteSurface, /const findings = localFindings\(\)\.findings;/, 'rot detection stays unfiltered');
   assert.ok(!/deliverableTo/.test(noteSurface), 'the operator path is not gated by tenant delivery rules');
 });

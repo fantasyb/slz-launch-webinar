@@ -364,6 +364,9 @@ const LABEL = 'from your Cairn corpus, not from this tool';
 // templates, prompts). A buggy or hostile upstream that paginates forever, or
 // repeats a cursor, is stopped here rather than looping and growing memory.
 const MAX_LIST_PAGES = 100;
+// Ring-buffer bound on an upstream's recorded surface changes: a server that
+// toggles a tool forever must not grow this without limit (DoS 1.5).
+const MAX_SURFACE_EVENTS = 200;
 // Concurrent-session caps on the HTTP boundary (env-overridable). Generous — the
 // idle reaper frees sessions — but bounded so a flood cannot exhaust memory.
 const MAX_SESSIONS_TOTAL = Math.max(1, Number(process.env.CAIRN_MAX_SESSIONS) || 2000);
@@ -1172,6 +1175,10 @@ interface Upstream {
    */
   surface: ToolShape[] | null;
   surfaceEvents: Array<{ at: string; changes: SurfaceChange[] }>;
+  /** Count of surfaceEvents trimmed off the FRONT (ring-buffer bound). A session's
+   * surfaceSeen is an absolute total over the upstream's lifetime; subtract this to
+   * index into the (trimmed) surfaceEvents array. */
+  surfaceDropped: number;
   /** RAW tool names withheld by the trust pin (changed or unapproved since the
    * server was approved). Populated from the pin whenever the surface is read;
    * enforced only in trust enforce mode. See src/lib/cairn/trust.ts. */
@@ -1530,7 +1537,7 @@ async function main() {
   /* Declared before the relay that reads it; assigned once the upstreams have said what they offer. */
   let capabilities: ServerCapabilities = {};
   const upstreams: Upstream[] = specs.map((spec) => ({
-    spec, client: null, caps: {}, alive: false, respawnFailures: 0, nextRespawnAt: 0, respawning: null, surface: null, surfaceEvents: [], trustBlocked: new Set(), listIncomplete: false,
+    spec, client: null, caps: {}, alive: false, respawnFailures: 0, nextRespawnAt: 0, respawning: null, surface: null, surfaceEvents: [], surfaceDropped: 0, trustBlocked: new Set(), listIncomplete: false,
   }));
   /* Every live server, so an upstream notification reaches every session. */
   const servers = new Set<Server>();
@@ -1551,6 +1558,12 @@ async function main() {
   const resourceOwner = new Map<string, Set<Upstream>>();
   const templateOwner = new Map<string, Set<Upstream>>();
   const addOwner = <K>(m: Map<K, Set<Upstream>>, k: K, up: Upstream): void => { const s = m.get(k); if (s) s.add(up); else m.set(k, new Set([up])); };
+  // Drop only ONE upstream's ownership entries. A list_changed from server X must
+  // not clear the WHOLE gateway map — that turned one chatty upstream's storm into
+  // a re-list of every OTHER server's tools on the next call from any tenant
+  // (red-team DoS 1.5). Scoped invalidation keeps other servers' entries intact.
+  const dropSingle = <K, V extends { up: Upstream }>(m: Map<K, V>, up: Upstream): void => { for (const [k, v] of m) if (v.up === up) m.delete(k); };
+  const dropSet = <K>(m: Map<K, Set<Upstream>>, up: Upstream): void => { for (const [k, s] of m) { s.delete(up); if (!s.size) m.delete(k); } };
   /*
    * Negative cache for unknown tool names. A call to a name we do not own
    * triggers a full re-list across every upstream (allTools) to catch a tool
@@ -1863,6 +1876,16 @@ async function main() {
     up.surface = shapes;
     if (!changes.length) return;
     up.surfaceEvents.push({ at: new Date().toISOString(), changes });
+    // Bound the backlog: an upstream that toggles a tool forever must not grow this
+    // array without limit (memory, and one huge delivery to an idle session on its
+    // next result — red-team DoS 1.5). Keep the most recent MAX_SURFACE_EVENTS and
+    // count what was dropped, so a session's absolute surfaceSeen still indexes
+    // correctly; a session that missed older ones was already told the surface moved.
+    if (up.surfaceEvents.length > MAX_SURFACE_EVENTS) {
+      const drop = up.surfaceEvents.length - MAX_SURFACE_EVENTS;
+      up.surfaceEvents.splice(0, drop);
+      up.surfaceDropped += drop;
+    }
     const findings = localFindings().findings;
     for (const c of changes) {
       process.stderr.write(`cairn-proxy: ${up.spec.name}: ${c.detail}\n`);
@@ -1930,9 +1953,11 @@ async function main() {
     // Surface-change signals: clear routing state now (cheap), and invalidate
     // the unknown-name negative cache — a name that did not exist may now — then
     // debounce the expensive re-list + client relay instead of doing them here.
-    if (method === 'notifications/tools/list_changed') { toolOwner.clear(); unknownToolCache.clear(); scheduleListChangedFlush(up, method); return; }
-    if (method === 'notifications/prompts/list_changed') { promptOwner.clear(); unknownPromptCache.clear(); scheduleListChangedFlush(up, method); return; }
-    if (method === 'notifications/resources/list_changed') { resourceOwner.clear(); templateOwner.clear(); unknownResourceCache.clear(); scheduleListChangedFlush(up, method); return; }
+    // Invalidate ONLY the notifying upstream's ownership (DoS 1.5); the negative
+    // caches are cleared too, since a previously-unknown name may now exist there.
+    if (method === 'notifications/tools/list_changed') { dropSingle(toolOwner, up); unknownToolCache.clear(); scheduleListChangedFlush(up, method); return; }
+    if (method === 'notifications/prompts/list_changed') { dropSingle(promptOwner, up); unknownPromptCache.clear(); scheduleListChangedFlush(up, method); return; }
+    if (method === 'notifications/resources/list_changed') { dropSet(resourceOwner, up); dropSet(templateOwner, up); unknownResourceCache.clear(); scheduleListChangedFlush(up, method); return; }
     // Defang the one notification that carries free upstream text to the model.
     // `data` may be a string OR an arbitrary object (the spec allows any JSON), so
     // defang deeply — the object case was previously forwarded raw (red-team A5).
@@ -2343,7 +2368,7 @@ async function main() {
     servers.add(server);
     serverSession.set(server, session);
     /* A session is told about changes from its own start, not about history it never saw. */
-    for (const up of upstreams) session.surfaceSeen.set(up.spec.name, up.surfaceEvents.length);
+    for (const up of upstreams) session.surfaceSeen.set(up.spec.name, up.surfaceDropped + up.surfaceEvents.length);
 
     /* ---- tools ---------------------------------------------------------- */
 
@@ -2701,10 +2726,14 @@ async function main() {
          * indistinguishable from no gateway.
          */
         const events = owner.up.surfaceEvents;
+        // surfaceSeen is an ABSOLUTE total over the upstream's lifetime; the array is
+        // a trimmed tail, so total = dropped + length and the slice start subtracts
+        // what was dropped (DoS 1.5 ring buffer).
+        const total = owner.up.surfaceDropped + events.length;
         const seen = session.surfaceSeen.get(owner.up.spec.name) ?? 0;
-        if (events.length > seen && !degraded()) {
-          session.surfaceSeen.set(owner.up.spec.name, events.length);
-          const fresh = events.slice(seen).flatMap((e) => e.changes);
+        if (total > seen && !degraded()) {
+          session.surfaceSeen.set(owner.up.spec.name, total);
+          const fresh = events.slice(Math.max(0, seen - owner.up.surfaceDropped)).flatMap((e) => e.changes);
           const named = findings.filter((f) => fresh.some((c) => findingNames(f.triggers, c.tool, owner!.up.spec.name) || (c.to !== undefined && findingNames(f.triggers, c.to, owner!.up.spec.name))));
           note +=
             `\n\n--- ${blockLabel(session)} ---\nThis server's tools changed while this session was open:\n` +
@@ -3122,6 +3151,13 @@ async function main() {
    * has a matching delete in the same onclose that clears `transports`.
    */
   const live = new Map<string, { transport: StreamableHTTPServerTransport; server: Server; session: SessionState }>();
+  // Slots RESERVED between passing the session cap and landing in `live`. The cap
+  // check and the live.set are separated by `await instructionsFor` (a listTools
+  // fan-out), so without a synchronous reservation N concurrent initializes all
+  // pass the same live.size and blow past the cap (red-team DoS 1.7). Counted into
+  // the cap and released when the session lands or the init fails.
+  let reservedTotal = 0;
+  const reservedByPrincipal = new Map<string, number>();
 
   /*
    * Idle-session reaper. A client that disconnects cleanly fires onclose and
@@ -3361,7 +3397,8 @@ async function main() {
         // memory, fans out listTools, and books ledger rows until the reaper runs.
         // A global cap protects the process; a per-principal cap keeps one tenant
         // from starving others. Both are generous; the reaper frees them on idle.
-        if (live.size >= MAX_SESSIONS_TOTAL) {
+        // Count reservations into both caps so concurrent inits cannot all pass.
+        if (live.size + reservedTotal >= MAX_SESSIONS_TOTAL) {
           const dir = auditDirOf();
           if (dir && principal !== LOCAL_ADMIN) { try { appendAudit(dir, { principal: principal.id, decision: 'deny', reason: `session cap reached (${MAX_SESSIONS_TOTAL})` }); } catch { /* never block on a log */ } }
           res.writeHead(429, { 'content-type': 'application/json' });
@@ -3369,7 +3406,7 @@ async function main() {
           return;
         }
         if (principal !== LOCAL_ADMIN) {
-          let mine = 0;
+          let mine = reservedByPrincipal.get(principal.id) ?? 0;
           for (const m of live.values()) if (m.session.principal !== LOCAL_ADMIN && m.session.principal.id === principal.id) mine++;
           if (mine >= MAX_SESSIONS_PER_PRINCIPAL) {
             const dir = auditDirOf();
@@ -3381,16 +3418,25 @@ async function main() {
         }
         const session = newSession(randomUUID());
         session.principal = principal;
-        const transport = new StreamableHTTPServerTransport({
-          sessionIdGenerator: () => session.id,
-          onsessioninitialized: (id) => { transports.set(id, transport); },
-          onsessionclosed: (id) => { transports.delete(id); live.delete(id); },
-        });
-        const server = buildServer(session, await instructionsFor(session));
-        live.set(session.id, { transport, server, session });
-        transport.onclose = () => { transports.delete(session.id); live.delete(session.id); servers.delete(server); serverSession.delete(server); };
-        await server.connect(transport);
-        await transport.handleRequest(req, res, body);
+        // RESERVE synchronously, before the await, and release in finally.
+        const pid = principal !== LOCAL_ADMIN ? principal.id : null;
+        reservedTotal++;
+        if (pid) reservedByPrincipal.set(pid, (reservedByPrincipal.get(pid) ?? 0) + 1);
+        try {
+          const transport = new StreamableHTTPServerTransport({
+            sessionIdGenerator: () => session.id,
+            onsessioninitialized: (id) => { transports.set(id, transport); },
+            onsessionclosed: (id) => { transports.delete(id); live.delete(id); },
+          });
+          const server = buildServer(session, await instructionsFor(session));
+          live.set(session.id, { transport, server, session });
+          transport.onclose = () => { transports.delete(session.id); live.delete(session.id); servers.delete(server); serverSession.delete(server); };
+          await server.connect(transport);
+          await transport.handleRequest(req, res, body);
+        } finally {
+          reservedTotal--;
+          if (pid) { const n = (reservedByPrincipal.get(pid) ?? 1) - 1; if (n <= 0) reservedByPrincipal.delete(pid); else reservedByPrincipal.set(pid, n); }
+        }
         return;
       }
       res.writeHead(400, { 'content-type': 'application/json' });
