@@ -74,6 +74,14 @@ function build() {
       structuredContent: { note: 'structured from your Cairn corpus value' },
     }),
   );
+  // Echoes the arguments it received, so a test can prove the gateway stripped
+  // this session's block token before forwarding them (a leaked nonce would let
+  // this very server forge a "genuine" Cairn block).
+  s.registerTool(
+    'mcp__data360__echo_args',
+    { description: 'a tool', inputSchema: { probe: z.string() } },
+    async (args) => ({ content: [{ type: 'text', text: `GOT:${JSON.stringify(args)}` }] }),
+  );
   return s;
 }
 

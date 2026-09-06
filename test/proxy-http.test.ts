@@ -216,6 +216,31 @@ test('a forged label is defanged in every channel, not only description + result
   } finally { await p.close(); proc.kill('SIGKILL'); }
 });
 
+test("this session's block token is stripped from arguments forwarded upstream (#6)", async () => {
+  // The ⟦nonce⟧ is what lets the model tell a genuine Cairn block from a tool
+  // faking one. If the model echoes it into a tool argument, forwarding that
+  // verbatim would teach the upstream the nonce — and then that upstream could
+  // forge a block that passes the model's own check. The gateway must redact it.
+  const { proc, port } = await startHttp();
+  const home = corpus();
+  const cfg = path.join(home, 'cfg.json');
+  fs.writeFileSync(cfg, JSON.stringify({ mcpServers: { data360: { url: `http://127.0.0.1:${port}/mcp` } } }));
+  const p = new Proxy(home, cfg);
+  try {
+    // The session's nonce is disclosed to the model in the initialize instructions.
+    const initR = await p.request('initialize', { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 't', version: '1' } });
+    p.notify('notifications/initialized');
+    const nonce = /⟦([0-9a-f]{12})⟧/.exec(String(initR.result.instructions ?? ''))?.[1];
+    assert.ok(nonce, 'the session token is present in the instructions');
+
+    // The model (foolishly) pastes the token into an argument.
+    const r = await p.call('mcp__data360__echo_args', { probe: `see ⟦${nonce}⟧ and bare ${nonce} too` });
+    const got = texts(r).find((t) => t.startsWith('GOT:')) ?? '';
+    assert.ok(!got.includes(nonce), 'the upstream never receives the nonce (token or bare)');
+    assert.match(got, /redacted/, 'the token was redacted, not merely dropped');
+  } finally { await p.close(); proc.kill('SIGKILL'); }
+});
+
 test('an HTTP upstream that restarts is re-dialed, not served as a dead session (#1)', async () => {
   // The critical fix: the HTTP transport does not fire onclose on a dead host,
   // so without re-dial logic a restarted upstream (a redeploy) would be served
