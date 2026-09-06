@@ -153,6 +153,24 @@ test('a corrupt or unreadable policy loads as error (fail closed), never as none
   }
 });
 
+test('read-only now denies the write verbs the old wordlist missed', () => {
+  const p = policy();
+  for (const name of ['run_shell', 'exec_command', 'transfer_funds', 'approve_invoice', 'grant_access', 'wipe_disk', 'merge_branch', 'reset_password']) {
+    assert.equal(authorize(p, alice, 'sf', { name }).allowed, false, `${name} reads as a write and is denied read-only`);
+  }
+  // ...but a genuine read still passes.
+  assert.equal(authorize(p, alice, 'sf', { name: 'get_account' }).allowed, true, 'a read passes');
+  assert.equal(authorize(p, alice, 'sf', { name: 'list_users' }).allowed, true, 'a list passes');
+});
+
+test('a prototype-polluting role name authorizes nothing (fails closed)', () => {
+  const p = policy();
+  for (const role of ['__proto__', 'constructor', 'toString', 'hasOwnProperty']) {
+    const r = authorize(p, { id: 'x', role }, 'sf', { name: 'get' });
+    assert.equal(r.allowed, false, `role "${role}" must not resolve to an inherited object`);
+  }
+});
+
 /* ---- audit: the tamper-evident chain ----------------------------------- */
 
 function freshDir(): string {

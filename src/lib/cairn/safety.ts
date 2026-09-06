@@ -126,8 +126,16 @@ const CREDENTIAL_KEYWORDS = 'password|passwd|secret|api[_-]?key|authorization|to
 const QUOTED_MIN = 4;
 const OPAQUE_MIN = 40;
 
+/** A matched base64-ish run is a likely secret only if it carries a digit and is
+ * not entirely hexadecimal (a git SHA, a hex hash — not a credential). Applied as
+ * a predicate AFTER a linear run-match, so the scan never backtracks. */
+const looksOpaque = (m: string): boolean => {
+  const core = m.replace(/=+$/, '');
+  return /[0-9]/.test(core) && !/^[0-9a-fA-F]+$/.test(core);
+};
+
 /** Things that should never leave a private repository in a submission. */
-const SENSITIVE: Array<{ re: RegExp; pattern: string; reason: string }> = [
+const SENSITIVE: Array<{ re: RegExp; pattern: string; reason: string; filter?: (m: string) => boolean }> = [
   // `ghu` and `github_pat_` were in neither list, so a fine-grained GitHub PAT
   // passed the gate AND the cleaner: the underscores split it into runs too
   // short for `opaque-blob` to reach, so nothing saw it at all.
@@ -175,7 +183,7 @@ const SENSITIVE: Array<{ re: RegExp; pattern: string; reason: string }> = [
    * hyphen while still refusing MYSECRET, which keeps the precision that \b
    * was there for.
    */
-  { re: new RegExp(`(?<![A-Za-z0-9])(?:${CREDENTIAL_KEYWORDS})\\s*[:=]\\s*(?:([\"'])[^\"'\\n]{${QUOTED_MIN},}\\1|(?=[A-Za-z0-9+/=_-]*\\d)[A-Za-z0-9+/=_-]{8,})`, 'i'), pattern: 'credential-assignment', reason: 'a credential assignment' },
+  { re: new RegExp(`(?<![A-Za-z0-9])(?:${CREDENTIAL_KEYWORDS})[\"']?\\s*[:=]\\s*(?:([\"'])[^\"'\\n]{${QUOTED_MIN},}\\1|(?=[A-Za-z0-9+/=_-]*\\d)[A-Za-z0-9+/=_-]{8,})`, 'i'), pattern: 'credential-assignment', reason: 'a credential assignment' },
   { re: /\/(?:home|Users)\/(?!user\b|you\b|runner\b|root\b|linuxbrew\b|Shared\b)[A-Za-z0-9._-]+/i, pattern: 'home-path', reason: 'a home directory naming a real user' },
   { re: /\bhttps?:\/\/(?![^\s]*(?:example\.com|localhost))(?:[a-z0-9-]+\.)*[a-z0-9-]+\.(?:internal|corp|local|intranet|lan)\b/i, pattern: 'internal-host', reason: 'an internal hostname' },
   { re: /\b(?:10|192\.168|172\.(?:1[6-9]|2\d|3[01]))\.\d{1,3}\.\d{1,3}\b/, pattern: 'private-ip', reason: 'a private network address' },
@@ -202,7 +210,12 @@ const SENSITIVE: Array<{ re: RegExp; pattern: string; reason: string }> = [
    * what separates encoded data from a long name, and it costs almost nothing
    * in recall.
    */
-  { re: new RegExp(`\\b(?![0-9a-fA-F]+\\b)(?=[A-Za-z0-9+/]*\\d)[A-Za-z0-9+/]{${OPAQUE_MIN},}={0,2}\\b`), pattern: 'opaque-blob', reason: 'a long base64-like string that may be encoded data' },
+  // Linear: match the RUN of base64-ish characters, then decide with a predicate
+  // — never `\b` + a lookahead, which on input like "a/a/a/…" rescans to the end
+  // at every position (quadratic) and let a read-only `cairn_find` query stall
+  // the whole event loop. `filter` keeps only runs that carry a digit and are
+  // not entirely hex (a git SHA is not a secret).
+  { re: new RegExp(`[A-Za-z0-9+/]{${OPAQUE_MIN},}={0,2}`), pattern: 'opaque-blob', reason: 'a long base64-like string that may be encoded data', filter: looksOpaque },
 ];
 
 export function scanSensitive(text: string): Flag[] {
@@ -210,6 +223,17 @@ export function scanSensitive(text: string): Flag[] {
   // still a token.
   const scanned = normaliseForScan(text);
   return SENSITIVE.flatMap((d) => {
+    if (d.filter) {
+      // Iterate runs and keep the first that satisfies the predicate — the
+      // linear alternative to a backtracking lookahead.
+      const re = new RegExp(d.re.source, 'g');
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(scanned))) {
+        if (d.filter(m[0])) return [{ severity: 'warn' as const, pattern: d.pattern, reason: d.reason, sample: m[0].slice(0, 60) }];
+        if (m.index === re.lastIndex) re.lastIndex++;
+      }
+      return [];
+    }
     const m = d.re.exec(scanned);
     return m ? [{ severity: 'warn' as const, pattern: d.pattern, reason: d.reason, sample: m[0].slice(0, 60) }] : [];
   });
@@ -250,7 +274,7 @@ export interface Redaction {
  * customer. Those are semantic and need a person. Redaction shrinks the
  * judgement call; it does not remove it.
  */
-const REDACTIONS: Array<{ re: RegExp; pattern: string; to: string }> = [
+const REDACTIONS: Array<{ re: RegExp; pattern: string; to: string; filter?: (m: string) => boolean }> = [
   // Falls back to the header alone when there is no END marker, so a
   // truncated key is rewritten rather than flagged-and-published.
   { re: /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g, pattern: 'private-key', to: '<redacted:private-key>' },
@@ -258,12 +282,12 @@ const REDACTIONS: Array<{ re: RegExp; pattern: string; to: string }> = [
   { re: new RegExp(TOKEN_RE.source, 'g'), pattern: 'api-token', to: '<redacted:token>' },
   { re: /\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{12,}/gi, pattern: 'auth-header', to: '$1 <redacted:credential>' },
   { re: /\b00D[A-Za-z0-9]{12,15}![A-Za-z0-9._-]{20,}/g, pattern: 'salesforce-session', to: '<redacted:salesforce-session>' },
-  { re: new RegExp(`((?:${CREDENTIAL_KEYWORDS})\\s*[:=]\\s*)(?:([\"'])[^\"'\\n]{${QUOTED_MIN},}\\2|(?=[A-Za-z0-9+/=_-]*\\d)[A-Za-z0-9+/=_-]{8,})`, 'gi'), pattern: 'credential-assignment', to: '$1<redacted:credential>' },
+  { re: new RegExp(`((?:${CREDENTIAL_KEYWORDS})[\"']?\\s*[:=]\\s*)(?:([\"'])[^\"'\\n]{${QUOTED_MIN},}\\2|(?=[A-Za-z0-9+/=_-]*\\d)[A-Za-z0-9+/=_-]{8,})`, 'gi'), pattern: 'credential-assignment', to: '$1<redacted:credential>' },
   { re: /\b[A-Za-z0-9._%+-]+@(?!example\.|test\.)[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g, pattern: 'email', to: '<redacted:email>' },
   { re: /\b(https?:\/\/)(?:[a-z0-9-]+\.)*[a-z0-9-]+(\.(?:internal|corp|local|intranet|lan))\b/gi, pattern: 'internal-host', to: '$1<redacted:host>$2' },
   { re: /\/(home|Users)\/(?!user\b|you\b|runner\b|root\b|linuxbrew\b|Shared\b)[A-Za-z0-9._-]+/gi, pattern: 'home-path', to: '/$1/<redacted:user>' },
   { re: /\b(?:10|192\.168|172\.(?:1[6-9]|2\d|3[01]))\.\d{1,3}\.\d{1,3}\.?\d{0,3}\b/g, pattern: 'private-ip', to: '<redacted:private-ip>' },
-  { re: new RegExp(`\\b(?![0-9a-fA-F]+\\b)(?=[A-Za-z0-9+/]*\\d)[A-Za-z0-9+/]{${OPAQUE_MIN},}={0,2}\\b`, 'g'), pattern: 'opaque-blob', to: '<redacted:blob>' },
+  { re: new RegExp(`[A-Za-z0-9+/]{${OPAQUE_MIN},}={0,2}`, 'g'), pattern: 'opaque-blob', to: '<redacted:blob>', filter: looksOpaque },
 ];
 
 export function redact(text: string): { text: string; redactions: Redaction[] } {
@@ -277,6 +301,7 @@ export function redact(text: string): { text: string; redactions: Redaction[] } 
   for (const r of REDACTIONS) {
     out = out.replace(r.re, (...args: unknown[]) => {
       const match = args[0] as string;
+      if (r.filter && !r.filter(match)) return match; // matched the run but it is not actually a secret: leave it
       const replacement = (r.to as string).replace(/\$(\d)/g, (_, d: string) => (args[Number(d)] as string) ?? '');
       redactions.push({ pattern: r.pattern, original: match.slice(0, 60), replacement });
       return replacement;

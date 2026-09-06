@@ -187,8 +187,10 @@ export function authorize(
   // against the policy, never for this sentinel. Compared by identity, so an
   // org that defines its own "admin" ROLE is unaffected.
   if (principal === LOCAL_ADMIN) return { allowed: true, reason: 'local admin (ungoverned)' };
-  const role = policy.roles[principal.role];
-  if (!role) return { allowed: false, reason: `role "${principal.role}" is not defined in the org policy` };
+  // hasOwn, not index: a role named "__proto__"/"constructor"/"toString" would
+  // otherwise resolve to an inherited object and authorize everything.
+  const role = Object.prototype.hasOwnProperty.call(policy.roles, principal.role) ? policy.roles[principal.role] : undefined;
+  if (!role || typeof role !== 'object') return { allowed: false, reason: `role "${principal.role}" is not defined in the org policy` };
   if (role.denyServers?.includes(server)) return { allowed: false, reason: `role "${principal.role}" is denied server "${server}"` };
   if (role.allowServers && !role.allowServers.includes(server)) return { allowed: false, reason: `role "${principal.role}" may only reach ${role.allowServers.join(', ')}` };
   // denyTools is matched against the exposed name AND the raw upstream name
@@ -342,7 +344,12 @@ function foldSpills(dir: string): void {
 function appendChained(dir: string, e: SpillRow): void {
   const tail = diskHead(dir);
   const seq = tail.seq + 1;
-  const partial = { seq, at: e.at ?? new Date().toISOString(), principal: e.principal, decision: e.decision, server: e.server, tool: e.tool, reason: e.reason, session: e.session, agent: e.agent };
+  // Cap client-/upstream-controlled fields so one entry cannot be made huge (an
+  // upstream error body in `reason`, a 100 KB clientInfo.name in `agent`), which
+  // would bloat every row and, once a line outgrows the tail window, cost a
+  // full-file read per append.
+  const cap = (s: string | undefined, n: number) => (s !== undefined && s.length > n ? s.slice(0, n) + '…' : s);
+  const partial = { seq, at: e.at ?? new Date().toISOString(), principal: cap(e.principal, 128)!, decision: e.decision, server: cap(e.server, 128), tool: cap(e.tool, 128), reason: cap(e.reason, 500), session: cap(e.session, 128), agent: cap(e.agent, 120) };
   const hash = chainHash(tail.hash, partial);
   const entry: AuditEntry = { ...partial, prevHash: tail.hash, hash };
   // A crash-truncated tail line has no trailing newline; start on a fresh line

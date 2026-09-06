@@ -54,7 +54,7 @@ export function shapeOf(tool: Tool): ToolShape {
 /* ------------------------------------------------------------------------ */
 
 /** A name that reads as a write. Consulted only where the server declares nothing, and as a second opinion where it does. */
-export const WRITE_LOOKING = /create|update|delete|upsert|execute|insert|remove|write|modify|destroy|drop|send|post|put|patch|deploy|run/i;
+export const WRITE_LOOKING = /create|update|delete|upsert|execute|insert|remove|write|modify|destroy|drop|send|post|put|patch|deploy|run|shell|bash|exec|eval|sql|merge|push|approve|reject|transfer|grant|revoke|provision|terminate|restart|reboot|kill|scale|wipe|erase|format|truncate|refund|charge|email|invite|publish|unpublish|install|uninstall|rename|move|chmod|chown|edit|apply|commit|revert|rollback|reset|invoke|trigger|enable|disable|activate|deactivate|assign|unassign|import|upload|purge|flush|archive/i;
 
 export interface Classification {
   permitted: boolean;

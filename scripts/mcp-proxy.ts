@@ -870,6 +870,10 @@ interface Upstream {
    * server was approved). Populated from the pin whenever the surface is read;
    * enforced only in trust enforce mode. See src/lib/cairn/trust.ts. */
   trustBlocked: Set<string>;
+  /** The last tool listing was incomplete (a page errored), so its surface was
+   * never trust-evaluated. In enforce mode every tool on this upstream is
+   * withheld until it lists completely — a partial listing must not fail open. */
+  listIncomplete: boolean;
 }
 
 /** Lifted from the SDK's 60s: a long-running tool must not fail only because it was proxied. */
@@ -1201,7 +1205,7 @@ async function main() {
   /* Declared before the relay that reads it; assigned once the upstreams have said what they offer. */
   let capabilities: ServerCapabilities = {};
   const upstreams: Upstream[] = specs.map((spec) => ({
-    spec, client: null, caps: {}, alive: false, respawnFailures: 0, nextRespawnAt: 0, respawning: null, surface: null, surfaceEvents: [], trustBlocked: new Set(),
+    spec, client: null, caps: {}, alive: false, respawnFailures: 0, nextRespawnAt: 0, respawning: null, surface: null, surfaceEvents: [], trustBlocked: new Set(), listIncomplete: false,
   }));
   /* Every live server, so an upstream notification reaches every session. */
   const servers = new Set<Server>();
@@ -1704,7 +1708,17 @@ async function main() {
       // Read the surface (and evaluate trust) BEFORE exposing, so a withheld tool
       // never reaches the list even for one listing.
       if (complete) noteSurface(up, mine);
+      up.listIncomplete = !complete;
       const enforce = trustMode() === 'enforce';
+      // A partial listing was never trust-evaluated (noteSurface is skipped), and
+      // up.trustBlocked keeps its old value — so a server that serves a poisoned
+      // page 1 and errors on page 2 would be fully callable in enforce mode. Fail
+      // CLOSED: withhold this upstream's tools until it lists completely.
+      if (!complete && enforce) {
+        process.stderr.write(`cairn-proxy: TRUST ${up.spec.name}: incomplete tool listing (${up.lastError ?? 'error'}) — withholding all its tools in enforce mode until it lists completely\n`);
+        for (const t of mine) owners.set(expose(up, t.name), { up, raw: t.name, annotations: t.annotations }); // route-known so a direct call gets a clear refusal
+        continue;
+      }
       for (const t of mine) {
         const name = expose(up, t.name);
         // Always route-known, so a call to a withheld tool gets a clear refusal
@@ -1926,7 +1940,11 @@ async function main() {
         return textResult(outcome.message, !outcome.ok);
       }
       if (!toolOwner.has(req.params.name) && req.params.name === 'cairn_find') {
-        const query = String(args.query ?? '');
+        // Cap the query before it reaches the retriever/redactor: cairn_find is a
+        // read any principal may call, and an unbounded query is a cheap way to
+        // load the shared corpus code with a giant string. 4 KB is far past any
+        // real query.
+        const query = String(args.query ?? '').slice(0, 4096);
         const { findings } = localFindings();
         let hits: ReturnType<typeof retrieve> = [];
         try { hits = retrieve(query, findings, { limit: 5 }); } catch { /* a corpus problem never reaches the caller */ }
@@ -1970,9 +1988,9 @@ async function main() {
        * it here, so a poisoned/rug-pulled tool cannot be invoked until a human
        * re-approves the server. Monitor mode only flags; it does not block.
        */
-      if (trustMode() === 'enforce' && owner.up.trustBlocked.has(owner.raw)) {
+      if (trustMode() === 'enforce' && (owner.up.trustBlocked.has(owner.raw) || owner.up.listIncomplete)) {
         try { observe(`${owner.up.spec.name} ${owner.raw} [trust-withheld]`, [], 'mcp-proxy:trust-withheld', { by: session.agent, session: session.id }); } catch { /* never fatal */ }
-        audit(session, 'deny', owner.up.spec.name, owner.raw, 'trust: tool surface changed since approval (withheld)');
+        audit(session, 'deny', owner.up.spec.name, owner.raw, owner.up.listIncomplete ? 'trust: upstream listed incompletely, surface not evaluated (withheld)' : 'trust: tool surface changed since approval (withheld)');
         return textResult(
           `cairn-proxy: "${req.params.name}" is withheld — its definition changed since this server was approved, ` +
             `which is how a tool-poisoning / rug-pull attack looks. Re-approve the server with \`cairn:trust --reapprove ${owner.up.spec.name}\` once you have confirmed the change is legitimate.`,
@@ -2366,7 +2384,13 @@ async function main() {
      */
     server.oninitialized = () => {
       const client = server.getClientVersion();
-      if (client?.name) session.agent = process.env.CAIRN_AGENT ?? client.name;
+      // clientInfo.name is unbounded, client-chosen, and becomes a ledger shard
+      // filename and an audit field — so cap it and strip anything that isn't a
+      // safe filename character. For a governed session the authenticated
+      // principal is the real identity; prefer it so ledger rows and shards are
+      // attributed to who authenticated, not to a name the client made up.
+      const raw = process.env.CAIRN_AGENT ?? (governed(session) ? session.principal.id : client?.name);
+      if (raw) session.agent = String(raw).replace(/[^A-Za-z0-9._-]+/g, '-').slice(0, 120) || 'client';
     };
     return server;
   }
@@ -2486,16 +2510,19 @@ async function main() {
          * loopback by default). `governed`/`auth`/`audit` let an operator confirm
          * the controls are actually live on the running host.
          */
+        // "governed" means auth is actually ENFORCED, not merely that a policy
+        // file exists — a policy with auth.required:false governs nothing.
+        const authOn = g.mode === 'governed' && g.policy.auth.required;
         const base = {
           ok: true,
           sessions: transports.size,
-          governed: g.mode === 'governed',
+          governed: authOn,
           policy: g.mode,
-          auth: g.mode === 'governed' ? g.policy.auth.required : false,
+          auth: authOn,
           audit: g.mode !== 'ungoverned' ? !!auditDirOf() : false,
         };
         res.end(JSON.stringify(
-          g.mode === 'governed'
+          authOn
             ? base
             : {
                 ...base,
@@ -2542,8 +2569,24 @@ async function main() {
       const principal: Principal = authResult.principal;
       let body: unknown;
       if (req.method === 'POST') {
+        // Cap the body: we read and parse it ourselves, which bypasses the SDK's
+        // own size limit, so without this an unauthenticated-sized request could
+        // be as large as the client cares to send. 4 MB matches the SDK default.
+        const MAX_BODY = 4 << 20;
         const chunks: Buffer[] = [];
-        for await (const c of req) chunks.push(c as Buffer);
+        let total = 0;
+        let tooBig = false;
+        for await (const c of req) {
+          total += (c as Buffer).length;
+          if (total > MAX_BODY) { tooBig = true; break; }
+          chunks.push(c as Buffer);
+        }
+        if (tooBig) {
+          try { req.destroy(); } catch { /* already gone */ }
+          res.writeHead(413, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ jsonrpc: '2.0', error: { code: -32001, message: 'request body too large' }, id: null }));
+          return;
+        }
         try { body = JSON.parse(Buffer.concat(chunks).toString('utf8') || 'null'); } catch { body = null; }
       }
       const sid = req.headers['mcp-session-id'];
@@ -2616,6 +2659,10 @@ async function main() {
     process.stderr.write(`cairn-proxy: refusing to start — org policy is present but unusable: ${startupGov.reason}. Fix ${orgPolicyPath()} or remove it.\n`);
     process.exit(1);
   }
+  // Auth is only actually ENFORCED when a policy is in force AND requires it. A
+  // policy with auth.required:false is "governed" but lets every request through
+  // as the local admin — not a control.
+  const authEnforced = startupGov.mode === 'governed' && startupGov.policy.auth.required;
   if (startupGov.mode === 'governed') {
     const dir = auditDirOf();
     if (!dir) {
@@ -2628,10 +2675,14 @@ async function main() {
       process.stderr.write(`cairn-proxy: refusing to start — governed but the audit log is not writable at ${dir}: ${(e as Error).message}\n`);
       process.exit(1);
     }
-  } else {
+  }
+  {
+    // A non-loopback bind demands ENFORCED auth, not merely a policy file: a
+    // policy with auth.required:false on a network interface is exactly the open,
+    // unauthenticated, unaudited gateway this guard exists to stop.
     const loopback = host === '127.0.0.1' || host === '::1' || host === 'localhost';
-    if (!loopback && process.env.CAIRN_ALLOW_UNGOVERNED !== '1') {
-      process.stderr.write(`cairn-proxy: refusing to start — binding a non-loopback host (${host}) with NO org policy means an open, unauthenticated, unaudited tool gateway. Add a policy (cairn:org init-policy --require-auth), or set CAIRN_ALLOW_UNGOVERNED=1 if that is truly intended.\n`);
+    if (!loopback && !authEnforced && process.env.CAIRN_ALLOW_UNGOVERNED !== '1') {
+      process.stderr.write(`cairn-proxy: refusing to start — binding a non-loopback host (${host}) without ENFORCED auth means an open, unauthenticated, unaudited tool gateway.${startupGov.mode === 'governed' ? ' The policy exists but auth.required is false — set it true.' : ' Add a policy (cairn:org init-policy --require-auth).'} Or set CAIRN_ALLOW_UNGOVERNED=1 if that is truly intended.\n`);
       process.exit(1);
     }
   }
