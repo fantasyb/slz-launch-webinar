@@ -138,6 +138,39 @@ test('no ledger row can be unbounded, whatever the caller passes', () => {
 });
 
 /*
+ * A cheap message from an untrusted party must not amplify into unbounded work.
+ * Two upstream-driven vectors are bounded: a tools/list_changed storm (each one
+ * would otherwise drive a full re-list AND a client-notify fan-out), and a
+ * spray of unknown tool names (each unknown name would otherwise drive a full
+ * re-list across every upstream). This pins the structure that bounds them, so
+ * a refactor that drops the debounce or the negative cache is caught.
+ */
+test('list_changed is coalesced and unknown tool names are negatively cached', () => {
+  const src = fs.readFileSync(path.join(process.cwd(), 'scripts', 'mcp-proxy.ts'), 'utf8');
+
+  // Debounce: a flush already queued for an (upstream, kind) drops the duplicate.
+  assert.match(src, /const pendingListChanged = new Map/, 'there is a coalescing queue');
+  assert.match(src, /if \(pendingListChanged\.has\(key\)\) return;/, 'a queued flush coalesces further notifications');
+  // The three list_changed methods route through the debouncer and return,
+  // rather than doing the expensive work inline per notification.
+  for (const kind of ['tools', 'prompts', 'resources']) {
+    assert.match(
+      src,
+      new RegExp(`notifications/${kind}/list_changed'\\)[^\\n]*scheduleListChangedFlush`),
+      `${kind}/list_changed is debounced`,
+    );
+  }
+
+  // Negative cache: an unknown name confirmed after a re-list is remembered, and
+  // a subsequent call short-circuits BEFORE the re-list.
+  assert.match(src, /const unknownToolCache = new Map/, 'the negative cache exists');
+  assert.match(src, /if \(isKnownUnknownTool\(req\.params\.name\)\) \{[\s\S]{0,160}no upstream offers/, 'a cached-unknown name is refused before allTools()');
+  assert.match(src, /rememberUnknownTool\(req\.params\.name\);/, 'a name still unknown after a re-list is cached');
+  // And the cache is invalidated when the surface changes.
+  assert.match(src, /toolOwner\.clear\(\); unknownToolCache\.clear\(\);/, 'a tools list_changed clears the negative cache');
+});
+
+/*
  * A tenant-authored (agentRecorded) finding is delivered only to its author, or
  * after an operator promotes it with a signed observation — the same gate the
  * checker uses before it will ever execute one. The risk is a governed,

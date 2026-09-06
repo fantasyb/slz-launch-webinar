@@ -1399,6 +1399,29 @@ async function main() {
   const promptOwner = new Map<string, { up: Upstream; raw: string }>();
   const resourceOwner = new Map<string, Upstream>();
   const templateOwner = new Map<string, Upstream>();
+  /*
+   * Negative cache for unknown tool names. A call to a name we do not own
+   * triggers a full re-list across every upstream (allTools) to catch a tool
+   * added since the last list. That is the right thing ONCE, but a client
+   * spraying random names would turn each cheap call into a full fan-out
+   * re-list. So we remember a name that still did not resolve after a re-list
+   * for a short TTL and refuse it straight away; any list_changed clears the
+   * cache (a previously-unknown name may now exist). Bounded in size so the
+   * cache itself cannot be grown without limit.
+   */
+  const unknownToolCache = new Map<string, number>(); // name -> expiry ms
+  const UNKNOWN_TOOL_TTL_MS = 5_000;
+  const UNKNOWN_TOOL_CACHE_MAX = 1_000;
+  const isKnownUnknownTool = (name: string): boolean => {
+    const exp = unknownToolCache.get(name);
+    if (exp === undefined) return false;
+    if (Date.now() > exp) { unknownToolCache.delete(name); return false; }
+    return true;
+  };
+  const rememberUnknownTool = (name: string): void => {
+    if (unknownToolCache.size >= UNKNOWN_TOOL_CACHE_MAX) unknownToolCache.clear(); // simplest bound: drop the whole cache
+    unknownToolCache.set(name, Date.now() + UNKNOWN_TOOL_TTL_MS);
+  };
 
   /**
    * NOTICE, RECORD, NEVER ENFORCE. Every complete look at an upstream's tool
@@ -1658,10 +1681,45 @@ async function main() {
     noteSurface(up, tools);
   }
 
+  /*
+   * Coalesce a list_changed storm. A hostile or buggy upstream that emits
+   * tools/list_changed in a tight loop would otherwise drive a full re-list
+   * (refreshSurface: every page, plus a trust re-evaluation) AND a
+   * notification fan-out to every client session, once per message —
+   * amplifying one cheap notification into unbounded work. We clear the owner
+   * maps immediately (cheap, keeps routing correct and invalidates the
+   * negative cache), but the expensive re-list and the client relay run at
+   * most once per debounce window per (upstream, kind); a message arriving
+   * while a flush is already queued is dropped, so the final state still
+   * propagates but a flood cannot.
+   */
+  const LISTCHANGED_DEBOUNCE_MS = 300;
+  const pendingListChanged = new Map<string, NodeJS.Timeout>();
+  const scheduleListChangedFlush = (up: Upstream, method: string) => {
+    const key = `${up.spec.name}:${method}`;
+    if (pendingListChanged.has(key)) return; // a flush is already queued: coalesce
+    const t = setTimeout(() => {
+      pendingListChanged.delete(key);
+      if (method === 'notifications/tools/list_changed') void refreshSurface(up);
+      for (const server of servers) {
+        try {
+          if (method === 'notifications/prompts/list_changed' && !capabilities.prompts) continue;
+          if (method === 'notifications/resources/list_changed' && !capabilities.resources) continue;
+          void server.notification({ method, params: {} });
+        } catch { /* a notification that cannot be relayed is dropped, never fatal */ }
+      }
+    }, LISTCHANGED_DEBOUNCE_MS);
+    t.unref?.();
+    pendingListChanged.set(key, t);
+  };
+
   const forwardNotification = (up: Upstream, method: string, params: unknown) => {
-    if (method === 'notifications/tools/list_changed') { toolOwner.clear(); void refreshSurface(up); }
-    if (method === 'notifications/prompts/list_changed') promptOwner.clear();
-    if (method === 'notifications/resources/list_changed') { resourceOwner.clear(); templateOwner.clear(); }
+    // Surface-change signals: clear routing state now (cheap), and invalidate
+    // the unknown-name negative cache — a name that did not exist may now — then
+    // debounce the expensive re-list + client relay instead of doing them here.
+    if (method === 'notifications/tools/list_changed') { toolOwner.clear(); unknownToolCache.clear(); scheduleListChangedFlush(up, method); return; }
+    if (method === 'notifications/prompts/list_changed') { promptOwner.clear(); scheduleListChangedFlush(up, method); return; }
+    if (method === 'notifications/resources/list_changed') { resourceOwner.clear(); templateOwner.clear(); scheduleListChangedFlush(up, method); return; }
     // Defang the one notification that carries free upstream text to the model.
     let outParams = (params ?? {}) as Record<string, unknown>;
     if (method === 'notifications/message' && outParams && typeof outParams.data === 'string') {
@@ -2175,10 +2233,18 @@ async function main() {
 
       let owner = toolOwner.get(req.params.name);
       if (!owner) {
+        // Skip the full re-list if this exact name was already confirmed unknown
+        // within the TTL — otherwise a spray of bad names amplifies into a
+        // fan-out re-list per call. A real gateway tool (cairn_find etc.) is
+        // handled above, so reaching here for one means it is genuinely unowned.
+        if (isKnownUnknownTool(req.params.name)) {
+          return textResult(`cairn-proxy: no upstream offers a tool named "${req.params.name}"`, true);
+        }
         await allTools();
         owner = toolOwner.get(req.params.name);
       }
       if (!owner) {
+        rememberUnknownTool(req.params.name);
         return textResult(`cairn-proxy: no upstream offers a tool named "${req.params.name}"`, true);
       }
       /*
