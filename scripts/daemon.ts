@@ -125,6 +125,10 @@ function maybeVerifyAudit(): void {
   if (v.ok) {
     // Intact: clear any stale alarm from a prior break that has since been fixed.
     try { if (fs.existsSync(marker)) fs.unlinkSync(marker); } catch { /* best-effort */ }
+    // Make declared-offload bridging visible: the daemon trusts the flag for
+    // on-box liveness, so surface which ranges were bridged rather than re-hashed,
+    // so an operator can reconcile them against the off-box anchors they hold.
+    if (v.bridged?.length) process.stderr.write(`cairn:daemon audit ${v.detail}\n`);
     // H4 defense: the daemon remembers, IN PROCESS, the last anchor it wrote —
     // memory an attacker with file-write access cannot erase. If the on-disk
     // anchor log no longer ends with that anchor (deleted or replaced), someone

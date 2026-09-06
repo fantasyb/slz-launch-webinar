@@ -766,12 +766,24 @@ export function rotateAudit(dir: string): RotateResult {
     // failure would leave an archive verify cannot find — a false CHAIN BROKEN on
     // the very next check, since the live marker's prevHash chains from a head
     // that then appears nowhere.
+    // Capture the manifest length before the append so a rename failure below can
+    // ROLL BACK the entry — otherwise a phantom manifest record for an archive that
+    // was never created would make every later verify a false CHAIN BROKEN.
+    let manifestLenBefore = 0;
+    try { manifestLenBefore = fs.statSync(segmentsFile(dir)).size; } catch { manifestLenBefore = 0; }
     try {
       fs.appendFileSync(segmentsFile(dir), JSON.stringify({ file: archiveName, firstSeq: first.seq, lastSeq: tail.seq, firstPrevHash: first.prevHash, lastHash: tail.hash } as Segment) + '\n');
     } catch (e) {
       return { ok: false, detail: `could not record the segment manifest; left the live log intact: ${(e as Error).message}` };
     }
-    fs.renameSync(auditFile(dir), path.join(dir, archiveName));
+    try {
+      fs.renameSync(auditFile(dir), path.join(dir, archiveName));
+    } catch (e) {
+      // The archive was not created: undo the manifest append so verify does not
+      // see a record for a file that isn't there. Live log is untouched.
+      try { fs.truncateSync(segmentsFile(dir), manifestLenBefore); } catch { /* best-effort rollback */ }
+      return { ok: false, detail: `could not archive the live segment; rolled back the manifest and left the live log intact: ${(e as Error).message}` };
+    }
     const at = new Date().toISOString();
     const marker = { seq: tail.seq + 1, at, principal: 'system', decision: 'allow' as AuditDecision, reason: `rotated: archived seq ${first.seq}-${tail.seq} to ${archiveName}` };
     const markerHash = chainHash(tail.hash, marker);
@@ -805,31 +817,50 @@ export interface OffloadResult { ok: boolean; file?: string; freedBytes?: number
  * Undeclared deletion of an archive remains a hard tamper failure everywhere.
  */
 export function offloadArchive(dir: string, file: string): OffloadResult {
+  // `file` is joined onto `dir` and unlinked, so it must be a bare archive
+  // basename — never a path that could escape the audit dir.
+  if (!/^audit\.\d+-\d+\.jsonl$/.test(file)) return { ok: false, detail: `not an archive filename: ${file} (expected audit.<from>-<to>.jsonl)` };
   const r = withAuditLock(dir, (): OffloadResult => {
     const segs = readSegments(dir);
     const idx = segs.findIndex((s) => s.file === file);
     if (idx === -1) return { ok: false, detail: `no archived segment named ${file} in the manifest` };
     const seg = segs[idx];
-    if (seg.offloaded) return { ok: false, detail: `${file} is already declared offloaded` };
     const local = path.join(dir, file);
-    let size = 0;
-    try { size = fs.statSync(local).size; } catch { return { ok: false, detail: `${file} is not present locally — declare offload BEFORE moving it off-box so its contents can be verified one last time` }; }
+    const localSize = (): number | null => { try { return fs.statSync(local).size; } catch { return null; } };
+    // Idempotent: a prior offload that marked the manifest but failed (or was
+    // interrupted) before removing the local copy is COMPLETED here rather than
+    // refused — the segment is already declared, so just finish the unlink.
+    if (seg.offloaded) {
+      const sz = localSize();
+      if (sz === null) return { ok: true, file, freedBytes: 0, detail: 'already offloaded; local copy already gone' };
+      try { fs.unlinkSync(local); } catch (e) { return { ok: false, detail: `already declared offloaded but could not remove the leftover local copy (${(e as Error).message}); delete ${local} by hand` }; }
+      return { ok: true, file, freedBytes: sz, detail: 'already declared; removed the leftover local copy' };
+    }
+    const size = localSize();
+    if (size === null) return { ok: false, detail: `${file} is not present locally — declare offload BEFORE moving it off-box so its contents can be verified one last time` };
     // Verify the whole chain (allowing prior declared offloads) before trusting
     // this one; never offload out of a broken log.
     const v = verifyAudit(dir, { trustDeclaredOffload: true });
     if (!v.ok) return { ok: false, detail: `refusing to offload: the log does not verify (${v.detail})` };
     // The boundary MUST be pinned by a shipped off-box anchor, or the range would
-    // become permanently unverifiable off the box once the local copy is gone.
+    // become permanently unverifiable off the box once the local copy is gone. A
+    // segment rotated while off-box anchoring was not in use never had a boundary
+    // anchor taken and cannot be offloaded at all — anchorHead only ever anchors
+    // the CURRENT head, never a past boundary — so say that plainly.
     const anchor = readAnchors(dir).find((a) => a.seq === seg.lastSeq && a.hash === seg.lastHash);
-    if (!anchor) return { ok: false, detail: `no anchor pins the boundary of ${file} (seq ${seg.lastSeq}) — run \`cairn:audit-log anchor\` and ship it off-box first` };
+    if (!anchor) return { ok: false, detail: `no anchor pins the boundary of ${file} (seq ${seg.lastSeq}). Off-box anchoring must have been in force when this segment was rotated; it cannot be offloaded retroactively.` };
     if (!anchorShipped(dir, anchor)) return { ok: false, detail: `the boundary anchor for ${file} (seq ${seg.lastSeq}) has not shipped off-box — set CAIRN_AUDIT_ANCHOR_CMD and ship it before offloading, so the range stays verifiable` };
-    // Mark offloaded in the manifest (full rewrite under the lock), then remove the
-    // local copy. Order: manifest first — if the unlink fails, the segment is still
-    // correctly declared and a re-run completes it; deleting first then failing the
-    // manifest write would leave an undeclared absence (a false tamper alarm).
+    // Mark offloaded in the manifest (full rewrite), then remove the local copy.
+    // Order: manifest first — if the unlink fails, the segment is still correctly
+    // declared and a re-run finishes it; deleting first then failing the manifest
+    // write would leave an undeclared absence (a false tamper alarm). The rewrite
+    // is atomic (tmp + rename), so a concurrent unlocked verify never reads a
+    // truncated manifest and a crash mid-write never corrupts it.
     const next = segs.map((s, i) => (i === idx ? { ...s, offloaded: true } : s));
     try {
-      fs.writeFileSync(segmentsFile(dir), next.map((s) => JSON.stringify(s)).join('\n') + '\n');
+      const tmp = path.join(dir, `.segments.${process.pid}.tmp`);
+      fs.writeFileSync(tmp, next.map((s) => JSON.stringify(s)).join('\n') + '\n');
+      fs.renameSync(tmp, segmentsFile(dir));
     } catch (e) {
       return { ok: false, detail: `could not update the manifest; nothing removed: ${(e as Error).message}` };
     }
@@ -943,18 +974,23 @@ export function verifyAudit(dir: string, opts: { against?: { seq: number; hash: 
       // otherwise fail forever — permanently disabling anchoring and rotation, so
       // the live log grows unbounded and no new checkpoints ship (Fable-6 #2). For
       // those callers a segment DECLARED offloaded (offloadArchive marked it, after
-      // requiring its boundary anchor to be shipped off-box) is bridged via the
-      // manifest link alone. This trades nothing real: the offloaded range is
-      // off-box, so only the operator's `verify --against <off-box anchors>` — which
-      // does NOT set trustDeclaredOffload — can vouch for it, and that path still
-      // demands the true external anchor. A forged offload flag can mute the on-box
-      // liveness monitor for an already-off-box range, never the authoritative check.
+      // requiring its boundary anchor to be shipped off-box) is bridged. But the
+      // FLAG ALONE is not enough even here: the liveness bridge additionally
+      // requires a LOCAL anchor pinning the boundary that has SHIPPED off-box —
+      // exactly what offloadArchive demanded. So a forged `offloaded:true` on a
+      // segment whose boundary was never anchored and shipped (an archive simply
+      // deleted to hide it) is refused even by the lenient on-box check. This trades
+      // nothing real: the offloaded range is off-box, so only the operator's
+      // `verify --against <off-box anchors>` — which does NOT set trustDeclaredOffload
+      // — can vouch for it, and that path still demands the true external anchor.
       const boundary = externalAt.get(seg.lastSeq);
       const externallyPinned = boundary !== undefined && boundary === seg.lastHash;
       if (!externallyPinned) {
-        if (!(opts.trustDeclaredOffload && seg.offloaded)) {
+        const declaredOffload = opts.trustDeclaredOffload === true && seg.offloaded === true
+          && (() => { const a = anchors.find((x) => x.seq === seg.lastSeq && x.hash === seg.lastHash); return !!a && anchorShipped(dir, a); })();
+        if (!declaredOffload) {
           return { ok: false, entries: st.lastSeq, detail: seg.offloaded
-            ? `archive ${seg.file} (seq ${seg.firstSeq}-${seg.lastSeq}) is declared offloaded but no off-box anchor pins its boundary — its history cannot be verified here`
+            ? `archive ${seg.file} (seq ${seg.firstSeq}-${seg.lastSeq}) is declared offloaded but no shipped off-box anchor pins its boundary — its history cannot be verified here`
             : `archive ${seg.file} (seq ${seg.firstSeq}-${seg.lastSeq}) is not present and no off-box anchor pins its boundary — its history cannot be verified` };
         }
       }

@@ -583,6 +583,49 @@ test('offload refuses unless the boundary anchor has shipped off-box (Fable-6 #2
   assert.ok(fsReal.existsSync(pathReal.join(dir, rot.archived!)), 'the local archive is left in place');
 });
 
+test('the liveness bridge requires a SHIPPED boundary anchor, not just the offloaded flag (Fable-6 #2 follow-up)', () => {
+  const dir = freshDir();
+  // No off-box anchoring: rotate takes a LOCAL boundary anchor but ships nothing.
+  for (let i = 0; i < 5; i++) appendAudit(dir, { principal: 'a', decision: 'call', server: 's', tool: `t${i}` });
+  const rot = rotateAudit(dir);
+  assert.equal(rot.ok, true, rot.detail);
+  // Forge: delete the archive and set offloaded:true in the manifest, WITHOUT ever
+  // shipping the boundary anchor off-box. Even the lenient on-box liveness check
+  // must refuse — the flag alone is not enough.
+  fsReal.rmSync(pathReal.join(dir, rot.archived!));
+  const segFile = pathReal.join(dir, 'audit.segments.jsonl');
+  const segs = fsReal.readFileSync(segFile, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  segs[0].offloaded = true;
+  fsReal.writeFileSync(segFile, segs.map((s) => JSON.stringify(s)).join('\n') + '\n');
+  _resetAuditCache();
+  const v = verifyAudit(dir, { trustDeclaredOffload: true });
+  assert.equal(v.ok, false, 'a forged offloaded flag without a shipped boundary anchor is refused even by the liveness check');
+  assert.match(v.detail ?? '', /no shipped off-box anchor|not present|cannot be verified/);
+});
+
+test('offload rejects a non-basename file and is idempotent on re-run (Fable-6 #2 follow-up)', () => {
+  const dir = freshDir();
+  // A path that could escape the audit dir is refused before any filesystem touch.
+  for (const bad of ['../secrets', 'audit.jsonl', '/etc/passwd', 'audit.1-2.jsonl.bak']) {
+    const r = offloadArchive(dir, bad);
+    assert.equal(r.ok, false, `${bad} is not a valid archive name`);
+    assert.match(r.detail ?? '', /not an archive filename/);
+  }
+  process.env.CAIRN_AUDIT_ANCHOR_CMD = 'cat > /dev/null';
+  try {
+    for (let i = 0; i < 5; i++) appendAudit(dir, { principal: 'a', decision: 'call', server: 's', tool: `t${i}` });
+    const rot = rotateAudit(dir);
+    assert.equal(rot.ok, true, rot.detail);
+    const off1 = offloadArchive(dir, rot.archived!);
+    assert.equal(off1.ok, true, off1.detail);
+    // Re-running offload on an already-declared segment (local copy already gone) is
+    // a no-op success, not an error — so an interrupted offload can be safely retried.
+    _resetAuditCache();
+    const off2 = offloadArchive(dir, rot.archived!);
+    assert.equal(off2.ok, true, 'a re-run of an already-offloaded segment is idempotent');
+  } finally { delete process.env.CAIRN_AUDIT_ANCHOR_CMD; }
+});
+
 test('rotation refuses to archive a broken log', () => {
   const dir = freshDir();
   for (let i = 0; i < 3; i++) appendAudit(dir, { principal: 'a', decision: 'call', server: 's', tool: `t${i}` });
