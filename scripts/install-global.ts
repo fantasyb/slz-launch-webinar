@@ -788,11 +788,15 @@ function main() {
      * server is wrapped only when it carries an auth header, so a wrapped/ stash
      * contains a bearer token by construction. Left un-ignored, one `git add -A`
      * in the corpus (which findings commit into) would publish it.
+     *
+     * `audit/` (the enterprise decision log) and `org-policy.json` (principals
+     * and token hashes) are local governance state, never corpus content — they
+     * are ignored on the same principle: a corpus is committed, this is not.
      */
     if (!DRY) {
       try {
         const gi = path.join(home, '.gitignore');
-        const want = ['.cairn-secrets/', 'drafts/', 'retrievals/', 'wrapped/', 'trust/'];
+        const want = ['.cairn-secrets/', 'drafts/', 'retrievals/', 'wrapped/', 'trust/', 'audit/', 'org-policy.json'];
         const existing = fs.existsSync(gi) ? fs.readFileSync(gi, 'utf8') : '';
         const lines = new Set(existing.split('\n').map((l) => l.trim()));
         const missing = want.filter((w) => !lines.has(w));

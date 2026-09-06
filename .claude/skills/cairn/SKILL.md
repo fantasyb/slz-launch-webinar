@@ -38,6 +38,8 @@ Run every command below from the Cairn checkout with that home, e.g. `CAIRN_HOME
 | `/cairn holes` \| `/cairn drafts` | `cairn:unanswered` and the drafts in `cairn:report` — what's noticed but unwritten |
 | `/cairn queue` | the **sleep queue** and daemon health — what is harvested and waiting for triage, and whether the always-on daemon is draining it (see **The queue**) |
 | `/cairn trust` | the **security pins** — which wrapped servers are approved, and any tool that drifted from its approval (tool-poisoning / rug-pull). `cairn:trust`; `--reapprove <server>` after a legitimate change (see **Trust**) |
+| `/cairn org` | the **enterprise access policy** — who may reach which servers, and mint/revoke tokens. `cairn:org list`; `init-policy`, `mint-token`, `revoke` (see **Enterprise**) |
+| `/cairn audit-log` | the gateway's **tamper-evident access log** — every allow/deny/auth-fail under a policy, hash-chained. `cairn:audit-log view`; `verify`, `export` (see **Enterprise**). NOT `cairn:audit`, which checks the forecast ledger |
 | `/cairn update` | bring the **code** up to date, safely: `cairn:update` (fast-forward only, rolls back a bad build). `--check` to preview (see **Updating**) |
 | `/cairn why <question>` | `cairn:history "<question>"` — search the *reasoning* in git history, not just the corpus |
 | `/cairn sync` | `cairn:sync` — pull the shared **corpus** and re-federate (findings, not code) |
@@ -88,6 +90,27 @@ Cairn's gateway sits in front of every wrapped MCP server, so it is the place to
 When showing trust, lead with **whether anything is withheld or flagged right now** (a live security event), then which servers are pinned. A drifted tool in enforce mode is not a bug to fix — it is the defense working; the action is to inspect the change and either re-approve or leave it blocked.
 
 It installs and updates with everything else: every wrapped server is trust-`monitor` by default from the moment you install, and the daemon's self-update keeps the security logic current with the rest of the code — nothing separate to turn on.
+
+## Enterprise — governed access and the audit trail (`/cairn org`, `/cairn audit-log`)
+
+The same gateway is a personal loopback tool **and** a governed enterprise gateway, decided by one thing: whether an **org policy** (`CAIRN_HOME/org-policy.json`, or `$CAIRN_ORG_POLICY`) exists. With no policy, every client is the local admin, nothing is gated, and nothing is audited — the install you already have. With a policy that requires auth, the hosted gateway (`--http`) demands a bearer token, maps it to a principal, and lets that principal's role decide which servers and tools it may reach. This engages only on the HTTP path; a stdio personal install is never affected.
+
+- **`cairn:org list`** (default) — show the policy: auth on/off, the roles, and the principals (by id and role; tokens are never stored or shown, only their SHA-256).
+- **`cairn:org init-policy [--require-auth]`** — scaffold the policy (starter roles: `admin` unrestricted, `readonly` = write-looking tools denied). Refuses to clobber an existing one.
+- **`cairn:org mint-token --id <who> --role <role>`** — generate a token, store only its hash, and print the raw token **once**. Hand it to the client as `Authorization: Bearer …` out of band (a secrets manager — never chat, never the repo). It cannot be recovered; mint a new one if lost.
+- **`cairn:org revoke --id <who>`** — drop that principal's token(s). A running gateway re-reads the policy on change, so revocation takes effect on the next request without a restart.
+
+Roles in `org-policy.json`: `allowServers` (strict allowlist), `denyServers`, `denyTools`, `readOnly` (deny any write-looking tool). **Deny wins**, and an unknown role denies everything (fail closed).
+
+The audit trail is the other half — every decision the governed gateway makes is one hash-chained JSONL entry:
+
+- **`cairn:audit-log view [--limit N]`** — the most recent decisions (who, what, on which server, allow/deny/auth-fail), and whether the chain is intact.
+- **`cairn:audit-log verify`** — re-walk the chain; any edit, deletion, or reorder of a committed entry is detected and the exact line named.
+- **`cairn:audit-log export [--out file]`** — stream the raw JSONL; it IS the SIEM feed.
+
+When showing enterprise state, lead with whether the gateway is **governed at all** (is there a policy, is auth required) — an ungoverned gateway has no principals and an empty audit log by design, which is not a fault. `org-policy.json` and `audit/` are local governance state (gitignored on install); they are never corpus content and never leave the machine unless exported.
+
+**Do not confuse `cairn:audit-log` (the gateway access log) with `cairn:audit` (the forecast-ledger integrity check).** They are different commands for different things.
 
 ## Managing
 

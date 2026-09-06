@@ -76,6 +76,7 @@ import { recordSubmission } from '../src/lib/cairn/recordFinding';
 import { redactForLedger } from '../src/lib/cairn/safety';
 import { shapeOf, diffSurface, findingNames, type ToolShape, type SurfaceChange } from '../src/lib/cairn/toolsurface';
 import { trustMode, readPin, writePin, evaluateTrust } from '../src/lib/cairn/trust';
+import { loadOrgPolicy, orgPolicyPath, authenticate, authorize, appendAudit, LOCAL_ADMIN, type OrgPolicy, type Principal } from '../src/lib/cairn/enterprise';
 import { summarise, detect, type CallSummary } from '../src/lib/cairn/contradiction';
 import { tierOf } from '../src/lib/cairn/brief';
 import { resonates } from '../src/lib/cairn/resonance';
@@ -514,6 +515,14 @@ interface SessionState {
   id: string;
   /** The client's own name from initialize, for attribution. */
   agent?: string;
+  /**
+   * Who is on the other end, for RBAC and audit. LOCAL_ADMIN over stdio and on
+   * an ungoverned HTTP gateway (no org policy, or auth not required); a real
+   * authenticated principal when an org policy requires a bearer token. Governs
+   * nothing while it is LOCAL_ADMIN — see enterprise.ts. Refreshed on every HTTP
+   * request so a revoked token or an edited role takes effect without a restart.
+   */
+  principal: Principal;
   /** Upstreams whose trap index has already been delivered on a result. */
   introduced: Set<string>;
   callsByTool: Map<string, number>;
@@ -547,7 +556,7 @@ interface SessionState {
 
 function newSession(id: string): SessionState {
   return {
-    id, introduced: new Set(), callsByTool: new Map(), shown: new Set(), nudged: new Set(), holes: new Map(), drafted: new Set(), surfaceSeen: new Map(), recent: new Map(), contradicted: new Set(), notesOffered: new Set(), describedSurfaces: new Set(), lastSeen: Date.now(),
+    id, introduced: new Set(), callsByTool: new Map(), shown: new Set(), nudged: new Set(), holes: new Map(), drafted: new Set(), surfaceSeen: new Map(), recent: new Map(), contradicted: new Set(), notesOffered: new Set(), describedSurfaces: new Set(), lastSeen: Date.now(), principal: LOCAL_ADMIN,
   };
 }
 
@@ -1181,6 +1190,51 @@ async function main() {
     try { return path.join(cairnHome(), 'trust'); } catch { return null; }
   }
 
+  /* ---- enterprise: auth, RBAC, tamper-evident audit --------------------- */
+  /*
+   * These engage ONLY when an org policy file is present and requires auth. With
+   * no policy the gateway is the personal tool it always was: every principal is
+   * LOCAL_ADMIN, authorize() permits everything, and nothing is audited. So the
+   * same binary is a frictionless loopback tool and a governed enterprise
+   * gateway, decided entirely by whether org-policy.json exists.
+   */
+
+  /** CAIRN_HOME/audit, where the hash-chained decision log lives. Null if no home. */
+  function auditDirOf(): string | null {
+    try { return path.join(cairnHome(), 'audit'); } catch { return null; }
+  }
+
+  /*
+   * The org policy, reloaded when its file changes (mtime), so a revoked token
+   * or an edited role takes effect on the next request without restarting the
+   * gateway — but without a full JSON parse on every request. A missing file is
+   * the personal case (no governance) and is cached as null.
+   */
+  let policyCache: { mtimeMs: number; value: OrgPolicy | null } | null = null;
+  function orgPolicy(): OrgPolicy | null {
+    const p = orgPolicyPath();
+    if (!p) return null;
+    let mtimeMs: number;
+    try { mtimeMs = fs.statSync(p).mtimeMs; } catch { policyCache = null; return null; }
+    if (policyCache && policyCache.mtimeMs === mtimeMs) return policyCache.value;
+    const value = loadOrgPolicy();
+    policyCache = { mtimeMs, value };
+    return value;
+  }
+
+  /** Governed = an authenticated, non-local principal under an org policy. The
+   * local/personal principal governs nothing and is never audited. */
+  const governed = (session: SessionState): boolean => session.principal !== LOCAL_ADMIN;
+
+  /** Record one audit decision, if this gateway is governed. Never throws, never
+   * blocks a call — a log that cannot be written is loud on stderr (in appendAudit). */
+  function audit(session: SessionState, decision: 'call' | 'allow' | 'deny' | 'error', server?: string, tool?: string, reason?: string): void {
+    if (!governed(session)) return;
+    const dir = auditDirOf();
+    if (!dir) return;
+    appendAudit(dir, { principal: session.principal.id, decision, server, tool, reason });
+  }
+
   /*
    * The security check: compare the live surface to the APPROVED one. First
    * sight of a server pins it (trust on first use); after that, a tool whose
@@ -1627,7 +1681,21 @@ async function main() {
     /* ---- tools ---------------------------------------------------------- */
 
     server.setRequestHandler(ListToolsRequestSchema, async () => {
-      const tools = await allTools();
+      let tools = await allTools();
+      // RBAC: a governed principal sees only the tools its role may reach. An
+      // upstream tool the role is denied is filtered from the list entirely, the
+      // same way a trust-withheld tool is — the model is never shown a capability
+      // it cannot use. The gateway's own tools (cairn_*) are Cairn's, not a
+      // governed server's, so they are never filtered here. Ungoverned (personal)
+      // sessions skip this whole branch.
+      if (governed(session)) {
+        const policy = orgPolicy();
+        tools = tools.filter((t) => {
+          const owner = toolOwner.get(t.name);
+          if (!owner) return true; // a gateway-own tool, or one about to be resolved
+          return authorize(policy, session.principal, owner.up.spec.name, { name: owner.raw, annotations: t.annotations as never }).allowed;
+        });
+      }
       const { findings } = localFindings();
       let budget = DESCRIPTION_CAP;
       const described = tools.map((t) => {
@@ -1716,6 +1784,20 @@ async function main() {
         return textResult(`cairn-proxy: no upstream offers a tool named "${req.params.name}"`, true);
       }
       /*
+       * RBAC: is this principal allowed to call this tool on this server? Governed
+       * sessions only; a personal (LOCAL_ADMIN) session is permitted everything by
+       * authorize() and is not audited. A denial is refused here and recorded, so
+       * a client that calls a filtered tool by name gets a clear reason, not the
+       * tool's result — and the org has an audit row for the attempt.
+       */
+      if (governed(session)) {
+        const az = authorize(orgPolicy(), session.principal, owner.up.spec.name, { name: owner.raw, annotations: undefined });
+        if (!az.allowed) {
+          audit(session, 'deny', owner.up.spec.name, owner.raw, az.reason);
+          return textResult(`cairn-proxy: "${req.params.name}" is not permitted — ${az.reason}.`, true);
+        }
+      }
+      /*
        * Trust enforcement: a tool whose surface drifted from what was approved is
        * withheld from the list, but a client could still call it by name. Refuse
        * it here, so a poisoned/rug-pulled tool cannot be invoked until a human
@@ -1732,6 +1814,10 @@ async function main() {
       if (!(await ensure(owner.up))) {
         return textResult(`cairn-proxy: upstream "${owner.up.spec.name}" is not running (${owner.up.lastError ?? 'unknown'})${retryHint(owner.up)}`, true);
       }
+      // The call is permitted, trusted and routable: record it. This is the row
+      // an audit asks for — who called what, on which server, when — hash-chained
+      // so it cannot be edited after the fact. Ungoverned sessions record nothing.
+      audit(session, 'call', owner.up.spec.name, owner.raw);
 
       let result: Awaited<ReturnType<Client['callTool']>>;
       try {
@@ -2200,6 +2286,23 @@ async function main() {
         res.writeHead(404).end();
         return;
       }
+      /*
+       * Enterprise auth at the HTTP boundary. With no org policy (or auth not
+       * required) this returns the local admin and nothing changes — the personal
+       * loopback gateway. With a policy that requires it, a valid bearer token is
+       * mandatory: a missing or unknown token is a 401 and a hash-chained
+       * `auth-fail` audit row, before any MCP dispatch. Re-checked on EVERY
+       * request, so a revoked token stops working mid-session without a restart.
+       */
+      const authResult = authenticate(orgPolicy(), req.headers.authorization);
+      if (!authResult.principal) {
+        const dir = auditDirOf();
+        if (dir) { try { appendAudit(dir, { principal: 'anonymous', decision: 'auth-fail', reason: authResult.reason }); } catch { /* never fatal */ } }
+        res.writeHead(401, { 'content-type': 'application/json', 'www-authenticate': 'Bearer realm="cairn"' });
+        res.end(JSON.stringify({ jsonrpc: '2.0', error: { code: -32001, message: `unauthorized: ${authResult.reason ?? 'authentication required'}` }, id: null }));
+        return;
+      }
+      const principal: Principal = authResult.principal;
       let body: unknown;
       if (req.method === 'POST') {
         const chunks: Buffer[] = [];
@@ -2210,12 +2313,13 @@ async function main() {
       const existing = typeof sid === 'string' ? transports.get(sid) : undefined;
       if (existing) {
         const meta = typeof sid === 'string' ? live.get(sid) : undefined;
-        if (meta) meta.session.lastSeen = Date.now();
+        if (meta) { meta.session.lastSeen = Date.now(); meta.session.principal = principal; }
         await existing.handleRequest(req, res, body);
         return;
       }
       if (req.method === 'POST' && isInitializeRequest(body)) {
         const session = newSession(randomUUID());
+        session.principal = principal;
         const transport = new StreamableHTTPServerTransport({
           sessionIdGenerator: () => session.id,
           onsessioninitialized: (id) => { transports.set(id, transport); },

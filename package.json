@@ -73,6 +73,8 @@
     "cairn:daemon": "tsx scripts/daemon.ts",
     "cairn:update": "tsx scripts/update.ts",
     "cairn:trust": "tsx scripts/trust.ts",
+    "cairn:org": "tsx scripts/org.ts",
+    "cairn:audit-log": "tsx scripts/audit-log.ts",
     "cairn:impact": "tsx scripts/impact.ts",
     "cairn:seal": "tsx scripts/seal.ts",
     "cairn:project": "tsx scripts/project.ts"

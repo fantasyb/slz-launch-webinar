@@ -128,6 +128,13 @@ export function authorize(
   tool: { name: string; annotations?: Annotations | null },
 ): AuthzResult {
   if (!policy) return { allowed: true, reason: 'no org policy' };
+  // The local/personal principal is ungoverned by construction: it is the
+  // identity used when no one authenticated (stdio, or loopback with auth off).
+  // A policy file that happens to be present must not start denying a personal
+  // install — governance engages only for a principal that authenticated
+  // against the policy, never for this sentinel. Compared by identity, so an
+  // org that defines its own "admin" ROLE is unaffected.
+  if (principal === LOCAL_ADMIN) return { allowed: true, reason: 'local admin (ungoverned)' };
   const role = policy.roles[principal.role];
   if (!role) return { allowed: false, reason: `role "${principal.role}" is not defined in the org policy` };
   if (role.denyServers?.includes(server)) return { allowed: false, reason: `role "${principal.role}" is denied server "${server}"` };
