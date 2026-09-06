@@ -399,22 +399,68 @@ test('rotation archives the live segment and the chain continues, verifiably, ac
     assert.equal(rot.fromSeq, 1);
     assert.equal(rot.toSeq, 4);
     assert.ok(fsReal.existsSync(pathReal.join(dir, rot.archived!)), 'the archive file exists');
-    assert.ok(!fsReal.existsSync(pathReal.join(dir, 'audit.jsonl')), 'the live file was archived away');
-
-    // Right after rotation the live segment is empty, but the pre-rotation anchor
-    // (for an archived seq) must NOT read as truncation, and verify is clean.
+    // The new live segment exists and starts with a real CHAINED marker (seq 5),
+    // not an unauthenticated carry — so verify walks archive+live as one chain.
+    assert.ok(fsReal.existsSync(pathReal.join(dir, 'audit.jsonl')), 'a fresh live segment with the boundary marker exists');
     _resetAuditCache();
-    assert.equal(verifyAudit(dir).ok, true, 'a freshly rotated (empty) live segment verifies');
-    assert.equal(verifyAudit(dir, { against: [external] }).ok, true, 'a pre-rotation anchor is archived, not "truncated"');
+    assert.equal(verifyAudit(dir).ok, true, 'the rotated log verifies (archive + marker)');
+    // The pre-rotation anchor is for seq 4, which lives in the ARCHIVE — verify
+    // walks the archive to check it, never skips it.
+    assert.equal(verifyAudit(dir, { against: [external] }).ok, true, 'the pre-rotation anchor is verified against the archived segment');
 
-    // Appends continue the chain: seq 5, prevHash = seq 4's hash.
     appendAudit(dir, { principal: 'a', decision: 'call', server: 's', tool: 'post0' });
     appendAudit(dir, { principal: 'a', decision: 'call', server: 's', tool: 'post1' });
     _resetAuditCache();
     const v = verifyAudit(dir, { against: [external] });
     assert.equal(v.ok, true, `the continued chain verifies: ${v.detail ?? ''}`);
     const seqs = readAudit(dir).map((e) => e.seq);
-    assert.deepEqual(seqs, [5, 6], 'seq is monotonic across the rotation boundary, not reset to 1');
+    assert.deepEqual(seqs, [5, 6, 7], 'the live segment is marker(5) + post0(6) + post1(7); seq is monotonic across the boundary');
+  } finally { delete process.env.CAIRN_AUDIT_ANCHOR_CMD; }
+});
+
+test('a forged rotation cannot make verify pass — the carry attack is closed (Fable pass-4 CRITICAL)', () => {
+  const dir = freshDir();
+  process.env.CAIRN_AUDIT_ANCHOR_CMD = 'cat > /dev/null';
+  try {
+    for (let i = 0; i < 10; i++) appendAudit(dir, { principal: 'a', decision: 'call', server: 's', tool: `t${i}` });
+    const a = anchorHead(dir)!;
+    const offbox = [{ seq: a.seq, hash: a.hash }]; // the operator holds this off the box
+    assert.equal(verifyAudit(dir, { against: offbox }).ok, true, 'clean log verifies against the off-box anchor');
+
+    // The old attack: write a forged carry to raise the base, delete the log, and
+    // verify would report clean. There is no carry now — forging one is inert —
+    // and deleting the live log is caught as a deletion.
+    fsReal.writeFileSync(pathReal.join(dir, 'audit.carry.json'), JSON.stringify({ seq: 900000, hash: 'f'.repeat(64) }));
+    fsReal.unlinkSync(pathReal.join(dir, 'audit.jsonl'));
+    fsReal.rmSync(pathReal.join(dir, 'head.json'), { force: true });
+    _resetAuditCache();
+    assert.equal(verifyAudit(dir).ok, false, 'a deleted log is not "clean" just because a carry file was planted');
+    assert.equal(verifyAudit(dir, { against: offbox }).ok, false, 'and the off-box anchor is NOT skipped — the forgery is caught');
+  } finally { delete process.env.CAIRN_AUDIT_ANCHOR_CMD; }
+});
+
+test('a rotated log detects a deleted or edited archive', () => {
+  const dir = freshDir();
+  process.env.CAIRN_AUDIT_ANCHOR_CMD = 'cat > /dev/null';
+  try {
+    for (let i = 0; i < 4; i++) appendAudit(dir, { principal: 'a', decision: 'call', server: 's', tool: `t${i}` });
+    const rot = rotateAudit(dir);
+    appendAudit(dir, { principal: 'a', decision: 'call', server: 's', tool: 'post' });
+    _resetAuditCache();
+    assert.equal(verifyAudit(dir).ok, true, 'baseline: rotated log verifies');
+    // Edit the archive: verify walks it and catches the edit.
+    const archive = pathReal.join(dir, rot.archived!);
+    const al = fsReal.readFileSync(archive, 'utf8').split('\n').filter(Boolean);
+    const e = JSON.parse(al[1]); e.tool = 'EVIL'; al[1] = JSON.stringify(e);
+    fsReal.writeFileSync(archive, al.join('\n') + '\n');
+    _resetAuditCache();
+    assert.equal(verifyAudit(dir).ok, false, 'an edited archive is caught (archives are walked, not trusted)');
+    // Delete the archive entirely (no off-box anchor pins its boundary): fail.
+    fsReal.unlinkSync(archive);
+    _resetAuditCache();
+    const v = verifyAudit(dir);
+    assert.equal(v.ok, false, 'a deleted archive is caught');
+    assert.match(v.detail ?? '', /not present|does not link|out of order/);
   } finally { delete process.env.CAIRN_AUDIT_ANCHOR_CMD; }
 });
 

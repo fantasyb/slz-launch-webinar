@@ -101,7 +101,11 @@ function maybeVerifyAudit(): void {
   const marker = path.join(dir, 'ALARM.json');
   let v;
   try {
-    if (!fs.existsSync(path.join(dir, 'audit.jsonl'))) return; // ungoverned / no log: nothing to verify
+    // Do NOT short-circuit on a missing audit.jsonl: after a rotation there are
+    // archived segments (and a checkpoint) even when the live file was just
+    // deleted, and a DELETION of the live log is exactly what verify must catch.
+    // verify returns ok on a genuinely-fresh dir (no segments, no checkpoints).
+    if (!fs.existsSync(path.join(dir, 'audit.jsonl')) && !fs.existsSync(path.join(dir, 'audit.segments.jsonl')) && !fs.existsSync(path.join(dir, 'head.json'))) return;
     v = verifyAudit(dir);
   } catch (e) {
     process.stderr.write(`cairn:daemon audit-verify threw (ignored): ${(e as Error).message}\n`);
