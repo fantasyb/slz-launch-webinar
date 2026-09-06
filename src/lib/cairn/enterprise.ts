@@ -117,6 +117,25 @@ export function readOrgPolicy(): PolicyLoad {
   if (!isObj(raw.auth) || typeof raw.auth.required !== 'boolean') return { status: 'error', reason: 'policy.auth.required must be present and a boolean' };
   if (raw.principals !== undefined && !isObj(raw.principals)) return { status: 'error', reason: 'policy.principals must be an object' };
   if (raw.roles !== undefined && !isObj(raw.roles)) return { status: 'error', reason: 'policy.roles must be an object' };
+  // Validate the SHAPE of each principal and role, fail CLOSED on a typo (red-team
+  // #6). A string `allowServers:"github"` (not an array) turns `.includes(server)`
+  // into a substring test that admits `git`/`hub`/``; a principal missing `id`
+  // maps its ledger rows to the operator's shard. Reject rather than misbehave.
+  for (const [h, pr] of Object.entries((raw.principals ?? {}) as Record<string, unknown>)) {
+    if (!isObj(pr) || typeof pr.id !== 'string' || !pr.id || typeof pr.role !== 'string' || !pr.role) {
+      return { status: 'error', reason: `policy.principals["${h}"] must have a non-empty string id and role` };
+    }
+  }
+  const strArr = (v: unknown) => v === undefined || (Array.isArray(v) && v.every((x) => typeof x === 'string'));
+  for (const [name, role] of Object.entries((raw.roles ?? {}) as Record<string, unknown>)) {
+    if (!isObj(role)) return { status: 'error', reason: `policy.roles["${name}"] must be an object` };
+    if (!strArr(role.allowServers) || !strArr(role.denyServers) || !strArr(role.denyTools)) {
+      return { status: 'error', reason: `policy.roles["${name}"] allowServers/denyServers/denyTools must each be an array of strings` };
+    }
+    for (const flag of ['readOnly', 'readOnlyStrict'] as const) {
+      if (role[flag] !== undefined && typeof role[flag] !== 'boolean') return { status: 'error', reason: `policy.roles["${name}"].${flag} must be a boolean` };
+    }
+  }
   return {
     status: 'ok',
     policy: {

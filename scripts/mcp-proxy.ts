@@ -2435,6 +2435,16 @@ async function main() {
         return textResult(outcome.message + closed, !outcome.ok);
       }
       if (!toolOwner.has(req.params.name) && req.params.name === 'cairn_observe') {
+        // A governed tenant may only observe a finding it can actually SEE: attest
+        // resolves any id, so without this a tenant could refresh (or probe the
+        // existence of) another tenant's private agentRecorded finding. The refusal
+        // is IDENTICAL whether the id is invisible or absent, so it is not an
+        // existence oracle over other tenants' findings (red-team #2).
+        if (governed(session)) {
+          const fid = String(args.finding ?? '');
+          const visible = deliverableTo(session, localFindings().findings).some((f) => f.id === fid);
+          if (!visible) return textResult(`cairn-proxy: no finding "${fid}" is available to observe.`, true);
+        }
         // origin:'agent' FORCES the author to the authenticated identity: the caller
         // is a model, and a caller-supplied `by` must never attribute an observation
         // to ANOTHER tenant (which the note/observation delivery then hands that

@@ -176,6 +176,20 @@ test('a corrupt or unreadable policy loads as error (fail closed), never as none
     const r = readOrgPolicy();
     assert.equal(r.status, 'ok');
     assert.equal(r.status === 'ok' && r.policy.auth.required, true);
+    // Shape typos fail CLOSED (red-team #6): a STRING allowServers turns .includes
+    // into a substring test; a principal without an id pools its ledger with the
+    // operator's; a non-boolean readOnly is not a coincidental "off".
+    fsReal.writeFileSync(file, JSON.stringify({ auth: { required: true }, roles: { r: { allowServers: 'github' } } }));
+    assert.equal(readOrgPolicy().status, 'error', 'a string allowServers is rejected');
+    fsReal.writeFileSync(file, JSON.stringify({ auth: { required: true }, principals: { h: { role: 'admin' } } }));
+    assert.equal(readOrgPolicy().status, 'error', 'a principal without an id is rejected');
+    fsReal.writeFileSync(file, JSON.stringify({ auth: { required: true }, roles: { r: { denyTools: ['x', 3] } } }));
+    assert.equal(readOrgPolicy().status, 'error', 'a non-string denyTools entry is rejected');
+    fsReal.writeFileSync(file, JSON.stringify({ auth: { required: true }, roles: { r: { readOnly: 'yes' } } }));
+    assert.equal(readOrgPolicy().status, 'error', 'a non-boolean readOnly is rejected');
+    // A correctly-shaped policy with roles still loads.
+    fsReal.writeFileSync(file, JSON.stringify({ auth: { required: true }, principals: { h: { id: 'alice', role: 'ro' } }, roles: { ro: { readOnly: true, allowServers: ['github'] } } }));
+    assert.equal(readOrgPolicy().status, 'ok', 'a well-shaped policy loads');
   } finally {
     if (prev === undefined) delete process.env.CAIRN_ORG_POLICY; else process.env.CAIRN_ORG_POLICY = prev;
   }

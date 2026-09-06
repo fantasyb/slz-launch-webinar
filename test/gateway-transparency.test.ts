@@ -201,7 +201,7 @@ test('every model-delivery path filters findings through deliverableTo', () => {
   // Every model-delivery read of the corpus goes through the gate. If a new
   // delivery site is added it must too; if one is removed the count drops.
   const delivered = src.match(/deliverableTo\(session, localFindings\(\)\.findings\)/g) ?? [];
-  assert.equal(delivered.length, 4, 'connect index, tool-list describe, cairn_find, and result annotate all filter');
+  assert.equal(delivered.length, 5, 'connect index, tool-list describe, cairn_find, result annotate, and the cairn_observe visibility gate all filter');
 
   // The rot detector reads the corpus RAW: it is operator-facing stderr, never
   // handed to the model, and it must see every finding including other tenants'.
