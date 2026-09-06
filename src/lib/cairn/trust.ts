@@ -39,6 +39,15 @@ export interface Pin {
   approvedAt: string;
   /** The approved surface: every tool's name, description, annotations, schema hash. */
   tools: ToolShape[];
+  /**
+   * The server's own `instructions` at approval time. The model reads these
+   * exactly as it reads a tool description, so a server that slips a new
+   * instruction in here after approval is the same rug-pull as one that
+   * rewrites a tool description — pinned and checked on the same footing.
+   * Optional so a pin written before this field existed still loads (treated as
+   * empty, which a real instructions string will correctly read as drift).
+   */
+  instructions?: string;
 }
 
 const safeName = (s: string) => s.replace(/[^A-Za-z0-9_.-]+/g, '_') || 'server';
@@ -55,10 +64,10 @@ export function readPin(server: string, trustDir: string): Pin | null {
   }
 }
 
-export function writePin(server: string, tools: ToolShape[], trustDir: string): boolean {
+export function writePin(server: string, tools: ToolShape[], trustDir: string, instructions?: string): boolean {
   try {
     fs.mkdirSync(trustDir, { recursive: true });
-    const pin: Pin = { server, approvedAt: new Date().toISOString(), tools };
+    const pin: Pin = { server, approvedAt: new Date().toISOString(), tools, instructions: instructions ?? '' };
     const tmp = path.join(trustDir, `.${safeName(server)}.${process.pid}.tmp`);
     fs.writeFileSync(tmp, JSON.stringify(pin, null, 2) + '\n');
     fs.renameSync(tmp, pinPath(server, trustDir));
@@ -82,24 +91,45 @@ export function forgetPin(server: string, trustDir: string): boolean {
 /**
  * The kinds of surface change that are a SECURITY concern — a tool the model
  * would now read differently than when it was approved, or one that appeared
- * unapproved. A pure rename (same schema and description) and a tool that
- * vanished are reported but not blocked: neither hands the model a changed
- * instruction or a new capability, so withholding them would be noise, not
- * safety. `annotations` IS blocking: a readOnly→write flip is a privilege change.
+ * unapproved. Only a `vanished` tool is reported without blocking: it is gone,
+ * so there is nothing live to withhold. Everything else is blocked in enforce
+ * mode, including a `renamed` tool: the new name is exposed and callable, and
+ * "the same schema now reachable under a name I never approved" is exactly the
+ * substitution a rug-pull uses. `annotations` blocking catches a readOnly→write
+ * flip in place; the strict rename pairing in diffSurface (annotations must
+ * match) keeps such a flip from hiding as a rename in the first place.
  */
-const BLOCKING: ReadonlySet<SurfaceChange['kind']> = new Set(['appeared', 'schema', 'description', 'annotations']);
+const BLOCKING: ReadonlySet<SurfaceChange['kind']> = new Set(['appeared', 'renamed', 'schema', 'description', 'annotations']);
 
 export interface TrustVerdict {
   /** Human-readable drift from the approved surface, most alarming first. */
   changes: SurfaceChange[];
   /** RAW upstream tool names to withhold in enforce mode (changed or unapproved). */
   blocked: Set<string>;
+  /** The server's own `instructions` string drifted from what was approved. */
+  instructionsChanged: boolean;
 }
 
-/** Compare a live surface to the approved one. Pure. */
-export function evaluateTrust(approved: ToolShape[], live: ToolShape[]): TrustVerdict {
+/**
+ * Compare a live surface to the approved one. Pure. The blocked set holds the
+ * name that is LIVE and callable now — for a rename that is the new name
+ * (`c.to`), not the old one that no longer exists, so the withhold actually
+ * lands on the tool the model would otherwise be handed. The optional
+ * instructions arguments carry the server's own `instructions` channel through
+ * the same check: the model reads it, so drift in it is a security event too.
+ */
+export function evaluateTrust(
+  approved: ToolShape[],
+  live: ToolShape[],
+  approvedInstructions?: string,
+  liveInstructions?: string,
+): TrustVerdict {
   const changes = diffSurface(approved, live);
   const blocked = new Set<string>();
-  for (const c of changes) if (BLOCKING.has(c.kind)) blocked.add(c.tool);
-  return { changes, blocked };
+  for (const c of changes) {
+    if (!BLOCKING.has(c.kind)) continue;
+    blocked.add(c.kind === 'renamed' && c.to ? c.to : c.tool);
+  }
+  const instructionsChanged = (approvedInstructions ?? '') !== (liveInstructions ?? '');
+  return { changes, blocked, instructionsChanged };
 }

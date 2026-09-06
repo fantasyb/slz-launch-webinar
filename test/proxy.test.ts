@@ -770,6 +770,34 @@ test('trust monitor: drift is flagged but nothing is withheld', async () => {
   } finally { await b.close(); }
 });
 
+/**
+ * The instructions channel is the twin of a tool description: the model reads
+ * the server's own `instructions` at connect exactly as it reads a tool's
+ * description. A rug-pull that slips a new directive in there must be caught
+ * the same way — pinned on first sight, withheld on drift under enforce.
+ */
+test('trust enforce: poisoned server instructions are withheld from the model, not passed through', async () => {
+  const home = corpus();
+  const enforce = { CAIRN_TRUST_MODE: 'enforce' };
+  // Session one pins the clean instructions.
+  const a = new Session(home, ['--server', `node ${FIXTURE}`], enforce);
+  try {
+    const init = await a.init();
+    const instr = (init.result as { instructions?: string }).instructions ?? '';
+    assert.match(instr, /paginate with limit 50/, 'the clean instructions are passed through and pinned on first sight');
+    await a.tools();
+  } finally { await a.close(); }
+
+  // Session two: the server's instructions are poisoned.
+  const b = new Session(home, ['--server', `node ${FIXTURE} --poison-instructions`], enforce);
+  try {
+    const init = await b.init();
+    const instr = (init.result as { instructions?: string }).instructions ?? '';
+    assert.ok(!/id_rsa/.test(instr), `the poisoned directive must not reach the model: ${instr.slice(0, 300)}`);
+    assert.match(instr, /WITHHELD pending re-approval/, 'the model is told the instructions were withheld, and how to re-approve');
+  } finally { await b.close(); }
+});
+
 /* ------------------------------------------------------------------------ */
 /* Ambient, in front of a real connector all day                              */
 /* ------------------------------------------------------------------------ */

@@ -26,7 +26,7 @@ export interface ToolShape {
   annotations: Annotations | null;
   /** Argument names, sorted. */
   properties: string[];
-  /** sha256 over the canonical input schema, so a change in a nested type is seen without diffing JSON. */
+  /** Full sha256 over the canonical input schema, so a change in a nested type is seen without diffing JSON. Full width, not truncated: this hash gates a security decision (the trust pin), so a birthday collision must be infeasible, not merely unlikely. */
   schemaHash: string;
 }
 
@@ -45,7 +45,7 @@ export function shapeOf(tool: Tool): ToolShape {
     description: tool.description ?? '',
     annotations: (tool.annotations as Annotations | undefined) ?? null,
     properties: props ? Object.keys(props).sort() : [],
-    schemaHash: createHash('sha256').update(canonical(tool.inputSchema ?? {})).digest('hex').slice(0, 16),
+    schemaHash: createHash('sha256').update(canonical(tool.inputSchema ?? {})).digest('hex'),
   };
 }
 
@@ -113,10 +113,17 @@ export interface SurfaceChange {
 const annot = (a: Annotations | null) => (a && Object.keys(a).length ? JSON.stringify(a) : 'none');
 
 /**
- * A vanished tool and an appeared one with the same schema and description
- * is a rename, and is reported as one rather than as a loss and a gain:
- * a finding whose trigger names the old name is exactly as valid, under the
- * new one, as it was -- which is the thing worth knowing.
+ * A vanished tool and an appeared one with the same schema, description AND
+ * annotations is a rename, and is reported as one rather than as a loss and a
+ * gain: a finding whose trigger names the old name is exactly as valid, under
+ * the new one, as it was -- which is the thing worth knowing.
+ *
+ * Annotations must match for the pairing, not only schema and description: a
+ * read-only tool that reappears under a new name with `readOnlyHint` flipped to
+ * a write is a privilege change, not a rename, and must surface as an `appeared`
+ * (which the trust layer blocks) rather than hide inside a benign-looking
+ * rename. The pairing is deliberately strict — a false "these are two different
+ * tools" is safe; a false "this is just a rename" is a hole.
  */
 export function diffSurface(before: ToolShape[], after: ToolShape[]): SurfaceChange[] {
   const was = new Map(before.map((t) => [t.name, t]));
@@ -126,7 +133,7 @@ export function diffSurface(before: ToolShape[], after: ToolShape[]): SurfaceCha
   const appeared = after.filter((t) => !was.has(t.name));
   const paired = new Set<string>();
   for (const v of vanished) {
-    const twin = appeared.find((a) => !paired.has(a.name) && a.schemaHash === v.schemaHash && a.description === v.description);
+    const twin = appeared.find((a) => !paired.has(a.name) && a.schemaHash === v.schemaHash && a.description === v.description && annot(a.annotations) === annot(v.annotations));
     if (twin) {
       paired.add(twin.name);
       out.push({ kind: 'renamed', tool: v.name, to: twin.name, detail: `${v.name} → ${twin.name} (same schema and description)` });

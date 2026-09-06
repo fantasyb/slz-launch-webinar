@@ -1192,24 +1192,48 @@ async function main() {
    */
   function evaluateTrustFor(up: Upstream, shapes: ToolShape[]): void {
     const mode = trustMode();
+    if (mode === 'off') { up.trustBlocked = new Set(); return; }
     const dir = trustDirOf();
-    if (mode === 'off' || !dir) { up.trustBlocked = new Set(); return; }
-    const pin = readPin(up.spec.name, dir);
-    if (!pin) {
-      writePin(up.spec.name, shapes, dir); // trust on first use: this surface is the baseline
+    if (!dir) {
+      // Enforce that cannot resolve its pin directory is enforcement that is not
+      // running. Never silently downgrade to "allow all" — that is the exact
+      // "the control is off while it says it is on" failure. Say so, loudly,
+      // every read, so the operator cannot mistake a broken home for a safe one.
       up.trustBlocked = new Set();
-      process.stderr.write(`cairn-proxy: TRUST ${up.spec.name}: pinned ${shapes.length} tool(s) as approved (first sight)\n`);
+      process.stderr.write(`cairn-proxy: TRUST ${up.spec.name}: cannot resolve CAIRN_HOME/trust — trust ${mode.toUpperCase()} is NOT active for this server (fix CAIRN_HOME)\n`);
       return;
     }
-    const { changes, blocked } = evaluateTrust(pin.tools, shapes);
+    const live = up.instructions ?? '';
+    const pin = readPin(up.spec.name, dir);
+    if (!pin) {
+      // Trust on first use: this surface AND these instructions are the baseline.
+      const ok = writePin(up.spec.name, shapes, dir, live);
+      up.trustBlocked = new Set();
+      if (ok) {
+        process.stderr.write(`cairn-proxy: TRUST ${up.spec.name}: pinned ${shapes.length} tool(s) as approved (first sight)\n`);
+      } else {
+        // The pin did not persist. Next read will "first-sight" again and never
+        // enforce — so in enforce mode this server is currently unprotected. Do
+        // not print "pinned"; make the gap visible.
+        process.stderr.write(`cairn-proxy: TRUST ${up.spec.name}: could not write approval pin — ${mode === 'enforce' ? 'this server is UNPROTECTED until the pin can be written' : 'no baseline recorded this run'} (check CAIRN_HOME/trust is writable)\n`);
+      }
+      return;
+    }
+    const { changes, blocked, instructionsChanged } = evaluateTrust(pin.tools, shapes, pin.instructions, live);
     up.trustBlocked = blocked;
-    if (!changes.length) return;
+    if (!changes.length && !instructionsChanged) return;
     for (const c of changes) {
-      const action = blocked.has(c.tool) ? (mode === 'enforce' ? 'WITHHELD until re-approved' : 'flagged (monitor)') : 'noted';
+      const live = c.kind === 'renamed' && c.to ? c.to : c.tool;
+      const action = blocked.has(live) ? (mode === 'enforce' ? 'WITHHELD until re-approved' : 'flagged (monitor)') : 'noted';
       process.stderr.write(`cairn-proxy: TRUST ${up.spec.name}: ${c.detail} — ${action}\n`);
     }
+    if (instructionsChanged) {
+      const action = mode === 'enforce' ? 'server instructions WITHHELD until re-approved' : 'server instructions changed — flagged (monitor)';
+      process.stderr.write(`cairn-proxy: TRUST ${up.spec.name}: ${action}\n`);
+    }
     try {
-      observe(`${up.spec.name} tool surface drifted from approval: ${changes.map((c) => c.detail).join('; ').slice(0, 500)}`, [], `mcp-proxy:trust-${mode}`, { by: 'gateway', session: process.env.CAIRN_SESSION });
+      const detail = [...changes.map((c) => c.detail), ...(instructionsChanged ? ['server instructions changed since approval'] : [])].join('; ').slice(0, 500);
+      observe(`${up.spec.name} tool surface drifted from approval: ${detail}`, [], `mcp-proxy:trust-${mode}`, { by: 'gateway', session: process.env.CAIRN_SESSION });
     } catch { /* never fatal */ }
   }
 
@@ -1511,6 +1535,22 @@ async function main() {
     return out;
   }
 
+  /**
+   * Are this server's live instructions withheld right now? Computed straight
+   * from the pin, not from up.instructionsBlocked, so the connect path does not
+   * depend on a surface read having already run this session (it may not have):
+   * the pin is on disk from a prior session, and that is all the comparison
+   * needs. Only enforce mode withholds; monitor flags without blocking.
+   */
+  function instructionsWithheld(up: Upstream): boolean {
+    if (trustMode() !== 'enforce') return false;
+    const dir = trustDirOf();
+    if (!dir) return false; // no pin dir: the loud fail-open warning is emitted in evaluateTrustFor
+    const pin = readPin(up.spec.name, dir);
+    if (!pin) return false; // first sight: nothing approved to drift from yet
+    return (pin.instructions ?? '') !== (up.instructions ?? '');
+  }
+
   /** The instructions a session is handed at connect: the upstreams' own, then the index. */
   async function instructionsFor(session: SessionState): Promise<string> {
     const findings = localFindings().findings;
@@ -1519,7 +1559,17 @@ async function main() {
     const programs = programIndex(session, findings, idsIn(index), 'connect-program-index');
     const upstreamOwn = upstreams
       .filter((u) => u.instructions)
-      .map((u) => defangUpstream(single ? u.instructions! : `## ${u.spec.name}\n${u.instructions!}`));
+      .map((u) => {
+        // Trust enforce: a server whose instructions drifted from approval has
+        // its instructions withheld — the model gets a notice, not the (possibly
+        // poisoned) new text — until a human re-approves. The tool surface is
+        // withheld the same way in listTools; this closes the parallel channel.
+        if (instructionsWithheld(u)) {
+          const notice = `${u.spec.name}: its startup instructions changed since you approved this server and are WITHHELD pending re-approval (cairn:trust --reapprove ${u.spec.name}).`;
+          return single ? notice : `## ${u.spec.name}\n${notice}`;
+        }
+        return defangUpstream(single ? u.instructions! : `## ${u.spec.name}\n${u.instructions!}`);
+      });
     /*
      * An upstream that did not start, when others did: its tools are absent
      * and the client has to be told where they went. This is about the
