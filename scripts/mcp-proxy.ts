@@ -400,20 +400,27 @@ const CONFUSABLES: Record<string, string> = {
   // Lowercase Cyrillic/Greek look-alikes.
   'а': 'a', 'е': 'e', 'о': 'o', 'р': 'p', 'с': 'c', 'у': 'y', 'х': 'x', 'і': 'i', 'ѕ': 's', 'м': 'm', 'н': 'h', 'т': 't', 'к': 'k',
   'ο': 'o', 'α': 'a', 'ε': 'e', 'ρ': 'p', 'υ': 'u', 'χ': 'x', 'κ': 'k', 'ν': 'v', 'ι': 'i', 'τ': 't',
+  // Greek lunate/final sigma (NFKC maps ϲ → ς, not to c), Cyrillic shha/palochka,
+  // Latin dotless i, Armenian look-alikes — all leave a non-Latin letter that the
+  // Greek+Cyrillic-only table missed (Fable-6 #14 follow-up).
+  'ϲ': 'c', 'ς': 'c', 'ı': 'i', 'һ': 'h', 'ӏ': 'l', 'ո': 'n', 'ս': 'u', 'ա': 'a', 'ց': 'g', 'օ': 'o', 'ք': 'p',
   // Uppercase look-alikes fold to lowercase Latin — the label match is
   // case-insensitive, so an upstream that writes "Сairn"/"СAIRN" with Cyrillic or
   // Greek CAPITALS (which NFKC leaves non-Latin, and the lowercase-only table
   // missed) no longer slips a forged label past the defang (Fable-6 #14).
   'А': 'a', 'Е': 'e', 'О': 'o', 'Р': 'p', 'С': 'c', 'У': 'y', 'Х': 'x', 'І': 'i', 'Ѕ': 's', 'М': 'm', 'Н': 'h', 'Т': 't', 'К': 'k', 'В': 'b',
-  'Ο': 'o', 'Α': 'a', 'Ε': 'e', 'Ρ': 'p', 'Υ': 'y', 'Χ': 'x', 'Κ': 'k', 'Ν': 'n', 'Ι': 'i', 'Τ': 't', 'Β': 'b', 'Η': 'h', 'Μ': 'm',
+  'Ο': 'o', 'Α': 'a', 'Ε': 'e', 'Ρ': 'p', 'Υ': 'y', 'Χ': 'x', 'Κ': 'k', 'Ν': 'n', 'Ι': 'i', 'Τ': 't', 'Β': 'b', 'Η': 'h', 'Μ': 'm', 'Ϲ': 'c', 'Һ': 'h', 'Ӏ': 'l',
 };
-// Dash-like code points an upstream could fence with instead of ASCII "-":
-// NFKC folds full-width/small hyphen-minus to "-", but leaves the em/en dash,
-// horizontal bar, figure dash, hyphens, and the math minus non-ASCII — so a
-// fence made of "——" would evade the ASCII-hyphen FENCE_LABEL_RE. Fold them all
-// to "-" for MATCHING only (Fable-6 #14).
-const DASH_LIKE_RE = /[‐-―⁃−⸺⸻﹘]/g;
-const foldConfusables = (s: string): string => s.replace(/[Ͱ-ϿЀ-ӿ]/g, (ch) => CONFUSABLES[ch] ?? ch).replace(DASH_LIKE_RE, '-');
+// Dash-like code points an upstream could fence with instead of ASCII "-": NFKC
+// folds full-width/small hyphen-minus to "-", but leaves the em/en dash, the
+// horizontal bar, box-drawing rules (─ ━), the katakana prolonged mark (ー), the
+// math minus, and the general \p{Pd} dash punctuation non-ASCII — so a fence made
+// of "——" or "━━" would evade the ASCII-hyphen FENCE_LABEL_RE. Fold them all to
+// "-" for MATCHING only; the original text is spliced back unchanged (Fable-6 #14).
+const DASH_LIKE_RE = /[\p{Pd}⁃−⸺⸻﹘─━╌╍╴╶╺╼╾ー]/gu;
+// Scan Latin Extended-A/B, Greek/Coptic, Cyrillic, and Armenian for letter
+// look-alikes; each maps to Latin only when it is in the table (else left as-is).
+const foldConfusables = (s: string): string => s.replace(/[Ā-ɏͰ-ϿЀ-ӿ԰-֏]/g, (ch) => CONFUSABLES[ch] ?? ch).replace(DASH_LIKE_RE, '-');
 // Only a FENCED label reads as one of our blocks. The model is told to trust a
 // block ONLY if it carries this session's ⟦nonce⟧, so a forgery is already
 // ignored on that basis — the defang is belt-and-suspenders against the
@@ -1484,8 +1491,15 @@ async function main() {
   /* Owner maps, rebuilt whenever a list is fetched or an upstream says it changed. */
   const toolOwner = new Map<string, { up: Upstream; raw: string; annotations?: Tool['annotations'] }>();
   const promptOwner = new Map<string, { up: Upstream; raw: string }>();
-  const resourceOwner = new Map<string, Upstream>();
-  const templateOwner = new Map<string, Upstream>();
+  // MULTI-VALUED: two different upstreams can serve the SAME raw resource URI or
+  // template (resource URIs are not namespaced the way tool/prompt names are). A
+  // single-owner map would let the last-listed server shadow the other, so a
+  // governed tenant that may reach only the shadowed one is deterministically
+  // denied a resource it is entitled to (Fable-6 #12 follow-up). Every owner is
+  // kept; use-time gating by mayReachServer picks the tenant's reachable one.
+  const resourceOwner = new Map<string, Set<Upstream>>();
+  const templateOwner = new Map<string, Set<Upstream>>();
+  const addOwner = <K>(m: Map<K, Set<Upstream>>, k: K, up: Upstream): void => { const s = m.get(k); if (s) s.add(up); else m.set(k, new Set([up])); };
   /*
    * Negative cache for unknown tool names. A call to a name we do not own
    * triggers a full re-list across every upstream (allTools) to catch a tool
@@ -2658,7 +2672,7 @@ async function main() {
         // the reachable subset. Fill a local map across the awaits, then swap it in
         // synchronously at the end: clearing the shared map before an await leaves a
         // window where a concurrent session sees a half-built map.
-        const owned = new Map<string, Upstream>();
+        const owned = new Map<string, Set<Upstream>>();
         const resources: Array<Record<string, unknown>> = [];
         for (const up of withResources()) {
           const show = mayReachServer(session, up);
@@ -2667,7 +2681,7 @@ async function main() {
           for (let pg = 0; ; pg++) {
             let page;
             try { page = await up.client!.listResources({ cursor }, FORWARD); } catch { break; }
-            for (const r of page.resources) { owned.set(r.uri, up); if (show) resources.push(defangDescribable(r as Record<string, unknown>)); }
+            for (const r of page.resources) { addOwner(owned, r.uri, up); if (show) resources.push(defangDescribable(r as Record<string, unknown>)); }
             cursor = page.nextCursor;
             if (!cursor || seen.has(cursor) || pg + 1 >= MAX_LIST_PAGES) break; // bound a runaway/looping paginator
             seen.add(cursor);
@@ -2678,7 +2692,7 @@ async function main() {
       });
 
       server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => {
-        const owned = new Map<string, Upstream>();
+        const owned = new Map<string, Set<Upstream>>();
         const resourceTemplates: Array<Record<string, unknown>> = [];
         for (const up of withResources()) {
           const show = mayReachServer(session, up);
@@ -2687,7 +2701,7 @@ async function main() {
           for (let pg = 0; ; pg++) {
             let page;
             try { page = await up.client!.listResourceTemplates({ cursor }, FORWARD); } catch { break; }
-            for (const t of page.resourceTemplates) { owned.set(t.uriTemplate, up); if (show) resourceTemplates.push(defangDescribable(t as Record<string, unknown>)); }
+            for (const t of page.resourceTemplates) { addOwner(owned, t.uriTemplate, up); if (show) resourceTemplates.push(defangDescribable(t as Record<string, unknown>)); }
             cursor = page.nextCursor;
             if (!cursor || seen.has(cursor) || pg + 1 >= MAX_LIST_PAGES) break; // bound a runaway/looping paginator
             seen.add(cursor);
@@ -2706,29 +2720,37 @@ async function main() {
        */
       async function ownerOf(uri: string): Promise<Upstream[]> {
         const gate = (ups: Upstream[]) => ups.filter((u) => mayReachServer(session, u));
-        const lookup = (): Upstream | null => {
-          const exact = resourceOwner.get(uri);
-          if (exact?.alive) return exact;
-          for (const [tpl, up] of templateOwner) {
+        // ALL owners of this uri — every server that declared the exact uri, plus
+        // every server whose template prefix covers it. A collision no longer lets
+        // one server shadow another; use-time gating picks the reachable one.
+        const lookup = (): Upstream[] => {
+          const out = new Set<Upstream>();
+          for (const up of resourceOwner.get(uri) ?? []) if (up.alive) out.add(up);
+          for (const [tpl, ups] of templateOwner) {
             const prefix = tpl.split('{')[0];
-            if (prefix && uri.startsWith(prefix) && up.alive) return up;
+            if (prefix && uri.startsWith(prefix)) for (const up of ups) if (up.alive) out.add(up);
           }
-          return null;
+          return [...out];
         };
-        let up = lookup();
-        // Cold or stale shared map (another session listed a narrower view, or the
-        // resource appeared since the last list): re-list this session's OWN
-        // reachable servers before giving up, so a broader tenant is never denied a
-        // resource it may reach just because a restricted tenant listed last
-        // (Fable-6 #12). Mirrors GetPrompt's lazy re-list.
-        if (!up) {
+        // Gate FIRST: the reachable owners for THIS session. A collision can leave
+        // only an UNREACHABLE server mapped for this uri (a peer with a different
+        // role listed), so testing the raw lookup for emptiness would skip the
+        // re-list and wrongly deny — gate, then decide (Fable-6 #12 follow-up).
+        let ups = gate(lookup());
+        // No reachable owner yet: re-list this session's OWN reachable servers
+        // before giving up, so a broader tenant is never denied a resource it may
+        // reach just because a peer listed a narrower view (or nobody has listed).
+        // Paginates like the list handlers so a resource on a later page is not missed.
+        if (!ups.length) {
           for (const u of withResources().filter((u) => mayReachServer(session, u))) {
-            try { const page = await u.client!.listResources({}, FORWARD); for (const r of page.resources) resourceOwner.set(r.uri, u); } catch { /* skip */ }
-            try { const page = await u.client!.listResourceTemplates({}, FORWARD); for (const t of page.resourceTemplates) templateOwner.set(t.uriTemplate, u); } catch { /* skip */ }
+            let cursor: string | undefined; const seen = new Set<string>();
+            for (let pg = 0; ; pg++) { let page; try { page = await u.client!.listResources({ cursor }, FORWARD); } catch { break; } for (const r of page.resources) addOwner(resourceOwner, r.uri, u); cursor = page.nextCursor; if (!cursor || seen.has(cursor) || pg + 1 >= MAX_LIST_PAGES) break; seen.add(cursor); }
+            cursor = undefined; seen.clear();
+            for (let pg = 0; ; pg++) { let page; try { page = await u.client!.listResourceTemplates({ cursor }, FORWARD); } catch { break; } for (const t of page.resourceTemplates) addOwner(templateOwner, t.uriTemplate, u); cursor = page.nextCursor; if (!cursor || seen.has(cursor) || pg + 1 >= MAX_LIST_PAGES) break; seen.add(cursor); }
           }
-          up = lookup();
+          ups = gate(lookup());
         }
-        if (up) return gate([up]);
+        if (ups.length) return ups;
         return governed(session) ? [] : withResources(); // no blind fan-out for a governed principal
       }
 
@@ -2815,18 +2837,26 @@ async function main() {
            * EVERYWHERE — never one merely unreachable for this tenant, which would
            * poison the shared cache for a tenant that CAN reach it (Fable-6 #12).
            * Reachability is still enforced at the owner gate just below. */
+          let reListComplete = true; // a server that errored or truncated leaves the map possibly-incomplete
           for (const up of alive().filter((u) => u.caps.prompts)) {
-            try {
-              const page = await up.client!.listPrompts({}, FORWARD);
+            let cursor: string | undefined; const seen = new Set<string>();
+            for (let pg = 0; ; pg++) {
+              let page;
+              try { page = await up.client!.listPrompts({ cursor }, FORWARD); } catch { reListComplete = false; break; }
               for (const p of page.prompts) promptOwner.set(expose(up, p.name), { up, raw: p.name });
-            } catch { /* skip */ }
+              cursor = page.nextCursor;
+              if (!cursor) break;
+              if (seen.has(cursor) || pg + 1 >= MAX_LIST_PAGES) { reListComplete = false; break; } // couldn't see every page
+              seen.add(cursor);
+            }
           }
           owner = promptOwner.get(req.params.name);
+          // Only remember a name as unknown when the re-list was COMPLETE across all
+          // alive servers (every page of each). A server that errored or paged out
+          // may own it, so caching it would wrongly deny it gateway-wide (Fable-6 #12).
+          if (!owner && reListComplete) rememberUnknownPrompt(req.params.name);
         }
-        // Genuinely absent everywhere (the re-list above spanned all alive servers):
-        // safe to remember gateway-wide. A role-denied prompt is NOT cached here — it
-        // resolves an owner and is refused by the reachability gate below instead.
-        if (!owner) { rememberUnknownPrompt(req.params.name); throw new Error(`no upstream offers a prompt named "${req.params.name}"`); }
+        if (!owner) throw new Error(`no upstream offers a prompt named "${req.params.name}"`);
         if (!mayReachServer(session, owner.up)) {
           audit(session, 'deny', owner.up.spec.name, '(prompt:get)', req.params.name);
           throw new Error(`cairn-proxy: not permitted to use prompt "${req.params.name}"`);
@@ -2862,8 +2892,8 @@ async function main() {
           const owner = promptOwner.get(ref.name);
           if (owner) targets = [{ up: owner.up, params: { ...safeParams, ref: { ...ref, name: owner.raw } } }];
         } else if (ref.type === 'ref/resource') {
-          const up = templateOwner.get(ref.uri) ?? resourceOwner.get(ref.uri);
-          if (up) targets = [{ up, params: safeParams }];
+          const owners = templateOwner.get(ref.uri) ?? resourceOwner.get(ref.uri);
+          if (owners) targets = [...owners].map((up) => ({ up, params: safeParams }));
         }
         if (!targets.length) targets = alive().filter((u) => u.caps.completions).map((up) => ({ up, params: safeParams }));
         // A governed principal must not enumerate completions (argument values,

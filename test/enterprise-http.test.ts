@@ -55,10 +55,10 @@ function governedHome(): string {
 }
 
 /** Start the proxy in HTTP mode; resolve with base URL once it reports listening. */
-function startProxy(home: string, env: Record<string, string> = {}): Promise<{ child: ChildProcess; base: string }> {
+function startProxy(home: string, env: Record<string, string> = {}, serverArgs: string[] = ['--server', `node ${FIXTURE}`]): Promise<{ child: ChildProcess; base: string }> {
   // detached so we can kill the whole process group — `npx tsx` spawns a
   // grandchild node that would otherwise keep our inherited stdio pipes open.
-  const child = spawn(process.execPath, [PROXY_BIN, '--server', `node ${FIXTURE}`, '--http', '0'], {
+  const child = spawn(process.execPath, [PROXY_BIN, ...serverArgs, '--http', '0'], {
     cwd: REPO,
     env: { ...process.env, CAIRN_HOME: home, ...env } as NodeJS.ProcessEnv,
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -321,6 +321,59 @@ test("a governed gateway attributes a tenant's ledger rows to its principal, not
     const shards = fs.existsSync(retr) ? fs.readdirSync(retr) : [];
     assert.ok(shards.includes('alice.jsonl'), `the row is in the principal's shard (got ${shards.join(', ') || 'none'})`);
     assert.ok(!shards.includes('t.jsonl'), 'and NOT in a shard named for the client name');
+  } finally {
+    closeOpenReqs();
+    stopProxy(child);
+  }
+});
+
+test('two tenants on different servers both read a COLLIDING resource URI; neither shadows the other (Fable-6 #12 follow-up)', async () => {
+  // alpha and beta are two upstreams that BOTH serve `fixture://doc` (resource URIs
+  // are not namespaced the way tool/prompt names are). alice may reach only alpha,
+  // bob only beta. A single-owner map would let whichever listed last own the URI,
+  // deterministically denying the other tenant a resource it is entitled to.
+  const home = baseHome('cairn-ent-collide-');
+  const cfg = path.join(home, 'servers.json');
+  fs.writeFileSync(cfg, JSON.stringify({
+    mcpServers: {
+      alpha: { command: 'node', args: [FIXTURE, '--name', 'alpha'] },
+      beta: { command: 'node', args: [FIXTURE, '--name', 'beta'] },
+    },
+  }));
+  fs.writeFileSync(path.join(home, 'org-policy.json'), JSON.stringify({
+    auth: { required: true },
+    principals: {
+      [tokenHash(TOKEN)]: { id: 'alice', role: 'onlyAlpha' },
+      [tokenHash(TOKEN_BOB)]: { id: 'bob', role: 'onlyBeta' },
+    },
+    roles: { onlyAlpha: { allowServers: ['alpha'] }, onlyBeta: { allowServers: ['beta'] } },
+  }));
+  const { child, base } = await startProxy(home, {}, ['--config', cfg]);
+  const read = async (token: string) => {
+    // A prior request's SSE stream can leave the next init a spurious empty 400 on
+    // this box (cairn-0050 territory); retry the init a few times before asserting.
+    let init = await hit(base, '/mcp', { method: 'POST', headers: mcpHeaders(token), body: initBody(), keepOpen: true });
+    for (let a = 0; a < 5 && init.status !== 200; a++) {
+      await new Promise((r) => setTimeout(r, 200));
+      init = await hit(base, '/mcp', { method: 'POST', headers: mcpHeaders(token), body: initBody(), keepOpen: true });
+    }
+    assert.equal(init.status, 200, 'init ok');
+    const sid = String(init.headers['mcp-session-id'] ?? '');
+    // No resources/list first — the read must resolve the owner on its own, which
+    // is exactly where a single-owner map shadowed the other tenant's server.
+    return hit(base, '/mcp', {
+      method: 'POST',
+      headers: { ...mcpHeaders(token), 'mcp-session-id': sid },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 7, method: 'resources/read', params: { uri: 'fixture://doc' } }),
+    });
+  };
+  try {
+    const aliceRead = await read(TOKEN);
+    assert.match(aliceRead.body, /resource body text from upstream/, `alice reads via alpha: ${aliceRead.body}`);
+    assert.doesNotMatch(aliceRead.body, /not permitted/, 'alice is not denied');
+    const bobRead = await read(TOKEN_BOB);
+    assert.match(bobRead.body, /resource body text from upstream/, `bob reads via beta (not shadowed by alpha): ${bobRead.body}`);
+    assert.doesNotMatch(bobRead.body, /not permitted/, 'bob is not denied by a collision with alpha');
   } finally {
     closeOpenReqs();
     stopProxy(child);
