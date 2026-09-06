@@ -158,7 +158,12 @@ export function authenticate(policy: OrgPolicy | null, authorization: string | u
   if (!principal) return { principal: null, reason: 'unknown token' };
   if (principal.expiresAt) {
     const exp = Date.parse(principal.expiresAt);
-    if (Number.isFinite(exp) && exp <= Date.now()) return { principal: null, reason: 'token expired' };
+    // A typo'd or unparseable expiry is REJECTED, not treated as "never expires":
+    // Number.isFinite(NaN) is false, so the old guard let a bad date (2026-13-45)
+    // yield a perpetual token — fail closed on a credential the operator meant to
+    // bound.
+    if (!Number.isFinite(exp)) return { principal: null, reason: 'token has an unparseable expiresAt' };
+    if (exp <= Date.now()) return { principal: null, reason: 'token expired' };
   }
   return { principal };
 }
@@ -675,13 +680,22 @@ export function rotateAudit(dir: string): RotateResult {
       return { ok: false, detail: `the head advanced from seq ${finalAnchor.seq} to ${tail.seq} after the boundary anchor was shipped; refusing to rotate so the archive boundary stays pinned off-box — retry.` };
     }
     const archiveName = `audit.${first.seq}-${tail.seq}.jsonl`;
-    // Archive the live file, then record the segment, then START the new live
-    // segment with a real CHAINED marker entry (seq = tail.seq+1, prevHash =
-    // tail.hash). No unauthenticated "carry" file: an absent/empty live file is a
-    // deletion, and the new segment's first entry chains from the archived head,
-    // so a forged boundary cannot make verify skip anything.
+    // Record the segment in the manifest FIRST, then archive the live file, then
+    // START the new live segment with a real CHAINED marker entry (seq =
+    // tail.seq+1, prevHash = tail.hash). No unauthenticated "carry" file: an
+    // absent/empty live file is a deletion, and the new segment's first entry
+    // chains from the archived head, so a forged boundary cannot make verify skip
+    // anything. The manifest is written before the rename and its failure ABORTS
+    // the rotation (live untouched): renaming first and swallowing a manifest
+    // failure would leave an archive verify cannot find — a false CHAIN BROKEN on
+    // the very next check, since the live marker's prevHash chains from a head
+    // that then appears nowhere.
+    try {
+      fs.appendFileSync(segmentsFile(dir), JSON.stringify({ file: archiveName, firstSeq: first.seq, lastSeq: tail.seq, firstPrevHash: first.prevHash, lastHash: tail.hash } as Segment) + '\n');
+    } catch (e) {
+      return { ok: false, detail: `could not record the segment manifest; left the live log intact: ${(e as Error).message}` };
+    }
     fs.renameSync(auditFile(dir), path.join(dir, archiveName));
-    try { fs.appendFileSync(segmentsFile(dir), JSON.stringify({ file: archiveName, firstSeq: first.seq, lastSeq: tail.seq, firstPrevHash: first.prevHash, lastHash: tail.hash } as Segment) + '\n'); } catch { /* re-derivable from the archive itself */ }
     const at = new Date().toISOString();
     const marker = { seq: tail.seq + 1, at, principal: 'system', decision: 'allow' as AuditDecision, reason: `rotated: archived seq ${first.seq}-${tail.seq} to ${archiveName}` };
     const markerHash = chainHash(tail.hash, marker);

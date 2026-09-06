@@ -124,6 +124,11 @@ test('an expired token is refused', () => {
   assert.match(authenticate(expired, `Bearer ${raw}`).reason ?? '', /expired/);
   const valid = policy({ principals: { [tokenHash(raw)]: { id: 'temp', role: 'readonly', expiresAt: future } } });
   assert.equal(authenticate(valid, `Bearer ${raw}`).principal?.id, 'temp', 'a future expiry still works');
+  // Fable-5: an unparseable expiry must FAIL CLOSED, not mean "never expires".
+  const bad = policy({ principals: { [tokenHash(raw)]: { id: 'temp', role: 'readonly', expiresAt: '2026-13-45T99:99Z' } } });
+  const br = authenticate(bad, `Bearer ${raw}`);
+  assert.equal(br.principal, null, 'a token with an unparseable expiresAt is rejected, not perpetual');
+  assert.match(br.reason ?? '', /unparseable/);
 });
 
 /* ---- policy loading: fail closed, never open ---------------------------- */

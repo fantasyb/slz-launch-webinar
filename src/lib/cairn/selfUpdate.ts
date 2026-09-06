@@ -146,7 +146,13 @@ export function selfUpdate(opts: UpdateOptions = {}): UpdateResult {
   const build = opts.build ?? defaultBuild;
   const requireSigned = opts.requireSigned ?? process.env.CAIRN_UPDATE_REQUIRE_SIGNED === '1';
   const allowedSigners = opts.allowedSigners ?? process.env.CAIRN_UPDATE_ALLOWED_SIGNERS;
-  const minTrust = opts.minTrust ?? process.env.CAIRN_UPDATE_MIN_TRUST ?? 'fully';
+  // Clamp to the two SAFE levels only: gpg.minTrustLevel also accepts 'marginal'
+  // and 'never', which would WEAKEN the gate below what we intend, so a typo or a
+  // hostile env cannot lower it — anything but 'ultimate' falls back to 'fully'.
+  // (Note: 'ultimate' refuses SSH-signed commits, which git assigns fully-trusted
+  // when they match the allow-signers file — use 'fully' with SSH signing.)
+  const requested = opts.minTrust ?? process.env.CAIRN_UPDATE_MIN_TRUST ?? 'fully';
+  const minTrust = requested === 'ultimate' ? 'ultimate' : 'fully';
   const verify = opts.verify ?? ((dir: string, ref: string) => verifyCommit(dir, ref, allowedSigners, minTrust));
 
   // Is this a git checkout at all?

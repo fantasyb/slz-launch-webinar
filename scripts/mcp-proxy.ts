@@ -2988,6 +2988,15 @@ async function main() {
             return;
           }
           meta.session.lastSeen = Date.now();
+        } else {
+          // The transport is still in `transports` but its `live` entry is gone —
+          // the reaper/onclose deletes `live` before the transport finishes
+          // closing. Dispatching here would run the request against the old
+          // principal's Server WITHOUT the binding check above. Refuse: the
+          // session is being torn down, so the client must re-initialize.
+          res.writeHead(404, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ jsonrpc: '2.0', error: { code: -32000, message: 'session is closing; re-initialize' }, id: null }));
+          return;
         }
         await existing.handleRequest(req, res, body);
         return;

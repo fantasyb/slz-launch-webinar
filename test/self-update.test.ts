@@ -158,7 +158,8 @@ test('the verifier always anchors trust, and a governed daemon forces signing', 
   // could sign a malicious update.
   const src = fs.readFileSync(path.join(process.cwd(), 'src', 'lib', 'cairn', 'selfUpdate.ts'), 'utf8');
   assert.match(src, /gpg\.minTrustLevel=\$\{minTrust\}/, 'every verify passes gpg.minTrustLevel');
-  assert.match(src, /const minTrust = opts\.minTrust \?\? process\.env\.CAIRN_UPDATE_MIN_TRUST \?\? 'fully'/, 'minTrust defaults to a trusted level, overridable');
+  assert.match(src, /const requested = opts\.minTrust \?\? process\.env\.CAIRN_UPDATE_MIN_TRUST \?\? 'fully'/, 'minTrust defaults to a trusted level, overridable');
+  assert.match(src, /const minTrust = requested === 'ultimate' \? 'ultimate' : 'fully'/, 'and is clamped to the two safe levels (marginal/never cannot weaken it)');
 
   // On a governed box, signing is mandatory regardless of the env default: the
   // daemon auto-updates unattended and re-runs the installer.
