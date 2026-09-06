@@ -346,7 +346,7 @@ function foldSpills(dir: string): void {
   for (const f of files.sort()) {
     const fp = path.join(dir, f);
     let rows: SpillRow[];
-    try { rows = fs.readFileSync(fp, 'utf8').split('\n').filter(Boolean).flatMap((l) => { try { return [JSON.parse(l) as SpillRow]; } catch { return []; } }); } catch { continue; }
+    try { rows = fs.readFileSync(fp, 'utf8').split('\n').filter(Boolean).flatMap((l) => { try { const r = JSON.parse(l); return isObj(r) ? [r as SpillRow] : []; } catch { return []; } }); } catch { continue; }
     for (const r of rows) appendChained(dir, r);
     try { fs.unlinkSync(fp); } catch { /* another folder took it */ }
   }
@@ -461,9 +461,14 @@ function anchorChainHash(prevAnchorHash: string, a: { seq: number; hash: string;
   return createHash('sha256').update(prevAnchorHash).update('\n').update(JSON.stringify([a.seq, a.hash, a.at])).digest('hex');
 }
 
+// A parsed JSONL line is usable only if it is a plain object (isObj, above):
+// `null`, a number, a string, or an array all parse WITHOUT throwing but carry
+// no fields, so a later property access on them throws where the try/catch can
+// no longer see it — the exact way an appended `null` turned the audit tamper
+// check into an uncaught throw.
 export function readAnchors(dir: string): Anchor[] {
   try {
-    return fs.readFileSync(anchorFile(dir), 'utf8').split('\n').filter(Boolean).flatMap((l) => { try { return [JSON.parse(l) as Anchor]; } catch { return []; } });
+    return fs.readFileSync(anchorFile(dir), 'utf8').split('\n').filter(Boolean).flatMap((l) => { try { const a = JSON.parse(l); return isObj(a) ? [a as unknown as Anchor] : []; } catch { return []; } });
   } catch { return []; }
 }
 
@@ -477,7 +482,13 @@ export function readAnchors(dir: string): Anchor[] {
  */
 export function loadAnchorFile(file: string): { ok: boolean; pairs: { seq: number; hash: string }[]; detail?: string } {
   let anchors: Anchor[];
-  try { anchors = fs.readFileSync(file, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l) as Anchor); }
+  try {
+    anchors = fs.readFileSync(file, 'utf8').split('\n').filter(Boolean).map((l) => {
+      const a = JSON.parse(l); // a malformed off-box anchor line is a tamper signal, not a skip
+      if (!isObj(a)) throw new Error('anchor line is not a JSON object');
+      return a as unknown as Anchor;
+    });
+  }
   catch (e) { return { ok: false, pairs: [], detail: `cannot read anchor file: ${(e as Error).message}` }; }
   let prev = GENESIS;
   for (let i = 0; i < anchors.length; i++) {
@@ -624,7 +635,7 @@ export interface RotateResult {
 export interface Segment { file: string; firstSeq: number; lastSeq: number; firstPrevHash: string; lastHash: string; }
 const segmentsFile = (dir: string) => path.join(dir, 'audit.segments.jsonl');
 export function readSegments(dir: string): Segment[] {
-  try { return fs.readFileSync(segmentsFile(dir), 'utf8').split('\n').filter(Boolean).flatMap((l) => { try { return [JSON.parse(l) as Segment]; } catch { return []; } }); } catch { return []; }
+  try { return fs.readFileSync(segmentsFile(dir), 'utf8').split('\n').filter(Boolean).flatMap((l) => { try { const s = JSON.parse(l); return isObj(s) ? [s as unknown as Segment] : []; } catch { return []; } }); } catch { return []; }
 }
 
 export function rotateAudit(dir: string): RotateResult {
@@ -653,6 +664,16 @@ export function rotateAudit(dir: string): RotateResult {
     for (const l of lines) { try { first = JSON.parse(l) as AuditEntry; break; } catch { /* skip a corrupt leading line */ } }
     const tail = diskHead(dir);
     if (!first || tail.seq === 0) return { ok: false, detail: 'could not read the segment boundary' };
+    // The boundary anchor was taken and shipped OUTSIDE this lock; appends in the
+    // gap advance the head, so the archive we are about to cut (at `tail`, the
+    // current head) can end at a LATER seq than the anchor. That anchor would then
+    // pin a point INSIDE the archive, not its boundary — and a later deletion of
+    // the archive could not be bridged (verify needs an off-box anchor at
+    // seg.lastSeq). When off-box anchoring is in force, refuse rather than ship a
+    // misaligned boundary; the caller re-anchors the new head and retries.
+    if (process.env.CAIRN_AUDIT_ANCHOR_CMD && finalAnchor && tail.seq !== finalAnchor.seq) {
+      return { ok: false, detail: `the head advanced from seq ${finalAnchor.seq} to ${tail.seq} after the boundary anchor was shipped; refusing to rotate so the archive boundary stays pinned off-box — retry.` };
+    }
     const archiveName = `audit.${first.seq}-${tail.seq}.jsonl`;
     // Archive the live file, then record the segment, then START the new live
     // segment with a real CHAINED marker entry (seq = tail.seq+1, prevHash =
@@ -732,7 +753,16 @@ export function verifyAudit(dir: string, opts: { against?: { seq: number; hash: 
   const walk = (lines: string[], where: string): AuditVerdict | null => {
     for (let i = 0; i < lines.length; i++) {
       let e: AuditEntry;
-      try { e = JSON.parse(lines[i]) as AuditEntry; } catch { return { ok: false, entries: st.lastSeq, brokenAt: i + 1, detail: `${where}: line is not JSON` }; }
+      // A non-object JSON line (`null`, `42`, `"x"`, `[]`) parses WITHOUT throwing,
+      // so it must be rejected explicitly — otherwise `e.prevHash` throws a
+      // TypeError that escapes verify. An attacker with append access could
+      // otherwise append `null` to turn the tamper check into an uncaught throw
+      // (silently swallowed by the daemon's catch) instead of a CHAIN BROKEN.
+      try {
+        const parsed = JSON.parse(lines[i]);
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('not an object');
+        e = parsed as AuditEntry;
+      } catch { return { ok: false, entries: st.lastSeq, brokenAt: i + 1, detail: `${where}: line is not a JSON object` }; }
       if (e.prevHash !== st.prev) return { ok: false, entries: st.lastSeq, brokenAt: i + 1, detail: `${where}: prevHash does not match the previous entry (deletion or reorder)` };
       if (e.seq !== st.expectedSeq) return { ok: false, entries: st.lastSeq, brokenAt: i + 1, detail: `${where}: seq ${e.seq} out of order (expected ${st.expectedSeq})` };
       const recomputed = chainHash(st.prev, { seq: e.seq, at: e.at, principal: e.principal, decision: e.decision, server: e.server, tool: e.tool, reason: e.reason, session: e.session, agent: e.agent });
@@ -762,7 +792,14 @@ export function verifyAudit(dir: string, opts: { against?: { seq: number; hash: 
       const boundary = externalAt.get(seg.lastSeq);
       if (boundary === undefined || boundary !== seg.lastHash) return { ok: false, entries: st.lastSeq, detail: `archive ${seg.file} (seq ${seg.firstSeq}-${seg.lastSeq}) is not present and no off-box anchor pins its boundary — its history cannot be verified` };
       if (st.expectedSeq !== seg.firstSeq || st.prev !== seg.firstPrevHash) return { ok: false, entries: st.lastSeq, detail: `archive ${seg.file} does not link to the previous segment` };
-      matched.add(seg.lastSeq);
+      // The off-box anchor pins this segment's boundary and it links to the prior
+      // segment, so its endpoints are trusted. Any checkpoint that falls INSIDE
+      // the absent archive (an interior anchor from a per-tick anchorHead) cannot
+      // be checked against an entry that is no longer on the box — but it must not
+      // false-alarm as a truncation/deletion either. Its hash is already
+      // determined by the boundary chain the external anchor pins, so mark every
+      // expected seq in the segment's range as matched (bridged, not re-verified).
+      for (const [seq] of expectAtSeq) if (seq >= seg.firstSeq && seq <= seg.lastSeq) matched.add(seq);
       st.prev = seg.lastHash; st.expectedSeq = seg.lastSeq + 1; st.lastSeq = seg.lastSeq;
     }
   }
@@ -795,7 +832,7 @@ export function readAudit(dir: string, limit?: number): AuditEntry[] {
   // verifyAudit is the tamper check; this is the reader.
   const out: AuditEntry[] = [];
   for (const l of chosen) {
-    try { out.push(JSON.parse(l) as AuditEntry); } catch { /* skip a corrupt line */ }
+    try { const e = JSON.parse(l); if (isObj(e)) out.push(e as unknown as AuditEntry); } catch { /* skip a corrupt line */ }
   }
   return out;
 }

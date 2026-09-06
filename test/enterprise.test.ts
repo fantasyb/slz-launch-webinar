@@ -464,6 +464,41 @@ test('a rotated log detects a deleted or edited archive', () => {
   } finally { delete process.env.CAIRN_AUDIT_ANCHOR_CMD; }
 });
 
+test('a non-object JSON line (a bare null) is CHAIN BROKEN, not an uncaught throw (Fable-5)', () => {
+  // JSON.parse("null") succeeds, so a naive parser skips the "not JSON" branch
+  // and then throws a TypeError on the property access — which the daemon
+  // swallows as "verify threw (ignored)", muting the alarm. verify must report a
+  // broken chain instead, so an appended `null` is caught as tampering.
+  const dir = freshDir();
+  for (let i = 0; i < 3; i++) appendAudit(dir, { principal: 'a', decision: 'call', server: 's', tool: `t${i}` });
+  fsReal.appendFileSync(pathReal.join(dir, 'audit.jsonl'), 'null\n');
+  _resetAuditCache();
+  let v: ReturnType<typeof verifyAudit>;
+  assert.doesNotThrow(() => { v = verifyAudit(dir); }, 'verify must not throw on a non-object line');
+  assert.equal(v!.ok, false, 'the null line breaks the chain');
+  assert.match(v!.detail ?? '', /not a JSON object/);
+});
+
+test('an off-box archive with an interior anchor still verifies after it is offloaded (Fable-5)', () => {
+  const dir = freshDir();
+  process.env.CAIRN_AUDIT_ANCHOR_CMD = 'cat > /dev/null';
+  try {
+    for (let i = 0; i < 4; i++) appendAudit(dir, { principal: 'a', decision: 'call', server: 's', tool: `t${i}` });
+    anchorHead(dir); // an INTERIOR anchor at seq 4, shipped off-box
+    appendAudit(dir, { principal: 'a', decision: 'call', server: 's', tool: 't5' });
+    const rot = rotateAudit(dir); // anchors the head (seq 5) and archives seq 1-5
+    assert.equal(rot.ok, true, rot.detail);
+    // The operator holds the FULL off-box anchor chain (seq 4 interior + seq 5 boundary).
+    const offbox = readAnchors(dir).map((a) => ({ seq: a.seq, hash: a.hash }));
+    assert.ok(offbox.some((p) => p.seq === 4) && offbox.some((p) => p.seq === 5), 'both anchors were taken');
+    // Offload the archive off the box, then verify against the full off-box chain.
+    fsReal.rmSync(pathReal.join(dir, rot.archived!));
+    _resetAuditCache();
+    const v = verifyAudit(dir, { against: offbox });
+    assert.equal(v.ok, true, `a correctly-offloaded archive must not false-alarm: ${v.detail ?? ''}`);
+  } finally { delete process.env.CAIRN_AUDIT_ANCHOR_CMD; }
+});
+
 test('rotation refuses to archive a broken log', () => {
   const dir = freshDir();
   for (let i = 0; i < 3; i++) appendAudit(dir, { principal: 'a', decision: 'call', server: 's', tool: `t${i}` });

@@ -108,7 +108,13 @@ function maybeVerifyAudit(): void {
     if (!fs.existsSync(path.join(dir, 'audit.jsonl')) && !fs.existsSync(path.join(dir, 'audit.segments.jsonl')) && !fs.existsSync(path.join(dir, 'head.json'))) return;
     v = verifyAudit(dir);
   } catch (e) {
-    process.stderr.write(`cairn:daemon audit-verify threw (ignored): ${(e as Error).message}\n`);
+    // A THROW out of verify is itself an alarm, never an "ignore": verify is
+    // written to return a broken-chain verdict for every tamper it knows, so a
+    // throw means the log reached a state its own checker could not evaluate —
+    // which an attacker could try to induce to mute detection. Raise the alarm
+    // marker rather than swallowing it.
+    process.stderr.write(`cairn:daemon AUDIT ALARM — verify threw (treated as tampering): ${(e as Error).message}\n`);
+    try { fs.writeFileSync(marker, JSON.stringify({ at: new Date().toISOString(), detail: `audit verify threw: ${(e as Error).message}` }, null, 2) + '\n'); } catch { /* best-effort */ }
     return;
   }
   if (v.ok) {
