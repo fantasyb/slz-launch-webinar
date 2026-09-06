@@ -53,8 +53,28 @@ export function shapeOf(tool: Tool): ToolShape {
 /* Classification: may an unattended model call this?                        */
 /* ------------------------------------------------------------------------ */
 
-/** A name that reads as a write. Consulted only where the server declares nothing, and as a second opinion where it does. */
-export const WRITE_LOOKING = /create|update|delete|upsert|execute|insert|remove|write|modify|destroy|drop|send|post|put|patch|deploy|run|shell|bash|exec|eval|sql|merge|push|approve|reject|transfer|grant|revoke|provision|terminate|restart|reboot|kill|scale|wipe|erase|format|truncate|refund|charge|email|invite|publish|unpublish|install|uninstall|rename|move|chmod|chown|edit|apply|commit|revert|rollback|reset|invoke|trigger|enable|disable|activate|deactivate|assign|unassign|import|upload|purge|flush|archive/i;
+/**
+ * The write verbs a tool name can carry. Matched against NAME TOKENS as a
+ * prefix, never as a raw substring: a substring match reads "put" inside
+ * `list_computers`, "eval" inside `data_retrieval`, "post" inside `compost`,
+ * "charge" inside `surcharge` — flagging plain reads as writes. Tokenizing on
+ * `_`/`-`/`.` and camelCase boundaries, then matching a verb only at the START
+ * of a token, keeps the morphology tolerance that matters (`deployments` ->
+ * `deploy`, `creates` -> `create`) while dropping the embedded-substring
+ * false positives.
+ */
+const WRITE_VERBS = 'create|update|delete|upsert|execute|insert|remove|write|modify|destroy|drop|send|post|put|patch|deploy|run|shell|bash|exec|eval|sql|merge|push|approve|reject|transfer|grant|revoke|provision|terminate|restart|reboot|kill|scale|wipe|erase|format|truncate|refund|charge|email|invite|publish|unpublish|install|uninstall|rename|move|chmod|chown|edit|apply|commit|revert|rollback|reset|invoke|trigger|enable|disable|activate|deactivate|assign|unassign|import|upload|purge|flush|archive';
+const WRITE_TOKEN = new RegExp(`^(?:${WRITE_VERBS})`, 'i');
+/** Split a tool name into word tokens on separators and camelCase boundaries. */
+function nameTokens(name: string): string[] {
+  return name.replace(/([a-z0-9])([A-Z])/g, '$1 $2').split(/[^A-Za-z0-9]+/).filter(Boolean);
+}
+/** Does any token of this name begin with a write verb? */
+export function readsAsWrite(name: string): boolean {
+  return nameTokens(name).some((t) => WRITE_TOKEN.test(t));
+}
+/** @deprecated Substring-matches; use readsAsWrite. Kept for callers that test raw names. */
+export const WRITE_LOOKING = new RegExp(WRITE_VERBS, 'i');
 
 export interface Classification {
   permitted: boolean;
@@ -85,12 +105,12 @@ export function classify(
     override ? { permitted: true, reason: `${reason}; overruled in readOnlyDespiteName`, overridden: override } : { permitted: false, reason };
   if (opts.allowed && !opts.allowed.includes(tool.name)) return { permitted: false, reason: 'not in allowedTools' };
   if (a?.readOnlyHint === true) {
-    if (WRITE_LOOKING.test(tool.name)) return excluded('declared read-only (readOnlyHint: true), but the name reads as a write');
+    if (readsAsWrite(tool.name)) return excluded('declared read-only (readOnlyHint: true), but the name reads as a write');
     return { permitted: true, reason: 'declared read-only (readOnlyHint: true)' };
   }
   if (a?.destructiveHint === true) return excluded('declared destructive (destructiveHint: true)');
   if (a?.readOnlyHint === false) return excluded('declared not read-only (readOnlyHint: false)');
-  if (WRITE_LOOKING.test(tool.name)) return excluded('no annotation; name reads as a write');
+  if (readsAsWrite(tool.name)) return excluded('no annotation; name reads as a write');
   return { permitted: true, reason: 'no annotation; name reads as a read' };
 }
 

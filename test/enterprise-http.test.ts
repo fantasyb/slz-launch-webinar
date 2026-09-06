@@ -285,6 +285,47 @@ test('a network-bound gateway fails closed (503) if its policy stops enforcing a
   }
 });
 
+test('a governed gateway does not disclose the live session count to unauthenticated health probes (#12)', async () => {
+  const home = governedHome();
+  const { child, base } = await startProxy(home);
+  try {
+    const health = await hit(base, '/healthz');
+    assert.equal(health.status, 200, '/healthz is open');
+    const body = JSON.parse(health.body) as Record<string, unknown>;
+    assert.equal(body.ok, true);
+    assert.equal(body.governed, true, 'it still reports governance posture');
+    assert.ok(!('sessions' in body), 'but not the live session count — that is reconnaissance');
+    assert.ok(!('upstreams' in body) && !('corpus' in body), 'nor upstream names or the corpus path');
+  } finally {
+    stopProxy(child);
+  }
+});
+
+test("a governed gateway attributes a tenant's ledger rows to its principal, not the client name (#11)", async () => {
+  const home = governedHome();
+  const { child, base } = await startProxy(home);
+  try {
+    // alice (principal id "alice") initializes with clientInfo.name "t" and runs
+    // a find. The retrieval row must land in the principal's shard, so one tenant
+    // cannot pool or hijack another's ledger text by choosing a client name.
+    const init = await hit(base, '/mcp', { method: 'POST', headers: mcpHeaders(TOKEN), body: initBody(), keepOpen: true });
+    assert.equal(init.status, 200);
+    const sid = String(init.headers['mcp-session-id'] ?? '');
+    await hit(base, '/mcp', {
+      method: 'POST',
+      headers: { ...mcpHeaders(TOKEN), 'mcp-session-id': sid },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 5, method: 'tools/call', params: { name: 'cairn_find', arguments: { query: 'anything at all' } } }),
+    });
+    const retr = path.join(home, 'data', 'retrievals');
+    const shards = fs.existsSync(retr) ? fs.readdirSync(retr) : [];
+    assert.ok(shards.includes('alice.jsonl'), `the row is in the principal's shard (got ${shards.join(', ') || 'none'})`);
+    assert.ok(!shards.includes('t.jsonl'), 'and NOT in a shard named for the client name');
+  } finally {
+    closeOpenReqs();
+    stopProxy(child);
+  }
+});
+
 test('with no org policy, the same gateway needs no token (the personal case is unchanged)', async () => {
   const home = baseHome('cairn-ent-open-');
   const { child, base } = await startProxy(home);

@@ -23,6 +23,20 @@ test('the server\'s declaration comes first, the name only when it says nothing'
   assert.match(both.reason, /declared read-only .*but the name reads as a write/);
 });
 
+test('a write verb embedded inside a longer word no longer reads as a write (#10)', () => {
+  // The old substring match flagged plain reads because a verb hid inside a
+  // token: "put" in computers, "eval" in retrieval, "post" in compost, "charge"
+  // in surcharge, "run" in prune, "sql" in mysql. Tokenizing and matching the
+  // verb as a token PREFIX drops all of these.
+  for (const name of ['list_computers', 'data_retrieval', 'get_compost_bins', 'view_surcharge', 'prune_preview', 'mysql_describe', 'get_skill', 'read_credentials', 'inputs_summary']) {
+    assert.equal(classify({ name }).permitted, true, `${name} is a read (no token begins with a write verb)`);
+  }
+  // Real writes — as a whole token or a token prefix (morphology) — still excluded.
+  for (const name of ['delete_user', 'create_report', 'deploy_stack', 'deployments_apply', 'updateRecord', 'send_email', 'purge_cache', 'exec_command']) {
+    assert.equal(classify({ name }).permitted, false, `${name} reads as a write`);
+  }
+});
+
 test('an override permits an excluded tool and is carried with the reason it overruled', () => {
   const c = classify({ name: 'update_thing' }, { overrides: { update_thing: 'refreshes a cached read model only' } });
   assert.equal(c.permitted, true);

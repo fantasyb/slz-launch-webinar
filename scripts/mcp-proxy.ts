@@ -733,6 +733,19 @@ function newSession(id: string): SessionState {
 const blockLabel = (session: SessionState): string => `${LABEL} ⟦${session.blockNonce}⟧`;
 
 /*
+ * Who a ledger row (a retrieval, an observation, an arc choice) is ATTRIBUTED
+ * to — which is also the shard it lands in, since the ledger shards by author.
+ * On a governed gateway this must be the authenticated PRINCIPAL, not
+ * session.agent: the agent name is client-supplied, so two tenants presenting
+ * the same clientInfo name would otherwise pool their query text in one shard,
+ * and a tenant could name itself after another to write into theirs. The
+ * principal is what the record/note paths already attribute to (ownBy); this
+ * brings the observe path in line. An ungoverned/personal gateway keeps the
+ * client name — there is exactly one tenant, and LOCAL_ADMIN has no id to use.
+ */
+const ledgerBy = (session: SessionState): string => (session.principal !== LOCAL_ADMIN ? session.principal.id : (session.agent ?? 'client'));
+
+/*
  * Strip this session's block token from anything headed UPSTREAM. The token
  * ⟦nonce⟧ is what lets the model tell a genuine Cairn block from a tool
  * imitating one; it is a per-session secret. If the model ever echoes a Cairn
@@ -782,7 +795,7 @@ function served(session: SessionState, findingId: string, tool: string, surface:
       `${tool} [${surface}]`,
       [{ finding: { id: findingId }, rank: 1, strength: 'strong' }] as never,
       `mcp-proxy:${surface}`,
-      { by: session.agent, session: session.id },
+      { by: ledgerBy(session), session: session.id },
     );
   } catch (e) {
     /*
@@ -907,7 +920,7 @@ function draftFor(session: SessionState, tool: string, args: Record<string, unkn
     process.stderr.write(`cairn-proxy: could not write draft: ${(e as Error).message}\n`);
   }
   try {
-    observe(`${tool} [draft]`, [], 'mcp-proxy:draft', { by: session.agent, session: session.id });
+    observe(`${tool} [draft]`, [], 'mcp-proxy:draft', { by: ledgerBy(session), session: session.id });
   } catch { /* never fatal */ }
   return (
     `\n\n--- ${blockLabel(session)} ---\n` +
@@ -987,7 +1000,7 @@ function contradictionFor(session: SessionState, tool: string, args: Record<stri
     process.stderr.write(`cairn-proxy: could not write draft: ${(e as Error).message}\n`);
   }
   try {
-    observe(`${tool} [contradiction ${found.kind}]`, [], 'mcp-proxy:contradiction', { by: session.agent, session: session.id });
+    observe(`${tool} [contradiction ${found.kind}]`, [], 'mcp-proxy:contradiction', { by: ledgerBy(session), session: session.id });
   } catch { /* never fatal */ }
   return (
     `\n\n--- ${blockLabel(session)} ---\n` +
@@ -1357,8 +1370,8 @@ function countArc(arc: string, choice: 'bank' | 'my-mistake' | 'not-surprising',
   const offered = readArcs().find((r) => r.arc === arc && r.choice === 'offered');
   if (!offered) return false;
   try {
-    recordArc({ arc, key: offered.key, failing: offered.failing, choice, by: session.agent });
-    observe(`${offered.key} [arc ${choice}]`, [], `mcp-proxy:arc-${choice}`, { by: session.agent, session: session.id });
+    recordArc({ arc, key: offered.key, failing: offered.failing, choice, by: ledgerBy(session) });
+    observe(`${offered.key} [arc ${choice}]`, [], `mcp-proxy:arc-${choice}`, { by: ledgerBy(session), session: session.id });
   } catch { /* never fatal */ }
   return true;
 }
@@ -2182,7 +2195,7 @@ async function main() {
         const { note: noteId, arc: arcId, ...submission } = args as Record<string, unknown> & { note?: unknown; arc?: unknown };
         const outcome = await recordSubmission(submission, { by: ownBy, origin: 'agent' });
         if (outcome.ok && typeof arcId === 'string') countArc(arcId, 'bank', session);
-        try { observe(`cairn_record ${outcome.ok ? outcome.finding!.id : 'refused'}`, [], 'mcp-proxy:record', { by: session.agent, session: session.id }); } catch { /* never fatal */ }
+        try { observe(`cairn_record ${outcome.ok ? outcome.finding!.id : 'refused'}`, [], 'mcp-proxy:record', { by: ledgerBy(session), session: session.id }); } catch { /* never fatal */ }
         let closed = '';
         if (outcome.ok) {
           try {
@@ -2194,7 +2207,7 @@ async function main() {
       }
       if (!toolOwner.has(req.params.name) && req.params.name === 'cairn_observe') {
         const outcome = attest(args, { by: ownBy ?? 'agent', via: `cairn-proxy, client ${session.agent ?? 'unknown'}`, keyId: ownKey });
-        try { observe(`cairn_observe ${String(args.finding ?? '?')} ${outcome.ok ? String(args.verdict) : 'refused'}`, [], `mcp-proxy:observe-${outcome.ok ? String(args.verdict) : 'refused'}`, { by: session.agent, session: session.id }); } catch { /* never fatal */ }
+        try { observe(`cairn_observe ${String(args.finding ?? '?')} ${outcome.ok ? String(args.verdict) : 'refused'}`, [], `mcp-proxy:observe-${outcome.ok ? String(args.verdict) : 'refused'}`, { by: ledgerBy(session), session: session.id }); } catch { /* never fatal */ }
         return textResult(outcome.message, !outcome.ok);
       }
       if (!toolOwner.has(req.params.name) && req.params.name === 'cairn_note') {
@@ -2206,12 +2219,12 @@ async function main() {
         }
         if (typeof args.discard === 'string') {
           const dropped = discardNote(args.discard, governed(session) ? session.principal.id : undefined);
-          try { observe(`cairn_note discard ${args.discard}`, [], 'mcp-proxy:note-discarded', { by: session.agent, session: session.id }); } catch { /* never fatal */ }
+          try { observe(`cairn_note discard ${args.discard}`, [], 'mcp-proxy:note-discarded', { by: ledgerBy(session), session: session.id }); } catch { /* never fatal */ }
           return textResult(dropped ? `Discarded ${dropped.id}.` : `No open note with id ${args.discard}.`, !dropped);
         }
         const { arc: arcId, ...noteArgs } = args as Record<string, unknown> & { arc?: unknown };
         const outcome = recordNote(noteArgs, { by: ownBy, session: session.id });
-        try { observe(`cairn_note ${outcome.ok ? outcome.note!.id : 'refused'}`, [], 'mcp-proxy:note', { by: session.agent, session: session.id }); } catch { /* never fatal */ }
+        try { observe(`cairn_note ${outcome.ok ? outcome.note!.id : 'refused'}`, [], 'mcp-proxy:note', { by: ledgerBy(session), session: session.id }); } catch { /* never fatal */ }
         if (outcome.ok && typeof arcId === 'string') countArc(arcId, 'bank', session);
         return textResult(outcome.message, !outcome.ok);
       }
@@ -2224,7 +2237,7 @@ async function main() {
         const findings = deliverableTo(session, localFindings().findings);
         let hits: ReturnType<typeof retrieve> = [];
         try { hits = retrieve(query, findings, { limit: 5 }); } catch { /* a corpus problem never reaches the caller */ }
-        try { observe(query, hits, 'mcp-proxy:find', { by: session.agent, session: session.id }); } catch { /* never fatal */ }
+        try { observe(query, hits, 'mcp-proxy:find', { by: ledgerBy(session), session: session.id }); } catch { /* never fatal */ }
         if (!hits.length) return textResult('Nothing recorded bears on that.');
         return textResult(
           hits.map((h) => `${h.finding.id} [${h.strength}] ${h.finding.title}\n  ACTUALLY: ${clip(h.finding.reality, 400)}` + (h.finding.workaround ? `\n  INSTEAD: ${clip(h.finding.workaround, 400)}` : '')).join('\n\n'),
@@ -2273,7 +2286,7 @@ async function main() {
        * re-approves the server. Monitor mode only flags; it does not block.
        */
       if (trustMode() === 'enforce' && (owner.up.trustBlocked.has(owner.raw) || owner.up.listIncomplete)) {
-        try { observe(`${owner.up.spec.name} ${owner.raw} [trust-withheld]`, [], 'mcp-proxy:trust-withheld', { by: session.agent, session: session.id }); } catch { /* never fatal */ }
+        try { observe(`${owner.up.spec.name} ${owner.raw} [trust-withheld]`, [], 'mcp-proxy:trust-withheld', { by: ledgerBy(session), session: session.id }); } catch { /* never fatal */ }
         audit(session, 'deny', owner.up.spec.name, owner.raw, owner.up.listIncomplete ? 'trust: upstream listed incompletely, surface not evaluated (withheld)' : 'trust: tool surface changed since approval (withheld)');
         return textResult(
           `cairn-proxy: "${req.params.name}" is withheld — its definition changed since this server was approved, ` +
@@ -2357,7 +2370,7 @@ async function main() {
         );
       } catch (e) {
         if (extra.signal.aborted) {
-          try { observe(callRecord(req.params.name, args), [], 'mcp-proxy:cancelled', { by: session.agent, session: session.id }); } catch { /* never fatal */ }
+          try { observe(callRecord(req.params.name, args), [], 'mcp-proxy:cancelled', { by: ledgerBy(session), session: session.id }); } catch { /* never fatal */ }
           audit(session, 'error', owner.up.spec.name, owner.raw, 'cancelled by client');
           return textResult(`cairn-proxy: call to "${req.params.name}" was cancelled by the client`, true);
         }
@@ -2386,7 +2399,7 @@ async function main() {
         // The outcome, chained after the attempt row: the log must not say a call
         // succeeded when the tool refused it.
         if (isError) audit(session, 'error', owner.up.spec.name, owner.raw, 'tool returned an error result');
-        const ctx = { by: session.agent, session: session.id };
+        const ctx = { by: ledgerBy(session), session: session.id };
         const ownText = Array.isArray(result.content)
           ? (result.content as Array<{ type: string; text?: string }>).filter((c) => c.type === 'text').map((c) => c.text ?? '').join('\n')
           : '';
@@ -2822,9 +2835,14 @@ async function main() {
         // "governed" means auth is actually ENFORCED, not merely that a policy
         // file exists — a policy with auth.required:false governs nothing.
         const authOn = g.mode === 'governed' && g.policy.auth.required;
+        // The governed response is liveness + governance posture ONLY. The live
+        // session count is reconnaissance to whoever can reach the port — it
+        // reveals how many tenants/agents are connected and lets them watch
+        // activity rise and fall — so it is disclosed only on the ungoverned
+        // personal gateway (loopback, nothing to protect), alongside the fuller
+        // operational shape.
         const base = {
           ok: true,
-          sessions: transports.size,
           governed: authOn,
           policy: g.mode,
           auth: authOn,
@@ -2835,6 +2853,7 @@ async function main() {
             ? base
             : {
                 ...base,
+                sessions: transports.size,
                 idleEvictionMs: IDLE_MS,
                 relaysProgress: true,
                 upstreams: upstreams.map((u) => ({ name: u.spec.name, alive: u.alive })),

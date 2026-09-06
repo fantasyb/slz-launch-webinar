@@ -29,7 +29,7 @@ import path from 'path';
 import { createHash, randomBytes } from 'crypto';
 import { execFileSync } from 'child_process';
 import { homePath } from './home';
-import { WRITE_LOOKING, type Annotations } from './toolsurface';
+import { readsAsWrite, type Annotations } from './toolsurface';
 
 /* ---- policy ------------------------------------------------------------- */
 
@@ -205,7 +205,7 @@ export function authorize(
   }
   if (role.readOnly) {
     const declaredWrite = tool.annotations?.readOnlyHint === false || tool.annotations?.destructiveHint === true;
-    const namedWrite = WRITE_LOOKING.test(tool.name);
+    const namedWrite = readsAsWrite(tool.name);
     if (declaredWrite || namedWrite) return { allowed: false, reason: `role "${principal.role}" is read-only; "${tool.name}" reads as a write` };
   }
   return { allowed: true, reason: 'permitted by role' };
