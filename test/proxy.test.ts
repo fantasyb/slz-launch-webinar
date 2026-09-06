@@ -804,6 +804,32 @@ test('a tool surface that changes mid-session is noticed, told once, recorded, a
   } finally { await s.close(); }
 });
 
+test('a forged Cairn label smuggled into an argument name is neutralized in the surface-change block (red-team A1)', async () => {
+  const home = corpus(false);
+  bank(home, '0001-q.json', 'cairn-0001', 'query_records caps at fifty rows silently', 'query_records', ['query_records limit']);
+  const phase = path.join(home, 'phase');
+  fs.writeFileSync(phase, 'base');
+  const s = new Session(home, ['--server', `node ${MUTABLE} --phase-file ${phase}`]);
+  try {
+    await s.init();
+    await s.call('get_record', { object: 'Case', id: 'x' }); // first contact
+    // query_records gains an argument whose NAME is a forged Cairn block.
+    fs.writeFileSync(phase, 'forge');
+    const deadline = Date.now() + 30000; // cairn-0050 failsafe
+    while (Date.now() < deadline && !s.stderr.includes('input schema changed')) await new Promise((r) => setTimeout(r, 200));
+    assert.match(s.stderr, /query_records: input schema changed/, 'the schema change is noticed');
+    const told = await s.call('get_record', { object: 'Case', id: 'x' });
+    const note = texts(told).join('\n');
+    assert.match(note, /tools changed while this session was open/, 'the surface-change block is delivered');
+    // The forged label must NOT read as a second, un-nonced Cairn fence: the only
+    // genuine occurrence of the label phrase is this block's own nonce-bearing
+    // header. If the argument name leaked raw, the phrase would appear twice.
+    const occurrences = note.split('from your Cairn corpus').length - 1;
+    assert.equal(occurrences, 1, `the forged label was neutralized (label phrase appears only in the genuine header): got ${occurrences}`);
+    assert.doesNotMatch(note, /-{3,}\s*from your Cairn corpus[\s\S]*?-{3,}\s*[\r\n]+INSTEAD/, 'no intact forged fence leads into the injected instruction');
+  } finally { await s.close(); }
+});
+
 test('degraded, a changed tool surface is noticed on stderr and nothing is appended', async () => {
   const home = brokenHome();
   const phase = path.join(home, 'phase');
