@@ -18,7 +18,7 @@ import pathReal from 'path';
 import { createHash } from 'crypto';
 import {
   authenticate, authorize, tokenHash, bearerToken, LOCAL_ADMIN,
-  appendAudit, verifyAudit, readAudit, _resetAuditCache, readOrgPolicy, anchorHead, readAnchors, rotateAudit,
+  appendAudit, verifyAudit, readAudit, _resetAuditCache, readOrgPolicy, anchorHead, readAnchors, rotateAudit, offloadArchive,
   type OrgPolicy,
 } from '../src/lib/cairn/enterprise';
 
@@ -525,6 +525,62 @@ test('an off-box archive with an interior anchor still verifies after it is offl
     const v = verifyAudit(dir, { against: offbox });
     assert.equal(v.ok, true, `a correctly-offloaded archive must not false-alarm: ${v.detail ?? ''}`);
   } finally { delete process.env.CAIRN_AUDIT_ANCHOR_CMD; }
+});
+
+test('a declared offload keeps anchoring and rotation working; an undeclared deletion still alarms (Fable-6 #2)', () => {
+  const dir = freshDir();
+  process.env.CAIRN_AUDIT_ANCHOR_CMD = 'cat > /dev/null'; // ships the boundary anchor off-box
+  try {
+    for (let i = 0; i < 4; i++) appendAudit(dir, { principal: 'a', decision: 'call', server: 's', tool: `t${i}` });
+    appendAudit(dir, { principal: 'a', decision: 'call', server: 's', tool: 't5' });
+    const rot = rotateAudit(dir); // archives seq 1-5, boundary anchor shipped
+    assert.equal(rot.ok, true, rot.detail);
+    const archive = rot.archived!;
+    const offbox = readAnchors(dir).map((a) => ({ seq: a.seq, hash: a.hash }));
+
+    // BEFORE the fix, simply deleting the archive off-box permanently broke the
+    // on-box self-checks. Do it the SUPPORTED way: declare the offload.
+    const off = offloadArchive(dir, archive);
+    assert.equal(off.ok, true, `offload should succeed once the boundary anchor is shipped: ${off.detail ?? ''}`);
+    assert.ok((off.freedBytes ?? 0) > 0, 'it reports the reclaimed space');
+    assert.ok(!fsReal.existsSync(pathReal.join(dir, archive)), 'the local copy is removed');
+    _resetAuditCache();
+
+    // The whole point of #2: on-box anchoring and rotation still work after offload.
+    for (let i = 0; i < 3; i++) appendAudit(dir, { principal: 'a', decision: 'call', server: 's', tool: `later${i}` });
+    const a2 = anchorHead(dir);
+    assert.ok(a2, 'anchoring is NOT permanently disabled by an offload');
+    const rot2 = rotateAudit(dir);
+    assert.equal(rot2.ok, true, `rotation is NOT permanently disabled by an offload: ${rot2.detail ?? ''}`);
+
+    // The operator's authoritative check still re-verifies the offloaded range
+    // against the REAL off-box anchor — the declared flag alone does not satisfy it.
+    _resetAuditCache();
+    const vAuth = verifyAudit(dir, { against: offbox });
+    assert.equal(vAuth.ok, true, `authoritative verify with off-box anchors passes: ${vAuth.detail ?? ''}`);
+
+    // And an UNDECLARED deletion of an on-box archive is still a hard failure, even
+    // for the lenient liveness check — offload is a declaration, not a free pass.
+    const seg2 = rot2.archived!;
+    fsReal.rmSync(pathReal.join(dir, seg2));
+    _resetAuditCache();
+    const vLive = verifyAudit(dir, { trustDeclaredOffload: true });
+    assert.equal(vLive.ok, false, 'an undeclared archive deletion still alarms');
+    assert.match(vLive.detail ?? '', /not present|cannot be verified/);
+  } finally { delete process.env.CAIRN_AUDIT_ANCHOR_CMD; }
+});
+
+test('offload refuses unless the boundary anchor has shipped off-box (Fable-6 #2)', () => {
+  const dir = freshDir();
+  // No off-box anchoring: rotate still works, but the boundary is not shipped, so
+  // the range would become permanently unverifiable if the local copy were removed.
+  for (let i = 0; i < 4; i++) appendAudit(dir, { principal: 'a', decision: 'call', server: 's', tool: `t${i}` });
+  const rot = rotateAudit(dir);
+  assert.equal(rot.ok, true, rot.detail);
+  const off = offloadArchive(dir, rot.archived!);
+  assert.equal(off.ok, false, 'offload is refused with no shipped boundary anchor');
+  assert.match(off.detail ?? '', /anchor|ship/);
+  assert.ok(fsReal.existsSync(pathReal.join(dir, rot.archived!)), 'the local archive is left in place');
 });
 
 test('rotation refuses to archive a broken log', () => {

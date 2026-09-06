@@ -641,8 +641,11 @@ export function anchorHead(dir: string): Anchor | null {
     const r = withAuditLock(dir, (): Anchor | { skip: string } | null => {
       foldSpills(dir);
       // Never anchor a broken log: an anchor of a forgery launders it into the
-      // trust root. Verify under the lock so no append moves the head first.
-      const v = verifyAudit(dir);
+      // trust root. Verify under the lock so no append moves the head first. This
+      // is an on-box LIVENESS check with no off-box anchors to pass, so it bridges
+      // DECLARED offloads (offloadArchive marked them, boundary shipped off-box)
+      // rather than failing forever once an archive is offloaded (Fable-6 #2).
+      const v = verifyAudit(dir, { trustDeclaredOffload: true });
       if (!v.ok) return { skip: `refusing to anchor a broken log: ${v.detail}` };
       const tail = diskHead(dir);
       if (tail.empty || tail.seq === 0) return null;
@@ -703,7 +706,7 @@ export interface RotateResult {
  * head first so the boundary itself is checkpointed off-box. Bounds the live file
  * so appends and the tail read stay cheap however long the gateway runs.
  */
-export interface Segment { file: string; firstSeq: number; lastSeq: number; firstPrevHash: string; lastHash: string; }
+export interface Segment { file: string; firstSeq: number; lastSeq: number; firstPrevHash: string; lastHash: string; offloaded?: boolean; }
 const segmentsFile = (dir: string) => path.join(dir, 'audit.segments.jsonl');
 export function readSegments(dir: string): Segment[] {
   try { return fs.readFileSync(segmentsFile(dir), 'utf8').split('\n').filter(Boolean).flatMap((l) => { try { const s = JSON.parse(l); return isObj(s) ? [s as unknown as Segment] : []; } catch { return []; } }); } catch { return []; }
@@ -731,7 +734,9 @@ export function rotateAudit(dir: string): RotateResult {
   }
   const r = withAuditLock(dir, (): RotateResult => {
     foldSpills(dir);
-    const v = verifyAudit(dir);
+    // On-box liveness check (no off-box anchors here): bridge DECLARED offloads so
+    // rotation is not permanently disabled once an archive is offloaded (Fable-6 #2).
+    const v = verifyAudit(dir, { trustDeclaredOffload: true });
     if (!v.ok) return { ok: false, detail: `refusing to rotate a broken log: ${v.detail}` };
     let lines: string[];
     try { lines = fs.readFileSync(auditFile(dir), 'utf8').split('\n').filter(Boolean); } catch { return { ok: false, detail: 'no live segment to rotate' }; }
@@ -781,6 +786,62 @@ export function rotateAudit(dir: string): RotateResult {
   return out;
 }
 
+export interface OffloadResult { ok: boolean; file?: string; freedBytes?: number; detail?: string; }
+
+/**
+ * Declare an archived segment OFF-loaded: verified once more on the box, its
+ * boundary confirmed shipped off-box, marked `offloaded` in the manifest, and its
+ * local copy removed to reclaim space. This is the SUPPORTED way to move an
+ * archive off the machine — after it, the on-box liveness self-checks
+ * (anchorHead/rotateAudit/daemon) bridge the gap via the declared flag instead of
+ * failing forever (Fable-6 #2), while the operator's authoritative
+ * `verify --against <off-box anchors>` still re-checks the range against the real
+ * external anchor. Refuses unless:
+ *   - the named segment exists and its local file is still present (so its
+ *     contents get one final on-box hash-check before deletion),
+ *   - the whole chain verifies (never offload out of a broken log), and
+ *   - an off-box anchor pinning the segment boundary (seq, hash) has SHIPPED, so
+ *     the range stays verifiable off the box after the local copy is gone.
+ * Undeclared deletion of an archive remains a hard tamper failure everywhere.
+ */
+export function offloadArchive(dir: string, file: string): OffloadResult {
+  const r = withAuditLock(dir, (): OffloadResult => {
+    const segs = readSegments(dir);
+    const idx = segs.findIndex((s) => s.file === file);
+    if (idx === -1) return { ok: false, detail: `no archived segment named ${file} in the manifest` };
+    const seg = segs[idx];
+    if (seg.offloaded) return { ok: false, detail: `${file} is already declared offloaded` };
+    const local = path.join(dir, file);
+    let size = 0;
+    try { size = fs.statSync(local).size; } catch { return { ok: false, detail: `${file} is not present locally — declare offload BEFORE moving it off-box so its contents can be verified one last time` }; }
+    // Verify the whole chain (allowing prior declared offloads) before trusting
+    // this one; never offload out of a broken log.
+    const v = verifyAudit(dir, { trustDeclaredOffload: true });
+    if (!v.ok) return { ok: false, detail: `refusing to offload: the log does not verify (${v.detail})` };
+    // The boundary MUST be pinned by a shipped off-box anchor, or the range would
+    // become permanently unverifiable off the box once the local copy is gone.
+    const anchor = readAnchors(dir).find((a) => a.seq === seg.lastSeq && a.hash === seg.lastHash);
+    if (!anchor) return { ok: false, detail: `no anchor pins the boundary of ${file} (seq ${seg.lastSeq}) — run \`cairn:audit-log anchor\` and ship it off-box first` };
+    if (!anchorShipped(dir, anchor)) return { ok: false, detail: `the boundary anchor for ${file} (seq ${seg.lastSeq}) has not shipped off-box — set CAIRN_AUDIT_ANCHOR_CMD and ship it before offloading, so the range stays verifiable` };
+    // Mark offloaded in the manifest (full rewrite under the lock), then remove the
+    // local copy. Order: manifest first — if the unlink fails, the segment is still
+    // correctly declared and a re-run completes it; deleting first then failing the
+    // manifest write would leave an undeclared absence (a false tamper alarm).
+    const next = segs.map((s, i) => (i === idx ? { ...s, offloaded: true } : s));
+    try {
+      fs.writeFileSync(segmentsFile(dir), next.map((s) => JSON.stringify(s)).join('\n') + '\n');
+    } catch (e) {
+      return { ok: false, detail: `could not update the manifest; nothing removed: ${(e as Error).message}` };
+    }
+    try { fs.unlinkSync(local); } catch (e) {
+      return { ok: false, detail: `declared offloaded, but could not remove the local copy (${(e as Error).message}); delete ${local} by hand` };
+    }
+    return { ok: true, file, freedBytes: size };
+  });
+  if (!r.locked) return { ok: false, detail: 'could not take the audit lock to offload' };
+  return r.value!;
+}
+
 /** Re-walk the chain and confirm every hash. Detects any edit, deletion, or
  * reordering of committed entries — and, via the head sidecar and the anchors,
  * a whole-file rewrite or a tail truncation that the in-file chain alone cannot
@@ -788,7 +849,7 @@ export function rotateAudit(dir: string): RotateResult {
  * operator is holding OFF the box (the real defense against a box-level
  * attacker): each is `{ seq, hash }` from a `cairn:audit-log anchor` they saved
  * elsewhere. */
-export function verifyAudit(dir: string, opts: { against?: { seq: number; hash: string }[] } = {}): AuditVerdict {
+export function verifyAudit(dir: string, opts: { against?: { seq: number; hash: string }[]; trustDeclaredOffload?: boolean } = {}): AuditVerdict {
   // Read the cross-checks (anchors + head sidecar) BEFORE the log. Both are
   // written strictly AFTER the log line they describe, so a log read taken
   // afterwards is always at least as advanced — which means a concurrent append
@@ -875,8 +936,28 @@ export function verifyAudit(dir: string, opts: { against?: { seq: number; hash: 
       // anchor pins its boundary AND it links to the prior segment — never with a
       // local anchor (on-box, and this adversary can write the box). Without that
       // off-box anchor, archived history cannot be verified: fail.
+      //
+      // The ONE exception is a LIVENESS check (trustDeclaredOffload): the on-box
+      // self-checks in anchorHead/rotateAudit/daemon have no off-box anchors to
+      // pass, so once an operator legitimately offloads an archive they would
+      // otherwise fail forever — permanently disabling anchoring and rotation, so
+      // the live log grows unbounded and no new checkpoints ship (Fable-6 #2). For
+      // those callers a segment DECLARED offloaded (offloadArchive marked it, after
+      // requiring its boundary anchor to be shipped off-box) is bridged via the
+      // manifest link alone. This trades nothing real: the offloaded range is
+      // off-box, so only the operator's `verify --against <off-box anchors>` — which
+      // does NOT set trustDeclaredOffload — can vouch for it, and that path still
+      // demands the true external anchor. A forged offload flag can mute the on-box
+      // liveness monitor for an already-off-box range, never the authoritative check.
       const boundary = externalAt.get(seg.lastSeq);
-      if (boundary === undefined || boundary !== seg.lastHash) return { ok: false, entries: st.lastSeq, detail: `archive ${seg.file} (seq ${seg.firstSeq}-${seg.lastSeq}) is not present and no off-box anchor pins its boundary — its history cannot be verified` };
+      const externallyPinned = boundary !== undefined && boundary === seg.lastHash;
+      if (!externallyPinned) {
+        if (!(opts.trustDeclaredOffload && seg.offloaded)) {
+          return { ok: false, entries: st.lastSeq, detail: seg.offloaded
+            ? `archive ${seg.file} (seq ${seg.firstSeq}-${seg.lastSeq}) is declared offloaded but no off-box anchor pins its boundary — its history cannot be verified here`
+            : `archive ${seg.file} (seq ${seg.firstSeq}-${seg.lastSeq}) is not present and no off-box anchor pins its boundary — its history cannot be verified` };
+        }
+      }
       if (st.expectedSeq !== seg.firstSeq || st.prev !== seg.firstPrevHash) return { ok: false, entries: st.lastSeq, detail: `archive ${seg.file} does not link to the previous segment` };
       // The off-box anchor pins this segment's boundary and it links to the prior
       // segment, so its endpoints are trusted. Any checkpoint that falls INSIDE
@@ -907,7 +988,7 @@ export function verifyAudit(dir: string, opts: { against?: { seq: number; hash: 
   // anchor" (an offloaded archive): the operator should know an interior range was
   // not re-hashed on the box, only pinned at its boundary.
   const detail = bridged.length
-    ? `bridged ${bridged.length} off-loaded archive(s) via off-box anchors: ${bridged.map((b) => `${b.file} (seq ${b.firstSeq}-${b.lastSeq})`).join(', ')}`
+    ? `bridged ${bridged.length} off-loaded archive(s)${opts.trustDeclaredOffload ? ' (declared offload, not re-hashed on the box)' : ' via off-box anchors'}: ${bridged.map((b) => `${b.file} (seq ${b.firstSeq}-${b.lastSeq})`).join(', ')}`
     : undefined;
   return { ok: true, entries: st.lastSeq, bridged, detail };
 }

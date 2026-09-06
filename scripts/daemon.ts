@@ -106,7 +106,12 @@ function maybeVerifyAudit(): void {
     // deleted, and a DELETION of the live log is exactly what verify must catch.
     // verify returns ok on a genuinely-fresh dir (no segments, no checkpoints).
     if (!fs.existsSync(path.join(dir, 'audit.jsonl')) && !fs.existsSync(path.join(dir, 'audit.segments.jsonl')) && !fs.existsSync(path.join(dir, 'head.json'))) return;
-    v = verifyAudit(dir);
+    // On-box liveness monitor: it holds no off-box anchors, so it bridges DECLARED
+    // offloads (offloadArchive marked them, boundary shipped off-box) instead of
+    // false-alarming on every legitimate offload (Fable-6 #2). Undeclared absence
+    // is still a hard ALARM; the offloaded ranges are vouched for by the operator's
+    // authoritative `verify --against <off-box anchors>`, which does not trust the flag.
+    v = verifyAudit(dir, { trustDeclaredOffload: true });
   } catch (e) {
     // A THROW out of verify is itself an alarm, never an "ignore": verify is
     // written to return a broken-chain verdict for every tamper it knows, so a

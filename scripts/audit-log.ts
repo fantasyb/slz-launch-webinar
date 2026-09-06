@@ -4,6 +4,8 @@
  *   CAIRN_HOME=~/pilot npm run cairn:audit-log -- view [--limit 50]
  *   CAIRN_HOME=~/pilot npm run cairn:audit-log -- verify [--against <seq>:<hash>]
  *   CAIRN_HOME=~/pilot npm run cairn:audit-log -- anchor
+ *   CAIRN_HOME=~/pilot npm run cairn:audit-log -- rotate
+ *   CAIRN_HOME=~/pilot npm run cairn:audit-log -- offload <archive.jsonl>
  *   CAIRN_HOME=~/pilot npm run cairn:audit-log -- export [--out audit.jsonl]
  *
  * Distinct from `cairn:audit`, which checks the FORECAST ledger against git
@@ -26,7 +28,7 @@
 import fs from 'fs';
 import path from 'path';
 import { cairnHome } from '../src/lib/cairn/home';
-import { readAudit, verifyAudit, anchorHead, loadAnchorFile, rotateAudit } from '../src/lib/cairn/enterprise';
+import { readAudit, verifyAudit, anchorHead, loadAnchorFile, rotateAudit, offloadArchive } from '../src/lib/cairn/enterprise';
 
 const argv = process.argv.slice(2);
 const cmd = argv[0] ?? 'view';
@@ -76,7 +78,26 @@ if (cmd === 'rotate') {
   if (!r.ok) { console.error(`cairn:audit-log — not rotated: ${r.detail}`); process.exit(1); }
   console.log(`cairn:audit-log — rotated: archived seq ${r.fromSeq}–${r.toSeq} to ${r.archived}.`);
   console.log('  The chain continues in a fresh audit.jsonl from the next entry; existing anchors stay valid.');
-  console.log('  Move the archive off-box for retention; the live segment stays small.');
+  console.log(`  For retention, offload the archive off-box: cairn:audit-log offload ${r.archived}`);
+  console.log('  (that removes the local copy and keeps verify/anchor/rotate working — do NOT just delete it).');
+  process.exit(0);
+}
+
+if (cmd === 'offload') {
+  const file = argv[1];
+  if (!file || file.startsWith('--')) {
+    console.error('cairn:audit-log: offload wants an archive filename, e.g. `offload audit.1-1000.jsonl`.');
+    console.error('  List archives: cat "$CAIRN_HOME/audit/audit.segments.jsonl"');
+    process.exit(2);
+  }
+  // Declare the archive offloaded: verified once more, boundary confirmed shipped
+  // off-box, then removed locally. Do this BEFORE you move the file off the box —
+  // cairn removes the local copy for you once it is safe.
+  const r = offloadArchive(dir, file);
+  if (!r.ok) { console.error(`cairn:audit-log — not offloaded: ${r.detail}`); process.exit(1); }
+  console.log(`cairn:audit-log — offloaded ${r.file} (freed ${r.freedBytes} bytes).`);
+  console.log('  The segment is marked offloaded; keep your off-box copy and the boundary anchor.');
+  console.log('  On-box verify/anchor/rotate now bridge this range; `verify --against <off-box anchors>` still re-checks it.');
   process.exit(0);
 }
 
@@ -125,5 +146,5 @@ if (cmd === 'view') {
   process.exit(0);
 }
 
-console.error(`cairn:audit-log: unknown command "${cmd}". Use: view | verify | anchor | rotate | export`);
+console.error(`cairn:audit-log: unknown command "${cmd}". Use: view | verify | anchor | rotate | offload | export`);
 process.exit(1);
