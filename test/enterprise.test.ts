@@ -15,9 +15,10 @@ import path from 'path';
 import fsReal from 'fs';
 import osReal from 'os';
 import pathReal from 'path';
+import { createHash } from 'crypto';
 import {
   authenticate, authorize, tokenHash, bearerToken, LOCAL_ADMIN,
-  appendAudit, verifyAudit, readAudit, _resetAuditCache, readOrgPolicy,
+  appendAudit, verifyAudit, readAudit, _resetAuditCache, readOrgPolicy, anchorHead,
   type OrgPolicy,
 } from '../src/lib/cairn/enterprise';
 
@@ -233,6 +234,76 @@ test('session and agent are inside the chain hash (tampering with correlation da
   fsReal.writeFileSync(file, JSON.stringify(e) + '\n');
   _resetAuditCache();
   assert.equal(verifyAudit(dir).ok, false, 'editing the session id breaks the hash');
+});
+
+test('a tail truncation is caught by the head sidecar (deleting the last lines still verified clean before)', () => {
+  const dir = freshDir();
+  for (let i = 0; i < 5; i++) appendAudit(dir, { principal: 'a', decision: 'call', server: 's', tool: `t${i}` });
+  assert.equal(verifyAudit(dir).ok, true);
+  // Drop the last two lines: the remaining chain is internally consistent and
+  // would verify clean — but the head sidecar recorded seq 5, so the truncation
+  // is detected.
+  const file = pathReal.join(dir, 'audit.jsonl');
+  const lines = fsReal.readFileSync(file, 'utf8').split('\n').filter(Boolean);
+  fsReal.writeFileSync(file, lines.slice(0, 3).join('\n') + '\n');
+  _resetAuditCache();
+  const v = verifyAudit(dir);
+  assert.equal(v.ok, false, 'the tail truncation is caught');
+  assert.match(v.detail ?? '', /truncated/);
+});
+
+test('an off-box anchor catches a whole-file rewrite the in-file chain cannot', () => {
+  const dir = freshDir();
+  for (let i = 0; i < 4; i++) appendAudit(dir, { principal: 'a', decision: 'call', server: 's', tool: `t${i}` });
+  // Operator takes an anchor and stores it OFF the box.
+  const a = anchorHead(dir);
+  assert.ok(a && a.seq === 4, 'anchor captures the head');
+  const external = { seq: a!.seq, hash: a!.hash };
+  // Attacker with write access rewrites the ENTIRE file — a consistent chain of
+  // their own, re-hashed end to end. The in-file walk alone would accept it...
+  const forged: string[] = [];
+  let prev = '0'.repeat(64);
+  for (let seq = 1; seq <= 4; seq++) {
+    const at = new Date().toISOString();
+    // recompute a valid-looking hash the way the module does
+    const body = JSON.stringify([seq, at, 'attacker', 'call', 's', `evil${seq}`, '', '', '']);
+    const hash = createHash('sha256').update(prev).update('\n').update(body).digest('hex');
+    forged.push(JSON.stringify({ seq, at, principal: 'attacker', decision: 'call', server: 's', tool: `evil${seq}`, prevHash: prev, hash }));
+    prev = hash;
+  }
+  fsReal.writeFileSync(pathReal.join(dir, 'audit.jsonl'), forged.join('\n') + '\n');
+  // Also delete the local anchors + sidecar, as an attacker on the box would.
+  try { fsReal.unlinkSync(pathReal.join(dir, 'anchors.jsonl')); } catch { /* ok */ }
+  try { fsReal.unlinkSync(pathReal.join(dir, 'head.json')); } catch { /* ok */ }
+  _resetAuditCache();
+  // Without the external anchor, the forged chain looks clean (the disclosed limit).
+  assert.equal(verifyAudit(dir).ok, true, 'a fully re-hashed file passes the in-file walk — the known limit');
+  // WITH the off-box anchor, the rewrite is caught: seq 4 no longer has the anchored hash.
+  const v = verifyAudit(dir, { against: [external] });
+  assert.equal(v.ok, false, 'the off-box anchor catches the rewrite');
+  assert.match(v.detail ?? '', /anchor/);
+});
+
+test('concurrent processes appending to one log produce an intact chain (the cross-process lock)', async () => {
+  const { spawn } = await import('child_process');
+  const dir = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'cairn-audit-mp-'));
+  const appender = pathReal.join(process.cwd(), 'test', 'helpers', 'audit-appender.ts');
+  const N = 3;
+  const each = 15;
+  const procs = Array.from({ length: N }, (_, i) =>
+    new Promise<void>((resolve) => {
+      const c = spawn('npx', ['tsx', appender, dir, String(each), `proc${i}`], { cwd: process.cwd(), stdio: 'ignore' });
+      c.on('exit', () => resolve());
+      c.on('error', () => resolve());
+    }),
+  );
+  await Promise.all(procs);
+  _resetAuditCache();
+  const v = verifyAudit(dir);
+  assert.equal(v.ok, true, `the interleaved chain must verify — ${v.detail ?? ''} at ${v.brokenAt ?? '?'}`);
+  const entries = readAudit(dir);
+  assert.equal(entries.length, N * each, `every append landed (${entries.length} of ${N * each})`);
+  assert.deepEqual(entries.map((e) => e.seq), Array.from({ length: N * each }, (_, i) => i + 1), 'seqs are contiguous 1..n with no collision');
 });
 
 test('a write failure never throws out of appendAudit (a broken log must not break a call)', () => {

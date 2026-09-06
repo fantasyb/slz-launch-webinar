@@ -2,7 +2,8 @@
  * cairn:audit-log — read and verify the gateway's tamper-evident decision log.
  *
  *   CAIRN_HOME=~/pilot npm run cairn:audit-log -- view [--limit 50]
- *   CAIRN_HOME=~/pilot npm run cairn:audit-log -- verify
+ *   CAIRN_HOME=~/pilot npm run cairn:audit-log -- verify [--against <seq>:<hash>]
+ *   CAIRN_HOME=~/pilot npm run cairn:audit-log -- anchor
  *   CAIRN_HOME=~/pilot npm run cairn:audit-log -- export [--out audit.jsonl]
  *
  * Distinct from `cairn:audit`, which checks the FORECAST ledger against git
@@ -13,13 +14,19 @@
  * the chain and `verify` finds exactly where. The raw JSONL IS the SIEM feed:
  * `export` streams it for ingestion.
  *
+ * `anchor` checkpoints the current head — (seq, hash) — for you to store OFF the
+ * box (git, a WORM bucket, a webhook). `verify --against <seq>:<hash>` then
+ * confirms the live log still matches that anchor: the defense against someone
+ * who can rewrite the whole file on the box, since they cannot rewrite an anchor
+ * you already took off it. The daemon anchors automatically on its verify tick.
+ *
  * Reads only under CAIRN_HOME/audit. Nothing leaves the machine unless you
  * export it somewhere.
  */
 import fs from 'fs';
 import path from 'path';
 import { cairnHome } from '../src/lib/cairn/home';
-import { readAudit, verifyAudit } from '../src/lib/cairn/enterprise';
+import { readAudit, verifyAudit, anchorHead } from '../src/lib/cairn/enterprise';
 
 const argv = process.argv.slice(2);
 const cmd = argv[0] ?? 'view';
@@ -36,14 +43,37 @@ try { home = cairnHome(); } catch {
 const dir = path.join(home, 'audit');
 
 if (cmd === 'verify') {
-  const v = verifyAudit(dir);
+  // Optionally check against anchors held OFF the box: --against seq:hash (repeatable).
+  const against: { seq: number; hash: string }[] = [];
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === '--against' && argv[i + 1]) {
+      const [s, h] = argv[i + 1].split(':');
+      const seq = Number(s);
+      if (Number.isFinite(seq) && h) against.push({ seq, hash: h });
+      else { console.error(`cairn:audit-log: --against wants <seq>:<hash>, got "${argv[i + 1]}"`); process.exit(2); }
+    }
+  }
+  const v = verifyAudit(dir, against.length ? { against } : {});
   if (v.ok) {
-    console.log(`cairn:audit-log — chain intact: ${v.entries} entr${v.entries === 1 ? 'y' : 'ies'} verified${v.detail ? ` (${v.detail})` : ''}.`);
+    console.log(`cairn:audit-log — chain intact: ${v.entries} entr${v.entries === 1 ? 'y' : 'ies'} verified${against.length ? `, matches ${against.length} external anchor(s)` : ''}${v.detail ? ` (${v.detail})` : ''}.`);
     process.exit(0);
   }
-  console.error(`cairn:audit-log — CHAIN BROKEN at line ${v.brokenAt}: ${v.detail}`);
-  console.error('  An entry was edited, deleted, or reordered after it was written. The log is no longer trustworthy from that point on.');
+  console.error(`cairn:audit-log — CHAIN BROKEN${v.brokenAt ? ` at line ${v.brokenAt}` : ''}: ${v.detail}`);
+  console.error('  An entry was edited, deleted, reordered, or truncated after it was written. The log is no longer trustworthy from that point on.');
   process.exit(1);
+}
+
+if (cmd === 'anchor') {
+  const a = anchorHead(dir);
+  if (!a) {
+    console.log('cairn:audit-log — nothing to anchor (no audit entries yet).');
+    process.exit(0);
+  }
+  console.log(`cairn:audit-log — anchored the head at seq ${a.seq}.`);
+  console.log('  Store this OFF the box (git commit, a WORM bucket, an email to yourself). Later:');
+  console.log(`    cairn:audit-log verify --against ${a.seq}:${a.hash}`);
+  console.log('  If CAIRN_AUDIT_ANCHOR_CMD is set, it was also shipped there automatically.');
+  process.exit(0);
 }
 
 if (cmd === 'export') {
@@ -78,5 +108,5 @@ if (cmd === 'view') {
   process.exit(0);
 }
 
-console.error(`cairn:audit-log: unknown command "${cmd}". Use: view | verify | export`);
+console.error(`cairn:audit-log: unknown command "${cmd}". Use: view | verify | anchor | export`);
 process.exit(1);

@@ -22,7 +22,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { selfUpdate, describeUpdate, repoRoot } from '../src/lib/cairn/selfUpdate';
-import { verifyAudit } from '../src/lib/cairn/enterprise';
+import { verifyAudit, anchorHead } from '../src/lib/cairn/enterprise';
 
 const argv = process.argv.slice(2);
 function opt(name: string): string | undefined {
@@ -106,6 +106,15 @@ function maybeVerifyAudit(): void {
   if (v.ok) {
     // Intact: clear any stale alarm from a prior break that has since been fixed.
     try { if (fs.existsSync(marker)) fs.unlinkSync(marker); } catch { /* best-effort */ }
+    // Checkpoint the verified head as an anchor and ship it off-box (if
+    // CAIRN_AUDIT_ANCHOR_CMD is set). This is what turns the log into evidence
+    // against an attacker with write access to the box: an anchor published off
+    // the box cannot be rewritten to match a tampered log. Only anchors a head
+    // that verified clean, so we never certify a broken chain.
+    try {
+      const a = anchorHead(dir);
+      if (a) process.stderr.write(`cairn:daemon audit anchored at seq ${a.seq}\n`);
+    } catch (e) { process.stderr.write(`cairn:daemon audit anchor failed (ignored): ${(e as Error).message}\n`); }
     return;
   }
   process.stderr.write(

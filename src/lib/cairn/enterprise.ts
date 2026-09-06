@@ -27,6 +27,7 @@
 import fs from 'fs';
 import path from 'path';
 import { createHash } from 'crypto';
+import { execFileSync } from 'child_process';
 import { homePath } from './home';
 import { WRITE_LOOKING, type Annotations } from './toolsurface';
 
@@ -241,38 +242,81 @@ function chainHash(prevHash: string, e: Omit<AuditEntry, 'prevHash' | 'hash'>): 
   return createHash('sha256').update(prevHash).update('\n').update(body).digest('hex');
 }
 
-/* In-process chain head per audit dir, so an append does not re-read the whole
- * file each call. Seeded once from the file's last line. Appends within one
- * process are ordered (synchronous appendFileSync), which keeps the chain sound
- * for the single hosted process this is designed for. */
+/*
+ * Cross-PROCESS serialization. One hosted process is the design, but blue/green
+ * deploys, a pm2 cluster, or a stray CLI run mean two processes can share one
+ * CAIRN_HOME. Without a lock they interleave appends off a stale in-process head
+ * and the chain reads as tampered during NORMAL operation — which trains an
+ * operator to ignore verify, the one thing that must stay trustworthy. So the
+ * append (and the anchor write) runs under an OS-level exclusive lock file, and
+ * derives the head from the file's true tail under that lock, not from a
+ * per-process cache. Best-effort: audit must never block a tool call for long,
+ * so after a bounded wait we proceed unlocked rather than drop the entry — a
+ * rare interleave that verify would catch is better than a lost audit row.
+ */
+const lockPath = (dir: string) => path.join(dir, 'audit.lock');
+const sleepMs = (ms: number) => { try { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); } catch { /* no SAB: skip the wait */ } };
+
+function withAuditLock<T>(dir: string, fn: () => T): T {
+  const lp = lockPath(dir);
+  const deadline = Date.now() + 2000;
+  let fd: number | undefined;
+  for (;;) {
+    try { fd = fs.openSync(lp, 'wx'); break; } // atomic exclusive create
+    catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') { return fn(); } // can't lock at all: don't drop the row
+      // Break a stale lock (a process that crashed holding it).
+      try { if (Date.now() - fs.statSync(lp).mtimeMs > 5000) { fs.unlinkSync(lp); continue; } } catch { continue; }
+      if (Date.now() > deadline) return fn(); // sustained contention: proceed unlocked rather than block the call
+      sleepMs(5);
+    }
+  }
+  try { return fn(); } finally { try { fs.closeSync(fd!); fs.unlinkSync(lp); } catch { /* already released */ } }
+}
+
+/** The chain head as it is ON DISK right now — the last parseable entry, read
+ * from a bounded tail so an append does not cost a full-file read. Also reports
+ * whether the file ends in a newline (so an append after a crash-truncated line
+ * does not fuse onto it) and its size. */
+function diskHead(dir: string): { seq: number; hash: string; endsWithNL: boolean; empty: boolean } {
+  try {
+    const fd = fs.openSync(auditFile(dir), 'r');
+    try {
+      const size = fs.fstatSync(fd).size;
+      if (size === 0) return { seq: 0, hash: GENESIS, endsWithNL: true, empty: true };
+      const want = Math.min(65536, size);
+      const buf = Buffer.alloc(want);
+      fs.readSync(fd, buf, 0, want, size - want);
+      const endsWithNL = buf[want - 1] === 0x0a;
+      let lines = buf.toString('utf8').split('\n').filter(Boolean);
+      const pick = (ls: string[]) => { for (let i = ls.length - 1; i >= 0; i--) { try { const e = JSON.parse(ls[i]) as AuditEntry; if (typeof e.seq === 'number' && typeof e.hash === 'string') return { seq: e.seq, hash: e.hash }; } catch { /* walk back */ } } return null; };
+      let h = pick(lines);
+      if (!h && want < size) { lines = fs.readFileSync(auditFile(dir), 'utf8').split('\n').filter(Boolean); h = pick(lines); } // very long lines: fall back to a full read
+      return { seq: h?.seq ?? 0, hash: h?.hash ?? GENESIS, endsWithNL, empty: false };
+    } finally { fs.closeSync(fd); }
+  } catch {
+    return { seq: 0, hash: GENESIS, endsWithNL: true, empty: true };
+  }
+}
+
+/* A per-process head cache, advisory only now that the disk tail under the lock
+ * is the source of truth. Kept so head-reading callers and tests have something
+ * to reset. */
 const heads = new Map<string, { seq: number; hash: string }>();
 
-function head(dir: string): { seq: number; hash: string } {
-  const cached = heads.get(dir);
-  if (cached) return cached;
-  let seq = 0;
-  let hash = GENESIS;
+const headSidecar = (dir: string) => path.join(dir, 'head.json');
+/** The last head we committed, written beside the log so a RESTART can tell that
+ * the file was truncated after we last wrote (the tail-deletion the in-file chain
+ * alone cannot see: dropping the last k lines still verifies clean). Atomic. */
+function writeHeadSidecar(dir: string, h: { seq: number; hash: string; at: string }): void {
   try {
-    const lines = fs.readFileSync(auditFile(dir), 'utf8').split('\n').filter(Boolean);
-    // Seed from the last PARSEABLE entry, not blindly from the last line. A
-    // crash or ENOSPC mid-append leaves a partial trailing line; parsing it
-    // throws, and the old code then reset to genesis and started a SECOND chain
-    // after the garbage — orphaning every prior row and hiding the corruption.
-    // Walking back anchors the next append to the last real hash, so verify
-    // still flags the garbage line but the chain is recoverable, not silently
-    // restarted.
-    for (let i = lines.length - 1; i >= 0; i--) {
-      try {
-        const e = JSON.parse(lines[i]) as AuditEntry;
-        if (typeof e.seq === 'number' && typeof e.hash === 'string') { seq = e.seq; hash = e.hash; break; }
-      } catch { /* keep walking back past a corrupt tail line */ }
-    }
-  } catch {
-    /* no log yet: genesis */
-  }
-  const h = { seq, hash };
-  heads.set(dir, h);
-  return h;
+    const tmp = path.join(dir, `.head.${process.pid}.tmp`);
+    fs.writeFileSync(tmp, JSON.stringify(h));
+    fs.renameSync(tmp, headSidecar(dir));
+  } catch { /* best-effort: the sidecar is a cross-check, not the record */ }
+}
+function readHeadSidecar(dir: string): { seq: number; hash: string; at: string } | null {
+  try { return JSON.parse(fs.readFileSync(headSidecar(dir), 'utf8')) as { seq: number; hash: string; at: string }; } catch { return null; }
 }
 
 /** Append one tamper-evident audit entry. Best-effort: a log that cannot be
@@ -280,29 +324,88 @@ function head(dir: string): { seq: number; hash: string } {
 export function appendAudit(dir: string, e: { at?: string; principal: string; decision: AuditDecision; server?: string; tool?: string; reason?: string; session?: string; agent?: string }): void {
   try {
     fs.mkdirSync(dir, { recursive: true });
-    // On the FIRST append of this process, the file may end without a newline —
-    // a prior process crashed mid-append and left a partial line. Appending
-    // directly would FUSE our entry onto that garbage, making our (valid) entry
-    // unreadable too. Start on a fresh line instead, so the corrupt line stays
-    // isolated (verify flags it) and our entry is intact. Later appends in this
-    // process always end with '\n', so this check is first-touch only.
-    const firstTouch = !heads.has(dir);
-    let lead = '';
-    if (firstTouch) {
-      try {
-        const buf = fs.readFileSync(auditFile(dir));
-        if (buf.length && buf[buf.length - 1] !== 0x0a) lead = '\n';
-      } catch { /* no file yet: nothing to fuse onto */ }
-    }
-    const h = head(dir);
-    const seq = h.seq + 1;
-    const partial = { seq, at: e.at ?? new Date().toISOString(), principal: e.principal, decision: e.decision, server: e.server, tool: e.tool, reason: e.reason, session: e.session, agent: e.agent };
-    const hash = chainHash(h.hash, partial);
-    const entry: AuditEntry = { ...partial, prevHash: h.hash, hash };
-    fs.appendFileSync(auditFile(dir), lead + JSON.stringify(entry) + '\n');
-    heads.set(dir, { seq, hash });
+    withAuditLock(dir, () => {
+      const tail = diskHead(dir); // true head under the lock, so concurrent processes never interleave off a stale seq
+      const seq = tail.seq + 1;
+      const partial = { seq, at: e.at ?? new Date().toISOString(), principal: e.principal, decision: e.decision, server: e.server, tool: e.tool, reason: e.reason, session: e.session, agent: e.agent };
+      const hash = chainHash(tail.hash, partial);
+      const entry: AuditEntry = { ...partial, prevHash: tail.hash, hash };
+      // A crash-truncated tail line has no trailing newline; start on a fresh
+      // line so our valid entry is not fused onto the garbage.
+      const lead = !tail.empty && !tail.endsWithNL ? '\n' : '';
+      fs.appendFileSync(auditFile(dir), lead + JSON.stringify(entry) + '\n');
+      writeHeadSidecar(dir, { seq, hash, at: entry.at });
+      heads.set(dir, { seq, hash });
+    });
   } catch (err) {
     process.stderr.write(`cairn-proxy: could not write audit entry: ${(err as Error).message}\n`);
+  }
+}
+
+/* ---- off-box anchoring -------------------------------------------------- */
+/*
+ * The in-file hash chain catches an editor; it CANNOT catch an attacker with
+ * write access to the whole file, who can recompute every hash after a change
+ * (a limit the module discloses). An ANCHOR is the defense: a checkpoint of the
+ * chain head — (seq, hash) — published somewhere the attacker does not control.
+ * Anchors are themselves chained, appended to anchors.jsonl, and shipped off-box
+ * by an operator-supplied command (CAIRN_AUDIT_ANCHOR_CMD; the anchor JSON on
+ * stdin — pipe it to git, a WORM bucket, a webhook). verifyAudit then confirms
+ * the live chain still matches every anchor: a rewrite or truncation below an
+ * anchored seq is caught even when the whole file was re-hashed, because the
+ * attacker cannot change an anchor already shipped off the box.
+ */
+export interface Anchor {
+  seq: number;
+  hash: string;
+  at: string;
+  prevAnchorHash: string;
+  anchorHash: string;
+}
+const anchorFile = (dir: string) => path.join(dir, 'anchors.jsonl');
+function anchorChainHash(prevAnchorHash: string, a: { seq: number; hash: string; at: string }): string {
+  return createHash('sha256').update(prevAnchorHash).update('\n').update(JSON.stringify([a.seq, a.hash, a.at])).digest('hex');
+}
+
+export function readAnchors(dir: string): Anchor[] {
+  try {
+    return fs.readFileSync(anchorFile(dir), 'utf8').split('\n').filter(Boolean).flatMap((l) => { try { return [JSON.parse(l) as Anchor]; } catch { return []; } });
+  } catch { return []; }
+}
+
+function shipAnchor(a: Anchor): void {
+  const cmd = process.env.CAIRN_AUDIT_ANCHOR_CMD;
+  if (!cmd) return;
+  try {
+    execFileSync('/bin/sh', ['-c', cmd], { input: JSON.stringify(a) + '\n', timeout: 10_000, stdio: ['pipe', 'ignore', 'ignore'] });
+  } catch (err) {
+    process.stderr.write(`cairn: audit anchor ship failed (kept locally): ${(err as Error).message}\n`);
+  }
+}
+
+/** Checkpoint the current chain head as an anchor: chain it, append it, and ship
+ * it off-box. Returns the anchor, or null when there is nothing to anchor or the
+ * head is already anchored. Runs under the same lock as append. */
+export function anchorHead(dir: string): Anchor | null {
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    return withAuditLock(dir, () => {
+      const tail = diskHead(dir);
+      if (tail.empty || tail.seq === 0) return null;
+      const existing = readAnchors(dir);
+      const prevAnchorHash = existing.length ? existing[existing.length - 1].anchorHash : GENESIS;
+      if (existing.length && existing[existing.length - 1].seq === tail.seq && existing[existing.length - 1].hash === tail.hash) return existing[existing.length - 1]; // head unchanged since last anchor
+      const at = new Date().toISOString();
+      const anchor: Anchor = { seq: tail.seq, hash: tail.hash, at, prevAnchorHash, anchorHash: anchorChainHash(prevAnchorHash, { seq: tail.seq, hash: tail.hash, at }) };
+      let lead = '';
+      try { const b = fs.readFileSync(anchorFile(dir)); if (b.length && b[b.length - 1] !== 0x0a) lead = '\n'; } catch { /* no file yet */ }
+      fs.appendFileSync(anchorFile(dir), lead + JSON.stringify(anchor) + '\n');
+      shipAnchor(anchor);
+      return anchor;
+    });
+  } catch (err) {
+    process.stderr.write(`cairn: could not write audit anchor: ${(err as Error).message}\n`);
+    return null;
   }
 }
 
@@ -315,16 +418,38 @@ export interface AuditVerdict {
 }
 
 /** Re-walk the chain and confirm every hash. Detects any edit, deletion, or
- * reordering of committed entries. */
-export function verifyAudit(dir: string): AuditVerdict {
+ * reordering of committed entries — and, via the head sidecar and the anchors,
+ * a whole-file rewrite or a tail truncation that the in-file chain alone cannot
+ * see. Pass `against` to require the live chain to still match anchors an
+ * operator is holding OFF the box (the real defense against a box-level
+ * attacker): each is `{ seq, hash }` from a `cairn:audit-log anchor` they saved
+ * elsewhere. */
+export function verifyAudit(dir: string, opts: { against?: { seq: number; hash: string }[] } = {}): AuditVerdict {
   let lines: string[];
   try {
     lines = fs.readFileSync(auditFile(dir), 'utf8').split('\n').filter(Boolean);
   } catch {
     return { ok: true, entries: 0, detail: 'no audit log yet' };
   }
+
+  // What the chain must match: local anchors (verified as a chain first), any
+  // externally-held anchors, and the head sidecar. Keyed by seq → expected hash.
+  const expectAtSeq = new Map<number, string>();
+  const anchors = readAnchors(dir);
+  let prevA = GENESIS;
+  for (let i = 0; i < anchors.length; i++) {
+    const a = anchors[i];
+    if (a.prevAnchorHash !== prevA || anchorChainHash(prevA, { seq: a.seq, hash: a.hash, at: a.at }) !== a.anchorHash) {
+      return { ok: false, entries: 0, detail: `the anchor log is inconsistent at anchor #${i + 1} — anchors were tampered with` };
+    }
+    expectAtSeq.set(a.seq, a.hash);
+    prevA = a.anchorHash;
+  }
+  for (const ext of opts.against ?? []) expectAtSeq.set(ext.seq, ext.hash);
+
   let prev = GENESIS;
   let expectedSeq = 1;
+  let lastSeq = 0;
   for (let i = 0; i < lines.length; i++) {
     let e: AuditEntry;
     try { e = JSON.parse(lines[i]) as AuditEntry; } catch { return { ok: false, entries: i, brokenAt: i + 1, detail: 'line is not JSON' }; }
@@ -332,9 +457,26 @@ export function verifyAudit(dir: string): AuditVerdict {
     if (e.seq !== expectedSeq) return { ok: false, entries: i, brokenAt: i + 1, detail: `seq ${e.seq} out of order (expected ${expectedSeq})` };
     const recomputed = chainHash(prev, { seq: e.seq, at: e.at, principal: e.principal, decision: e.decision, server: e.server, tool: e.tool, reason: e.reason, session: e.session, agent: e.agent });
     if (recomputed !== e.hash) return { ok: false, entries: i, brokenAt: i + 1, detail: 'hash does not match contents (entry was edited)' };
+    const anchored = expectAtSeq.get(e.seq);
+    if (anchored !== undefined && anchored !== e.hash) return { ok: false, entries: i, brokenAt: i + 1, detail: `entry at seq ${e.seq} does not match a published anchor — the log was rewritten` };
     prev = e.hash;
+    lastSeq = e.seq;
     expectedSeq += 1;
   }
+
+  // A truncation drops the TAIL, which still verifies clean above. Catch it two
+  // ways: an anchor (local or external) for a seq beyond the current end, and
+  // the head sidecar recording a seq we no longer reach.
+  for (const [seq, hash] of expectAtSeq) {
+    if (seq > lastSeq) return { ok: false, entries: lines.length, detail: `the log ends at seq ${lastSeq} but a published anchor exists for seq ${seq} — entries were truncated` };
+    void hash;
+  }
+  const sc = readHeadSidecar(dir);
+  if (sc && typeof sc.seq === 'number') {
+    if (sc.seq > lastSeq) return { ok: false, entries: lines.length, detail: `the recorded head is seq ${sc.seq} but the log ends at seq ${lastSeq} — entries were truncated` };
+    if (sc.seq === lastSeq && sc.hash !== prev) return { ok: false, entries: lines.length, detail: 'the recorded head hash does not match the log tail — the log was rewritten' };
+  }
+
   return { ok: true, entries: lines.length };
 }
 
