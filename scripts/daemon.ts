@@ -23,6 +23,7 @@ import os from 'os';
 import path from 'path';
 import { selfUpdate, describeUpdate, repoRoot } from '../src/lib/cairn/selfUpdate';
 import { verifyAudit, anchorHead, readAnchors, rotateAudit, readOrgPolicy } from '../src/lib/cairn/enterprise';
+import { setCairnHome } from '../src/lib/cairn/home';
 
 const argv = process.argv.slice(2);
 function opt(name: string): string | undefined {
@@ -33,6 +34,17 @@ const expand = (p: string) => (p.startsWith('~') ? path.join(os.homedir(), p.sli
 
 const homeRaw = opt('home') ?? process.env.CAIRN_HOME;
 const home = homeRaw ? path.resolve(expand(homeRaw)) : undefined;
+/*
+ * Point every in-process corpus lookup at --home, not only the child ticks.
+ * `home` was threaded into the trigger's argv and env, but this process's OWN
+ * calls — readOrgPolicy() in the self-update path, via homePath() — resolved
+ * against the checkout the daemon was started from. On a governed box run as
+ * `cairn:daemon --home ~/pilot`, that read the CHECKOUT's (absent) policy,
+ * status `none`, and dropped the signing requirement the pilot's policy imposes
+ * — an unsigned fast-forward on exactly the deployment that must never take
+ * one. setCairnHome resets the memo and the env together (see home.ts).
+ */
+if (home) setCairnHome(home);
 /*
  * Seconds between ticks. Min 1 so a test can drive it fast; a person uses 300.
  * A non-numeric value (a typo, `CAIRN_DAEMON_INTERVAL=5m`) must fall back to the
@@ -156,7 +168,15 @@ function maybeVerifyAudit(): void {
     // off-box) until an operator, having checked their off-box anchors, removes the
     // review marker. A legitimate CLI offload trips this exactly once.
     const bridgeMarker = path.join(dir, 'BRIDGE-REVIEW.json');
-    const curBridges = new Set((v.bridged ?? []).map((b) => b.file));
+    // Keyed on the full bridged RANGE, not the filename: an attacker who keeps a
+    // legitimately-offloaded record's `file` but stretches its lastSeq/lastHash
+    // to a later real boundary (deleting the archives in between) would present
+    // the same filename this daemon acknowledged at boot and never read as novel.
+    // verifyAudit now refuses a record whose range its filename does not encode,
+    // but the daemon must not depend on that alone — a changed boundary IS a
+    // new bridge, whatever the file is called.
+    const bridgeKey = (b: NonNullable<typeof v.bridged>[number]) => `${b.file}:${b.firstSeq}:${b.lastSeq}:${b.lastHash}`;
+    const curBridges = new Set((v.bridged ?? []).map(bridgeKey));
     if (ackBridges === null) {
       ackBridges = curBridges; // first tick trusts the on-disk state
     } else {

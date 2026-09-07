@@ -60,6 +60,33 @@ test('it ticks repeatedly on the interval, then exits cleanly on SIGTERM', async
   }
 });
 
+/*
+ * The audit-monitor guards are structural: exercising them live needs two verify
+ * ticks a minute apart, so the shape is pinned in the source instead (the same
+ * way gateway-transparency pins the proxy's debounce). A refactor that keys the
+ * acknowledged-bridge set on the filename again, or drops setCairnHome, is caught.
+ */
+test('the novel-bridge guard keys on the full bridged range, not the archive filename', () => {
+  const src = fs.readFileSync(SCRIPT, 'utf8');
+  // A box-write attacker who keeps an acknowledged record's `file` but stretches
+  // its lastSeq/lastHash to a later boundary must read as a NOVEL bridge.
+  assert.match(src, /`\$\{b\.file\}:\$\{b\.firstSeq\}:\$\{b\.lastSeq\}:\$\{b\.lastHash\}`/, 'the bridge key carries file, range and boundary hash');
+  assert.match(src, /new Set\(\(v\.bridged \?\? \[\]\)\.map\(bridgeKey\)\)/, 'and the acknowledged set is built from that key');
+  assert.doesNotMatch(src, /\.map\(\(b\) => b\.file\)/, 'no bridge set is keyed on the filename alone');
+});
+
+test('--home governs the daemon\'s OWN policy reads, not only the ticks it spawns', () => {
+  // readOrgPolicy() in the self-update path goes through homePath(); without
+  // setCairnHome the daemon read the CHECKOUT's policy (status none) and dropped
+  // the signing requirement on a governed --home box.
+  const src = fs.readFileSync(SCRIPT, 'utf8');
+  assert.match(src, /import \{ setCairnHome \} from '\.\.\/src\/lib\/cairn\/home';/, 'setCairnHome is imported');
+  assert.match(src, /\nif \(home\) setCairnHome\(home\);/, 'and called at start, guarded for an unset home');
+  const call = src.indexOf('\nif (home) setCairnHome(home);');
+  const firstUse = src.indexOf('readOrgPolicy().status'); // the call, not a mention in a comment
+  assert.ok(call !== -1 && firstUse !== -1 && call < firstUse, 'it runs before the first policy read');
+});
+
 test('the first tick fires immediately, not only after one interval', async () => {
   /* A 300s default must still do useful work at once on boot — the loop ticks
    * before it sleeps. Use a long interval so only the eager first tick can land. */

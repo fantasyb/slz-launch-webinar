@@ -26,7 +26,7 @@
  */
 import fs from 'fs';
 import path from 'path';
-import { createHash, randomBytes } from 'crypto';
+import { createHash, createHmac, randomBytes } from 'crypto';
 import { execFileSync } from 'child_process';
 import { homePath } from './home';
 import { readsAsWrite, foldName, type Annotations } from './toolsurface';
@@ -246,10 +246,18 @@ export function authorize(
     }
   } else if (role.readOnly) {
     const declaredWrite = tool.annotations?.readOnlyHint === false || tool.annotations?.destructiveHint === true;
-    // Classify the RAW name too, not only the exposed `server__raw` one: otherwise
-    // a server NAMED with a read verb (e.g. `search`) makes its leading token a read
-    // and masks a raw write tool whose verb only prefix-matches (red-team #7).
-    const namedWrite = [tool.name, ...(tool.aliases ?? [])].some((n) => readsAsWrite(n));
+    // Classify the tool's OWN name, never the server's. The exposed name is
+    // `${server}__${raw}`, so classifying it whole makes the server name the
+    // leading token: a server called `zapier` (zap), `dropbox` (drop), `postgres`
+    // (post), `sendgrid` (send), `runpod` (run) or `pushover` (push) turned EVERY
+    // one of its tools into a write for a read-only role, and a server named with
+    // a read verb (`search`) masked a raw write whose verb only prefix-matches
+    // (red-team #7). Strip a leading `${server}__` from the exposed name and
+    // classify that plus the raw aliases; the fail-closed direction is kept — a
+    // genuine write verb in the tool's own name still denies.
+    const prefix = `${server}__`;
+    const ownName = tool.name.startsWith(prefix) ? tool.name.slice(prefix.length) : tool.name;
+    const namedWrite = [ownName, ...(tool.aliases ?? [])].some((n) => readsAsWrite(n));
     if (declaredWrite || namedWrite) return { allowed: false, reason: `role "${principal.role}" is read-only; "${tool.name}" reads as a write` };
   }
   return { allowed: true, reason: 'permitted by role' };
@@ -402,33 +410,99 @@ type SpillRow = { at?: string; principal: string; decision: AuditDecision; serve
  * die with its key — unfoldable, so dropped rather than laundered.
  */
 const SPILL_KEY = randomBytes(32);
-const spillHmac = (row: string): string => createHash('sha256').update(SPILL_KEY).update('\n').update(row).digest('hex');
+/*
+ * A per-row MAC is not enough on its own. The spill file is writable by any
+ * process with this UID, and a same-box squatter can force EVERY append to spill
+ * by planting an always-alive pid (`1:x`) in audit.lock — tryBreakStaleLock never
+ * breaks a live pid. It can then delete, reorder or duplicate spill lines, each
+ * still carrying a valid MAC, or unlink the file, and the fold would chain
+ * whatever survived with fresh seqs: audit rows vanishing with no signal. So
+ * each row carries a per-process MONOTONIC counter INSIDE the MAC, and the fold
+ * requires exactly lastFolded+1..lastWritten, in order — a gap, a duplicate, a
+ * reorder, or a vanished file is a discontinuity, folded as far as the rows are
+ * authentic and ALARMED (stderr, and a chained `error` row so the gap is in the
+ * log itself). The high-water marks live in memory beside the key, per audit
+ * dir, so the attacker cannot move them.
+ */
+const spillCounters = new Map<string, { written: number; folded: number }>();
+const spillState = (dir: string) => { let s = spillCounters.get(dir); if (!s) { s = { written: 0, folded: 0 }; spillCounters.set(dir, s); } return s; };
+const spillHmac = (n: number, row: string): string => createHmac('sha256', SPILL_KEY).update(String(n)).update('\n').update(row).digest('hex');
 function spillRow(dir: string, e: SpillRow): void {
+  const st = spillState(dir);
   try {
     const row = JSON.stringify({ ...e, at: e.at ?? new Date().toISOString() });
-    fs.appendFileSync(spillPath(dir), JSON.stringify({ row, hmac: spillHmac(row) }) + '\n');
+    const n = st.written + 1;
+    fs.appendFileSync(spillPath(dir), JSON.stringify({ n, row, hmac: spillHmac(n, row) }) + '\n');
+    // Advanced only once the line is on disk: a failed write leaves no phantom
+    // counter for the fold to alarm on (the torn line it may leave is dropped as
+    // corrupt, and the counter is reused).
+    st.written = n;
   } catch (err) { process.stderr.write(`cairn-proxy: could not spill audit entry: ${(err as Error).message}\n`); }
 }
+/** A spill discontinuity is never swallowed: loud on stderr AND written into
+ * the chain as a system `error` row, so a SIEM reading the log sees the gap
+ * where it happened. MUST run under the lock (it appends). */
+function spillAlarm(dir: string, detail: string): void {
+  process.stderr.write(`cairn-proxy: AUDIT ALARM — ${detail}\n`);
+  try { appendChained(dir, { principal: 'system', decision: 'error', reason: `audit spill discontinuity: ${detail}` }); } catch { /* the stderr line is the primary signal */ }
+}
 /** Fold THIS process's own spilled rows into the chain, verifying each against
- * the in-memory key. MUST run under the lock. Orphaned spill files from other
- * (dead) processes are garbage-collected but never folded — they cannot be
- * authenticated, so folding them would launder unauthenticated input. */
+ * the in-memory key AND the counter sequence. MUST run under the lock. Orphaned
+ * spill files from other (dead) processes are garbage-collected but never folded
+ * — they cannot be authenticated, so folding them would launder unauthenticated
+ * input. */
 function foldSpills(dir: string): void {
   const own = spillPath(dir);
-  try {
-    const rows = fs.readFileSync(own, 'utf8').split('\n').filter(Boolean).flatMap((l) => {
+  const st = spillState(dir);
+  // The counters this process has spilled and not yet folded: exactly what the
+  // file must contain, in this order, and nothing else authentic.
+  const want: number[] = [];
+  for (let n = st.folded + 1; n <= st.written; n++) want.push(n);
+  let text: string | null = null;
+  try { text = fs.readFileSync(own, 'utf8'); } catch { text = null; }
+  if (text === null) {
+    // No file. Fine when nothing is outstanding; a vanished file with rows
+    // outstanding is the squatter's unlink — alarm, and move the mark past them
+    // so the alarm fires once rather than on every fold forever.
+    if (want.length) spillAlarm(dir, `own spill file audit.spill.${process.pid}.jsonl is gone with ${want.length} row(s) unfolded (counters ${want[0]}-${want[want.length - 1]}) — deleted by another process`);
+    st.folded = st.written;
+  } else {
+    const authentic: { n: number; row: SpillRow }[] = [];
+    let dropped = 0;
+    for (const l of text.split('\n').filter(Boolean)) {
       try {
         const rec = JSON.parse(l);
-        if (!isObj(rec) || typeof rec.row !== 'string' || rec.hmac !== spillHmac(rec.row)) return []; // forged or corrupt: drop
+        if (!isObj(rec) || typeof rec.row !== 'string' || !Number.isInteger(rec.n) || rec.hmac !== spillHmac(rec.n as number, rec.row)) { dropped++; continue; } // forged or corrupt: drop
         const r = JSON.parse(rec.row);
-        return isObj(r) ? [r as SpillRow] : [];
-      } catch { return []; }
-    });
-    for (const r of rows) appendChained(dir, r);
-    fs.unlinkSync(own);
-  } catch { /* no own spill file, or it vanished: nothing to fold */ }
-  // GC orphaned spill files from OTHER pids that are no longer alive and are
-  // stale — leftovers from crashes. Never fold them; just reclaim the space.
+        if (isObj(r)) authentic.push({ n: rec.n as number, row: r as SpillRow }); else dropped++;
+      } catch { dropped++; }
+    }
+    const got = authentic.map((a) => a.n);
+    const contiguous = got.length === want.length && got.every((n, i) => n === want[i]);
+    if (contiguous) {
+      for (const a of authentic) appendChained(dir, a.row);
+    } else {
+      // Fold what is authentic and outstanding, once each, in counter order —
+      // the rows are genuinely ours and are not lost — then record the gap.
+      const seen = new Set<number>();
+      const ordered = authentic.filter((a) => a.n > st.folded && a.n <= st.written && !seen.has(a.n) && (seen.add(a.n), true)).sort((a, b) => a.n - b.n);
+      for (const a of ordered) appendChained(dir, a.row);
+      const missing = want.filter((n) => !seen.has(n));
+      const list = (ns: number[]) => (ns.length > 20 ? `${ns.slice(0, 20).join(',')},… (${ns.length})` : ns.join(','));
+      spillAlarm(dir, `own spill file audit.spill.${process.pid}.jsonl was edited by another process: expected counters ${want.length ? `${want[0]}-${want[want.length - 1]}` : 'none'} in order, found [${list(got)}]; missing [${list(missing)}]`);
+    }
+    if (dropped) process.stderr.write(`cairn-proxy: dropped ${dropped} unauthenticated or corrupt spill line(s) in audit.spill.${process.pid}.jsonl (not written by this process)\n`);
+    st.folded = st.written;
+    try { fs.unlinkSync(own); } catch { /* raced or unwritable: the next fold sees only duplicates and alarms */ }
+  }
+  // GC orphaned spill files from OTHER pids that are provably DEAD and stale.
+  // Never fold them; just reclaim the space. Only a 'dead' pid qualifies, never
+  // 'unknown' (ESRCH): on a shared volume that is a live holder in ANOTHER pid
+  // namespace, and its spill — which its own fold now checks for continuity —
+  // would be unlinked from under it after a minute of quiet, turning our GC into
+  // exactly the "vanished spill file" alarm it raises. A crashed process's spill
+  // therefore stays on disk; it is small, unfoldable by anyone, and a trace of
+  // the crash rather than a hole in the log.
   try {
     for (const f of fs.readdirSync(dir)) {
       const m = /^audit\.spill\.(\d+)\.jsonl$/.exec(f);
@@ -436,15 +510,68 @@ function foldSpills(dir: string): void {
       const fp = path.join(dir, f);
       try {
         const st = fs.statSync(fp);
-        if (pidLiveness(Number(m[1])) !== 'alive' && Date.now() - st.mtimeMs > LOCK_STALE_MS * 4) fs.unlinkSync(fp);
+        if (pidLiveness(Number(m[1])) === 'dead' && Date.now() - st.mtimeMs > LOCK_STALE_MS * 4) fs.unlinkSync(fp);
       } catch { /* raced */ }
     }
   } catch { /* dir unreadable */ }
 }
 
+const parsesAsObject = (line: string): boolean => { try { return isObj(JSON.parse(line)); } catch { return false; } };
+
+/**
+ * A crash- or ENOSPC-torn trailing line: the bytes after the file's last '\n'
+ * are non-empty and do not parse as a JSON object. Every write here is a prefix
+ * of `<json>\n`, so a torn write is always UNTERMINATED — a newline-terminated
+ * garbage line is not a torn write and is never treated as one. Returns the
+ * offset of the end of the last complete line (what the file should be
+ * truncated to), or -1 when the tail is not torn — including when the
+ * unterminated last line IS a complete entry (a crash between the JSON and its
+ * newline), which must be kept. Bounded tail read, like diskHead.
+ */
+function tornTailOffset(file: string): number {
+  try {
+    const fd = fs.openSync(file, 'r');
+    try {
+      const size = fs.fstatSync(fd).size;
+      if (size === 0) return -1;
+      const want = Math.min(65536, size);
+      let buf = Buffer.alloc(want);
+      fs.readSync(fd, buf, 0, want, size - want);
+      if (buf[want - 1] === 0x0a) return -1; // newline-terminated: not torn
+      let nl = buf.lastIndexOf(0x0a);
+      let base = size - want;
+      if (nl === -1 && want < size) { buf = fs.readFileSync(file); nl = buf.lastIndexOf(0x0a); base = 0; } // one very long line: full read
+      if (parsesAsObject(buf.subarray(nl + 1).toString('utf8'))) return -1;
+      return base + nl + 1;
+    } finally { fs.closeSync(fd); }
+  } catch { return -1; }
+}
+
+/**
+ * Truncate a torn trailing line so the file ends on its last complete entry.
+ * MUST run under the lock. Before this, appendChained wrote PAST the torn line
+ * (a leading '\n'), which kept the chain continuous but left the fragment in
+ * the file as an interior unparseable line: verify reported CHAIN BROKEN at it
+ * forever, anchorHead/rotateAudit/the daemon refused until someone hand-edited
+ * the log, and a tenant could induce the whole state with one ENOSPC. Nothing
+ * a verifier relies on is removed: the fragment was never a chained entry, and
+ * a deliberate truncation INTO the last real entry is still caught by the head
+ * sidecar and the anchors (the chain then ends below a checkpoint).
+ */
+function healTornTail(file: string): boolean {
+  const at = tornTailOffset(file);
+  if (at < 0) return false;
+  try {
+    fs.truncateSync(file, at);
+    process.stderr.write(`cairn: truncated a torn trailing line in ${path.basename(file)} (a crash or ENOSPC mid-write); the chain resumes from the last complete entry\n`);
+    return true;
+  } catch { return false; }
+}
+
 /** The raw chained append. MUST run under the lock: it reads the true disk head
  * and writes exactly one entry. */
 function appendChained(dir: string, e: SpillRow): void {
+  healTornTail(auditFile(dir));
   const tail = diskHead(dir);
   const seq = tail.seq + 1;
   // Cap client-/upstream-controlled fields so one entry cannot be made huge (an
@@ -678,6 +805,10 @@ export function anchorHead(dir: string): Anchor | null {
     fs.mkdirSync(dir, { recursive: true });
     const r = withAuditLock(dir, (): Anchor | { skip: string } | null => {
       foldSpills(dir);
+      // A torn trailing line in either file (a crash mid-write) is healed here,
+      // under the lock, so it never becomes a permanent refusal to anchor.
+      healTornTail(auditFile(dir));
+      healTornTail(anchorFile(dir));
       // Never anchor a broken log: an anchor of a forgery launders it into the
       // trust root. Verify under the lock so no append moves the head first. This
       // is an on-box LIVENESS check with no off-box anchors to pass, so it bridges
@@ -723,8 +854,10 @@ export interface AuditVerdict {
   brokenAt?: number;
   detail?: string;
   /** Off-loaded archives trusted by an off-box boundary anchor rather than
-   * walked on the box — the interior was not re-hashed here. */
-  bridged?: { file: string; firstSeq: number; lastSeq: number }[];
+   * walked on the box — the interior was not re-hashed here. lastHash is
+   * included so a watcher (the daemon) can key on the full bridged RANGE, not
+   * the filename alone. */
+  bridged?: { file: string; firstSeq: number; lastSeq: number; lastHash: string }[];
 }
 
 export interface RotateResult {
@@ -772,6 +905,7 @@ export function rotateAudit(dir: string): RotateResult {
   }
   const r = withAuditLock(dir, (): RotateResult => {
     foldSpills(dir);
+    healTornTail(auditFile(dir)); // never archive a torn fragment as an interior line
     // On-box liveness check (no off-box anchors here): bridge DECLARED offloads so
     // rotation is not permanently disabled once an archive is offloaded (Fable-6 #2).
     const v = verifyAudit(dir, { trustDeclaredOffload: true });
@@ -938,7 +1072,13 @@ export function verifyAudit(dir: string, opts: { against?: { seq: number; hash: 
   // so corrupting the last anchor line reads exactly like deleting it — silently.
   // A non-empty anchor line that is not a JSON object is tampering, not a skip.
   try {
-    const rawAnchorLines = fs.readFileSync(anchorFile(dir), 'utf8').split('\n').filter(Boolean);
+    const rawAnchors = fs.readFileSync(anchorFile(dir), 'utf8');
+    const rawAnchorLines = rawAnchors.split('\n').filter(Boolean);
+    // One UNTERMINATED, unparseable LAST line is a torn anchor write (a crash
+    // mid-append), not tampering: it was never a complete anchor, readAnchors
+    // already drops it, and the next anchorHead truncates it under the lock. A
+    // newline-terminated garbage line, or garbage anywhere else, stays tampering.
+    if (rawAnchorLines.length && !rawAnchors.endsWith('\n') && !parsesAsObject(rawAnchorLines[rawAnchorLines.length - 1])) rawAnchorLines.pop();
     for (let i = 0; i < rawAnchorLines.length; i++) {
       let parsed: unknown;
       try { parsed = JSON.parse(rawAnchorLines[i]); } catch { return { ok: false, entries: 0, detail: `the anchor log has a malformed line (#${i + 1}) — anchors were tampered with` }; }
@@ -993,7 +1133,7 @@ export function verifyAudit(dir: string, opts: { against?: { seq: number; hash: 
   // boundary to trust — the live segment's first entry chains from the archived
   // head via a real marker entry, and each archive must chain from the previous.
   const matched = new Set<number>();
-  const bridged: { file: string; firstSeq: number; lastSeq: number }[] = []; // archives trusted by an off-box boundary anchor, not walked
+  const bridged: { file: string; firstSeq: number; lastSeq: number; lastHash: string }[] = []; // archives trusted by an off-box boundary anchor, not walked
   const st = { prev: GENESIS, expectedSeq: 1, lastSeq: 0 };
   const walk = (lines: string[], where: string): AuditVerdict | null => {
     for (let i = 0; i < lines.length; i++) {
@@ -1023,6 +1163,18 @@ export function verifyAudit(dir: string, opts: { against?: { seq: number; hash: 
   };
 
   for (const seg of readSegments(dir)) {
+    // The archive FILENAME encodes the true range — rotateAudit always names it
+    // `audit.<first>-<last>.jsonl` — so a manifest record whose firstSeq/lastSeq
+    // disagree with its own `file` was rewritten after the fact. Without this
+    // check a box-write attacker who legitimately offloaded audit.1-10.jsonl
+    // could stretch that ONE record's lastSeq/lastHash to a later real (shipped)
+    // boundary, delete the intervening archives and their records, and have both
+    // the liveness and the authoritative verify bridge the whole 1-30 range as a
+    // single declared offload — history deleted, no alarm. Checked BEFORE the
+    // file is read, so a present archive under a stretched record fails too.
+    if (!Number.isInteger(seg.firstSeq) || !Number.isInteger(seg.lastSeq) || seg.file !== `audit.${seg.firstSeq}-${seg.lastSeq}.jsonl`) {
+      return { ok: false, entries: st.lastSeq, detail: `manifest record for ${seg.file} claims seq ${seg.firstSeq}-${seg.lastSeq}, which its filename does not encode — the segment manifest was rewritten` };
+    }
     let alines: string[] | null = null;
     try { alines = fs.readFileSync(path.join(dir, seg.file), 'utf8').split('\n').filter(Boolean); } catch { alines = null; }
     if (alines) {
@@ -1089,13 +1241,28 @@ export function verifyAudit(dir: string, opts: { against?: { seq: number; hash: 
       // determined by the boundary chain the external anchor pins, so mark every
       // expected seq in the segment's range as matched (bridged, not re-verified).
       for (const [seq] of expectAtSeq) if (seq >= seg.firstSeq && seq <= seg.lastSeq) matched.add(seq);
-      bridged.push({ file: seg.file, firstSeq: seg.firstSeq, lastSeq: seg.lastSeq });
+      bridged.push({ file: seg.file, firstSeq: seg.firstSeq, lastSeq: seg.lastSeq, lastHash: seg.lastHash });
       st.prev = seg.lastHash; st.expectedSeq = seg.lastSeq + 1; st.lastSeq = seg.lastSeq;
     }
   }
 
   let live: string[];
-  try { live = fs.readFileSync(auditFile(dir), 'utf8').split('\n').filter(Boolean); } catch { live = []; }
+  let tornLive = false;
+  try {
+    const raw = fs.readFileSync(auditFile(dir), 'utf8');
+    live = raw.split('\n').filter(Boolean);
+    // A SINGLE unterminated, unparseable LAST line is a torn write — a crash or
+    // ENOSPC mid-append — not an edit: every append is a prefix of `<json>\n`, so a
+    // torn one never ends in a newline, and it was never a chained entry (the
+    // sidecar is written only after a complete line). It is set aside here and
+    // truncated by the next locked write. This cannot mask a deletion: it applies
+    // only to the last line, an interior fragment still fails at its line, and a
+    // truncation INTO the last real entry leaves the chain ending below the head
+    // sidecar / an anchor, which the checkpoint pass below reports. Before this,
+    // one torn line was a permanent CHAIN BROKEN that halted anchoring, rotation
+    // and the daemon until the log was hand-edited.
+    if (live.length && !raw.endsWith('\n') && !parsesAsObject(live[live.length - 1])) { live.pop(); tornLive = true; }
+  } catch { live = []; }
   const liveResult = walk(live, 'live segment');
   if (liveResult) return liveResult;
 
@@ -1109,10 +1276,12 @@ export function verifyAudit(dir: string, opts: { against?: { seq: number; hash: 
   // Distinguish "walked and hash-checked" from "trusted by an off-box boundary
   // anchor" (an offloaded archive): the operator should know an interior range was
   // not re-hashed on the box, only pinned at its boundary.
-  const detail = bridged.length
-    ? `bridged ${bridged.length} off-loaded archive(s)${opts.trustDeclaredOffload ? ' (declared offload, not re-hashed on the box)' : ' via off-box anchors'}: ${bridged.map((b) => `${b.file} (seq ${b.firstSeq}-${b.lastSeq})`).join(', ')}`
-    : undefined;
-  return { ok: true, entries: st.lastSeq, bridged, detail };
+  const notes: string[] = [];
+  if (bridged.length) notes.push(`bridged ${bridged.length} off-loaded archive(s)${opts.trustDeclaredOffload ? ' (declared offload, not re-hashed on the box)' : ' via off-box anchors'}: ${bridged.map((b) => `${b.file} (seq ${b.firstSeq}-${b.lastSeq})`).join(', ')}`);
+  // Said out loud, not hidden: an operator should know the file carries a torn
+  // fragment until the next write truncates it.
+  if (tornLive) notes.push('the live segment ends in a torn, unterminated line (a crash or ENOSPC mid-append); it is not a chained entry and the next locked write truncates it');
+  return { ok: true, entries: st.lastSeq, bridged, detail: notes.length ? notes.join('; ') : undefined };
 }
 
 export function readAudit(dir: string, limit?: number): AuditEntry[] {

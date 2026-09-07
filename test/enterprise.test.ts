@@ -205,6 +205,32 @@ test('read-only now denies the write verbs the old wordlist missed', () => {
   assert.equal(authorize(p, alice, 'sf', { name: 'list_users' }).allowed, true, 'a list passes');
 });
 
+test('a read-only role classifies the TOOL name, not the server name that prefixes it', () => {
+  const p = policy();
+  const ro = { id: 'r', role: 'readonly' };
+  // A server whose NAME starts with a write verb (zap/drop/post/send/run/push)
+  // used to make every one of its tools read as a write.
+  for (const [server, read, write] of [
+    ['zapier', 'list_zaps', 'delete_zap'],
+    ['dropbox', 'list_folder', 'move_file'],
+    ['postgres', 'describe_table', 'execute_sql'],
+    ['sendgrid', 'get_stats', 'send_mail'],
+    ['runpod', 'get_pod', 'terminate_pod'],
+    ['pushover', 'list_devices', 'push_message'],
+  ] as const) {
+    const exposed = (raw: string) => ({ name: `${server}__${raw}`, aliases: [raw] });
+    assert.equal(authorize(p, ro, server, exposed(read)).allowed, true, `${server}__${read} is a read`);
+    assert.equal(authorize(p, ro, server, exposed(write)).allowed, false, `${server}__${write} is still a write`);
+  }
+  // The fail-closed direction survives: a raw write masked by a READ-verb server
+  // name (red-team #7) is still a write, via the raw alias and the stripped name.
+  assert.equal(authorize(p, ro, 'search', { name: 'search__delete_index', aliases: ['delete_index'] }).allowed, false);
+  assert.equal(authorize(p, ro, 'search', { name: 'search__delete_index' }).allowed, false, 'even with no alias, the stripped name is classified');
+  // Single-upstream gateways expose the raw name unprefixed: unchanged.
+  assert.equal(authorize(p, ro, 'zapier', { name: 'list_zaps' }).allowed, true);
+  assert.equal(authorize(p, ro, 'zapier', { name: 'delete_zap' }).allowed, false);
+});
+
 test('a prototype-polluting role name authorizes nothing (fails closed)', () => {
   const p = policy();
   for (const role of ['__proto__', 'constructor', 'toString', 'hasOwnProperty']) {
@@ -218,6 +244,16 @@ test('a prototype-polluting role name authorizes nothing (fails closed)', () => 
 function freshDir(): string {
   _resetAuditCache();
   return fs.mkdtempSync(path.join(os.tmpdir(), 'cairn-audit-'));
+}
+
+/** Run `fn` with process.stderr captured, so an alarm the code is REQUIRED to
+ * raise can be asserted rather than scrolled past. */
+function captureStderr(fn: () => void): string {
+  const orig = process.stderr.write;
+  let out = '';
+  process.stderr.write = ((chunk: unknown) => { out += String(chunk); return true; }) as typeof process.stderr.write;
+  try { fn(); } finally { process.stderr.write = orig; }
+  return out;
 }
 
 test('an empty log verifies, and appends chain and verify', () => {
@@ -280,8 +316,94 @@ test('a partial trailing line does not restart the chain at genesis (crash recov
   const entries = readAudit(dir);
   const real = entries.filter((e) => e.tool);
   assert.equal(real[real.length - 1].seq, 3, 'the recovered append continues the chain at seq 3, not 1');
-  // verify flags the garbage line (corruption IS detected) rather than hiding it.
-  assert.equal(verifyAudit(dir).ok, false, 'the corrupt tail line is reported by verify');
+  // The torn fragment was TRUNCATED under the lock before the append (it was
+  // never a chained entry), so the log is clean afterwards — not a permanent
+  // CHAIN BROKEN that only a hand-edit could clear. Interior corruption is still
+  // caught: see the torn-tail test below.
+  assert.equal(verifyAudit(dir).ok, true, 'the healed log verifies');
+  assert.ok(!fsReal.readFileSync(file, 'utf8').includes('"at":"2026\n'), 'the fragment is gone, not written past');
+});
+
+test('a crash-torn trailing line is tolerated and self-heals; interior or newline-terminated garbage is still CHAIN BROKEN', () => {
+  // Torn tail on the LIVE log: verify says so, but does not call it tampering,
+  // and anchorHead/rotateAudit/the next append are not blocked by it.
+  const dir = freshDir();
+  appendAudit(dir, { principal: 'a', decision: 'call', server: 's', tool: 't1' });
+  appendAudit(dir, { principal: 'a', decision: 'call', server: 's', tool: 't2' });
+  const file = pathReal.join(dir, 'audit.jsonl');
+  fsReal.appendFileSync(file, '{"seq":3,"at":"2026'); // unterminated, unparseable: exactly what ENOSPC leaves
+  _resetAuditCache();
+  const torn = verifyAudit(dir);
+  assert.equal(torn.ok, true, `a torn tail is a crash, not a tamper: ${torn.detail ?? ''}`);
+  assert.match(torn.detail ?? '', /torn, unterminated line/, 'and it is reported, not hidden');
+  const a = anchorHead(dir);
+  assert.ok(a && a.seq === 2, 'anchoring is not refused by a torn tail');
+  assert.ok(fsReal.readFileSync(file, 'utf8').endsWith('\n'), 'anchorHead healed the tail under the lock');
+  appendAudit(dir, { principal: 'a', decision: 'call', server: 's', tool: 't3' });
+  const healed = verifyAudit(dir);
+  assert.equal(healed.ok, true);
+  assert.doesNotMatch(healed.detail ?? '', /torn/, 'nothing left to report once healed');
+  assert.deepEqual(readAudit(dir).map((e) => e.seq), [1, 2, 3]);
+
+  // A newline-TERMINATED garbage last line is not a torn write (every write is a
+  // prefix of `<json>\n`), so it is still tampering.
+  fsReal.appendFileSync(file, 'this is not json\n');
+  _resetAuditCache();
+  assert.equal(verifyAudit(dir).ok, false, 'terminated garbage on the tail is still CHAIN BROKEN');
+
+  // Interior corruption — a fragment that is not the last line — is still caught,
+  // at its line, whether or not the file ends cleanly.
+  const dir2 = freshDir();
+  for (let i = 1; i <= 3; i++) appendAudit(dir2, { principal: 'a', decision: 'call', server: 's', tool: `t${i}` });
+  const file2 = pathReal.join(dir2, 'audit.jsonl');
+  const lines = fsReal.readFileSync(file2, 'utf8').split('\n').filter(Boolean);
+  lines[1] = '{"seq":2,"at":"20';
+  fsReal.writeFileSync(file2, lines.join('\n')); // no trailing newline either — still interior
+  _resetAuditCache();
+  const interior = verifyAudit(dir2);
+  assert.equal(interior.ok, false, 'an interior fragment is CHAIN BROKEN');
+  assert.equal(interior.brokenAt, 2);
+
+  // A deliberate truncation INTO the last real entry is NOT masked by the
+  // tolerance: the chain then ends below the head sidecar, which reports it.
+  const dir3 = freshDir();
+  for (let i = 1; i <= 3; i++) appendAudit(dir3, { principal: 'a', decision: 'call', server: 's', tool: `t${i}` });
+  const file3 = pathReal.join(dir3, 'audit.jsonl');
+  const raw3 = fsReal.readFileSync(file3, 'utf8');
+  fsReal.writeFileSync(file3, raw3.slice(0, raw3.lastIndexOf('"hash"'))); // cut seq 3 mid-line
+  _resetAuditCache();
+  const cut = verifyAudit(dir3);
+  assert.equal(cut.ok, false, 'cutting into the last entry is caught');
+  assert.match(cut.detail ?? '', /truncated/);
+
+  // Torn tail on ANCHORS.jsonl: previously a permanent "anchors were tampered
+  // with"; now tolerated by verify and healed by the next anchorHead.
+  const dir4 = freshDir();
+  for (let i = 1; i <= 3; i++) appendAudit(dir4, { principal: 'a', decision: 'call', server: 's', tool: `t${i}` });
+  assert.ok(anchorHead(dir4), 'first anchor');
+  const af = pathReal.join(dir4, 'anchors.jsonl');
+  fsReal.appendFileSync(af, '{"seq":4,"ha');
+  _resetAuditCache();
+  assert.equal(verifyAudit(dir4).ok, true, 'a torn anchor line is not tampering');
+  appendAudit(dir4, { principal: 'a', decision: 'call', server: 's', tool: 't4' });
+  const a2 = anchorHead(dir4);
+  assert.ok(a2 && a2.seq === 4, 'anchoring proceeds');
+  assert.equal(readAnchors(dir4).length, 2, 'the torn line was truncated, not written past');
+  assert.equal(verifyAudit(dir4).ok, true);
+  // But a newline-terminated malformed anchor line is still tampering (gap 3).
+  fsReal.appendFileSync(af, 'not json\n');
+  _resetAuditCache();
+  assert.equal(verifyAudit(dir4).ok, false);
+
+  // Rotation with a torn tail heals first, so the archive never carries the fragment.
+  const dir5 = freshDir();
+  for (let i = 1; i <= 3; i++) appendAudit(dir5, { principal: 'a', decision: 'call', server: 's', tool: `t${i}` });
+  fsReal.appendFileSync(pathReal.join(dir5, 'audit.jsonl'), '{"seq":4,"at":"2026');
+  _resetAuditCache();
+  const rot = rotateAudit(dir5);
+  assert.equal(rot.ok, true, rot.detail);
+  assert.ok(fsReal.readFileSync(pathReal.join(dir5, rot.archived!), 'utf8').endsWith('\n'), 'the archive ends on a complete entry');
+  assert.equal(verifyAudit(dir5).ok, true);
 });
 
 test('session and agent are inside the chain hash (tampering with correlation data is caught)', () => {
@@ -732,6 +854,92 @@ test('a forged spill file is never laundered into the chain (Fable-6 #7)', () =>
   assert.equal(verifyAudit(dir).ok, true, 'and the chain verifies');
 });
 
+test('a lock squatter cannot silently drop, reorder, or delete spilled rows — the fold alarms on any discontinuity', () => {
+  const dir = freshDir();
+  appendAudit(dir, { principal: 'a', decision: 'call', server: 's', tool: 't0' });
+  const lp = pathReal.join(dir, 'audit.lock');
+  const spill = pathReal.join(dir, `audit.spill.${process.pid}.jsonl`);
+  // Squat: an always-alive pid in the lock is never broken, so every append
+  // spills. (Our own pid stands in for the attacker's `1:x`.)
+  const squat = () => fsReal.writeFileSync(lp, `${process.pid}:squat`);
+  const spillLines = () => fsReal.readFileSync(spill, 'utf8').split('\n').filter(Boolean);
+  const tools = () => readAudit(dir).map((e) => e.tool).filter(Boolean);
+  const alarms = () => readAudit(dir).filter((e) => e.decision === 'error' && e.principal === 'system').map((e) => e.reason ?? '');
+
+  // 1. A DELETED middle row. Each surviving line still carries a valid MAC, so
+  //    before the fix the fold chained s1 and s3 with fresh seqs and s2 was gone
+  //    without a trace.
+  squat();
+  for (const t of ['s1', 's2', 's3']) appendAudit(dir, { principal: 'a', decision: 'call', server: 's', tool: t });
+  const three = spillLines();
+  assert.equal(three.length, 3, 'three rows spilled under the squat');
+  fsReal.writeFileSync(spill, [three[0], three[2]].join('\n') + '\n');
+  fsReal.unlinkSync(lp);
+  const err1 = captureStderr(() => appendAudit(dir, { principal: 'a', decision: 'call', server: 's', tool: 't4' }));
+  assert.match(err1, /AUDIT ALARM/, 'the gap is loud on stderr');
+  assert.deepEqual(tools(), ['t0', 's1', 's3', 't4'], 'the authentic survivors are still folded, in order — nothing else is lost');
+  assert.equal(alarms().length, 1, 'and the gap is recorded IN the chain as a system error row');
+  assert.match(alarms()[0], /spill discontinuity.*missing \[2\]/, 'naming the missing counter');
+
+  // 2. REORDERED rows: the counters say which order is real.
+  squat();
+  for (const t of ['s5', 's6']) appendAudit(dir, { principal: 'a', decision: 'call', server: 's', tool: t });
+  const two = spillLines();
+  fsReal.writeFileSync(spill, [two[1], two[0]].join('\n') + '\n');
+  fsReal.unlinkSync(lp);
+  const err2 = captureStderr(() => appendAudit(dir, { principal: 'a', decision: 'call', server: 's', tool: 't7' }));
+  assert.match(err2, /AUDIT ALARM/);
+  assert.deepEqual(tools().slice(-3), ['s5', 's6', 't7'], 'folded in counter order, not file order');
+  assert.equal(alarms().length, 2);
+
+  // 3. A DUPLICATED row is not folded twice.
+  squat();
+  appendAudit(dir, { principal: 'a', decision: 'call', server: 's', tool: 's8' });
+  const one = spillLines();
+  fsReal.writeFileSync(spill, [one[0], one[0]].join('\n') + '\n');
+  fsReal.unlinkSync(lp);
+  captureStderr(() => appendAudit(dir, { principal: 'a', decision: 'call', server: 's', tool: 't9' }));
+  assert.deepEqual(tools().slice(-2), ['s8', 't9'], 'one copy of the duplicated row');
+  assert.equal(alarms().length, 3);
+
+  // 4. The whole spill file UNLINKED: previously "nothing to fold", silently.
+  squat();
+  appendAudit(dir, { principal: 'a', decision: 'call', server: 's', tool: 's10' });
+  fsReal.unlinkSync(spill);
+  fsReal.unlinkSync(lp);
+  const err4 = captureStderr(() => appendAudit(dir, { principal: 'a', decision: 'call', server: 's', tool: 't11' }));
+  assert.match(err4, /AUDIT ALARM.*is gone with 1 row/, 'a vanished spill file with rows outstanding alarms');
+  assert.equal(alarms().length, 4);
+  // The alarm fires once, not on every later fold forever.
+  const quiet = captureStderr(() => appendAudit(dir, { principal: 'a', decision: 'call', server: 's', tool: 't12' }));
+  assert.doesNotMatch(quiet, /AUDIT ALARM/, 'a clean append after the alarm is quiet');
+  assert.equal(alarms().length, 4);
+
+  // The chain is intact throughout: alarms are chained rows, not corruption.
+  assert.equal(verifyAudit(dir).ok, true);
+  // And an honest spill-then-fold still raises nothing (the H1 path).
+  squat();
+  appendAudit(dir, { principal: 'a', decision: 'call', server: 's', tool: 's13' });
+  fsReal.unlinkSync(lp);
+  const honest = captureStderr(() => appendAudit(dir, { principal: 'a', decision: 'call', server: 's', tool: 't14' }));
+  assert.doesNotMatch(honest, /ALARM/, 'no false alarm on an untouched spill');
+  assert.deepEqual(tools().slice(-2), ['s13', 't14']);
+});
+
+test('spill GC reclaims only a provably DEAD pid, never an unknown one (a live holder in another pid namespace)', () => {
+  const dir = freshDir();
+  const old = new Date(Date.now() - 10 * 60_000); // well past LOCK_STALE_MS * 4
+  // ESRCH: a pid that does not exist HERE — indistinguishable from a live
+  // process in another namespace on a shared volume. Must survive.
+  const unknown = pathReal.join(dir, 'audit.spill.2147483646.jsonl');
+  // An invalid pid is provably dead: nobody can ever fold it. May be reclaimed.
+  const dead = pathReal.join(dir, 'audit.spill.0.jsonl');
+  for (const f of [unknown, dead]) { fsReal.writeFileSync(f, '{"n":1,"row":"{}","hmac":"x"}\n'); fsReal.utimesSync(f, old, old); }
+  appendAudit(dir, { principal: 'a', decision: 'call', server: 's', tool: 't0' }); // takes the lock; folds; GCs
+  assert.ok(fsReal.existsSync(unknown), "an 'unknown' pid's spill is left alone");
+  assert.ok(!fsReal.existsSync(dead), "a 'dead' pid's stale spill is reclaimed");
+});
+
 test('rotation refuses when off-box anchoring was used but no anchor command is set now (Fable-6 #6)', () => {
   const dir = freshDir();
   try {
@@ -748,6 +956,48 @@ test('rotation refuses when off-box anchoring was used but no anchor command is 
     assert.equal(rot.ok, false, 'rotation is refused');
     assert.match(rot.detail ?? '', /off-box anchoring is in use/);
     assert.ok(fsReal.existsSync(pathReal.join(dir, 'audit.jsonl')), 'the live segment is left intact');
+  } finally { delete process.env.CAIRN_AUDIT_ANCHOR_CMD; }
+});
+
+test('a rewritten manifest record cannot stretch a declared offload over deleted archives (range rewrite)', () => {
+  const dir = freshDir();
+  process.env.CAIRN_AUDIT_ANCHOR_CMD = 'cat > /dev/null'; // every boundary anchor ships
+  try {
+    // Three rotations: three archives, each boundary anchored and shipped.
+    const archives: string[] = [];
+    for (let r = 0; r < 3; r++) {
+      for (let i = 0; i < 3; i++) appendAudit(dir, { principal: 'a', decision: 'call', server: 's', tool: `r${r}t${i}` });
+      const rot = rotateAudit(dir);
+      assert.equal(rot.ok, true, rot.detail);
+      archives.push(rot.archived!);
+    }
+    // The FIRST archive is offloaded the supported way — a genuine declared bridge.
+    const off = offloadArchive(dir, archives[0]);
+    assert.equal(off.ok, true, off.detail);
+    const offbox = readAnchors(dir).map((a) => ({ seq: a.seq, hash: a.hash }));
+    _resetAuditCache();
+    assert.equal(verifyAudit(dir, { trustDeclaredOffload: true }).ok, true, 'the honest state passes the liveness check');
+    assert.equal(verifyAudit(dir, { against: offbox, offloaded: [archives[0]] }).ok, true, 'and the authoritative one');
+
+    // ATTACK (box write): keep the offloaded record's filename, but stretch its
+    // lastSeq/lastHash to the LAST archive's real, shipped boundary; drop the two
+    // later records and delete their archives. Before the fix, both verifies
+    // bridged the whole range as one declared offload — two archives of history
+    // gone, no alarm, and the daemon's filename-keyed guard saw nothing novel.
+    const segFile = pathReal.join(dir, 'audit.segments.jsonl');
+    const segs = fsReal.readFileSync(segFile, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+    assert.equal(segs.length, 3);
+    const stretched = { ...segs[0], lastSeq: segs[2].lastSeq, lastHash: segs[2].lastHash };
+    fsReal.writeFileSync(segFile, JSON.stringify(stretched) + '\n');
+    fsReal.rmSync(pathReal.join(dir, archives[1]));
+    fsReal.rmSync(pathReal.join(dir, archives[2]));
+    _resetAuditCache();
+    const live = verifyAudit(dir, { trustDeclaredOffload: true });
+    assert.equal(live.ok, false, 'the liveness check refuses the stretched record');
+    assert.match(live.detail ?? '', /filename does not encode|manifest was rewritten/);
+    const auth = verifyAudit(dir, { against: offbox, offloaded: [archives[0]] });
+    assert.equal(auth.ok, false, 'the authoritative check refuses it too, even with the real off-box anchors and the operator naming the offload');
+    assert.match(auth.detail ?? '', /filename does not encode|manifest was rewritten/);
   } finally { delete process.env.CAIRN_AUDIT_ANCHOR_CMD; }
 });
 
