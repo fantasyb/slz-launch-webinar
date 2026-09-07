@@ -678,3 +678,51 @@ to a third-party server (`@modelcontextprotocol/server-everything`) at the
 protocol level. Whether real tools carry the kind of trap that made the
 experiment work — a call that returns success with a misleading payload —
 is still unmeasured.
+
+## What is defended best-effort, and where the real guarantee sits
+
+Three defenses are deliberately heuristic. Naming them is not an apology;
+it is stating which layer you are allowed to trust, so a later reader does
+not mistake the soft edge for the hard one.
+
+**The read/write name classifier is a word list, and a word list loses a
+race against language.** `readsAsWrite` knows `delete`, `drop`, `nuke`,
+`obliterate` and a few dozen more, and every server that ships a new verb
+for destruction can add one it does not know. Chasing that list is
+whack-a-mole and it is not where the boundary lives. The boundary is two
+things the list cannot be talked out of: a tool call is authorized by its
+`readOnlyHint` **annotation** first — a server that does not declare a tool
+read-only is treated as a write regardless of its name — and a name that
+does not fold to recognizable Latin after NFKD-and-confusables normalization
+**fails closed**, counted as a write, so a Cyrillic-`о` `оbliterate` or a
+zero-width-split verb does not sail through as an unrecognized (and
+therefore "read") word. The verb list only ever moves a name from
+write to read; the annotation and the fail-closed fold are what keep a real
+write from being run unattended. Adding verbs hardens a convenience, never
+the guarantee.
+
+**Some per-request work is O(N) in the surface size.** Owner resolution,
+surface diffing against the pin, and the defang scan walk the whole tool or
+prompt surface on the paths that rebuild it. This is linear, not
+adversarially sublinear, and that is a conscious trade: real surfaces are
+tens to low hundreds of tools, the maps are rebuilt only on a listing or a
+`list_changed`, and every unbounded accumulator that an upstream could grow
+without limit — surface events, the unknown-name caches, the fence-defang
+scan — is separately capped (`MAX_SURFACE_EVENTS`, `UNKNOWN_KEY_MAX`, the
+linear two-phase fence scan that replaced the quadratic regex). A hostile
+upstream can make a listing slower; it cannot make it superlinear or
+unbounded. If a surface ever genuinely runs to thousands of tools, these
+scans become the thing to profile — but that is a performance decision then,
+not a security hole now.
+
+**Some guards live only in process memory and reset on restart.** The
+per-principal session reservations, the duplicate-suppression on repeated
+audit-attach denials, and the in-memory rate counters are throttles, not
+security decisions: losing them on a restart costs a moment of over-logging
+or a briefly re-openable session slot, nothing that changes who is allowed
+to do what. Every decision that must survive a crash is on disk — the
+hash-chained audit log and its off-box anchor, the trust pins, the org
+policy — and each is read back and re-verified on the next request, not
+trusted from memory. The rule is simple to keep: if losing it on `kill -9`
+would let someone do something they could not do before, it does not live in
+memory. Nothing that matters does.
