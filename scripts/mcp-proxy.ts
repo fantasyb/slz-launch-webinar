@@ -2341,7 +2341,10 @@ async function main() {
           audit(session, 'deny', 'cairn', req.params.name, az.reason);
           return textResult(`cairn-proxy: "${req.params.name}" is not permitted — ${az.reason}.`, true);
         }
-        audit(session, 'call', 'cairn', req.params.name);
+        // A permit that exists only because an operator's readTools override
+        // overruled the classifier is a governance decision: its reason rides
+        // on the call row, so the audit distinguishes it from an ordinary allow.
+        audit(session, 'call', 'cairn', req.params.name, az.override ? az.reason : undefined);
       }
       /* Attribution and signing for the own tools. For a governed session the
        * author is the authenticated principal, never the client-chosen agent
@@ -2459,17 +2462,22 @@ async function main() {
        * a client that calls a filtered tool by name gets a clear reason, not the
        * tool's result — and the org has an audit row for the attempt.
        */
+      // When the call is permitted ONLY by an operator's readTools override, the
+      // reason is carried onto the `call` audit row below, so a SIEM can see
+      // exactly where the read/write heuristic was overridden and by which role.
+      let overrideReason: string | undefined;
       if (governed(session)) {
         // Real annotations, not undefined: a read-only role must catch a tool
         // that DECLARES itself destructive even when its name misses the
         // write-looking word list (transfer_funds, approve_invoice, exec …).
         // Matched on the exposed name the operator sees, with the raw name as an
-        // alias so a denyTools entry in either form lands.
+        // alias so a denyTools (or readTools) entry in either form lands.
         const az = authorize(currentPolicy(), session.principal, owner.up.spec.name, { name: req.params.name, aliases: [owner.raw], annotations: owner.annotations as never });
         if (!az.allowed) {
           audit(session, 'deny', owner.up.spec.name, owner.raw, az.reason);
           return textResult(`cairn-proxy: "${req.params.name}" is not permitted — ${az.reason}.`, true);
         }
+        if (az.override) overrideReason = az.reason;
       }
       /*
        * Trust enforcement: a tool whose surface drifted from what was approved is
@@ -2492,7 +2500,9 @@ async function main() {
       // The call is permitted, trusted and routable: record it. This is the row
       // an audit asks for — who called what, on which server, when — hash-chained
       // so it cannot be edited after the fact. Ungoverned sessions record nothing.
-      audit(session, 'call', owner.up.spec.name, owner.raw);
+      // An override-permitted call carries the override reason; an ordinary
+      // permit carries none, exactly as before.
+      audit(session, 'call', owner.up.spec.name, owner.raw, overrideReason);
 
       let result: Awaited<ReturnType<Client['callTool']>>;
       try {

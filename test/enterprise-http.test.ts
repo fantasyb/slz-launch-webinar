@@ -415,6 +415,62 @@ test('a readOnlyStrict principal can still READ — resources/read and prompts/g
   }
 });
 
+test('a readTools override lets a strict principal call the ONE tool it names, and the audit `call` row says the heuristic was overridden', async () => {
+  // The same strict role as above, plus the operator's per-tool escape hatch:
+  // the fixture's `mcp__data360__unrelated` is unannotated, so strict refuses it
+  // (the test above proves that). Listed in readTools it is callable — and the
+  // audit row for that call must carry the override reason, so a SIEM can tell
+  // an operator-overruled permit from an ordinary one. Everything not listed
+  // (`mcp__data360__query_records`, also unannotated) is refused exactly as before.
+  const home = baseHome('cairn-ent-readtools-');
+  fs.writeFileSync(path.join(home, 'org-policy.json'), JSON.stringify({
+    auth: { required: true },
+    principals: { [tokenHash(TOKEN)]: { id: 'alice', role: 'viewer' } },
+    roles: { viewer: { readOnlyStrict: true, readTools: ['mcp__data360__unrelated'] } },
+  }));
+  const { child, base } = await startProxy(home);
+  const rpc = async (id: number, method: string, params: unknown) => {
+    let init = await hit(base, '/mcp', { method: 'POST', headers: mcpHeaders(TOKEN), body: initBody(), keepOpen: true });
+    for (let a = 0; a < 5 && init.status !== 200; a++) {
+      await new Promise((r) => setTimeout(r, 200));
+      init = await hit(base, '/mcp', { method: 'POST', headers: mcpHeaders(TOKEN), body: initBody(), keepOpen: true });
+    }
+    assert.equal(init.status, 200, 'init ok');
+    const sid = String(init.headers['mcp-session-id'] ?? '');
+    let r = await hit(base, '/mcp', { method: 'POST', headers: { ...mcpHeaders(TOKEN), 'mcp-session-id': sid }, body: JSON.stringify({ jsonrpc: '2.0', id, method, params }) });
+    for (let a = 0; a < 5 && r.status === 400; a++) {
+      await new Promise((res) => setTimeout(res, 150));
+      r = await hit(base, '/mcp', { method: 'POST', headers: { ...mcpHeaders(TOKEN), 'mcp-session-id': sid }, body: JSON.stringify({ jsonrpc: '2.0', id, method, params }) });
+    }
+    return r;
+  };
+  try {
+    const listed = await rpc(11, 'tools/call', { name: 'mcp__data360__unrelated', arguments: {} });
+    const ok = rpcResult(listed.body);
+    assert.notEqual(ok?.isError, true, `the listed tool is callable by the strict principal: ${listed.body}`);
+    assert.match(String(ok?.content?.[0]?.text ?? ''), /^ok$/, 'and the upstream actually ran it');
+
+    const unlisted = await rpc(12, 'tools/call', { name: 'mcp__data360__query_records', arguments: { object: 'Account' } });
+    const denied = rpcResult(unlisted.body);
+    assert.equal(denied?.isError, true, `an unlisted unannotated tool is still refused under strict: ${unlisted.body}`);
+    assert.match(String(denied?.content?.[0]?.text ?? ''), /strict read-only|not declared readOnlyHint/, 'with the strict-mode reason, unchanged');
+
+    // The audit trail distinguishes the two: the permitted call carries the
+    // override reason on its `call` row; the refusal is a `deny` row as before.
+    _resetAuditCache();
+    const rows = readAudit(path.join(home, 'audit'));
+    const overridden = rows.filter((e) => e.decision === 'call' && /unrelated/.test(e.tool ?? ''));
+    assert.equal(overridden.length, 1, `exactly one call row for the overridden tool: ${JSON.stringify(rows)}`);
+    assert.match(overridden[0].reason ?? '', /permitted by explicit readTools override in role "viewer"/, 'the call row says the permit came from the override, not a generic allow');
+    assert.match(overridden[0].reason ?? '', /not declared readOnlyHint:true/, 'and what the override overruled');
+    assert.ok(rows.some((e) => e.decision === 'deny' && /query_records/.test(e.tool ?? '') && /strict read-only/.test(e.reason ?? '')), 'the unlisted refusal is a deny row with the strict reason');
+    assert.equal(verifyAudit(path.join(home, 'audit')).ok, true, 'and the chain verifies');
+  } finally {
+    closeOpenReqs();
+    stopProxy(child);
+  }
+});
+
 test('with no org policy, the same gateway needs no token (the personal case is unchanged)', async () => {
   const home = baseHome('cairn-ent-open-');
   const { child, base } = await startProxy(home);

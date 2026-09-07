@@ -170,6 +170,119 @@ test('denyTools matches the exposed name AND the raw alias, case-folded', () => 
   assert.equal(authorize(p2, bob, 'github', { name: 'github__delete_repo', aliases: ['delete_repo'] }).allowed, false, 'the raw alias also matches');
 });
 
+/* ---- readTools: the operator's per-tool override of the classifier ------ */
+
+// Genuinely non-Latin names: NFKD cannot reduce them to ASCII, so readsAsWrite
+// FAILS CLOSED on them and a read-only role denies them whatever they mean.
+// That is the documented edge — a legitimately-named Japanese search tool a
+// strict role could not call, with no recourse before readTools existed.
+const KENSAKU = '検索'; // "search"
+const SAKUJO = '削除'; // "delete"
+
+test('with no readTools configured, authorize is byte-for-byte what it was — the fail-closed default is not weakened', () => {
+  const p = policy({ roles: { viewer: { readOnlyStrict: true }, ro: { readOnly: true }, empty: { readOnlyStrict: true, readTools: [] }, admin: { readTools: [KENSAKU] } } });
+  const v = { id: 'v', role: 'viewer' };
+  // deepEqual, not .allowed: the exact reason text AND the absence of any
+  // `override` marker are what a SIEM parsing existing rows depends on.
+  assert.deepEqual(
+    authorize(p, v, 'jira', { name: KENSAKU, annotations: { readOnlyHint: true } }),
+    { allowed: false, reason: `role "viewer" is strict read-only; "${KENSAKU}" is declared readOnlyHint:true but its name reads as a write, and the declaration is the server's own claim` },
+    'a non-Latin read name is denied under strict (the residual-non-Latin fail-closed)',
+  );
+  assert.deepEqual(authorize(p, v, 'jira', { name: 'list_issues' }), { allowed: false, reason: 'role "viewer" is strict read-only; "list_issues" is not declared readOnlyHint:true' });
+  assert.deepEqual(authorize(p, { id: 'r', role: 'ro' }, 'jira', { name: 'post_office_lookup' }), { allowed: false, reason: 'role "ro" is read-only; "post_office_lookup" reads as a write' }, 'a read the verb list misreads (post-) is denied under readOnly');
+  assert.deepEqual(authorize(p, v, 'jira', { name: 'get_issue', annotations: { readOnlyHint: true } }), { allowed: true, reason: 'permitted by role' });
+  // An empty list is the same as no list.
+  assert.deepEqual(authorize(p, { id: 'e', role: 'empty' }, 'jira', { name: KENSAKU, annotations: { readOnlyHint: true } }).allowed, false, 'an empty readTools changes nothing');
+  // On a role with no read-only flag there is no classification to override, so
+  // the entry is inert and the permit is the ordinary one — no override marker.
+  assert.deepEqual(authorize(p, bob, 'jira', { name: KENSAKU }), { allowed: true, reason: 'permitted by role' }, 'readTools on an unrestricted role is inert');
+});
+
+test('readTools: strict read-only denies a non-Latin read tool WITHOUT the override, permits that named tool WITH it, and still denies an unlisted write tool', () => {
+  const without = policy({ roles: { viewer: { readOnlyStrict: true } } });
+  const withIt = policy({ roles: { viewer: { readOnlyStrict: true, readTools: [KENSAKU] } } });
+  const v = { id: 'v', role: 'viewer' };
+  const search = { name: KENSAKU, annotations: { readOnlyHint: true } };
+  // Fail-before: the escape hatch does not exist, the read is refused.
+  assert.equal(authorize(without, v, 'jira', search).allowed, false, 'without the override, strict denies the non-Latin read');
+  // Pass-after: the operator named it, and the permit says so.
+  const r = authorize(withIt, v, 'jira', search);
+  assert.equal(r.allowed, true, 'with the override, the named tool is permitted');
+  assert.equal(r.override, 'readTools', 'the result is marked as an override, for the audit row');
+  assert.match(r.reason, /permitted by explicit readTools override in role "viewer"/, 'the reason names the override, never a generic allow');
+  assert.match(r.reason, /would otherwise be denied \(.*reads as a write/, 'and says what was overruled');
+  // Everything the operator did NOT name fails closed exactly as before: a
+  // write-named tool even when declared read-only, and a different non-Latin
+  // tool — the override opens one name, never a class.
+  assert.equal(authorize(withIt, v, 'jira', { name: 'delete_issue', annotations: { readOnlyHint: true } }).allowed, false, 'an unlisted write tool is still denied');
+  assert.equal(authorize(withIt, v, 'jira', { name: SAKUJO, annotations: { readOnlyHint: true } }).allowed, false, 'a different, unlisted non-Latin tool is still denied');
+  assert.equal(authorize(withIt, v, 'jira', { name: 'list_issues' }).allowed, false, 'an unlisted unannotated tool is still denied');
+  // The strict "not declared readOnlyHint:true" gate is also the operator's to
+  // overrule for a named tool: a server that ships no annotations at all.
+  const r2 = authorize(withIt, v, 'jira', { name: KENSAKU });
+  assert.equal(r2.allowed, true, 'strict permits a listed but unannotated tool');
+  assert.match(r2.reason, /not declared readOnlyHint:true/, 'and the reason records that the undeclared gate was overruled');
+});
+
+test('readTools matches exactly as denyTools does: exposed name or raw alias, folded, case-insensitive', () => {
+  const r = { id: 'r', role: 'ro' };
+  // The operator copied the EXPOSED name their client shows.
+  const p = policy({ roles: { ro: { readOnly: true, readTools: ['jira__Post_Office_Lookup'] } } });
+  assert.equal(authorize(p, r, 'jira', { name: 'jira__post_office_lookup', aliases: ['post_office_lookup'] }).allowed, true, 'the exposed name matches case-insensitively');
+  assert.equal(authorize(p, r, 'jira', { name: 'post_office_lookup', aliases: ['post_office_lookup'] }).allowed, false, 'an exposed-name entry does not match a tool seen only by its raw name — the same asymmetry denyTools has');
+  // The operator wrote the RAW name; the gateway supplies it as the alias.
+  const p2 = policy({ roles: { ro: { readOnly: true, readTools: ['post_office_lookup'] } } });
+  const viaAlias = authorize(p2, r, 'jira', { name: 'jira__post_office_lookup', aliases: ['post_office_lookup'] });
+  assert.equal(viaAlias.allowed, true, 'a raw-name entry lands via the alias');
+  assert.equal(viaAlias.override, 'readTools');
+  // Folded like denyTools: the entry lands on the tool however the server spells it.
+  assert.equal(authorize(p2, r, 'jira', { name: 'pоst_office_lookup' /* Cyrillic о */ }).allowed, true, 'a confusable spelling folds to the listed name');
+  assert.equal(authorize(p2, r, 'jira', { name: 'POST_OFFICE_LOOKUP' }).allowed, true, 'case does not matter');
+  // A name that merely shares a prefix or verb is NOT listed.
+  assert.equal(authorize(p2, r, 'jira', { name: 'post_comment' }).allowed, false, 'an unlisted write is still denied');
+  assert.equal(authorize(p2, r, 'jira', { name: 'post_office_lookup_and_delete' }).allowed, false, 'a longer name is a different tool');
+});
+
+test('deny beats readTools: denyTools, denyServers and allowServers each win over an override of the same tool (precedence is pinned)', () => {
+  const p = policy({
+    roles: {
+      both: { readOnlyStrict: true, readTools: [KENSAKU], denyTools: [KENSAKU] },
+      blocked: { readOnlyStrict: true, readTools: [KENSAKU], denyServers: ['jira'] },
+      scoped: { readOnlyStrict: true, readTools: [KENSAKU], allowServers: ['docs'] },
+    },
+  });
+  const search = { name: KENSAKU, annotations: { readOnlyHint: true } };
+  // 6 (denyTools) runs before 7 (classification + override): no beats yes.
+  const both = authorize(p, { id: 'b', role: 'both' }, 'jira', search);
+  assert.equal(both.allowed, false, 'a tool on both lists is denied');
+  assert.match(both.reason, /is denied tool/, 'by the deny, not by classification');
+  assert.equal(both.override, undefined, 'and nothing marks it as an override');
+  // 4 and 5 (reachability) run before 7: the override never reaches an
+  // unreachable server.
+  assert.equal(authorize(p, { id: 'x', role: 'blocked' }, 'jira', search).allowed, false, 'a denied server wins over the override');
+  assert.equal(authorize(p, { id: 's', role: 'scoped' }, 'jira', search).allowed, false, 'a server outside allowServers wins over the override');
+  assert.equal(authorize(p, { id: 's', role: 'scoped' }, 'docs', search).allowed, true, 'on a reachable server the same override applies');
+  // 3 (unknown role) still denies everything.
+  assert.equal(authorize(p, { id: 'g', role: 'ghost' }, 'jira', search).allowed, false, 'an unknown role is still denied everything');
+});
+
+test('readTools overrules the name heuristic and the strict undeclared gate, never a server\'s positive write declaration', () => {
+  const p = policy({ roles: { viewer: { readOnlyStrict: true, readTools: ['sync_now'] }, ro: { readOnly: true, readTools: ['sync_now'] } } });
+  for (const role of ['viewer', 'ro']) {
+    const pr = { id: role, role };
+    // The server SAYS it writes. The operator is overruling a guess about a
+    // name, not that statement — it stays decisive in both modes.
+    assert.equal(authorize(p, pr, 'sf', { name: 'sync_now', annotations: { readOnlyHint: false } }).allowed, false, `${role}: readOnlyHint:false is not overridden`);
+    assert.equal(authorize(p, pr, 'sf', { name: 'sync_now', annotations: { destructiveHint: true } }).allowed, false, `${role}: destructiveHint:true is not overridden`);
+    // The heuristic-only case (a write-verb name, no declaration) IS the
+    // operator's to overrule.
+    const r = authorize(p, pr, 'sf', { name: 'sync_now' });
+    assert.equal(r.allowed, true, `${role}: an unannotated write-named tool the operator listed is permitted`);
+    assert.equal(r.override, 'readTools');
+  }
+});
+
 test('an expired token is refused', () => {
   const raw = ['expiring', 'token'].join('-');
   const past = new Date(Date.now() - 1000).toISOString();
@@ -217,6 +330,20 @@ test('a corrupt or unreadable policy loads as error (fail closed), never as none
     assert.equal(readOrgPolicy().status, 'error', 'a principal without an id is rejected');
     fsReal.writeFileSync(file, JSON.stringify({ auth: { required: true }, roles: { r: { denyTools: ['x', 3] } } }));
     assert.equal(readOrgPolicy().status, 'error', 'a non-string denyTools entry is rejected');
+    // A malformed readTools override fails CLOSED on the same footing — the
+    // escape hatch is a governance decision, and a typo'd one must refuse the
+    // policy, never be silently ignored (which would deny the tool the operator
+    // meant to open, with nothing saying why).
+    fsReal.writeFileSync(file, JSON.stringify({ auth: { required: true }, roles: { r: { readOnlyStrict: true, readTools: 'search' } } }));
+    const badRead = readOrgPolicy();
+    assert.equal(badRead.status, 'error', 'a string readTools is rejected');
+    assert.match(badRead.status === 'error' ? badRead.reason : '', /readTools/, 'and the reason names the field');
+    fsReal.writeFileSync(file, JSON.stringify({ auth: { required: true }, roles: { r: { readOnlyStrict: true, readTools: ['search', 3] } } }));
+    assert.equal(readOrgPolicy().status, 'error', 'a non-string readTools entry is rejected');
+    fsReal.writeFileSync(file, JSON.stringify({ auth: { required: true }, roles: { r: { readOnlyStrict: true, readTools: { search: true } } } }));
+    assert.equal(readOrgPolicy().status, 'error', 'an object readTools is rejected');
+    fsReal.writeFileSync(file, JSON.stringify({ auth: { required: true }, roles: { r: { readOnlyStrict: true, readTools: ['search'] } } }));
+    assert.equal(readOrgPolicy().status, 'ok', 'a well-formed readTools loads');
     fsReal.writeFileSync(file, JSON.stringify({ auth: { required: true }, roles: { r: { readOnly: 'yes' } } }));
     assert.equal(readOrgPolicy().status, 'error', 'a non-boolean readOnly is rejected');
     // A correctly-shaped policy with roles still loads.

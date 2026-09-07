@@ -100,7 +100,7 @@ The same gateway is a personal loopback tool **and** a governed enterprise gatew
 - **`cairn:org mint-token --id <who> --role <role>`** — generate a token, store only its hash, and print the raw token **once**. Hand it to the client as `Authorization: Bearer …` out of band (a secrets manager — never chat, never the repo). It cannot be recovered; mint a new one if lost.
 - **`cairn:org revoke --id <who>`** — drop that principal's token(s). A running gateway re-reads the policy on change, so revocation takes effect on the next request without a restart.
 
-Roles in `org-policy.json`: `allowServers` (strict allowlist), `denyServers`, `denyTools`, `readOnly` (deny any write-looking tool). **Deny wins**, and an unknown role denies everything (fail closed).
+Roles in `org-policy.json`: `allowServers` (strict allowlist), `denyServers`, `denyTools`, `readOnly` (deny any write-looking tool), `readOnlyStrict` (deny any tool not declared `readOnlyHint:true`, and any write-named one even if declared), `readTools` (named tools treated as reads even where the classifier or strict mode would deny them — the per-tool override; it never beats `denyTools`, the server lists, or a server's own write declaration, and every use is audited under its own reason). **Deny wins**, and an unknown role denies everything (fail closed).
 
 The audit trail is the other half — every decision the governed gateway makes is one hash-chained JSONL entry:
 

@@ -749,6 +749,29 @@ write to read; the annotation and the fail-closed fold are what keep a real
 write from being run unattended. Adding verbs hardens a convenience, never
 the guarantee.
 
+That heuristic has two edges, and both are now **a heuristic default plus
+an explicit, per-tool operator override** rather than a verdict with no
+recourse. In the dangerous direction — a write whose verb the list does not
+know — a role's `denyTools` has always been the override: the operator names
+the tool and it is refused before classification is even consulted. In the
+other direction — a *read* the list misreads as a write (`post_office_lookup`
+carries `post`), or a genuinely non-Latin read name (a Japanese `検索`) that
+the fail-closed fold counts as a write, which under `readOnlyStrict` denied a
+legitimate search tool with no way to say otherwise — the override is the
+role's `readTools`: the named tool, and only that name, is treated as a read.
+It is scoped to tool names the operator lists (never "disable strict"),
+matched exactly as `denyTools` is (exposed or raw name, folded,
+case-insensitive), and it sits at the bottom of the precedence order: a
+`denyTools` entry, a `denyServers` entry or a server outside `allowServers`
+still wins over it, and it never overrides a server's own positive
+declaration that a tool writes (`readOnlyHint:false`, `destructiveHint:true`)
+— it overrules a guess about a name, not the server's statement. With no
+`readTools` configured, behaviour is exactly what is described above; and
+every call permitted by one is audited under its own reason ("permitted by
+explicit readTools override in role …, would otherwise be denied …"), so the
+places where the heuristic was overruled are visible in the log, not hidden
+inside an ordinary allow.
+
 **Some per-request work is O(N) in the surface size.** Owner resolution,
 surface diffing against the pin, and the defang scan walk the whole tool or
 prompt surface on the paths that rebuild it. This is linear, not

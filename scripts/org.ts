@@ -61,7 +61,7 @@ if (cmd === 'init-policy') {
     auth: { required: has('require-auth') },
     principals: {},
     roles: {
-      // A starter set. Edit freely: allowServers/denyServers/denyTools/readOnly.
+      // A starter set. Edit freely: allowServers/denyServers/denyTools/readTools/readOnly/readOnlyStrict.
       admin: {},
       readonly: { readOnly: true },
     },
@@ -133,9 +133,13 @@ die(`unknown command "${cmd}". Use: init-policy | mint-token | revoke | list`);
 
 function describeRole(r: Role): string {
   const parts: string[] = [];
-  if (r.readOnly) parts.push('read-only');
+  if (r.readOnlyStrict) parts.push('strict read-only');
+  else if (r.readOnly) parts.push('read-only');
   if (r.allowServers?.length) parts.push(`servers: ${r.allowServers.join(', ')}`);
   if (r.denyServers?.length) parts.push(`deny servers: ${r.denyServers.join(', ')}`);
   if (r.denyTools?.length) parts.push(`deny tools: ${r.denyTools.join(', ')}`);
+  // Shown so an operator reviewing the policy sees every place the read/write
+  // classifier has been overruled — the override is a governance decision.
+  if (r.readTools?.length) parts.push(`treated as reads (override): ${r.readTools.join(', ')}`);
   return parts.length ? parts.join('; ') : 'unrestricted';
 }

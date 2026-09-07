@@ -47,6 +47,27 @@ export interface Role {
   denyServers?: string[];
   /** Exposed tool names this role may never call. */
   denyTools?: string[];
+  /**
+   * Tool names this role treats as READS, whatever the name classifier says.
+   * The per-tool escape hatch for the two edges readsAsWrite is documented to
+   * have (GATEWAY.md, "defended best-effort"): a name the verb list misreads as
+   * a write, and a genuinely non-Latin name (a Japanese `検索`) that the
+   * residual-non-Latin fold FAILS CLOSED on — which under `readOnlyStrict` left
+   * a legitimate read tool with no recourse. Listing a tool here relaxes ONLY
+   * the classification verdict for that one name (the "reads as a write" and
+   * strict "not declared readOnlyHint:true" denials). It never touches
+   * reachability (allowServers/denyServers), never beats denyTools, and never
+   * overrides a server's POSITIVE write declaration (readOnlyHint:false or
+   * destructiveHint:true) — the operator is overruling a heuristic, not the
+   * server's own statement that the tool writes. Matched exactly as denyTools
+   * is: exposed name or raw upstream name, folded and case-insensitive. Every
+   * use is audited under its own reason so a SIEM can see where the heuristic
+   * was overridden. Named `readTools` rather than `allowTools` because
+   * `allowServers` is a strict ALLOWLIST ("may reach only these"), and this is
+   * the opposite shape — an exception list that opens named tools, not a fence
+   * that closes everything else.
+   */
+  readTools?: string[];
   /** Deny any write-looking tool (create/update/delete/deploy/…) by name/annotation. */
   readOnly?: boolean;
   /**
@@ -145,8 +166,12 @@ export function readOrgPolicy(): PolicyLoad {
   const strArr = (v: unknown) => v === undefined || (Array.isArray(v) && v.every((x) => typeof x === 'string'));
   for (const [name, role] of Object.entries((raw.roles ?? {}) as Record<string, unknown>)) {
     if (!isObj(role)) return { status: 'error', reason: `policy.roles["${name}"] must be an object` };
-    if (!strArr(role.allowServers) || !strArr(role.denyServers) || !strArr(role.denyTools)) {
-      return { status: 'error', reason: `policy.roles["${name}"] allowServers/denyServers/denyTools must each be an array of strings` };
+    // readTools is validated on the same footing: a malformed override is a
+    // policy that cannot mean what its author intended, and it fails CLOSED
+    // (the gateway refuses) rather than being silently ignored — an operator
+    // who typo'd the escape hatch must learn it now, not from a denied call.
+    if (!strArr(role.allowServers) || !strArr(role.denyServers) || !strArr(role.denyTools) || !strArr(role.readTools)) {
+      return { status: 'error', reason: `policy.roles["${name}"] allowServers/denyServers/denyTools/readTools must each be an array of strings` };
     }
     for (const flag of ['readOnly', 'readOnlyStrict'] as const) {
       if (role[flag] !== undefined && typeof role[flag] !== 'boolean') return { status: 'error', reason: `policy.roles["${name}"].${flag} must be a boolean` };
@@ -214,12 +239,55 @@ export function authenticate(policy: OrgPolicy | null, authorization: string | u
 export interface AuthzResult {
   allowed: boolean;
   reason: string;
+  /**
+   * Set when the call is permitted ONLY because an operator override overruled
+   * the classifier — a governance decision the audit trail must show as such,
+   * not as a generic allow. The gateway copies `reason` onto the `call` row
+   * exactly when this is set.
+   */
+  override?: 'readTools';
+}
+
+/**
+ * The ONE matching rule for a per-tool operator list (denyTools, readTools):
+ * matched against the exposed name AND the raw upstream name (aliases),
+ * case-folded — an operator copies the name their client shows
+ * (`github__delete_repo`), which is the exposed one, while the gateway routes
+ * by the raw one; a mismatch there is a deny that silently does nothing.
+ * Folded, not just lower-cased: a hostile server naming its tool `dеlete_repo`
+ * (Cyrillic е) or spacing it out must not slip past an operator's denylist —
+ * and, symmetrically, an operator's readTools entry lands on the tool it
+ * names however the server spells it. Shared so the two lists can never drift
+ * into two matching rules.
+ */
+function toolListHit(list: string[] | undefined, tool: { name: string; aliases?: string[] }): boolean {
+  if (!list?.length) return false;
+  const fold = (n: string) => foldName(n).toLowerCase();
+  const listed = new Set(list.map(fold));
+  return [tool.name, ...(tool.aliases ?? [])].map(fold).some((c) => listed.has(c));
 }
 
 /**
  * May this principal call this tool on this server? Deny wins, and an unknown
  * role denies everything (fail closed). With no policy, all is allowed — the
  * personal case, where the gateway governs nothing.
+ *
+ * PRECEDENCE, in the order the checks run — each gate is decisive when it
+ * fires, and nothing later can reopen it:
+ *   1. no policy                      → allow (ungoverned)
+ *   2. the LOCAL_ADMIN sentinel       → allow (ungoverned by construction)
+ *   3. role not defined               → DENY
+ *   4. denyServers                    → DENY
+ *   5. allowServers (server not on it)→ DENY
+ *   6. denyTools                      → DENY
+ *   7. classification (readOnly / readOnlyStrict) → deny a write; here, and
+ *      ONLY here, `readTools` may overrule the verdict for a tool it names —
+ *      except a server's positive write declaration, which it never overrides.
+ * So deny beats allow at every level: a tool on both denyTools and readTools
+ * is denied (6 runs before 7), a readTools entry on a denied or unlisted
+ * server is denied (4 and 5 run before 7), and readTools cannot reach a tool
+ * the server itself declares a write. With no readTools configured, step 7 is
+ * byte-for-byte what it was before the override existed.
  */
 export function authorize(
   policy: OrgPolicy | null,
@@ -241,19 +309,10 @@ export function authorize(
   if (!role || typeof role !== 'object') return { allowed: false, reason: `role "${principal.role}" is not defined in the org policy` };
   if (role.denyServers?.includes(server)) return { allowed: false, reason: `role "${principal.role}" is denied server "${server}"` };
   if (role.allowServers && !role.allowServers.includes(server)) return { allowed: false, reason: `role "${principal.role}" may only reach ${role.allowServers.join(', ')}` };
-  // denyTools is matched against the exposed name AND the raw upstream name
-  // (aliases), case-folded — an operator copies the name their client shows
-  // (`github__delete_repo`), which is the exposed one, while the gateway routes
-  // by the raw one; a mismatch there is a deny that silently does nothing.
-  if (role.denyTools?.length) {
-    // Folded, not just lower-cased: a hostile server naming its tool `dеlete_repo`
-    // (Cyrillic е) or spacing it out must not slip past an operator's denylist.
-    const fold = (n: string) => foldName(n).toLowerCase();
-    const denied = new Set(role.denyTools.map(fold));
-    const candidates = [tool.name, ...(tool.aliases ?? [])].map(fold);
-    const hit = candidates.find((c) => denied.has(c));
-    if (hit) return { allowed: false, reason: `role "${principal.role}" is denied tool "${tool.name}"` };
-  }
+  // denyTools: see toolListHit for the matching rule (shared with readTools).
+  // Runs BEFORE classification, so an explicit deny beats an explicit read
+  // override of the same name — no beats yes.
+  if (toolListHit(role.denyTools, tool)) return { allowed: false, reason: `role "${principal.role}" is denied tool "${tool.name}"` };
   // Classify the tool's OWN name, never the server's. The exposed name is
   // `${server}__${raw}`, so classifying it whole makes the server name the
   // leading token: a server called `zapier` (zap), `dropbox` (drop), `postgres`
@@ -266,26 +325,47 @@ export function authorize(
   const prefix = `${server}__`;
   const ownName = tool.name.startsWith(prefix) ? tool.name.slice(prefix.length) : tool.name;
   const namedWrite = (role.readOnlyStrict || role.readOnly) && [ownName, ...(tool.aliases ?? [])].some((n) => readsAsWrite(n));
-  if (role.readOnlyStrict) {
-    // Allow ONLY a tool the server itself declares read-only: an unannotated or
-    // write-declared tool is denied whatever its name says.
-    if (tool.annotations?.readOnlyHint !== true) {
-      return { allowed: false, reason: `role "${principal.role}" is strict read-only; "${tool.name}" is not declared readOnlyHint:true` };
+  // The classification verdict is computed FIRST and the override applied to
+  // it afterwards, so the audit reason can name what was overruled — and so the
+  // no-override path returns exactly the same denials it always has.
+  const classified = ((): AuthzResult | null => {
+    if (role.readOnlyStrict) {
+      // Allow ONLY a tool the server itself declares read-only: an unannotated or
+      // write-declared tool is denied whatever its name says.
+      if (tool.annotations?.readOnlyHint !== true) {
+        return { allowed: false, reason: `role "${principal.role}" is strict read-only; "${tool.name}" is not declared readOnlyHint:true` };
+      }
+      // AND the name must not read as a write. The annotation is the SERVER'S OWN
+      // claim, and the server is the untrusted party here: a hostile one that
+      // annotates `delete_repo` readOnlyHint:true used to pass strict on that claim
+      // alone, while plain readOnly (which checks the name) refused it — "strict"
+      // was looser than "read-only" against exactly the server it exists to
+      // distrust. Both facts, like classify(): declared read-only, and not named
+      // as a write (which includes the residual-non-Latin fail-closed in
+      // readsAsWrite, so a look-alike script cannot hide the verb).
+      if (namedWrite) return { allowed: false, reason: `role "${principal.role}" is strict read-only; "${tool.name}" is declared readOnlyHint:true but its name reads as a write, and the declaration is the server's own claim` };
+    } else if (role.readOnly) {
+      const declaredWrite = tool.annotations?.readOnlyHint === false || tool.annotations?.destructiveHint === true;
+      if (declaredWrite || namedWrite) return { allowed: false, reason: `role "${principal.role}" is read-only; "${tool.name}" reads as a write` };
     }
-    // AND the name must not read as a write. The annotation is the SERVER'S OWN
-    // claim, and the server is the untrusted party here: a hostile one that
-    // annotates `delete_repo` readOnlyHint:true used to pass strict on that claim
-    // alone, while plain readOnly (which checks the name) refused it — "strict"
-    // was looser than "read-only" against exactly the server it exists to
-    // distrust. Both facts, like classify(): declared read-only, and not named
-    // as a write (which includes the residual-non-Latin fail-closed in
-    // readsAsWrite, so a look-alike script cannot hide the verb).
-    if (namedWrite) return { allowed: false, reason: `role "${principal.role}" is strict read-only; "${tool.name}" is declared readOnlyHint:true but its name reads as a write, and the declaration is the server's own claim` };
-  } else if (role.readOnly) {
-    const declaredWrite = tool.annotations?.readOnlyHint === false || tool.annotations?.destructiveHint === true;
-    if (declaredWrite || namedWrite) return { allowed: false, reason: `role "${principal.role}" is read-only; "${tool.name}" reads as a write` };
+    return null;
+  })();
+  if (!classified) return { allowed: true, reason: 'permitted by role' };
+  // readTools: the operator's explicit, per-tool overrule of the CLASSIFIER —
+  // and of nothing else. It reopens the name heuristic ("reads as a write",
+  // including the residual-non-Latin fail-closed) and strict's "not declared
+  // readOnlyHint:true" gate, for the one name it lists. It does NOT reopen a
+  // server's positive statement that the tool writes: an operator listing a
+  // tool as a read is overruling a guess about its name, and a server that
+  // declares readOnlyHint:false / destructiveHint:true is not guessing. That
+  // declaration stays decisive in both modes. The permit carries its own
+  // reason and the `override` marker so the audit row says the heuristic was
+  // overridden, never a bare "permitted by role".
+  const declaredWrite = tool.annotations?.readOnlyHint === false || tool.annotations?.destructiveHint === true;
+  if (!declaredWrite && toolListHit(role.readTools, tool)) {
+    return { allowed: true, override: 'readTools', reason: `permitted by explicit readTools override in role "${principal.role}": "${tool.name}" would otherwise be denied (${classified.reason})` };
   }
-  return { allowed: true, reason: 'permitted by role' };
+  return classified;
 }
 
 /* ---- audit -------------------------------------------------------------- */
