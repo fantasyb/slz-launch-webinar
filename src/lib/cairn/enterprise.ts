@@ -330,6 +330,11 @@ export function authorize(
   // no-override path returns exactly the same denials it always has.
   const classified = ((): AuthzResult | null => {
     if (role.readOnlyStrict) {
+      // Contradictory hints are not read-only: an upstream's positive
+      // destructive declaration wins even when it also claims readOnlyHint.
+      if (tool.annotations?.destructiveHint === true) {
+        return { allowed: false, reason: `role "${principal.role}" is strict read-only; "${tool.name}" is declared destructiveHint:true` };
+      }
       // Allow ONLY a tool the server itself declares read-only: an unannotated or
       // write-declared tool is denied whatever its name says.
       if (tool.annotations?.readOnlyHint !== true) {

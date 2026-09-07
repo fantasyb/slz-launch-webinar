@@ -53,6 +53,24 @@ the earlier full-suite green claim on a fresh host.
 
 ## TL;DR
 
+**Security follow-up:** a subsequent adversarial review reproduced and fixed
+three permission/trust failures, despite the earlier hardening claims below:
+conflicting safety hints bypassed strict read-only; reconnect reused stale RBAC
+and trust approval; and trust enforcement failed open when approval could not
+be persisted. See `SECURITY_REVIEW.md` and `test/gateway-adversarial.test.ts`.
+All five new regressions pass, including real HTTP tests that prove denied
+operations did not reach the upstream. Earlier "core is hard" wording is
+historical, not a current security attestation.
+
+Security-follow-up validation: 509 tests, **446 pass / 62 fail / 1 todo**.
+The 62 failing test names exactly match the pre-security-change run on this
+host; there are no newly failing tests. The five added tests account for the
+five additional passes. Type checking, corpus lint (0 errors / 57 warnings),
+and ledger audit (0 failures) pass. A normal CI-host full-suite run is still
+required. GitHub publishing was retried by a fresh subagent at the user's
+request and still received API 403 "Resource not accessible by integration";
+the connection permits repository reads but these commits remain local.
+
 - Full test suite **green** on the branch: `npm test` 504 tests, 503 pass, 1 todo,
   0 fail. `tsc --noEmit` clean. `cairn:lint` 0 errors. `cairn:audit` 0 failures.
 - **The gateway core is hard** — five+ adversarial (Fable) passes, every finding

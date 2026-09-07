@@ -1352,7 +1352,10 @@ async function main() {
   const serverSession = new Map<Server, SessionState>();
 
   /* Owner maps, rebuilt whenever a list is fetched or an upstream says it changed. */
-  const toolOwner = new Map<string, { up: Upstream; raw: string; annotations?: Tool['annotations'] }>();
+  // Approval belongs to the connection whose listing supplied it. A respawn
+  // may offer the same name with different permissions or a poisoned surface.
+  type ToolOwner = { up: Upstream; client: Client; raw: string; annotations?: Tool['annotations'] };
+  const toolOwner = new Map<string, ToolOwner>();
   const promptOwner = new Map<string, { up: Upstream; raw: string }>();
   // MULTI-VALUED: two different upstreams can serve the SAME raw resource URI or
   // template (resource URIs are not namespaced the way tool/prompt names are). A
@@ -1663,10 +1666,8 @@ async function main() {
     const dir = trustDirOf();
     if (!dir) {
       // Enforce that cannot resolve its pin directory is enforcement that is not
-      // running. Never silently downgrade to "allow all" — that is the exact
-      // "the control is off while it says it is on" failure. Say so, loudly,
-      // every read, so the operator cannot mistake a broken home for a safe one.
-      up.trustBlocked = new Set();
+      // running. Enforce fails closed; monitor only reports the problem.
+      up.trustBlocked = new Set(mode === 'enforce' ? shapes.map((s) => s.name) : []);
       process.stderr.write(`cairn-proxy: TRUST ${up.spec.name}: cannot resolve CAIRN_HOME/trust — trust ${mode.toUpperCase()} is NOT active for this server (fix CAIRN_HOME)\n`);
       return;
     }
@@ -1677,14 +1678,13 @@ async function main() {
       // — and the prompt surface too, if a complete prompt listing has already
       // been seen (otherwise the prompt channel is pinned on its first listing).
       const ok = writePin(up.spec.name, shapes, dir, live, up.promptSurface ?? undefined);
-      up.trustBlocked = new Set();
+      up.trustBlocked = new Set(!ok && mode === 'enforce' ? shapes.map((s) => s.name) : []);
       if (ok) {
         process.stderr.write(`cairn-proxy: TRUST ${up.spec.name}: pinned ${shapes.length} tool(s)${up.promptSurface ? ` and ${up.promptSurface.length} prompt(s)` : ''} as approved (first sight)\n`);
       } else {
         // The pin did not persist. Next read will "first-sight" again and never
-        // enforce — so in enforce mode this server is currently unprotected. Do
-        // not print "pinned"; make the gap visible.
-        process.stderr.write(`cairn-proxy: TRUST ${up.spec.name}: could not write approval pin — ${mode === 'enforce' ? 'this server is UNPROTECTED until the pin can be written' : 'no baseline recorded this run'} (check CAIRN_HOME/trust is writable)\n`);
+        // enforce. Refuse its tools until approval can actually be recorded.
+        process.stderr.write(`cairn-proxy: TRUST ${up.spec.name}: could not write approval pin — ${mode === 'enforce' ? 'tools WITHHELD until the pin can be written' : 'no baseline recorded this run'} (check CAIRN_HOME/trust is writable)\n`);
       }
       return;
     }
@@ -1722,7 +1722,7 @@ async function main() {
     const mode = trustMode();
     if (mode === 'off') { up.promptTrustBlocked = new Set(); return; }
     const dir = trustDirOf();
-    if (!dir) { up.promptTrustBlocked = new Set(); return; } // evaluateTrustFor shouts about this on every tool read
+    if (!dir) { up.promptTrustBlocked = new Set(mode === 'enforce' ? shapes.map((s) => s.name) : []); return; }
     const pin = readPin(up.spec.name, dir);
     up.promptTrustBlocked = new Set();
     if (!pin) {
@@ -1730,18 +1730,23 @@ async function main() {
       // which carries up.promptSurface along; a server with NO tools capability
       // never reaches that path, and its tool surface genuinely is empty — so
       // pin it here, with the prompts, rather than leave the channel unapproved.
-      if (up.caps.tools) return;
+      if (up.caps.tools) {
+        if (mode === 'enforce') up.promptTrustBlocked = new Set(shapes.map((s) => s.name));
+        return;
+      }
       const ok = writePin(up.spec.name, [], dir, up.instructions ?? '', shapes);
+      if (!ok && mode === 'enforce') up.promptTrustBlocked = new Set(shapes.map((s) => s.name));
       process.stderr.write(ok
         ? `cairn-proxy: TRUST ${up.spec.name}: pinned ${shapes.length} prompt(s) as approved (first sight)\n`
-        : `cairn-proxy: TRUST ${up.spec.name}: could not write approval pin — ${mode === 'enforce' ? 'its prompts are UNPROTECTED until the pin can be written' : 'no prompt baseline recorded this run'} (check CAIRN_HOME/trust is writable)\n`);
+        : `cairn-proxy: TRUST ${up.spec.name}: could not write approval pin — ${mode === 'enforce' ? 'prompts WITHHELD until the pin can be written' : 'no prompt baseline recorded this run'} (check CAIRN_HOME/trust is writable)\n`);
       return;
     }
     if (!pin.prompts) {
       const ok = pinPrompts(up.spec.name, shapes, dir);
+      if (!ok && mode === 'enforce') up.promptTrustBlocked = new Set(shapes.map((s) => s.name));
       process.stderr.write(ok
         ? `cairn-proxy: TRUST ${up.spec.name}: pinned ${shapes.length} prompt(s) as approved (first sight of its prompts)\n`
-        : `cairn-proxy: TRUST ${up.spec.name}: could not add prompts to the approval pin — ${mode === 'enforce' ? 'its prompts are UNPROTECTED until the pin can be written' : 'no prompt baseline recorded this run'} (check CAIRN_HOME/trust is writable)\n`);
+        : `cairn-proxy: TRUST ${up.spec.name}: could not add prompts to the approval pin — ${mode === 'enforce' ? 'prompts WITHHELD until the pin can be written' : 'no prompt baseline recorded this run'} (check CAIRN_HOME/trust is writable)\n`);
       return;
     }
     const { changes, blocked } = evaluateTrust(pin.prompts, shapes);
@@ -2122,11 +2127,12 @@ async function main() {
      * (pagination) left it incomplete mid-listing, so a concurrent CallTool or a
      * list_changed clearing it produced `toolOwner.get(name)!` === undefined and
      * a TypeError — the client then saw the wrapped server as having no tools. */
-    const owners = new Map<string, { up: Upstream; raw: string; annotations?: Tool['annotations'] }>();
+    const owners = new Map<string, ToolOwner>();
     const out: Tool[] = [];
     /* A listing is the moment a dead upstream is missed; try to bring it back first, within its backoff. */
     for (const up of upstreams) if (!up.alive) await ensure(up);
     for (const up of alive()) {
+      const client = up.client!;
       const mine: Tool[] = [];
       let complete = true;
       let cursor: string | undefined;
@@ -2134,7 +2140,7 @@ async function main() {
       for (let pg = 0; ; pg++) {
         let page;
         try {
-          page = await up.client!.listTools({ cursor }, FORWARD);
+          page = await client.listTools({ cursor }, FORWARD);
         } catch (e) {
           up.lastError = (e as Error).message;
           complete = false;
@@ -2154,6 +2160,8 @@ async function main() {
       }
       // Read the surface (and evaluate trust) BEFORE exposing, so a withheld tool
       // never reaches the list even for one listing.
+      // Never bless a listing from a connection replaced while it was in flight.
+      if (client !== up.client || !up.alive) continue;
       if (complete) noteSurface(up, mine);
       up.listIncomplete = !complete;
       const enforce = trustMode() === 'enforce';
@@ -2163,14 +2171,14 @@ async function main() {
       // CLOSED: withhold this upstream's tools until it lists completely.
       if (!complete && enforce) {
         process.stderr.write(`cairn-proxy: TRUST ${up.spec.name}: incomplete tool listing (${up.lastError ?? 'error'}) — withholding all its tools in enforce mode until it lists completely\n`);
-        for (const t of mine) owners.set(expose(up, t.name), { up, raw: t.name, annotations: t.annotations }); // route-known so a direct call gets a clear refusal
+        for (const t of mine) owners.set(expose(up, t.name), { up, client, raw: t.name, annotations: t.annotations }); // route-known so a direct call gets a clear refusal
         continue;
       }
       for (const t of mine) {
         const name = expose(up, t.name);
         // Always route-known, so a call to a withheld tool gets a clear refusal
         // rather than a generic "no such tool".
-        owners.set(name, { up, raw: t.name, annotations: t.annotations });
+        owners.set(name, { up, client, raw: t.name, annotations: t.annotations });
         if (enforce && up.trustBlocked.has(t.name)) continue; // withhold a changed/unapproved tool from the list
         // Defang any imitation of our label in the upstream's own tool
         // definition before it reaches the model (an HTTP host could forge a
@@ -2200,9 +2208,9 @@ async function main() {
   function instructionsWithheld(up: Upstream): boolean {
     if (trustMode() !== 'enforce') return false;
     const dir = trustDirOf();
-    if (!dir) return false; // no pin dir: the loud fail-open warning is emitted in evaluateTrustFor
+    if (!dir) return true;
     const pin = readPin(up.spec.name, dir);
-    if (!pin) return false; // first sight: nothing approved to drift from yet
+    if (!pin) return true; // approval must be persisted before instructions are trusted
     return (pin.instructions ?? '') !== (up.instructions ?? '');
   }
 
@@ -2466,6 +2474,20 @@ async function main() {
         if (alive().every((u) => !u.listIncomplete)) rememberUnknownTool(req.params.name);
         return textResult(`cairn-proxy: no upstream offers a tool named "${req.params.name}"`, true);
       }
+      // Reconnect BEFORE deciding permissions/trust, then re-list. The old
+      // order authorized cached annotations and only then respawned the server,
+      // allowing its replacement to execute once under the old approval.
+      if (!owner.up.alive || owner.up.respawning || owner.client !== owner.up.client) {
+        const up = owner.up;
+        if (!(await ensure(up))) {
+          return textResult(`cairn-proxy: upstream "${up.spec.name}" is not running (${defangUpstream(up.lastError ?? 'unknown')})${retryHint(up)}`, true);
+        }
+        await allTools();
+        owner = toolOwner.get(req.params.name);
+        if (!owner || !owner.up.alive || owner.client !== owner.up.client) {
+          return textResult('cairn-proxy: tool unavailable after reconnect; retry after a fresh tool listing', true);
+        }
+      }
       /*
        * RBAC: is this principal allowed to call this tool on this server? Governed
        * sessions only; a personal (LOCAL_ADMIN) session is permitted everything by
@@ -2505,9 +2527,8 @@ async function main() {
           true,
         );
       }
-      if (!(await ensure(owner.up))) {
-        return textResult(`cairn-proxy: upstream "${owner.up.spec.name}" is not running (${defangUpstream(owner.up.lastError ?? 'unknown')})${retryHint(owner.up)}`, true);
-      }
+      // No reconnect or other await between approval and dispatch. If this
+      // connection closes now, its request fails; it never runs on a replacement.
       // The call is permitted, trusted and routable: record it. This is the row
       // an audit asks for — who called what, on which server, when — hash-chained
       // so it cannot be edited after the fact. Ungoverned sessions record nothing.
@@ -2579,7 +2600,7 @@ async function main() {
                 ).catch(() => { /* client gone or slow; the result still returns */ });
               }
             : undefined;
-        result = await owner.up.client!.request(
+        result = await owner.client.request(
           // Never forward this session's block token to the upstream: redact it
           // from the WHOLE params (arguments, _meta, everything) so no field can
           // leak it — the tool name is owner.raw, which the redactor leaves alone.
