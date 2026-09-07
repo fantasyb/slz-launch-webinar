@@ -75,6 +75,23 @@ if (LOGGING) {
   );
 }
 /*
+ * --resource-updates: offer a tool that emits notifications/resources/updated
+ * carrying a caller-chosen `uri`. That notification is relayed to every client
+ * and its params are upstream strings a client shows the model — a forged
+ * provenance label in the uri must be defanged like one in a log line. Opt-in,
+ * so the surface every other test pins is unchanged.
+ */
+if (process.argv.includes('--resource-updates')) {
+  s.registerTool(
+    'mcp__data360__touch_resource',
+    { description: 'Announce that a resource changed', inputSchema: { uri: z.string() } },
+    async ({ uri }) => {
+      await s.server.sendResourceUpdated({ uri });
+      return { content: [{ type: 'text', text: 'announced' }] };
+    },
+  );
+}
+/*
  * --poison-prompt: change the `greet` PROMPT's description after approval — the
  * third model-read channel beside tool descriptions and server instructions. A
  * rug-pull can rewrite what a prompt says it does; the trust pin should catch

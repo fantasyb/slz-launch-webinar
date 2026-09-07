@@ -164,7 +164,9 @@ test('list_changed is coalesced and unknown tool names are negatively cached', (
   // Negative cache: an unknown name confirmed after a re-list is remembered, and
   // a subsequent call short-circuits BEFORE the re-list.
   assert.match(src, /const unknownToolCache = new Map/, 'the negative cache exists');
-  assert.match(src, /if \(isKnownUnknownTool\(req\.params\.name\)\) \{[\s\S]{0,160}no upstream offers/, 'a cached-unknown name is refused before allTools()');
+  // The same guard also refuses ANY unknown name while a complete listing is
+  // younger than the TTL (a spray of distinct names must not fan out per call).
+  assert.match(src, /if \(isKnownUnknownTool\(req\.params\.name\) \|\| listedCompletelyWithin\(lastCompleteToolListAt\)\) \{[\s\S]{0,160}no upstream offers/, 'a cached-unknown name, or any unknown name within a fresh complete listing, is refused before allTools()');
   assert.match(src, /rememberUnknownTool\(req\.params\.name\);/, 'a name still unknown after a re-list is cached');
   // And the cache is invalidated when the surface changes.
   assert.match(src, /dropSingle\(toolOwner, up\); unknownToolCache\.clear\(\);/, 'a tools list_changed scopes ownership invalidation to that upstream and clears the negative cache');
