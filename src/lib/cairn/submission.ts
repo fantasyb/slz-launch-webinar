@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { EnvironmentSchema, VerdictSchema } from './schema';
+import { EnvironmentSchema, VerdictSchema, ProvenanceSchema } from './schema';
 import { loadCorpus } from './load';
 import { defaultVisibility } from './visibility';
 import type { Finding } from './schema';
@@ -112,6 +112,17 @@ export const SubmissionSchema = z.object({
    */
   share: z.boolean().optional(),
   note: z.string().max(4000).optional(),
+  /**
+   * Both default to what a submission recorded at the keyboard means —
+   * `firsthand`, 180 days — and exist for a writer that must say otherwise. The
+   * consolidation pass (consolidate.ts) records findings it did NOT execute, so
+   * it must be able to say `secondhand` and give them a shorter half-life than
+   * a finding somebody watched fail; the alternative was rewriting the file
+   * after the one write path had validated it. Bounded exactly as FindingSchema
+   * bounds them, so nothing here can make a claim outlive its own decay.
+   */
+  provenance: ProvenanceSchema.optional(),
+  halfLifeDays: z.number().int().min(7).max(3650).optional(),
 });
 export type Submission = z.infer<typeof SubmissionSchema>;
 
@@ -204,8 +215,8 @@ export function normalise(s: Submission, now = new Date(), mintedId?: string) {
       ...(s.workaround ? { workaround: s.workaround } : {}),
       evidence: s.evidence,
       check: { ...s.check, manual: s.check.manual ?? readsAsProse(s.check.command) },
-      provenance: 'firsthand' as const,
-      halfLifeDays: 180,
+      provenance: s.provenance ?? ('firsthand' as const),
+      halfLifeDays: s.halfLifeDays ?? 180,
       observations: [
         {
           at,

@@ -100,10 +100,44 @@ test('a batch is bounded so a big backlog does not run as one giant brief', () =
   assert.match(out, /10 of 25/, 'took a bounded batch of the backlog, not all 25 at once');
 });
 
-test('it does nothing when execution is off', () => {
+test('it spawns no agent when execution is off, and leaves a non-sleep draft untouched', () => {
   const w = world(false);
   assert.equal(fire(w), false, 'no agent spawned while checks may not run here');
-  assert.equal(fs.readdirSync(w.drafts).filter((n) => n.endsWith('.json')).length, 1, 'the candidate is untouched');
+  assert.equal(fs.readdirSync(w.drafts).filter((n) => n.endsWith('.json')).length, 1, 'a gateway draft is not a sleep candidate; the consolidation pass does not touch it');
+});
+
+test('when execution is off it spawns the consolidation pass instead, and the candidate is served', () => {
+  /* The machine that may not run checks used to be inert: this is the path that
+   * makes it learn. A real sleep candidate is pending; the trigger spawns
+   * `cairn-sleep --consolidate` detached, and a finding appears in cairn/. */
+  const w = world(false, 0);
+  fs.writeFileSync(path.join(w.drafts, 'sleep-t-mcp__sf__query_records-3-abc.json'), JSON.stringify({
+    _kind: 'sleep-candidate',
+    source: 't.jsonl',
+    tool: 'mcp__sf__query_records',
+    surprisal: 3,
+    why: ['the agent revised its model of the tool after a notable result'],
+    expectation: 'I expect the churned contacts for this quarter to come back.',
+    reality: '{"records":[]}',
+    mechanism_or_update: 'Zero rows — actually it turns out the MCP server is bound to the sandbox org, so every query returns empty without any error.',
+    evidence: [{ command: 'mcp__sf__query_records {"object":"Contact"}', output: '{"records":[]}' }],
+  }));
+  const env: NodeJS.ProcessEnv = { ...process.env, CAIRN_HOME: w.home, CAIRN_POLICY: w.policy };
+  delete env.CAIRN_AUTO_CONSOLIDATE;
+  const out = execSync(`npx tsx "${SCRIPT}" 2>&1`, { encoding: 'utf8', env });
+  assert.match(out, /spawned the consolidation pass/, 'the breadcrumb names what ran');
+  const corpus = path.join(w.home, 'cairn');
+  const served = () => fs.readdirSync(corpus).filter((n) => n.endsWith('.json'));
+  /* Detached, and possibly through the tsx fallback: allow it a generous window. */
+  const deadline = Date.now() + 20_000;
+  while (Date.now() < deadline && served().length === 0) {
+    try { execFileSync('sh', ['-c', 'sleep 0.1']); } catch { /* ignore */ }
+  }
+  assert.equal(served().length, 1, `a finding was consolidated into cairn/ (log: ${fs.existsSync(path.join(w.drafts, '.consolidate.log')) ? fs.readFileSync(path.join(w.drafts, '.consolidate.log'), 'utf8') : 'none'})`);
+  const f = JSON.parse(fs.readFileSync(path.join(corpus, served()[0]), 'utf8'));
+  assert.equal(f.observations[0].by, 'cairn-sleep');
+  assert.equal(f.check.manual, true, 'no check runs on a machine where execution is off — the finding says so');
+  assert.equal(fs.readdirSync(w.drafts).filter((n) => n.endsWith('.json') && !n.startsWith('.')).length, 0, 'the queue drained');
 });
 
 test('it does nothing when no candidates are pending', () => {

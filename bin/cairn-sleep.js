@@ -1,9 +1,12 @@
 #!/usr/bin/env node
 /**
  * The offline consolidation pass. Run by cairn:install as two automatic hooks —
- * --hook at SessionEnd (harvest the transcript that just closed into drafts/)
- * and --surface at SessionStart (report what a prior session left) — so nobody
- * ever types a command. Also runs by hand over explicit transcripts.
+ * --hook at SessionEnd (harvest the transcript that just closed into drafts/,
+ * then promote what clears the automatic gate into cairn/) and --surface at
+ * SessionStart (report what sleep promoted and what still waits) — and as
+ * --consolidate, spawned detached by the triage trigger at session start and on
+ * every daemon tick, so nobody ever types a command. Also runs by hand over
+ * explicit transcripts.
  *
  * Bundle-or-source is decided in bin/launch.js, including what to do with a
  * stale build. This one is on the session-open and session-close path, so the

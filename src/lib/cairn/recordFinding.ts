@@ -138,8 +138,22 @@ function explain(issue: ZodIssue, raw: unknown): string {
 
 export async function recordSubmission(
   raw: unknown,
-  opts: { by?: string; origin?: 'human' | 'agent'; force?: boolean } = {},
+  opts: {
+    by?: string;
+    origin?: 'human' | 'agent';
+    force?: boolean;
+    /**
+     * Set only by the consolidation pass (consolidate.ts): the transcript and
+     * candidate this finding was promoted from, with no person deciding. It is
+     * accepted only alongside origin 'agent', so a consolidated finding can never
+     * be recorded as executable or journalled for the machine key to sign.
+     */
+    consolidated?: { transcript: string; candidate: string; at: string };
+  } = {},
 ): Promise<RecordOutcome> {
+  if (opts.consolidated && opts.origin !== 'agent') {
+    return { ok: false, message: 'A consolidated finding must be recorded as an agent submission (origin "agent"); nothing was written.' };
+  }
   // For an AGENT submission (a model over MCP, incl. a governed tenant) the
   // author is set by the gateway, never by the caller: a tenant that supplies
   // `by: "doctor"` would otherwise seed a machine-verified observation and forge
@@ -268,6 +282,9 @@ export async function recordSubmission(
   if (opts.origin === 'agent') {
     (finding as Record<string, unknown>).visibility = 'private';
     (finding as Record<string, unknown>).agentRecorded = true;
+    // The consolidation stamp rides on the agent path only (guarded above), so it
+    // inherits every property of that path: private, non-executable, unsigned.
+    if (opts.consolidated) (finding as Record<string, unknown>).consolidated = opts.consolidated;
   }
 
   let gateNote = '';

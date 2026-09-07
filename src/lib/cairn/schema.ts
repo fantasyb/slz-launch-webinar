@@ -427,6 +427,25 @@ export const FindingSchema = z.object({
    * a command that runs when the operator verifies the corpus.
    */
   agentRecorded: z.boolean().optional(),
+  /**
+   * Set when the CONSOLIDATION PASS (cairn:sleep) promoted this finding from a
+   * harvested transcript candidate — no person decided to record it and no
+   * check was ever run. It names the transcript and the candidate file so the
+   * promotion is auditable end to end (drafts/admitted/ keeps the candidate,
+   * the yield ledger keeps the verdict), and so every reader can tell a
+   * machine-consolidated finding from one a person or a live gate vouched for.
+   * Such a finding is always agentRecorded (never executed, never signed by the
+   * machine key) and carries a manual check; its standing starts at `aging` and
+   * decays to `stale` unless someone later observes it. Not part of
+   * findingBodyHash: it describes where the record came from, not what it claims.
+   */
+  consolidated: z
+    .object({
+      transcript: z.string().min(1).max(300),
+      candidate: z.string().min(1).max(300),
+      at: z.string().datetime(),
+    })
+    .optional(),
   status: z.enum(['active', 'retired']).default('active'),
   retiredReason: z.string().optional(),
 

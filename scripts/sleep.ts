@@ -9,10 +9,15 @@
  *
  * Candidates go to $CAIRN_HOME/drafts/ (self-gitignored, the quarantine): a
  * candidate is not a finding. It is the raw material — the agent's own stated
- * expectation, the tool's actual result, and the agent's own correction — that a
- * person or `cairn_record` turns into a finding with a check, at which point
- * selection (the check, usage, decay) decides whether it survives. Sleep writes
- * nothing to cairn/ and enables no execution.
+ * expectation, the tool's actual result, and the agent's own correction. Then
+ * CONSOLIDATION (src/lib/cairn/consolidate.ts) — the second half of sleep, and
+ * for a long time the missing half — promotes the candidates that clear an
+ * automatic gate into cairn/ as unverified, agent-authored findings, with
+ * nobody in the loop, and settles the rest with a reason. It runs in --hook
+ * right after the harvest, on demand as --consolidate, and detached from the
+ * session-start trigger and every daemon tick. Selection (usage, decay, a later
+ * cairn_observe) then decides whether a promoted finding survives. Sleep enables
+ * no execution: a consolidated finding's check is manual and is never run.
  *
  * See src/lib/cairn/sleep.ts for why errors are below threshold and a model
  * update or a superset contradiction is what clears the gate (cairn-0045).
@@ -21,21 +26,41 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import crypto from 'crypto';
-import { homePath } from '../src/lib/cairn/home';
+import { homePath, setCairnHome } from '../src/lib/cairn/home';
 import { parseTranscript, detectCandidates, type Candidate } from '../src/lib/cairn/sleep';
+import { consolidate, describe, takeReport } from '../src/lib/cairn/consolidate';
 
 const argv = process.argv.slice(2);
 const PRINT = argv.includes('--print') || argv.includes('--dry-run');
-/* Two automatic modes, wired by cairn:install into ~/.claude/settings.json so
+/* Three automatic modes, wired by cairn:install into ~/.claude/settings.json so
  * nobody ever has to type the command — a command nobody types is a command
  * that does not exist. --hook runs at SessionEnd (the offline consolidation
- * pass, over the transcript that just closed); --surface runs at SessionStart
- * (report the candidates a prior session left, so the loop closes). Both read
- * Claude Code's hook JSON on stdin and MUST NOT fail the session: everything is
- * wrapped, and they always exit 0 (cairn-0046 — a hook that throws at startup
- * shows up as a broken session, not a broken hook). */
+ * pass, over the transcript that just closed: harvest, then promote); --surface
+ * runs at SessionStart (report what sleep promoted and what still waits, so the
+ * loop closes); --consolidate runs the promotion pass alone, and is what the
+ * triage trigger spawns detached at session start and on every daemon tick.
+ * The hook modes read Claude Code's hook JSON on stdin and MUST NOT fail the
+ * session: everything is wrapped, and they always exit 0 (cairn-0046 — a hook
+ * that throws at startup shows up as a broken session, not a broken hook). */
 const HOOK = argv.includes('--hook');
 const SURFACE = argv.includes('--surface');
+const CONSOLIDATE = argv.includes('--consolidate');
+/** --quiet: a breadcrumb on stderr only, for the detached spawn's log. */
+const HOOK_QUIET = argv.includes('--quiet');
+
+/*
+ * Align CAIRN_HOME to --home BEFORE any corpus lookup. The harvest only ever
+ * needed the drafts path, so this script computed it by hand; consolidation
+ * WRITES to cairn/ through the one write path, which resolves the corpus via
+ * cairnHome() — and without this the hook wired as `--home <corpus>` would have
+ * recorded into whatever corpus the environment named (see triage.ts, which
+ * learned the same lesson).
+ */
+{
+  const i = argv.indexOf('--home');
+  const explicit = i !== -1 && argv[i + 1] ? argv[i + 1] : undefined;
+  if (explicit) setCairnHome(explicit.startsWith('~') ? path.join(os.homedir(), explicit.slice(1)) : explicit);
+}
 
 /** The corpus home for drafts: an explicit --home wins; else $CAIRN_HOME via homePath. */
 function draftsDir(): string | null {
@@ -175,12 +200,14 @@ function consolidateFile(dir: string, file: string): number {
 }
 
 /**
- * SessionEnd: consolidate the transcript that just closed, immediately, while it
- * is fresh, and advance the watermark so the next SessionStart need not re-parse
- * it. Best-effort by nature — a Ctrl-C or a crash may skip it entirely, which is
- * exactly why SessionStart also catches up. Never throws, always exits 0.
+ * SessionEnd: harvest the transcript that just closed, immediately, while it is
+ * fresh, advance the watermark so the next SessionStart need not re-parse it —
+ * and then PROMOTE: run the consolidation pass over the queue, so what this
+ * session hit is served to the next one with nobody typing anything. Best-effort
+ * by nature — a Ctrl-C or a crash may skip it entirely, which is exactly why
+ * SessionStart also catches up. Never throws, always exits 0.
  */
-function runHook(): void {
+async function runHook(): Promise<void> {
   try {
     const { transcript_path } = hookInput();
     const dir = draftsDir();
@@ -196,9 +223,34 @@ function runHook(): void {
     } catch {
       /* mtime unreadable; the next SessionStart re-parses this one, idempotently */
     }
-    if (n) process.stderr.write(`cairn:sleep consolidated ${n} candidate(s) into ${dir}\n`);
+    if (n) process.stderr.write(`cairn:sleep harvested ${n} candidate(s) into ${dir}\n`);
+    /* The promotion pass, over everything pending — this session's harvest and
+     * anything an earlier pass deferred. Its own guards decide whether it runs
+     * (off by env, or the live gate owns the queue) and it never throws. */
+    const r = await consolidate(dir);
+    if (!r.skippedBecause) process.stderr.write(`cairn:sleep ${describe(r).split('\n')[0]}\n`);
   } catch {
     /* a consolidation pass must never be the reason a session failed to end */
+  }
+  process.exit(0);
+}
+
+/**
+ * The promotion pass alone, over whatever is pending. Spawned detached by
+ * cairn:triage-trigger (session start, and every daemon tick) and available by
+ * hand; the harvest is not repeated. Exits 0 whatever happens — its callers are
+ * hooks and a daemon, neither of which may be broken by it.
+ */
+async function runConsolidate(): Promise<void> {
+  try {
+    const dir = draftsDir();
+    if (!dir) return;
+    const r = await consolidate(dir);
+    const line = describe(r);
+    if (HOOK_QUIET) { if (!r.skippedBecause) process.stderr.write(`cairn:sleep ${line}\n`); }
+    else console.log(`\ncairn:sleep --consolidate — ${line}\n`);
+  } catch (e) {
+    process.stderr.write(`cairn:sleep --consolidate failed (ignored): ${(e as Error).message}\n`);
   }
   process.exit(0);
 }
@@ -233,12 +285,25 @@ function runSurface(): void {
       }
       if (maxSeen > prior) writeWatermark(dir, maxSeen);
     }
-    const drafts = fs.existsSync(dir) ? fs.readdirSync(dir).filter((n) => n.endsWith('.json')) : [];
+    /* First, what sleep PROMOTED since anyone last looked — the loop closing,
+     * said out loud once: these are now served findings, unverified, and the
+     * agent that reads this is the one that can observe them. */
+    const report = takeReport(dir);
+    if (report?.promoted.length) {
+      process.stdout.write(
+        `Cairn: sleep consolidated ${report.promoted.length} finding(s) from earlier sessions — unverified, ` +
+          `standing decays until observed (cairn_observe when you next see the trap, or cairn:verify):\n` +
+          report.promoted.map((p) => `  ${p.id}  ${p.title}`).join('\n') + '\n',
+      );
+    }
+    /* Same rule as pendingCandidates: a dotfile (.triage-scores.json, the
+     * report just taken) is bookkeeping and a note-* is the human note tier. */
+    const drafts = fs.existsSync(dir) ? fs.readdirSync(dir).filter((n) => n.endsWith('.json') && !n.startsWith('.') && !n.startsWith('note-')) : [];
     if (!drafts.length) return;
     process.stdout.write(
-      `Cairn: ${drafts.length} consolidated candidate(s) from prior sessions are waiting in ${dir} — ` +
-        'surprise gaps harvested from earlier transcripts, not yet findings. If any names a real, ' +
-        'checkable trap, promote it with cairn_record (add a check); the rest decay unused.\n',
+      `Cairn: ${drafts.length} harvested candidate(s) from prior sessions are waiting in ${dir} — ` +
+        'surprise gaps from earlier transcripts, not yet findings. Sleep consolidates them itself (at session end, ' +
+        'and on every daemon tick); nothing is required of you. /cairn queue shows the queue and what was promoted.\n',
     );
   } catch {
     /* surfacing is a convenience; never let it disrupt a session opening */
@@ -249,7 +314,7 @@ function runSurface(): void {
 function draftFor(c: Candidate, source: string): Record<string, unknown> {
   return {
     _kind: 'sleep-candidate',
-    _note: 'Harvested from a transcript by cairn:sleep. Not a finding until a check is written and it survives selection. Complete with cairn_record.',
+    _note: 'Harvested from a transcript by cairn:sleep. Not a finding yet: the consolidation pass promotes it (unverified) if it clears the automatic gate, or settles it with a reason. A person may still complete it by hand with cairn_record.',
     source,
     tool: c.tool,
     surprisal: c.surprisal,
@@ -264,9 +329,10 @@ function draftFor(c: Candidate, source: string): Record<string, unknown> {
   };
 }
 
-function main() {
+async function main() {
   if (HOOK) return runHook();
   if (SURFACE) return runSurface();
+  if (CONSOLIDATE) return runConsolidate();
 
   const homeIdx = argv.indexOf('--home');
   const homeValIdx = homeIdx !== -1 ? homeIdx + 1 : -1;
@@ -280,7 +346,7 @@ function main() {
     files.push(t);
   }
   if (!files.length) {
-    console.error('usage: npm run cairn:sleep -- <transcript.jsonl> [...]  |  --latest  [--print]');
+    console.error('usage: npm run cairn:sleep -- <transcript.jsonl> [...]  |  --latest  [--print]  |  --consolidate');
     process.exit(2);
   }
 
@@ -321,9 +387,10 @@ function main() {
     console.log(`${total} candidate(s). Nothing written${dir ? ' (--print)' : ' (no corpus home)'}.`);
   } else {
     console.log(`${total} candidate(s) written to ${dir} — provisional, not findings.`);
-    console.log('Complete the ones worth keeping with cairn_record (add a check); the rest decay unused.');
+    const r = await consolidate(dir);
+    console.log(describe(r));
   }
   console.log();
 }
 
-main();
+void main();

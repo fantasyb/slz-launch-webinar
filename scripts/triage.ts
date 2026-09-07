@@ -93,12 +93,16 @@ async function main(): Promise<void> {
 
   if (!executionPolicy().enabled) {
     /* Not "this trap is not live" — "this machine may not run checks at all". So
-     * we do not defer-count anyone; we report and stop. Progress resumes the
-     * moment execution is enabled for this corpus. */
+     * we do not defer-count anyone; we report and stop. The queue is not stuck:
+     * the consolidation pass (cairn:sleep --consolidate, fired by the trigger and
+     * the daemon) promotes what clears its no-shell gate as unverified findings.
+     * The live gate here resumes the moment execution is enabled. */
     console.log(
-      `  ${pending.length} candidate(s) waiting, but execution is OFF for ${cairnHome()}.\n` +
+      `  ${pending.length} candidate(s) waiting, and execution is OFF for ${cairnHome()}.\n` +
         `  Triage runs the one-machine delta, which is shell from the corpus, so it is gated.\n` +
-        `  Enable it on THIS machine in ${policyPath()}:\n\n` +
+        `  The queue still drains: sleep consolidates candidates that clear its automatic gate into\n` +
+        `  unverified findings (npm run cairn:sleep -- --consolidate runs it now).\n` +
+        `  To gate them by a LIVE check instead, enable execution on THIS machine in ${policyPath()}:\n\n` +
         `    { "${cairnHome()}": { "enabled": true, "note": "who decided, and when" } }\n`,
     );
     return;

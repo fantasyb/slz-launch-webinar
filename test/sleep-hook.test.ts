@@ -28,14 +28,17 @@ function world(): { home: string; corpus: string; projects: string; drafts: stri
   return { home, corpus, projects, drafts: path.join(corpus, 'drafts') };
 }
 
-/** Run the sleep CLI with a stdin payload and an isolated HOME. Never throws on non-zero exit. */
-function run(w: { home: string }, args: string[], stdin: string): { status: number; stdout: string } {
+/**
+ * Run the sleep CLI with a stdin payload and an isolated HOME. Never throws on
+ * non-zero exit. The harvest-mechanics tests below run with consolidation OFF
+ * (the operator kill switch), because --hook now promotes what it harvests and
+ * these tests count what the HARVEST left; the full loop has its own test.
+ */
+function run(w: { home: string }, args: string[], stdin: string, opts: { consolidate?: boolean } = {}): { status: number; stdout: string } {
+  const env: NodeJS.ProcessEnv = { ...process.env, HOME: w.home, CAIRN_POLICY: path.join(w.home, 'no-policy.json') };
+  if (opts.consolidate) delete env.CAIRN_AUTO_CONSOLIDATE; else env.CAIRN_AUTO_CONSOLIDATE = '0';
   try {
-    const stdout = execFileSync('npx', ['tsx', SCRIPT, ...args], {
-      input: stdin,
-      encoding: 'utf8',
-      env: { ...process.env, HOME: w.home },
-    });
+    const stdout = execFileSync('npx', ['tsx', SCRIPT, ...args], { input: stdin, encoding: 'utf8', env });
     return { status: 0, stdout };
   } catch (e) {
     const err = e as { status?: number; stdout?: string };
@@ -58,8 +61,9 @@ function transcript(dir: string, name: string): string {
   return file;
 }
 
+/** Pending candidates at the root of drafts/ — not the dotfile bookkeeping beside them. */
 const draftCount = (w: { drafts: string }) =>
-  fs.existsSync(w.drafts) ? fs.readdirSync(w.drafts).filter((n) => n.endsWith('.json')).length : 0;
+  fs.existsSync(w.drafts) ? fs.readdirSync(w.drafts).filter((n) => n.endsWith('.json') && !n.startsWith('.')).length : 0;
 
 test('--hook consolidates the transcript named on stdin into drafts/', () => {
   const w = world();
@@ -107,7 +111,7 @@ test('--surface catches up a transcript a missed SessionEnd never consolidated',
   const { status, stdout } = run(w, ['--surface', '--home', w.corpus], JSON.stringify({ transcript_path: '/some/other/current.jsonl' }));
   assert.equal(status, 0);
   assert.equal(draftCount(w), 1, 'the abandoned transcript was swept up at the next session start');
-  assert.match(stdout, /1 consolidated candidate/, 'and reported');
+  assert.match(stdout, /1 harvested candidate/, 'and reported');
 });
 
 test('--surface excludes the current session and, on first run, backfills nothing', () => {
@@ -132,7 +136,43 @@ test('--hook then --surface does not re-scan the just-ended session (watermark a
    * nothing new to do but still reports the one waiting draft. */
   const { stdout } = run(w, ['--surface', '--home', w.corpus], JSON.stringify({ transcript_path: '/some/other.jsonl' }));
   assert.equal(draftCount(w), 1, 'no duplicate work');
-  assert.match(stdout, /1 consolidated candidate/);
+  assert.match(stdout, /1 harvested candidate/);
+});
+
+test('the loop closes with nobody in it: --hook harvests AND promotes, --surface reports what was served', () => {
+  const w = world();
+  const t = transcript(w.projects, 't.jsonl');
+  const { status } = run(w, ['--hook', '--home', w.corpus], JSON.stringify({ transcript_path: t, session_id: 'x' }), { consolidate: true });
+  assert.equal(status, 0, 'the hook exits 0');
+  const corpus = path.join(w.corpus, 'cairn');
+  const served = fs.existsSync(corpus) ? fs.readdirSync(corpus).filter((n) => n.endsWith('.json')) : [];
+  assert.equal(served.length, 1, 'the surprise gap is a SERVED finding in cairn/, not a candidate rotting in drafts/');
+  const f = JSON.parse(fs.readFileSync(path.join(corpus, served[0]), 'utf8'));
+  assert.equal(f.observations[0].by, 'cairn-sleep', 'authored by the consolidation pass, not by a person or by doctor');
+  assert.equal(f.check.manual, true, 'its check will never be executed');
+  assert.equal(f.agentRecorded, true);
+  assert.equal(f.consolidated.transcript, 't.jsonl', 'and it says where it came from');
+  assert.equal(draftCount(w), 0, 'the candidate left the queue');
+  assert.ok(fs.existsSync(path.join(w.drafts, 'admitted')), 'settled as admitted, not deleted');
+  /* The next session start reports the promotion once, then says nothing. */
+  const first = run(w, ['--surface', '--home', w.corpus], JSON.stringify({ transcript_path: '/some/other.jsonl' }), { consolidate: true });
+  assert.match(first.stdout, /sleep consolidated 1 finding/, 'the loop is announced');
+  assert.match(first.stdout, new RegExp(f.id));
+  assert.doesNotMatch(first.stdout, /waiting/, 'nothing is waiting');
+  const second = run(w, ['--surface', '--home', w.corpus], JSON.stringify({ transcript_path: '/some/other.jsonl' }), { consolidate: true });
+  assert.equal(second.stdout.trim(), '', 'reported once');
+});
+
+test('--consolidate alone promotes a queue an earlier pass left (the daemon/trigger path)', () => {
+  const w = world();
+  const t = transcript(w.projects, 't.jsonl');
+  run(w, ['--hook', '--home', w.corpus], JSON.stringify({ transcript_path: t })); // consolidation off: harvest only
+  assert.equal(draftCount(w), 1, 'one candidate waits');
+  const { status, stdout } = run(w, ['--consolidate', '--home', w.corpus], '', { consolidate: true });
+  assert.equal(status, 0);
+  assert.match(stdout, /consolidated 1 finding/);
+  assert.equal(draftCount(w), 0);
+  assert.equal(fs.readdirSync(path.join(w.corpus, 'cairn')).filter((n) => n.endsWith('.json')).length, 1);
 });
 
 test('--hook never throws on garbage stdin or a missing transcript', () => {

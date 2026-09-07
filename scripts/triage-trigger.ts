@@ -6,25 +6,35 @@
  * but only when the conditions to do it honestly are met, and always in the
  * background so the session that triggered it never waits.
  *
- * IT RUNS WHEN, AND ONLY WHEN, IT CAN:
- *   - execution is enabled for this corpus (triage runs checks — shell from the
- *     corpus — so this is gated by policy.ts, off by default), AND
- *   - there are candidates pending, AND
- *   - a triage agent is not already running (a stale-after-30-min lock, so a
- *     crashed run cannot wedge the queue forever).
- * If any is false it exits 0 having done nothing. No candidate is touched, so the
- * next opportunity simply tries again — the queue is eventually-drained, never
- * forced.
+ * TWO WAYS TO DRAIN, AND THE MACHINE PICKS THE BEST ONE IT CAN:
  *
- * IT NEVER BLOCKS: the agent is spawned detached and unref'd, and this process
- * exits immediately. Wired at SessionStart, the session opens at once and triage
- * runs beside it on the same live machine — which is the whole point, because that
- * machine is where the trap is live and the check can be honestly run.
+ *   - Where execution is OFF (the default), the queue is drained by the
+ *     CONSOLIDATION pass (src/lib/cairn/consolidate.ts): an automatic gate that
+ *     runs no shell promotes qualifying candidates into cairn/ as unverified,
+ *     agent-authored findings and settles the rest with a reason. This trigger
+ *     spawns `cairn-sleep --consolidate` detached whenever raw candidates wait,
+ *     so a machine that may not run checks still learns — before this, such a
+ *     machine's queue only ever grew.
+ *   - Where execution is ON, the live gate is strictly better (a discriminating
+ *     check, RUN where the trap is live) and owns the queue: a triage agent is
+ *     spawned, when candidates clear the cheap gate and no agent already holds
+ *     the lock (stale after 30 min, so a crashed run cannot wedge the queue).
  *
- * THE SPAWN IS PLUGGABLE. The default runs a headless `claude -p` over the brief;
- * a machine that drives a different agent sets CAIRN_TRIAGE_CMD. Either way the
- * brief (triageBrief.ts) and the corpus home reach the agent by file and env, so
- * the contract does not depend on which agent runs it. Never throws; always 0.
+ * If nothing applies it exits 0 having done nothing. No candidate is touched, so
+ * the next opportunity simply tries again — the queue is eventually-drained,
+ * never forced.
+ *
+ * IT NEVER BLOCKS: both spawns are detached and unref'd, and this process exits
+ * immediately. Wired at SessionStart, the session opens at once and the work
+ * runs beside it on the same machine — for the live gate, the whole point,
+ * because that machine is where the trap is live and the check can be honestly
+ * run. The daemon ticks this same trigger, so both paths also run unattended.
+ *
+ * THE AGENT SPAWN IS PLUGGABLE. The default runs a headless `claude -p` over the
+ * brief; a machine that drives a different agent sets CAIRN_TRIAGE_CMD. Either
+ * way the brief (triageBrief.ts) and the corpus home reach the agent by file and
+ * env, so the contract does not depend on which agent runs it. Never throws;
+ * always 0.
  */
 import fs from 'fs';
 import os from 'os';
@@ -32,7 +42,7 @@ import path from 'path';
 import { spawn, execSync } from 'child_process';
 import { homePath, cairnHome, setCairnHome } from '../src/lib/cairn/home';
 import { executionPolicy } from '../src/lib/cairn/policy';
-import { pendingCandidates } from '../src/lib/cairn/triage';
+import { pendingCandidates, hasCheck } from '../src/lib/cairn/triage';
 import { gateCandidates, DEFAULT_TRIAGE_THRESHOLD } from '../src/lib/cairn/triageScore';
 import { triageBrief } from '../src/lib/cairn/triageBrief';
 import { machineIdentity } from '../src/lib/cairn/autoseal';
@@ -41,7 +51,52 @@ const argv = process.argv.slice(2);
 const LOCK = '.triage.lock';
 const BRIEF = '.triage-brief.md';
 const LOG = '.triage.log';
+const CONSOLIDATE_LOG = '.consolidate.log';
 const STALE_MS = 30 * 60 * 1000;
+
+/** Find <repo>/bin/cairn-sleep.js from here, whether run as source (scripts/) or bundle (dist/cli/). */
+function findSleepBin(): string {
+  let d = __dirname;
+  for (let i = 0; i < 6; i++) {
+    const p = path.join(d, 'bin', 'cairn-sleep.js');
+    try { if (fs.existsSync(p)) return p; } catch { /* ignore */ }
+    d = path.dirname(d);
+  }
+  return path.join(__dirname, '..', 'bin', 'cairn-sleep.js');
+}
+
+/**
+ * Spawn the consolidation pass, detached, with its breadcrumbs in drafts/. The
+ * pass takes its own lock and applies its own guards (CAIRN_AUTO_CONSOLIDATE=0,
+ * the execution policy), so this only decides whether there is anything for it
+ * to look at: a raw sleep candidate — one no triage agent has given a check.
+ * `process.execPath`, never a bare `node`: under launchd PATH is bare (daemon.ts).
+ */
+function spawnConsolidation(dir: string, pending: Array<{ data: Record<string, unknown> }>): boolean {
+  if (process.env.CAIRN_AUTO_CONSOLIDATE === '0') return false;
+  const raw = pending.filter((c) => c.data._kind === 'sleep-candidate' && !hasCheck({ file: '', data: c.data }));
+  if (!raw.length) return false;
+  let logFd: number;
+  try {
+    logFd = fs.openSync(path.join(dir, CONSOLIDATE_LOG), 'a');
+  } catch {
+    return false;
+  }
+  try {
+    const child = spawn(process.execPath, [findSleepBin(), '--consolidate', '--quiet', '--home', cairnHome()], {
+      detached: true,
+      stdio: ['ignore', logFd, logFd],
+      env: { ...process.env, CAIRN_HOME: cairnHome() },
+    });
+    child.on('error', (e) => { try { fs.appendFileSync(path.join(dir, CONSOLIDATE_LOG), `cairn:triage-trigger consolidation spawn failed: ${(e as Error).message}\n`); } catch { /* last resort */ } });
+    child.unref();
+    return true;
+  } catch {
+    return false;
+  } finally {
+    try { fs.closeSync(logFd); } catch { /* already closed */ }
+  }
+}
 
 function draftsDir(): string | null {
   const i = argv.indexOf('--home');
@@ -119,9 +174,16 @@ function main(): void {
 
     const dir = draftsDir();
     if (!dir) return;
-    if (!executionPolicy().enabled) return; // may not run checks here — nothing to do
     const pending = pendingCandidates(dir);
     if (!pending.length) return; // nothing to triage
+    if (!executionPolicy().enabled) {
+      /* This machine may not run checks, so the live gate can never settle the
+       * queue here. The consolidation pass can — with no shell — and this is the
+       * one place it is fired for a machine like that, on every session start
+       * and every daemon tick. */
+      if (spawnConsolidation(dir, pending)) process.stderr.write(`cairn:triage-trigger spawned the consolidation pass over ${pending.length} pending candidate(s) (execution is off; no check runs)\n`);
+      return;
+    }
 
     /*
      * The cheap gate (score-first cascade). Most of a deep backlog is noise or
@@ -203,7 +265,8 @@ function main(): void {
   }
   /* setImmediate, not a synchronous exit: a spawn 'error' is emitted on the
    * nextTick queue, and exiting synchronously ran BEFORE it — so a failed spawn
-   * logged nothing and left the lock held. This lets the error handler run. */
+   * logged nothing and left the lock held. This lets the error handler run
+   * (for the consolidation spawn too). */
   setImmediate(() => process.exit(0));
 }
 

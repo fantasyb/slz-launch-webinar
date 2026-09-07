@@ -34,8 +34,9 @@ the background for later review. Silence is the common case and not a failure.
 ## How to tell it's alive
 
 - `/cairn` in Claude Code → a dashboard of what it remembers and what's queued.
-- `/cairn queue` → the sleep queue (traps harvested from your sessions, waiting
-  for review) and whether the daemon is draining it.
+- `/cairn queue` → the sleep queue (traps harvested from your sessions), what
+  sleep has already consolidated from it into unverified findings on its own,
+  and whether the daemon is draining it. Review is optional, never required.
 - `tail -f ~/pilot/daemon.log` → the daemon's heartbeat (macOS).
 
 ## What's normal (don't report these as bugs)

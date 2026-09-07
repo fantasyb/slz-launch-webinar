@@ -411,6 +411,31 @@
         "agentRecorded": {
           "type": "boolean"
         },
+        "consolidated": {
+          "type": "object",
+          "properties": {
+            "transcript": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 300
+            },
+            "candidate": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 300
+            },
+            "at": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          "required": [
+            "transcript",
+            "candidate",
+            "at"
+          ],
+          "additionalProperties": false
+        },
         "status": {
           "type": "string",
           "enum": [
