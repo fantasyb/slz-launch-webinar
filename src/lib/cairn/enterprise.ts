@@ -50,10 +50,12 @@ export interface Role {
   /** Deny any write-looking tool (create/update/delete/deploy/…) by name/annotation. */
   readOnly?: boolean;
   /**
-   * Fail-closed read-only: deny ANY tool not explicitly declared readOnlyHint:true.
-   * The name heuristic (readOnly) is best-effort and a hostile server controls its
-   * own tool names; strict mode does not trust the name at all, so an unannotated
-   * or write-declared tool is denied. Use this where the read-only boundary is a
+   * Fail-closed read-only: deny ANY tool not explicitly declared readOnlyHint:true,
+   * AND any tool whose name reads as a write even when it is so declared. The
+   * name heuristic (readOnly) is best-effort and a hostile server controls its
+   * own tool names — but it controls its annotations just as much, so strict
+   * mode trusts NEITHER alone: a tool must be declared read-only by the server
+   * and not be named as a write. Use this where the read-only boundary is a
    * real control rather than a convenience.
    */
   readOnlyStrict?: boolean;
@@ -252,26 +254,35 @@ export function authorize(
     const hit = candidates.find((c) => denied.has(c));
     if (hit) return { allowed: false, reason: `role "${principal.role}" is denied tool "${tool.name}"` };
   }
+  // Classify the tool's OWN name, never the server's. The exposed name is
+  // `${server}__${raw}`, so classifying it whole makes the server name the
+  // leading token: a server called `zapier` (zap), `dropbox` (drop), `postgres`
+  // (post), `sendgrid` (send), `runpod` (run) or `pushover` (push) turned EVERY
+  // one of its tools into a write for a read-only role, and a server named with
+  // a read verb (`search`) masked a raw write whose verb only prefix-matches
+  // (red-team #7). Strip a leading `${server}__` from the exposed name and
+  // classify that plus the raw aliases; the fail-closed direction is kept — a
+  // genuine write verb in the tool's own name still denies.
+  const prefix = `${server}__`;
+  const ownName = tool.name.startsWith(prefix) ? tool.name.slice(prefix.length) : tool.name;
+  const namedWrite = (role.readOnlyStrict || role.readOnly) && [ownName, ...(tool.aliases ?? [])].some((n) => readsAsWrite(n));
   if (role.readOnlyStrict) {
-    // Do not trust the name at all: allow ONLY a tool the server itself declares
-    // read-only. An unannotated or write-declared tool is denied.
+    // Allow ONLY a tool the server itself declares read-only: an unannotated or
+    // write-declared tool is denied whatever its name says.
     if (tool.annotations?.readOnlyHint !== true) {
       return { allowed: false, reason: `role "${principal.role}" is strict read-only; "${tool.name}" is not declared readOnlyHint:true` };
     }
+    // AND the name must not read as a write. The annotation is the SERVER'S OWN
+    // claim, and the server is the untrusted party here: a hostile one that
+    // annotates `delete_repo` readOnlyHint:true used to pass strict on that claim
+    // alone, while plain readOnly (which checks the name) refused it — "strict"
+    // was looser than "read-only" against exactly the server it exists to
+    // distrust. Both facts, like classify(): declared read-only, and not named
+    // as a write (which includes the residual-non-Latin fail-closed in
+    // readsAsWrite, so a look-alike script cannot hide the verb).
+    if (namedWrite) return { allowed: false, reason: `role "${principal.role}" is strict read-only; "${tool.name}" is declared readOnlyHint:true but its name reads as a write, and the declaration is the server's own claim` };
   } else if (role.readOnly) {
     const declaredWrite = tool.annotations?.readOnlyHint === false || tool.annotations?.destructiveHint === true;
-    // Classify the tool's OWN name, never the server's. The exposed name is
-    // `${server}__${raw}`, so classifying it whole makes the server name the
-    // leading token: a server called `zapier` (zap), `dropbox` (drop), `postgres`
-    // (post), `sendgrid` (send), `runpod` (run) or `pushover` (push) turned EVERY
-    // one of its tools into a write for a read-only role, and a server named with
-    // a read verb (`search`) masked a raw write whose verb only prefix-matches
-    // (red-team #7). Strip a leading `${server}__` from the exposed name and
-    // classify that plus the raw aliases; the fail-closed direction is kept — a
-    // genuine write verb in the tool's own name still denies.
-    const prefix = `${server}__`;
-    const ownName = tool.name.startsWith(prefix) ? tool.name.slice(prefix.length) : tool.name;
-    const namedWrite = [ownName, ...(tool.aliases ?? [])].some((n) => readsAsWrite(n));
     if (declaredWrite || namedWrite) return { allowed: false, reason: `role "${principal.role}" is read-only; "${tool.name}" reads as a write` };
   }
   return { allowed: true, reason: 'permitted by role' };

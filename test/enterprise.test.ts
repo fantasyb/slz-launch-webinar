@@ -115,6 +115,17 @@ test('readOnlyStrict denies any tool not declared readOnlyHint:true (Fable-6 #3)
   // Plain readOnly (non-strict) still trusts a read-looking name.
   const p2 = policy({ roles: { viewer: { readOnly: true } } });
   assert.equal(authorize(p2, v, 'sf', { name: 'list_things' }).allowed, true, 'non-strict readOnly allows a read-looking name');
+  // The annotation is the SERVER'S OWN claim, and the server is untrusted. Strict
+  // used to take readOnlyHint:true as the whole answer and never look at the
+  // name — so a hostile server annotating `delete_repo` read-only made it
+  // callable by a STRICT read-only tenant while plain readOnly (name-checked)
+  // refused it: "strict" was looser than "read-only" against exactly the server
+  // it exists to distrust. Strict now needs both facts, like classify().
+  for (const name of ['delete_repo', 'sf__delete_repo', 'dеlete_repo' /* Cyrillic е */, 'nuke_everything']) {
+    assert.equal(authorize(p, v, 'sf', { name, aliases: name.startsWith('sf__') ? [name.slice(4)] : [], annotations: { readOnlyHint: true } }).allowed, false, `strict denies "${name}" even when the server declares it readOnlyHint:true`);
+    assert.equal(authorize(p2, v, 'sf', { name, aliases: name.startsWith('sf__') ? [name.slice(4)] : [], annotations: { readOnlyHint: true } }).allowed, false, `and plain readOnly denies "${name}" as before`);
+  }
+  assert.equal(authorize(p, v, 'sf', { name: 'sf__get_thing', aliases: ['get_thing'], annotations: { readOnlyHint: true } }).allowed, true, 'a declared, read-named tool under its server prefix is still allowed');
 });
 
 test('readOnlyStrict permits a protocol-level READ (resources/prompts/completions) while still denying an unannotated tool', () => {
