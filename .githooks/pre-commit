@@ -31,7 +31,17 @@ echo "pre-commit: staged content"
 npx tsx scripts/precommit.ts || exit 1
 
 echo "pre-commit: tests"
-npm test >/tmp/cairn-precommit.log 2>&1 || {
+# GIT_DIR unset for the suite. When .git is a gitfile — every LINKED WORKTREE —
+# git exports an absolute GIT_DIR into the hook's environment, and the tests
+# that build a throwaway repo in /tmp and commit in it (self-update, safety,
+# autoseal) then run THIS repo's hook inside that repo, recursively, and die on
+# a missing scripts/precommit.ts. Seventeen red tests, none of them about the
+# change being committed, only from a worktree — and worse, one such test's
+# `git add` landed in the WORKTREE'S index (its work tree became the test's
+# cwd), staging the deletion of every tracked file. The main checkout was never
+# affected, so nothing here changes for it. The scanner above still sees the
+# real staged content: only the test step runs with these cleared.
+env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE npm test >/tmp/cairn-precommit.log 2>&1 || {
   echo "REFUSED — tests are red:"
   grep -E "^not ok|^# (pass|fail)" /tmp/cairn-precommit.log | head -20
   echo "  full output: /tmp/cairn-precommit.log"
