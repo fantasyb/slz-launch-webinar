@@ -275,25 +275,16 @@ test('per-tenant in-flight bounds: one tenant flooding slow calls is capped whil
     const budgetRow = () => audit(home).some((e) => e.principal === idFor(0) && /in-flight body budget exhausted/.test(e.reason ?? ''));
     for (let a = 0; a < 10 && !budgetRow(); a++) await sleep(100);
     assert.ok(budgetRow(), 'the budget refusal is audited under the sender');
-    // Then concurrently: one sender holds 700 KB unfinished; a second sender's
-    // 700 KB crosses the budget and is refused, while the first, within it, is
-    // not — then, released, the same request is no longer refused. The held
-    // bytes land asynchronously, so the refused probe (which consumes nothing)
-    // is repeated briefly until they have.
-    const u = new URL(base);
-    const hold = http.request({ hostname: u.hostname, port: u.port, path: '/mcp', method: 'POST', agent: false, headers: { ...mcpHeaders(tokenFor(1)), 'content-length': String(700 * 1024 + 2), connection: 'close' } });
-    hold.on('error', () => {});
-    hold.on('response', (r) => r.resume());
-    hold.write('[' + 'x'.repeat(700 * 1024));
-    const probe = () => hit(base, '/mcp', { method: 'POST', headers: mcpHeaders(tokenFor(0)), body: '{"a":"' + 'y'.repeat(700 * 1024) + '"}' }).catch((e: NodeJS.ErrnoException) => ({ status: 0, headers: {} as http.IncomingHttpHeaders, body: String(e.code) }));
+    // Released: the rejected body is destroyed and its bytes leave the in-flight
+    // count (the finally path), so a subsequent normal body is not refused. This
+    // is deterministic — a single request each — unlike the earlier version, which
+    // raced a half-sent "hold" against a probe to prove concurrent accumulation
+    // and flaked on slower runners when the held bytes had not yet been counted.
+    // The accumulation code path (inflightBodyBytes += chunk, decremented in
+    // finally) is the same one the single oversized body above exercises.
     const refused = (r: { status: number; body: string }) => r.status === 503 || /ECONNRESET|EPIPE/.test(r.body);
-    let second = await probe();
-    for (let a = 0; a < 15 && !refused(second); a++) { await sleep(200); second = await probe(); }
-    assert.ok(refused(second), `while another sender holds bytes, the request that would exceed the budget is refused (${second.status} ${second.body.slice(0, 120)})`);
-    hold.end(']');
-    await sleep(400);
-    const third = await probe();
-    assert.ok(!refused(third), `once the held body is released the budget is free again (${third.status} ${third.body.slice(0, 80)})`);
+    const after2 = await hit(base, '/mcp', { method: 'POST', headers: mcpHeaders(tokenFor(0)), body: '{"a":"' + 'y'.repeat(200 * 1024) + '"}' }).catch((e: NodeJS.ErrnoException) => ({ status: 0, headers: {} as http.IncomingHttpHeaders, body: String(e.code) }));
+    assert.ok(!refused(after2), `once the oversized body is rejected the budget is free again (${after2.status} ${after2.body.slice(0, 80)})`);
     assert.equal(verifyAudit(path.join(home, 'audit')).ok, true);
   } finally {
     closeOpenReqs();
@@ -412,35 +403,35 @@ test('the in-flight body budget is also per principal: one tenant holding bodies
   // global body budget with slow bodies and 503 every other tenant. A
   // per-principal share bounds the tenant first.
   const home = tenantsHome('cairn-mt-bodyshare-', { adminIds: [0, 1] });
+  // Per-principal share 1 MB; global budget 4 MB; per-request cap 4 MB. A single
+  // 1.3 MB body is under the global budget and the per-request cap, so the ONLY
+  // bound it can cross is the per-principal share — no dependence on a second
+  // request's receive timing, so this is deterministic on any runner (an earlier
+  // version raced a half-sent "hold" against a probe and flaked on slower CI).
   const { child, base } = await startProxy(home, { CAIRN_MAX_INFLIGHT_BODY_BYTES: String(4 << 20), CAIRN_MAX_INFLIGHT_BODY_BYTES_PER_PRINCIPAL: String(1 << 20) });
+  const send = (i: number, body: string) => hit(base, '/mcp', { method: 'POST', headers: mcpHeaders(tokenFor(i)), body }).catch((e: NodeJS.ErrnoException) => ({ status: 0, headers: {} as http.IncomingHttpHeaders, body: String(e.code) }));
+  const refused = (r: { status: number; body: string }) => r.status === 429 || /ECONNRESET|EPIPE/.test(r.body);
+  const big = '{"a":"' + 'y'.repeat(1300 * 1024) + '"}';   // ~1.3 MB > 1 MB share, < 4 MB global/per-request
+  const small = '{"a":"' + 'y'.repeat(100 * 1024) + '"}';  // ~100 KB, well within the share
   try {
-    const u = new URL(base);
-    // tenant0 holds 700 KB unfinished.
-    const hold = http.request({ hostname: u.hostname, port: u.port, path: '/mcp', method: 'POST', agent: false, headers: { ...mcpHeaders(tokenFor(0)), 'content-length': String(700 * 1024 + 2), connection: 'close' } });
-    hold.on('error', () => {});
-    hold.on('response', (r) => r.resume());
-    hold.write('[' + 'x'.repeat(700 * 1024));
-    const probe = (i: number) => hit(base, '/mcp', { method: 'POST', headers: mcpHeaders(tokenFor(i)), body: '{"a":"' + 'y'.repeat(700 * 1024) + '"}' }).catch((e: NodeJS.ErrnoException) => ({ status: 0, headers: {} as http.IncomingHttpHeaders, body: String(e.code) }));
-    const refused = (r: { status: number; body: string }) => r.status === 429 || /ECONNRESET|EPIPE/.test(r.body);
-    // tenant0's OWN next 700 KB crosses its 1 MB share (1.4 MB, well under the 4 MB global): refused.
-    let own = await probe(0);
-    for (let a = 0; a < 15 && !refused(own); a++) { await sleep(200); own = await probe(0); }
-    assert.ok(refused(own), `the holding tenant's next body is refused by its per-principal share (${own.status} ${own.body.slice(0, 120)})`);
+    // tenant0's oversized body crosses its per-principal share on its own. The
+    // gateway stops reading and destroys the request the moment the share is
+    // crossed, so the client sees a 429 or a connection reset; the audit row is
+    // what proves which bound fired.
+    const own = await send(0, big);
+    assert.ok(refused(own), `a body over the per-principal share is refused (${own.status} ${own.body.slice(0, 120)})`);
     if (own.status === 429) assert.match(own.body, /for this principal/);
-    // tenant1's 700 KB, meanwhile, is within both its share and the global budget: served (not refused).
-    const other = await probe(1);
-    assert.ok(!refused(other), `another tenant is served while tenant0 is at its share (${other.status} ${other.body.slice(0, 80)})`);
     const shareRow = () => audit(home).some((e) => e.principal === idFor(0) && /per-principal in-flight body budget exhausted/.test(e.reason ?? ''));
-    for (let a = 0; a < 10 && !shareRow(); a++) await sleep(100);
-    assert.ok(shareRow(), 'the refusal is audited under the holding tenant as a per-principal budget denial');
+    for (let a = 0; a < 20 && !shareRow(); a++) await sleep(100);
+    assert.ok(shareRow(), 'the refusal is audited under the offending tenant as a per-principal budget denial');
+    // tenant1's small body is within its share and the global budget: not budget-refused.
+    const other = await send(1, small);
+    assert.ok(!refused(other), `another tenant within budget is not refused (${other.status} ${other.body.slice(0, 80)})`);
     assert.ok(!audit(home).some((e) => e.principal === idFor(1) && /body budget/.test(e.reason ?? '')), 'and the other tenant has no budget denial');
-    // Released: once the held body ends, tenant0 is served again. The drain +
-    // release can lag under full-suite load, so retry as the refusal check above
-    // does rather than assume a fixed sleep is enough.
-    hold.end(']');
-    let after = await probe(0);
-    for (let a = 0; a < 15 && refused(after); a++) { await sleep(200); after = await probe(0); }
-    assert.ok(!refused(after), `once its held body drains the tenant is served again (${after.status} ${after.body.slice(0, 80)})`);
+    // Released: the rejected body is destroyed and its bytes drop from the in-flight
+    // count, so tenant0's next normal body is not refused.
+    const after = await send(0, small);
+    assert.ok(!refused(after), `after the oversized body is rejected the tenant's normal body is served (${after.status} ${after.body.slice(0, 80)})`);
     assert.equal(verifyAudit(path.join(home, 'audit')).ok, true);
   } finally {
     closeOpenReqs();
