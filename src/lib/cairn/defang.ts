@@ -62,7 +62,20 @@ export const CONFUSABLES: Record<string, string> = {
   // Greek CAPITALS (which NFKC leaves non-Latin, and the lowercase-only table
   // missed) no longer slips a forged label past the defang (Fable-6 #14).
   'А': 'a', 'Е': 'e', 'О': 'o', 'Р': 'p', 'С': 'c', 'У': 'y', 'Х': 'x', 'І': 'i', 'Ѕ': 's', 'М': 'm', 'Н': 'h', 'Т': 't', 'К': 'k', 'В': 'b',
-  'Ο': 'o', 'Α': 'a', 'Ε': 'e', 'Ρ': 'p', 'Υ': 'y', 'Χ': 'x', 'Κ': 'k', 'Ν': 'n', 'Ι': 'i', 'Τ': 't', 'Β': 'b', 'Η': 'h', 'Μ': 'm', 'Ϲ': 'c', 'Һ': 'h', 'Ӏ': 'l',
+  'Ο': 'o', 'Α': 'a', 'Ε': 'e', 'Ρ': 'p', 'Υ': 'y', 'Χ': 'x', 'Κ': 'k', 'Ν': 'n', 'Ι': 'i', 'Τ': 't', 'Β': 'b', 'Η': 'h', 'Μ': 'm', 'Һ': 'h', 'Ӏ': 'l',
+  // The table runs AFTER NFKC, so a key must be an NFKC-STABLE code point or it
+  // is dead: NFKC has already moved the character somewhere else before the table
+  // is consulted. Ϲ (U+03F9, capital lunate sigma — a C look-alike) canonicalizes
+  // to Σ (U+03A3), so a `'Ϲ': 'c'` entry was never reached and a forged
+  // "Ϲairn corpus" folded to "Σairn corpus" and passed. Map the POST-NFKC form:
+  // that catches Ϲ, the math-styled sigmas (𝚺 𝛴 …, all NFKC → Σ), and any
+  // pre-image a later Unicode adds, in one entry. The same shape already holds
+  // for ϲ → ς above, where the destination happens to be a key too.
+  // test/defang.test.ts pins that every key folds to its value, so a dead entry
+  // cannot recur silently. Σ is a real Greek capital, but the fold is used for
+  // MATCHING only and the original text is spliced back untouched — only a
+  // fenced label is ever replaced, so a Σ in Greek or math prose is unaffected.
+  'Σ': 'c',
 };
 // Dash-like code points an upstream could fence with instead of ASCII "-": NFKC
 // folds full-width/small hyphen-minus to "-", but leaves the em/en dash, the
@@ -252,11 +265,13 @@ const COMPAT_SOURCE =
   '\\u{3200}-\\u{33FF}\\u{A720}-\\u{A7FF}\\u{FB00}-\\u{FB4F}\\u{FF00}-\\u{FFEF}\\u{1CC00}-\\u{1CEBF}' +
   '\\u{1D400}-\\u{1D7FF}\\u{1E030}-\\u{1E08F}\\u{1F100}-\\u{1F1FF}';
 export const COMPAT_RE = new RegExp(`[${COMPAT_SOURCE}]`, 'u');
-// Per letter: the ASCII pair plus every CONFUSABLES entry that folds to it and
-// survives NFKC (the enumeration test says which). Everything else that folds to
-// the letter lives in a COMPAT block.
+// Per letter: the ASCII pair plus every code point OUTSIDE the compat blocks whose
+// whole fold is that letter (the enumeration test says which). That is keyed on
+// the ORIGINAL code point, so it holds both a table key and any pre-image NFKC
+// moves onto one: ς and ϲ (NFKC ϲ → ς), Σ and Ϲ (NFKC Ϲ → Σ). Everything else
+// that folds to the letter lives in a COMPAT block.
 export const LETTER_SOURCES: Record<string, string> = {
-  c: 'CcςϲСс', a: 'AaΑαАаա', i: 'IiıΙιІі', r: 'Rr', n: 'NnΝո', t: 'TtΤτТт', o: 'OoΟοОоօ', l: 'LlӀӏ',
+  c: 'CcςϲΣϹСс', a: 'AaΑαАаա', i: 'IiıΙιІі', r: 'Rr', n: 'NnΝո', t: 'TtΤτТт', o: 'OoΟοОоօ', l: 'LlӀӏ',
 };
 // Code points that fold to NOTHING may sit between the letters of a forged word
 // in the original (that is the whole point of stripping them in the fold).
