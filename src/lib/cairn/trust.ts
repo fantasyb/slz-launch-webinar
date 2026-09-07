@@ -49,6 +49,18 @@ export interface Pin {
    * empty, which a real instructions string will correctly read as drift).
    */
   instructions?: string;
+  /**
+   * The approved PROMPT surface (prompts/list): every prompt's name, title,
+   * description and argument list, as ToolShape via promptShapeOf. The model
+   * reads a prompt's description and arguments exactly as it reads a tool's, so
+   * a prompt rewritten after approval is the same rug-pull, pinned and checked
+   * on the same footing. ABSENT (not empty) in a pin written before prompts were
+   * covered, or before the server's prompts were first listed: that means "not
+   * yet approved", and the gateway pins the prompt channel on its next complete
+   * listing (trust on first use for that channel alone) rather than reading
+   * every existing prompt as `appeared` and withholding them all on upgrade.
+   */
+  prompts?: ToolShape[];
 }
 
 const safeName = (s: string) => s.replace(/[^A-Za-z0-9_.-]+/g, '_') || 'server';
@@ -64,25 +76,53 @@ export function pinPath(server: string, trustDir: string): string {
 export function readPin(server: string, trustDir: string): Pin | null {
   try {
     const p = JSON.parse(fs.readFileSync(pinPath(server, trustDir), 'utf8')) as Pin;
-    return p && Array.isArray(p.tools) ? p : null;
+    if (!p || !Array.isArray(p.tools)) return null;
+    // A malformed prompts field reads as "not yet approved", never as a surface.
+    if (p.prompts !== undefined && !Array.isArray(p.prompts)) delete p.prompts;
+    return p;
   } catch {
     return null;
   }
 }
 
-export function writePin(server: string, tools: ToolShape[], trustDir: string, instructions?: string): boolean {
+/** Atomic write of a whole pin (tmp + rename), so a crash never leaves a torn file that reads as no pin. */
+function persistPin(pin: Pin, trustDir: string): boolean {
   try {
     fs.mkdirSync(trustDir, { recursive: true });
-    const pin: Pin = { server, approvedAt: new Date().toISOString(), tools, instructions: instructions ?? '' };
-    const tmp = path.join(trustDir, `.${safeName(server)}.${process.pid}.tmp`);
+    const tmp = path.join(trustDir, `.${safeName(pin.server)}.${process.pid}.tmp`);
     fs.writeFileSync(tmp, JSON.stringify(pin, null, 2) + '\n');
-    fs.renameSync(tmp, pinPath(server, trustDir));
+    fs.renameSync(tmp, pinPath(pin.server, trustDir));
     return true;
   } catch {
     // Best-effort: a pin that cannot be written just means no enforcement this
     // run, never a broken gateway.
     return false;
   }
+}
+
+/**
+ * Pin a server's surface on first sight. `prompts` is included only when the
+ * caller has actually seen a complete prompt listing — omitted means the prompt
+ * channel is not yet approved and will be pinned by `pinPrompts` on its first
+ * complete listing, never that the server has no prompts.
+ */
+export function writePin(server: string, tools: ToolShape[], trustDir: string, instructions?: string, prompts?: ToolShape[]): boolean {
+  const pin: Pin = { server, approvedAt: new Date().toISOString(), tools, instructions: instructions ?? '', ...(prompts ? { prompts } : {}) };
+  return persistPin(pin, trustDir);
+}
+
+/**
+ * Attach a first-sight prompt surface to an EXISTING pin (one written before
+ * prompts were covered, or before this server's prompts were first listed).
+ * The tool surface, instructions and approval date are untouched: this is the
+ * trust-on-first-use step for the prompt channel alone. Returns false when
+ * there is no pin to attach to — the tool listing pins first, and carries the
+ * prompts with it.
+ */
+export function pinPrompts(server: string, prompts: ToolShape[], trustDir: string): boolean {
+  const pin = readPin(server, trustDir);
+  if (!pin) return false;
+  return persistPin({ ...pin, prompts }, trustDir);
 }
 
 export function forgetPin(server: string, trustDir: string): boolean {

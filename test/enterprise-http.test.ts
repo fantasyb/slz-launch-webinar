@@ -447,6 +447,62 @@ test('two tenants on different servers both read a COLLIDING resource URI; neith
   }
 });
 
+test('a readOnlyStrict principal can still READ — resources/read and prompts/get succeed, while an unannotated tool call is refused', async () => {
+  // Strict read-only refuses any TOOL a server did not declare readOnlyHint:true.
+  // The non-tool reads (resources, prompts, completions) route through the same
+  // authorize() with a synthetic descriptor, which used to carry no annotation —
+  // so a strict read-only principal was denied every read as "not declared
+  // read-only". Read-only must deny writes, not reads.
+  const home = baseHome('cairn-ent-strict-');
+  fs.writeFileSync(path.join(home, 'org-policy.json'), JSON.stringify({
+    auth: { required: true },
+    principals: { [tokenHash(TOKEN)]: { id: 'alice', role: 'viewer' } },
+    roles: { viewer: { readOnlyStrict: true } },
+  }));
+  const { child, base } = await startProxy(home);
+  // One request per FRESH session: sequential connection:close reads on one
+  // session hit the spurious empty-400 SSE race documented in cairn-0050 (every
+  // other streamed read), which has nothing to do with what is under test. Each
+  // call inits its own session (retrying the same spurious 400 on init) and
+  // makes exactly one request.
+  const rpc = async (id: number, method: string, params: unknown) => {
+    let init = await hit(base, '/mcp', { method: 'POST', headers: mcpHeaders(TOKEN), body: initBody(), keepOpen: true });
+    for (let a = 0; a < 5 && init.status !== 200; a++) {
+      await new Promise((r) => setTimeout(r, 200));
+      init = await hit(base, '/mcp', { method: 'POST', headers: mcpHeaders(TOKEN), body: initBody(), keepOpen: true });
+    }
+    assert.equal(init.status, 200, 'init ok');
+    const sid = String(init.headers['mcp-session-id'] ?? '');
+    let r = await hit(base, '/mcp', { method: 'POST', headers: { ...mcpHeaders(TOKEN), 'mcp-session-id': sid }, body: JSON.stringify({ jsonrpc: '2.0', id, method, params }) });
+    for (let a = 0; a < 5 && r.status === 400; a++) {
+      await new Promise((res) => setTimeout(res, 150));
+      r = await hit(base, '/mcp', { method: 'POST', headers: { ...mcpHeaders(TOKEN), 'mcp-session-id': sid }, body: JSON.stringify({ jsonrpc: '2.0', id, method, params }) });
+    }
+    return r;
+  };
+  try {
+    const read = await rpc(7, 'resources/read', { uri: 'fixture://doc' });
+    assert.match(read.body, /resource body text from upstream/, `a strict read-only principal reads a resource: ${read.body}`);
+    assert.doesNotMatch(read.body, /not permitted/, 'the read is not refused');
+
+    const got = await rpc(8, 'prompts/get', { name: 'greet', arguments: {} });
+    assert.match(got.body, /prompt body text from upstream/, `a strict read-only principal gets a prompt: ${got.body}`);
+    assert.doesNotMatch(got.body, /not permitted/, 'the get is not refused');
+
+    const listed = await rpc(9, 'prompts/list', {});
+    assert.match(listed.body, /"greet"/, 'and sees the prompt in the list');
+
+    // The TOOL boundary is unchanged: an unannotated tool is still refused under strict.
+    const call = await rpc(10, 'tools/call', { name: 'mcp__data360__unrelated', arguments: {} });
+    const result = rpcResult(call.body);
+    assert.equal(result?.isError, true, `an unannotated tool is still denied to a strict read-only role: ${call.body}`);
+    assert.match(String(result?.content?.[0]?.text ?? ''), /strict read-only|not declared readOnlyHint/, 'with the strict-mode reason');
+  } finally {
+    closeOpenReqs();
+    stopProxy(child);
+  }
+});
+
 test('with no org policy, the same gateway needs no token (the personal case is unchanged)', async () => {
   const home = baseHome('cairn-ent-open-');
   const { child, base } = await startProxy(home);

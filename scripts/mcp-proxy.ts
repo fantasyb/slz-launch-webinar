@@ -62,6 +62,7 @@ import {
   UnsubscribeRequestSchema,
   type ServerCapabilities,
   type Tool,
+  type Prompt,
 } from '@modelcontextprotocol/sdk/types.js';
 import http from 'http';
 import { randomUUID } from 'crypto';
@@ -74,9 +75,9 @@ import { homePath, cairnHome } from '../src/lib/cairn/home';
 import { observe } from '../src/lib/cairn/observe';
 import { recordSubmission } from '../src/lib/cairn/recordFinding';
 import { redactForLedger } from '../src/lib/cairn/safety';
-import { shapeOf, diffSurface, findingNames, type ToolShape, type SurfaceChange } from '../src/lib/cairn/toolsurface';
-import { trustMode, readPin, writePin, evaluateTrust } from '../src/lib/cairn/trust';
-import { readOrgPolicy, orgPolicyPath, authenticate, authorize, appendAudit, LOCAL_ADMIN, type OrgPolicy, type Principal } from '../src/lib/cairn/enterprise';
+import { shapeOf, promptShapeOf, diffSurface, findingNames, type ToolShape, type SurfaceChange } from '../src/lib/cairn/toolsurface';
+import { trustMode, readPin, writePin, pinPrompts, evaluateTrust } from '../src/lib/cairn/trust';
+import { readOrgPolicy, orgPolicyPath, authenticate, authorize, appendAudit, LOCAL_ADMIN, PROTOCOL_READ, type OrgPolicy, type Principal } from '../src/lib/cairn/enterprise';
 import { summarise, detect, type CallSummary } from '../src/lib/cairn/contradiction';
 import { tierOf } from '../src/lib/cairn/brief';
 import { resonates } from '../src/lib/cairn/resonance';
@@ -1202,6 +1203,18 @@ interface Upstream {
    * never trust-evaluated. In enforce mode every tool on this upstream is
    * withheld until it lists completely — a partial listing must not fail open. */
   listIncomplete: boolean;
+  /** The prompt surface from the last COMPLETE prompts/list (raw names), or null
+   * if never listed. Carried into a first-sight tool pin so the prompt channel is
+   * approved alongside the tools when both have been seen. */
+  promptSurface: ToolShape[] | null;
+  /** RAW prompt names withheld by the trust pin — the prompt twin of trustBlocked.
+   * A prompt's description and arguments are model-read like a tool's, so a
+   * prompt rewritten since approval is the same rug-pull. See trust.ts. */
+  promptTrustBlocked: Set<string>;
+  /** The prompt twin of listIncomplete: a partial prompt listing was never
+   * trust-evaluated, so in enforce mode every prompt on this upstream is withheld
+   * until it lists completely. */
+  promptListIncomplete: boolean;
 }
 
 /** Lifted from the SDK's 60s: a long-running tool must not fail only because it was proxied. */
@@ -1560,6 +1573,7 @@ async function main() {
   let capabilities: ServerCapabilities = {};
   const upstreams: Upstream[] = specs.map((spec) => ({
     spec, client: null, caps: {}, alive: false, respawnFailures: 0, nextRespawnAt: 0, respawning: null, surface: null, surfaceEvents: [], surfaceDropped: 0, trustBlocked: new Set(), listIncomplete: false,
+    promptSurface: null, promptTrustBlocked: new Set(), promptListIncomplete: false,
   }));
   /* Every live server, so an upstream notification reaches every session. */
   const servers = new Set<Server>();
@@ -1780,10 +1794,18 @@ async function main() {
    * the server allow/deny applies — a read is not gated by readOnly. RBAC used to
    * cover only tools/*, which let a denied or read-only principal read whatever a
    * server published as a resource or prompt; this closes that. Ungoverned → yes.
+   *
+   * The descriptor is PROTOCOL_READ, which declares itself read-only: every
+   * operation routed through here is a read by protocol definition, and a
+   * `readOnlyStrict` role (which refuses any TOOL not declared readOnlyHint:true)
+   * used to see a bare, unannotated name here and deny a strict read-only
+   * principal every resource, prompt and completion — read-only meant "cannot
+   * read". Tool calls never come through here; they carry their own annotations
+   * to authorize() and strict mode judges those as before.
    */
   function mayReachServer(session: SessionState, up: Upstream): boolean {
     if (!governed(session)) return true;
-    return authorize(currentPolicy(), session.principal, up.spec.name, { name: '(resource)' }).allowed;
+    return authorize(currentPolicy(), session.principal, up.spec.name, PROTOCOL_READ).allowed;
   }
 
   /**
@@ -1859,11 +1881,13 @@ async function main() {
     const live = up.instructions ?? '';
     const pin = readPin(up.spec.name, dir);
     if (!pin) {
-      // Trust on first use: this surface AND these instructions are the baseline.
-      const ok = writePin(up.spec.name, shapes, dir, live);
+      // Trust on first use: this surface AND these instructions are the baseline
+      // — and the prompt surface too, if a complete prompt listing has already
+      // been seen (otherwise the prompt channel is pinned on its first listing).
+      const ok = writePin(up.spec.name, shapes, dir, live, up.promptSurface ?? undefined);
       up.trustBlocked = new Set();
       if (ok) {
-        process.stderr.write(`cairn-proxy: TRUST ${up.spec.name}: pinned ${shapes.length} tool(s) as approved (first sight)\n`);
+        process.stderr.write(`cairn-proxy: TRUST ${up.spec.name}: pinned ${shapes.length} tool(s)${up.promptSurface ? ` and ${up.promptSurface.length} prompt(s)` : ''} as approved (first sight)\n`);
       } else {
         // The pin did not persist. Next read will "first-sight" again and never
         // enforce — so in enforce mode this server is currently unprotected. Do
@@ -1887,6 +1911,58 @@ async function main() {
     try {
       const detail = [...changes.map((c) => c.detail), ...(instructionsChanged ? ['server instructions changed since approval'] : [])].join('; ').slice(0, 500);
       observe(`${up.spec.name} tool surface drifted from approval: ${detail}`, [], `mcp-proxy:trust-${mode}`, { by: 'gateway', session: process.env.CAIRN_SESSION });
+    } catch { /* never fatal */ }
+  }
+
+  /*
+   * The prompt twin of evaluateTrustFor. A prompt's description and arguments
+   * are read by the model exactly as a tool's are, so a server that rewrites a
+   * prompt after approval — or adds one — is the same rug-pull, and was the one
+   * model-read channel the pin did not cover. Runs on every COMPLETE prompt
+   * listing. The prompt surface lives in the same pin as the tools: a pin with
+   * no `prompts` yet (written before prompts were covered, or before this
+   * server's prompts were first listed) is upgraded in place on first sight —
+   * trust on first use for that channel alone — never read as "every prompt
+   * appeared", which would withhold them all on upgrade. Never throws.
+   */
+  function evaluatePromptTrustFor(up: Upstream, shapes: ToolShape[]): void {
+    up.promptSurface = shapes; // the latest complete listing, so a later first-sight tool pin carries it
+    const mode = trustMode();
+    if (mode === 'off') { up.promptTrustBlocked = new Set(); return; }
+    const dir = trustDirOf();
+    if (!dir) { up.promptTrustBlocked = new Set(); return; } // evaluateTrustFor shouts about this on every tool read
+    const pin = readPin(up.spec.name, dir);
+    up.promptTrustBlocked = new Set();
+    if (!pin) {
+      // No pin at all yet. A server WITH tools is pinned by its tool listing,
+      // which carries up.promptSurface along; a server with NO tools capability
+      // never reaches that path, and its tool surface genuinely is empty — so
+      // pin it here, with the prompts, rather than leave the channel unapproved.
+      if (up.caps.tools) return;
+      const ok = writePin(up.spec.name, [], dir, up.instructions ?? '', shapes);
+      process.stderr.write(ok
+        ? `cairn-proxy: TRUST ${up.spec.name}: pinned ${shapes.length} prompt(s) as approved (first sight)\n`
+        : `cairn-proxy: TRUST ${up.spec.name}: could not write approval pin — ${mode === 'enforce' ? 'its prompts are UNPROTECTED until the pin can be written' : 'no prompt baseline recorded this run'} (check CAIRN_HOME/trust is writable)\n`);
+      return;
+    }
+    if (!pin.prompts) {
+      const ok = pinPrompts(up.spec.name, shapes, dir);
+      process.stderr.write(ok
+        ? `cairn-proxy: TRUST ${up.spec.name}: pinned ${shapes.length} prompt(s) as approved (first sight of its prompts)\n`
+        : `cairn-proxy: TRUST ${up.spec.name}: could not add prompts to the approval pin — ${mode === 'enforce' ? 'its prompts are UNPROTECTED until the pin can be written' : 'no prompt baseline recorded this run'} (check CAIRN_HOME/trust is writable)\n`);
+      return;
+    }
+    const { changes, blocked } = evaluateTrust(pin.prompts, shapes);
+    up.promptTrustBlocked = blocked;
+    if (!changes.length) return;
+    for (const c of changes) {
+      const live = c.kind === 'renamed' && c.to ? c.to : c.tool;
+      const action = blocked.has(live) ? (mode === 'enforce' ? 'WITHHELD until re-approved' : 'flagged (monitor)') : 'noted';
+      process.stderr.write(`cairn-proxy: TRUST ${up.spec.name}: prompt ${c.detail} — ${action}\n`);
+    }
+    try {
+      const detail = changes.map((c) => `prompt ${c.detail}`).join('; ').slice(0, 500);
+      observe(`${up.spec.name} prompt surface drifted from approval: ${detail}`, [], `mcp-proxy:trust-${mode}`, { by: 'gateway', session: process.env.CAIRN_SESSION });
     } catch { /* never fatal */ }
   }
 
@@ -1981,11 +2057,16 @@ async function main() {
     if (method === 'notifications/prompts/list_changed') { dropSingle(promptOwner, up); unknownPromptCache.clear(); scheduleListChangedFlush(up, method); return; }
     if (method === 'notifications/resources/list_changed') { dropSet(resourceOwner, up); dropSet(templateOwner, up); unknownResourceCache.clear(); scheduleListChangedFlush(up, method); return; }
     // Defang the one notification that carries free upstream text to the model.
-    // `data` may be a string OR an arbitrary object (the spec allows any JSON), so
-    // defang deeply — the object case was previously forwarded raw (red-team A5).
+    // The WHOLE params object, not only `data`: `data` may be a string OR an
+    // arbitrary object (the spec allows any JSON), and the sibling `logger` is a
+    // free upstream string a client renders beside it — a forged provenance
+    // label there reached the model intact while `data` was cleaned (the
+    // object case of `data` was itself forwarded raw before — red-team A5).
+    // defangDeep is a no-op on any string without a forgery, so `level` and a
+    // clean logger name pass through byte-for-byte.
     let outParams = (params ?? {}) as Record<string, unknown>;
-    if (method === 'notifications/message' && outParams && 'data' in outParams) {
-      outParams = { ...outParams, data: defangDeep(outParams.data) };
+    if (method === 'notifications/message' && outParams && typeof outParams === 'object') {
+      outParams = defangDeep(outParams) as Record<string, unknown>;
     }
     let withheld = false;
     for (const server of servers) {
@@ -2576,7 +2657,12 @@ async function main() {
         owner = toolOwner.get(req.params.name);
       }
       if (!owner) {
-        rememberUnknownTool(req.params.name);
+        // Remember the name as unknown only when the re-list was COMPLETE on every
+        // alive upstream (every page of each) — the same guard the prompt and
+        // resource caches apply. A server that errored mid-listing may own it on
+        // a page we never saw; caching it then would refuse a real tool for the
+        // TTL, and refuse it without even retrying the listing.
+        if (alive().every((u) => !u.listIncomplete)) rememberUnknownTool(req.params.name);
         return textResult(`cairn-proxy: no upstream offers a tool named "${req.params.name}"`, true);
       }
       /*
@@ -2999,6 +3085,38 @@ async function main() {
     /* ---- prompts -------------------------------------------------------- */
 
     if (capabilities.prompts) {
+      /**
+       * Every page of one upstream's prompt list, and whether every page was
+       * seen. A COMPLETE listing is the prompt channel's trust read (the twin of
+       * noteSurface for tools): it is evaluated against the pin before anything
+       * is exposed, so a withheld prompt never reaches a list even once. A
+       * partial listing (a page errored, a looping or runaway paginator) is
+       * never trust-evaluated, and promptListIncomplete makes enforce mode
+       * withhold the whole upstream's prompts until it lists completely — a
+       * poisoned page 1 plus an error on page 2 must not fail open.
+       */
+      async function listPromptsOf(up: Upstream): Promise<{ prompts: Prompt[]; complete: boolean }> {
+        const prompts: Prompt[] = [];
+        let complete = true;
+        let cursor: string | undefined;
+        const seen = new Set<string>();
+        for (let pg = 0; ; pg++) {
+          let page;
+          try { page = await up.client!.listPrompts({ cursor }, FORWARD); } catch { complete = false; break; }
+          prompts.push(...page.prompts);
+          cursor = page.nextCursor;
+          if (!cursor) break;
+          if (seen.has(cursor) || pg + 1 >= MAX_LIST_PAGES) { complete = false; break; } // bound a runaway/looping paginator
+          seen.add(cursor);
+        }
+        if (complete) evaluatePromptTrustFor(up, prompts.map(promptShapeOf)); // security: compare against the approval pin, every complete read
+        else if (trustMode() === 'enforce') process.stderr.write(`cairn-proxy: TRUST ${up.spec.name}: incomplete prompt listing — withholding all its prompts in enforce mode until it lists completely\n`);
+        up.promptListIncomplete = !complete;
+        return { prompts, complete };
+      }
+      /** Is this prompt withheld by trust enforce — drifted since approval, or on an upstream whose listing was never fully evaluated? */
+      const promptWithheld = (up: Upstream, raw: string): boolean => trustMode() === 'enforce' && (up.promptTrustBlocked.has(raw) || up.promptListIncomplete);
+
       server.setRequestHandler(ListPromptsRequestSchema, async () => {
         // Complete map from every alive prompt server, returned filtered to this
         // role; swapped in synchronously at the end (Fable-6 #12), same as resources.
@@ -3006,19 +3124,15 @@ async function main() {
         const prompts: Array<Record<string, unknown>> = [];
         for (const up of alive().filter((u) => u.caps.prompts)) {
           const show = mayReachServer(session, up);
-          let cursor: string | undefined;
-          const seen = new Set<string>();
-          for (let pg = 0; ; pg++) {
-            let page;
-            try { page = await up.client!.listPrompts({ cursor }, FORWARD); } catch { break; }
-            for (const p of page.prompts) {
-              const name = expose(up, p.name);
-              owned.set(name, { up, raw: p.name });
-              if (show) prompts.push(defangDescribable({ ...p, name }));
-            }
-            cursor = page.nextCursor;
-            if (!cursor || seen.has(cursor) || pg + 1 >= MAX_LIST_PAGES) break; // bound a runaway/looping paginator
-            seen.add(cursor);
+          const { prompts: mine } = await listPromptsOf(up);
+          for (const p of mine) {
+            const name = expose(up, p.name);
+            // Always route-known, so a get of a withheld prompt is refused with
+            // the rug-pull explanation rather than a generic "no such prompt".
+            owned.set(name, { up, raw: p.name });
+            if (!show) continue;
+            if (promptWithheld(up, p.name)) continue; // withhold a changed/unapproved prompt from the list
+            prompts.push(defangDescribable({ ...p, name }));
           }
         }
         promptOwner.clear(); for (const [k, v] of owned) promptOwner.set(k, v); // atomic swap
@@ -3041,16 +3155,9 @@ async function main() {
            * Reachability is still enforced at the owner gate just below. */
           let reListComplete = true; // a server that errored or truncated leaves the map possibly-incomplete
           for (const up of alive().filter((u) => u.caps.prompts)) {
-            let cursor: string | undefined; const seen = new Set<string>();
-            for (let pg = 0; ; pg++) {
-              let page;
-              try { page = await up.client!.listPrompts({ cursor }, FORWARD); } catch { reListComplete = false; break; }
-              for (const p of page.prompts) promptOwner.set(expose(up, p.name), { up, raw: p.name });
-              cursor = page.nextCursor;
-              if (!cursor) break;
-              if (seen.has(cursor) || pg + 1 >= MAX_LIST_PAGES) { reListComplete = false; break; } // couldn't see every page
-              seen.add(cursor);
-            }
+            const { prompts: mine, complete } = await listPromptsOf(up);
+            for (const p of mine) promptOwner.set(expose(up, p.name), { up, raw: p.name });
+            if (!complete) reListComplete = false;
           }
           owner = promptOwner.get(req.params.name);
           // Only remember a name as unknown when the re-list was COMPLETE across all
@@ -3062,6 +3169,19 @@ async function main() {
         if (!mayReachServer(session, owner.up)) {
           audit(session, 'deny', owner.up.spec.name, '(prompt:get)', req.params.name);
           throw new Error(`cairn-proxy: not permitted to use prompt "${req.params.name}"`);
+        }
+        /*
+         * Trust enforcement: a prompt whose definition drifted from what was
+         * approved is withheld from the list, but a client could still ask for
+         * it by name — refuse it here, as tools/call refuses a withheld tool, so
+         * a rug-pulled prompt cannot be fetched until a human re-approves.
+         */
+        if (promptWithheld(owner.up, owner.raw)) {
+          audit(session, 'deny', owner.up.spec.name, '(prompt:get)', owner.up.promptListIncomplete ? 'trust: upstream listed prompts incompletely, surface not evaluated (withheld)' : 'trust: prompt surface changed since approval (withheld)');
+          throw new Error(
+            `cairn-proxy: prompt "${req.params.name}" is withheld — its definition changed since this server was approved, ` +
+              `which is how a prompt-poisoning / rug-pull attack looks. Re-approve the server with \`cairn:trust --reapprove ${owner.up.spec.name}\` once you have confirmed the change is legitimate.`,
+          );
         }
         let out;
         try {

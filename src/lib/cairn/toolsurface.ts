@@ -15,7 +15,7 @@
  * the SDK's Tool type, safe to import from a long-lived host (cairn-0046).
  */
 import { createHash } from 'crypto';
-import type { Tool } from '@modelcontextprotocol/sdk/types.js';
+import type { Tool, Prompt } from '@modelcontextprotocol/sdk/types.js';
 
 export type Annotations = NonNullable<Tool['annotations']>;
 
@@ -57,6 +57,32 @@ export function shapeOf(tool: Tool): ToolShape {
     schemaHash: createHash('sha256').update(canonical(tool.inputSchema ?? {})).digest('hex'),
     title: (tool as { title?: string }).title ?? '',
     outputSchemaHash: createHash('sha256').update(canonical((tool as { outputSchema?: unknown }).outputSchema ?? {})).digest('hex'),
+  };
+}
+
+/**
+ * A prompt, in the SAME shape as a tool, so the trust pin and the diff treat
+ * the prompt channel exactly as they treat tools. What the model reads of a
+ * prompt before choosing it — its name, title, description, and its arguments'
+ * names, descriptions and required flags — is a rug-pull channel on the same
+ * footing as a tool description: a server that is benign when approved can
+ * later rewrite `greet`'s description to carry an instruction. Mapping onto
+ * ToolShape (annotations null: prompts carry none; the canonical `arguments`
+ * list under `schemaHash`; argument names as `properties`) means diffSurface
+ * and evaluateTrust need no second implementation, and a prompt pin reads,
+ * writes and drifts through the one code path the tool pin already has.
+ */
+export type PromptShape = ToolShape;
+export function promptShapeOf(prompt: Prompt): PromptShape {
+  const args = (prompt.arguments ?? []) as Array<{ name: string }>;
+  return {
+    name: prompt.name,
+    description: prompt.description ?? '',
+    annotations: null,
+    properties: args.map((a) => a.name).sort(),
+    schemaHash: createHash('sha256').update(canonical(prompt.arguments ?? [])).digest('hex'),
+    title: (prompt as { title?: string }).title ?? '',
+    outputSchemaHash: EMPTY_SCHEMA_HASH,
   };
 }
 

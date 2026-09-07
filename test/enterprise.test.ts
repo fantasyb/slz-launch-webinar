@@ -17,7 +17,7 @@ import osReal from 'os';
 import pathReal from 'path';
 import { createHash } from 'crypto';
 import {
-  authenticate, authorize, tokenHash, bearerToken, LOCAL_ADMIN,
+  authenticate, authorize, tokenHash, bearerToken, LOCAL_ADMIN, PROTOCOL_READ,
   appendAudit, verifyAudit, readAudit, _resetAuditCache, readOrgPolicy, anchorHead, readAnchors, rotateAudit, offloadArchive,
   type OrgPolicy,
 } from '../src/lib/cairn/enterprise';
@@ -115,6 +115,27 @@ test('readOnlyStrict denies any tool not declared readOnlyHint:true (Fable-6 #3)
   // Plain readOnly (non-strict) still trusts a read-looking name.
   const p2 = policy({ roles: { viewer: { readOnly: true } } });
   assert.equal(authorize(p2, v, 'sf', { name: 'list_things' }).allowed, true, 'non-strict readOnly allows a read-looking name');
+});
+
+test('readOnlyStrict permits a protocol-level READ (resources/prompts/completions) while still denying an unannotated tool', () => {
+  // The gateway routes every non-tool read (resources/read, prompts/get,
+  // completion/complete and their lists) through authorize() with PROTOCOL_READ.
+  // Strict mode refuses any TOOL not declared readOnlyHint:true; it used to see a
+  // bare, unannotated descriptor for these reads and deny them all — a read-only
+  // principal that could not read. The descriptor declares what the protocol
+  // guarantees, so strict read-only now means "may read, may not write".
+  const p = policy({ roles: { viewer: { readOnlyStrict: true }, scoped: { readOnlyStrict: true, allowServers: ['docs'] }, blocked: { readOnlyStrict: true, denyServers: ['secrets'] } } });
+  const v = { id: 'v', role: 'viewer' };
+  assert.equal(authorize(p, v, 'sf', PROTOCOL_READ).allowed, true, 'a strict read-only role may perform a protocol-level read');
+  assert.equal(authorize(p, v, 'sf', { name: 'list_things' }).allowed, false, 'an unannotated TOOL is still denied under strict — the tool boundary is unchanged');
+  assert.equal(authorize(p, v, 'sf', { name: 'x', annotations: { readOnlyHint: false } }).allowed, false, 'a write-declared tool is still denied');
+  // Server allow/deny still govern the read: PROTOCOL_READ only settles the
+  // read-only question, never the reachability one.
+  assert.equal(authorize(p, { id: 's', role: 'scoped' }, 'docs', PROTOCOL_READ).allowed, true, 'a read on an allowed server passes');
+  assert.equal(authorize(p, { id: 's', role: 'scoped' }, 'secrets', PROTOCOL_READ).allowed, false, 'a read on a server outside allowServers is denied');
+  assert.equal(authorize(p, { id: 'b', role: 'blocked' }, 'secrets', PROTOCOL_READ).allowed, false, 'a read on a denied server is denied');
+  // The descriptor is frozen: no caller can flip the one annotation every read rides on.
+  assert.ok(Object.isFrozen(PROTOCOL_READ) && Object.isFrozen(PROTOCOL_READ.annotations), 'PROTOCOL_READ is immutable');
 });
 
 test('read-only denies a write, by declaration or by name, and permits a read', () => {

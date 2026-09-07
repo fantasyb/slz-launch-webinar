@@ -4,11 +4,12 @@
  *   CAIRN_HOME=~/pilot npm run cairn:trust                       # list pinned servers
  *   CAIRN_HOME=~/pilot npm run cairn:trust -- --reapprove <srv>  # accept its CURRENT surface
  *
- * A pin is the approved tool surface of a wrapped MCP server — every tool's name,
- * description, annotations, and schema hash, as it was when first seen. The
+ * A pin is the approved surface of a wrapped MCP server — every tool's name,
+ * description, annotations, and schema hash, its instructions, and every
+ * prompt's name, description and arguments, as they were when first seen. The
  * gateway pins each server on first sight; in enforce mode it withholds any tool
- * whose definition later changed (the tool-poisoning / rug-pull defense) until it
- * is re-approved. When a change is a LEGITIMATE upgrade, re-approve: this forgets
+ * or prompt whose definition later changed (the tool-poisoning / rug-pull
+ * defense) until it is re-approved. When a change is a LEGITIMATE upgrade, re-approve: this forgets
  * the pin, and the next session re-pins to whatever the server offers then.
  *
  * Reads and writes only under CAIRN_HOME/trust. Nothing leaves the machine.
@@ -122,7 +123,10 @@ for (const f of files.sort()) {
   const pin: Pin | null = readPin(server, trustDir);
   if (!pin) { console.log(`  ${server}  (unreadable pin)`); continue; }
   const flag = drift.has(pin.server) ? '  ⚠ drifted' : '';
-  console.log(`  ${pin.server.padEnd(20)} ${pin.tools.length} tool(s) approved ${pin.approvedAt}${flag}`);
+  // Prompts are pinned on their first complete listing; "not yet listed" is
+  // distinct from "none", so an operator can see a channel that is still unapproved.
+  const prompts = pin.prompts ? `, ${pin.prompts.length} prompt(s)` : ', prompts not yet listed';
+  console.log(`  ${pin.server.padEnd(20)} ${pin.tools.length} tool(s)${prompts} approved ${pin.approvedAt}${flag}`);
 }
-console.log('\n  A tool whose definition drifts from its pin is flagged (monitor) or withheld (enforce).');
+console.log('\n  A tool or prompt whose definition drifts from its pin is flagged (monitor) or withheld (enforce).');
 console.log('  Re-approve a legitimate change with:  cairn:trust --reapprove <server>');

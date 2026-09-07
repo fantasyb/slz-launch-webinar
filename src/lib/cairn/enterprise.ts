@@ -69,6 +69,20 @@ export interface OrgPolicy {
 /** The principal used when no org policy governs this gateway (local/personal). */
 export const LOCAL_ADMIN: Principal = { id: 'local', role: 'admin' };
 
+/**
+ * The descriptor `authorize` is handed for a protocol-level READ that is not a
+ * tool call — resources/list, resources/read, resources/subscribe, prompts/list,
+ * prompts/get, completion/complete, and the notifications that go with them.
+ * These have no per-tool annotation, so the server allow/deny lists are what
+ * apply. It DECLARES itself read-only because the protocol defines each of
+ * these as a read: a `readOnlyStrict` role, which refuses any TOOL a server did
+ * not declare `readOnlyHint:true`, used to see a bare `{ name: '(resource)' }`
+ * here and deny every read as "not declared read-only" — read-only meant
+ * "cannot read". Read-only denies writes; these are not writes. Frozen so no
+ * caller can mutate the one descriptor the gateway routes every read through.
+ */
+export const PROTOCOL_READ: Readonly<{ name: string; annotations: Annotations }> = Object.freeze({ name: '(read)', annotations: Object.freeze({ readOnlyHint: true }) });
+
 export function orgPolicyPath(): string | null {
   if (process.env.CAIRN_ORG_POLICY) return process.env.CAIRN_ORG_POLICY;
   try {
