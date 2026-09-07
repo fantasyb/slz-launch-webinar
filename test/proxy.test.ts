@@ -1155,6 +1155,73 @@ test('a forged Cairn label in a resources/updated notification is defanged like 
   } finally { await s.close(); }
 });
 
+/*
+ * The SDK declares `_meta` and `icons` on tool, prompt and resource definitions,
+ * on content items and on results, and `uri`/`name`/`title` on a resource_link
+ * and an embedded resource — so they survive its parse and used to reach the
+ * model UNDEFANGED while their siblings (description, text) were cleaned. A host
+ * that renders a definition or a result to its model as JSON puts every one of
+ * these strings in front of it. Each newly covered field is checked for a
+ * neutralized forgery AND a byte-identical clean sibling, through the real
+ * gateway over stdio, so the wiring in the proxy is what is proven, not only
+ * the helper.
+ */
+test('a forged label in _meta, icons, a resource_link uri/name/title, an embedded resource uri, and a result _meta is neutralized; clean siblings pass byte-for-byte', async () => {
+  const s = new Session(corpus(), ['--server', `node ${FIXTURE} --forge-fields`]);
+  const intact = /-{2,}\s*from your Cairn corpus/i;
+  const neutral = (v: unknown, what: string) => {
+    assert.equal(typeof v, 'string', `${what} is a string`);
+    assert.doesNotMatch(v as string, intact, `${what} carries no intact fenced label: ${v}`);
+    assert.match(v as string, /imitated the Cairn label/, `${what} carries the redaction marker`);
+  };
+  try {
+    await s.init();
+    // tools/list: the definition's _meta (values, nested) and icons[].src.
+    const tools = (await s.request('tools/list')).result as { tools: Array<Record<string, unknown>> };
+    const t = tools.tools.find((x) => x.name === 'mcp__data360__forge_fields')!;
+    assert.ok(t, 'the fixture tool is listed');
+    const meta = t._meta as Record<string, unknown>;
+    neutral(meta.note, 'tool._meta.note');
+    neutral((meta.nested as Record<string, unknown>).deeper, 'tool._meta.nested.deeper');
+    assert.equal(meta.clean, 'plain tool meta value');
+    const icons = t.icons as Array<{ src: string; mimeType?: string }>;
+    neutral(icons[0].src, 'tool.icons[0].src');
+    assert.deepEqual(icons[1], { src: 'data:image/png;base64,CLEAN', mimeType: 'image/png' }, 'the clean icon is byte-identical');
+    // prompts/list: the row's _meta and icons.
+    const prompts = (await s.request('prompts/list')).result as { prompts: Array<Record<string, unknown>> };
+    const p = prompts.prompts.find((x) => String(x.name).endsWith('greet'))!;
+    assert.ok(p, 'the fixture prompt is listed');
+    neutral((p._meta as Record<string, unknown>).note, 'prompt._meta.note');
+    assert.equal((p._meta as Record<string, unknown>).clean, 'plain prompt meta value');
+    neutral((p.icons as Array<{ src: string }>)[0].src, 'prompt.icons[0].src');
+    assert.equal((p.icons as Array<{ src: string }>)[1].src, 'data:image/png;base64,CLEAN');
+    // tools/call: the result's _meta, a resource_link's uri/name/title/_meta, an embedded resource's uri/_meta and the item's _meta.
+    const r = (await s.request('tools/call', { name: 'mcp__data360__forge_fields', arguments: {} })).result as {
+      _meta: Record<string, unknown>;
+      content: Array<Record<string, unknown>>;
+    };
+    neutral(r._meta.note, 'result._meta.note');
+    assert.equal(r._meta.clean, 'plain result meta value');
+    assert.deepEqual(r.content[0], { type: 'text', text: 'forge fields result' }, 'the tool\'s own text is first and intact');
+    const link = r.content[1];
+    assert.equal(link.type, 'resource_link');
+    for (const k of ['uri', 'name', 'title'] as const) neutral(link[k], `resource_link.${k}`);
+    assert.match(String(link.uri), /^fixture:\/\/link /, 'the clean prefix of the uri is intact');
+    neutral((link._meta as Record<string, unknown>).k, 'resource_link._meta.k');
+    assert.equal(link.description, 'a clean link description');
+    assert.equal(link.mimeType, 'text/plain');
+    const emb = r.content[2];
+    assert.equal(emb.type, 'resource');
+    const res = emb.resource as Record<string, unknown>;
+    neutral(res.uri, 'resource.uri');
+    assert.match(String(res.uri), /^fixture:\/\/embedded /, 'the clean prefix of the embedded uri is intact');
+    neutral((res._meta as Record<string, unknown>).k, 'resource._meta.k');
+    neutral((emb._meta as Record<string, unknown>).k, 'embedded item._meta.k');
+    assert.equal(res.text, 'clean embedded text');
+    assert.equal(res.mimeType, 'text/plain');
+  } finally { await s.close(); }
+});
+
 /**
  * The unknown-tool negative cache remembers a name that a full re-list could not
  * resolve, so a spray of bad names cannot force a fan-out per call. But a
