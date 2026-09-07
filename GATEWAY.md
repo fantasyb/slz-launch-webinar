@@ -667,11 +667,59 @@ it cannot reach a corpus.
 A gateway is a passenger. Its worst failure is not being useless; it is
 being fatal to the thing it rides in.
 
+## Running it exposed
+
+The hosted mode (`--http`) is a plain-HTTP server. It is a governed tool
+gateway, not a network appliance, and three things it needs on a network
+are deliberately not built into it: TLS termination (certificates and
+renewal), an identity provider (it maps bearer tokens to principals from
+`org-policy.json`; it does not mint, rotate or federate them), and a
+connection-level rate limiter (it counts principals, not sockets). Each of
+those belongs to the reverse proxy / load balancer / IdP in front of it. What
+the gateway does is **fail closed at the edge of each**, so a deployment that
+forgot one is refused rather than served quietly. The table is the contract:
+
+| Property | Where it is enforced | How the gateway fails closed if it is not met |
+|---|---|---|
+| Authenticated traffic is not served in cleartext on a network | Deployment: a TLS-terminating proxy in front | A non-loopback bind with enforced auth **refuses to start** unless `CAIRN_BEHIND_TLS_PROXY=1` (or, for a private network where cleartext is truly intended, `CAIRN_ALLOW_CLEARTEXT_AUTH=1`). Behind the proxy, every request must carry the proxy's `X-Forwarded-Proto: https` (or RFC 7239 `Forwarded: proto=https`) with **every** listed hop `https`; a request with no such header did not come through the proxy and one that says `http` came through it in cleartext — both are refused (403) before the token is examined, and recorded as an auth failure. |
+| The gateway port is reachable only from the proxy | Deployment: network ACL / security group / private listener | Not verifiable from inside the process — a client that can reach the port directly can also forge `X-Forwarded-Proto`. The header check catches the misconfigured proxy and the accidental bypass, not a deliberate one; the ACL is the guarantee. |
+| The proxy sets `X-Forwarded-Proto` itself, overwriting any client-supplied value | Deployment: proxy configuration (Caddy, Traefik, ALB and Cloudflare do; nginx needs `proxy_set_header X-Forwarded-Proto $scheme`) | Not verifiable from inside the process. A proxy that passes the client's header through lets a client assert `https` for a cleartext hop. |
+| No unauthenticated request is served | Gateway (code) | A non-loopback bind without **enforced** auth refuses to start, and re-checks on every request: a policy that stops enforcing at runtime turns every request into a 503, never an open gateway (`CAIRN_ALLOW_UNGOVERNED=1` is the explicit escape). |
+| A session belongs to the principal that opened it | Gateway (code) | The binding (id + role) is set at initialize and never reassigned; a different principal presenting the session id is refused (403) and the attempt is audited under the attacker. A revoked token stops working on its next request. |
+| One tenant cannot exhaust the gateway | Gateway (code), per principal; deployment, per connection | Session caps (`CAIRN_MAX_SESSIONS`, `CAIRN_MAX_SESSIONS_PER_PRINCIPAL`), in-flight request caps (`CAIRN_MAX_INFLIGHT_PER_PRINCIPAL`, default 256) and a global in-flight body budget (`CAIRN_MAX_INFLIGHT_BODY_BYTES`, default 256 MB, on top of the 4 MB per-request cap) refuse with 429/503 + `Retry-After`. Cap denials are coalesced in the audit log (≤ 1 row/s per principal) so a tenant hammering a cap cannot grow the log. Connection floods, slow-header and slow-body holds are the load balancer's to cut (Node's own `headersTimeout`/`requestTimeout` defaults, 60 s/300 s, are the last line). |
+| An idle session does not live forever; an in-use one is never cut | Gateway (code) | The reaper closes a session idle past `CAIRN_SESSION_IDLE_MS` (default 30 min) — and never one with a request in flight, so a long forward is not torn down underneath its caller. |
+| Unauthenticated probes learn nothing | Gateway (code) | Every unauthenticated response on a governed gateway is the same 401 challenge, whatever the verb, path under `/mcp`, body or session id; `/healthz` is liveness plus posture; a non-loopback bind never discloses upstream names, the corpus path or the session count. |
+| Loopback is not reachable from a browser page | Gateway (code) | A loopback bind requires a loopback `Host` and (if present) `Origin` — DNS-rebinding protection. |
+| The audit log survives many writers | Gateway (code) | Appends run under a cross-process lock; a contended append is spilled (MAC'd, counted) and folded back in order by the next writer; the chain is verified against the off-box anchor. |
+
+Minimal shape of an exposed deployment:
+
+```
+client ──TLS──▶ proxy (terminates TLS, sets X-Forwarded-Proto: https) ──plain HTTP, private network──▶ cairn-proxy --http 8080
+                                                                                                        CAIRN_HTTP_HOST=0.0.0.0
+                                                                                                        CAIRN_BEHIND_TLS_PROXY=1
+                                                                                                        org-policy.json with auth.required: true
+```
+
+`test/hosted-concurrency.test.ts` is the harness that exercises the
+code-enforced rows above with a dozen principals at once on loopback —
+overlapping initializes racing the caps, every tenant trying every other
+tenant's session, parallel audit writers in two processes, the reaper racing
+in-flight calls — and asserts isolation, exact caps, released reservations and
+a verifying chain. It cannot exercise the deployment rows; those are the
+operator's, and the gateway's part is only to refuse when they are visibly
+absent.
+
 ## What is not proven here
 
-Anything hosted beyond one machine: the HTTP mode is tested with two
-clients on loopback, not with accounts, TLS or a network. The writer half
-outside this repository. Any model but one.
+Anything hosted beyond one machine: the HTTP mode is exercised with a dozen
+concurrent principals on loopback (the harness above), behind a *simulated*
+TLS proxy — not with a real proxy, real certificates, a real identity
+provider issuing and rotating tokens, or a network between the parts. Whether
+a given proxy actually overwrites `X-Forwarded-Proto`, whether the gateway
+port is actually unreachable except from it, and how the caps behave under a
+real load balancer's connection reuse are deployment facts only a deployment
+can show. The writer half outside this repository. Any model but one.
 
 A real MCP server is now half-proven: the gateway is measured transparent
 to a third-party server (`@modelcontextprotocol/server-everything`) at the

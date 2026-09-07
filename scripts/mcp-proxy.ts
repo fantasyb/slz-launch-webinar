@@ -359,6 +359,19 @@ const MAX_SURFACE_EVENTS = 200;
 // idle reaper frees sessions — but bounded so a flood cannot exhaust memory.
 const MAX_SESSIONS_TOTAL = Math.max(1, Number(process.env.CAIRN_MAX_SESSIONS) || 2000);
 const MAX_SESSIONS_PER_PRINCIPAL = Math.max(1, Number(process.env.CAIRN_MAX_SESSIONS_PER_PRINCIPAL) || 200);
+/*
+ * Hosted, per-REQUEST bounds — the session caps bound what a tenant may HOLD,
+ * these bound what it may have IN FLIGHT. Without them one authenticated tenant
+ * can open thousands of concurrent requests: each buffers up to MAX_BODY (4 MB)
+ * and each runs the same event loop every other tenant's calls run on, so one
+ * token holder can both exhaust memory (bodies × concurrency) and starve every
+ * other tenant of the loop. A load balancer in front counts connections, not
+ * principals, so it cannot enforce a PER-TENANT bound; this is the one place
+ * that can. Both are generous; a client with hundreds of concurrent tool calls
+ * in flight on one credential is a runaway, not a workload.
+ */
+const MAX_INFLIGHT_PER_PRINCIPAL = Math.max(1, Number(process.env.CAIRN_MAX_INFLIGHT_PER_PRINCIPAL) || 256);
+const MAX_INFLIGHT_BODY_BYTES = Math.max(1 << 20, Number(process.env.CAIRN_MAX_INFLIGHT_BODY_BYTES) || 256 << 20);
 
 
 /**
@@ -519,8 +532,13 @@ interface SessionState {
    * Who is on the other end, for RBAC and audit. LOCAL_ADMIN over stdio and on
    * an ungoverned HTTP gateway (no org policy, or auth not required); a real
    * authenticated principal when an org policy requires a bearer token. Governs
-   * nothing while it is LOCAL_ADMIN — see enterprise.ts. Refreshed on every HTTP
-   * request so a revoked token or an edited role takes effect without a restart.
+   * nothing while it is LOCAL_ADMIN — see enterprise.ts. BOUND at initialize and
+   * never reassigned: every later HTTP request re-authenticates its bearer and
+   * must resolve to the same (id, role) or is refused (403), so a revoked token
+   * stops working mid-session and a re-roled principal must re-initialize —
+   * the binding never silently follows the token. Role DEFINITIONS are looked up
+   * fresh from the policy on every authorize(), so an edited role takes effect
+   * without a restart.
    */
   principal: Principal;
   /** Upstreams whose trap index has already been delivered on a result. */
@@ -3111,7 +3129,7 @@ async function main() {
    * not just its transport. Kept in lockstep with `transports`: every add here
    * has a matching delete in the same onclose that clears `transports`.
    */
-  const live = new Map<string, { transport: StreamableHTTPServerTransport; server: Server; session: SessionState }>();
+  const live = new Map<string, { transport: StreamableHTTPServerTransport; server: Server; session: SessionState; inflight: number }>();
   // Slots RESERVED between passing the session cap and landing in `live`. The cap
   // check and the live.set are separated by `await instructionsFor` (a listTools
   // fan-out), so without a synchronous reservation N concurrent initializes all
@@ -3127,12 +3145,31 @@ async function main() {
    * and delivery state until the process restarts. Close anything idle past the
    * TTL — closing the transport cascades through onclose, which does the actual
    * cleanup, so this loop only decides WHAT is stale, never frees directly.
+   *
+   * "Idle" means no request IN FLIGHT and none seen within the TTL. lastSeen is
+   * stamped when a request ARRIVES, so a session whose only activity is one long
+   * tool call (a forward can legitimately run to the 10-minute FORWARD timeout)
+   * looked idle for the whole call and was closed underneath it once the TTL
+   * was shorter than the call — the transport torn down mid-forward, the caller
+   * left with a dropped stream. A session with a request in flight is never
+   * reaped, whatever its lastSeen.
+   *
+   * The OPERATOR floor stays 60 s: reaping is only a functional degradation
+   * (the next request re-initializes), but a too-aggressive idle would cut a
+   * client that merely pauses between calls — think-time, with nothing in
+   * flight — which the in-flight guard does not cover. A separate, undocumented
+   * CAIRN_SESSION_IDLE_MS_TEST exists ONLY so the reaper is exercisable in a
+   * few-second test; it just shortens idle (a safe direction, never a security
+   * boundary), and the operator knob keeps its 60 s floor.
    */
-  const IDLE_MS = Math.max(60_000, Number(process.env.CAIRN_SESSION_IDLE_MS) || 30 * 60_000);
+  const testIdle = Number(process.env.CAIRN_SESSION_IDLE_MS_TEST);
+  const IDLE_MS = testIdle > 0
+    ? Math.max(1_000, testIdle)
+    : Math.max(60_000, Number(process.env.CAIRN_SESSION_IDLE_MS) || 30 * 60_000);
   const reaper = setInterval(() => {
     const cutoff = Date.now() - IDLE_MS;
     for (const [id, meta] of live) {
-      if (meta.session.lastSeen > cutoff) continue;
+      if (meta.inflight > 0 || meta.session.lastSeen > cutoff) continue;
       live.delete(id);
       try {
         void meta.transport.close();
@@ -3148,6 +3185,81 @@ async function main() {
   // A loopback bind exempts the gateway from the ENFORCED-auth requirement, at
   // startup and on every request; computed once, used in both places.
   const httpLoopback = host === '127.0.0.1' || host === '::1' || host === 'localhost';
+  /*
+   * The TLS edge. This gateway speaks plain HTTP and does not terminate TLS —
+   * certificates, renewal and the listener that speaks HTTPS belong to the
+   * reverse proxy / load balancer in front of it, not to a tool gateway. What
+   * the gateway CAN do is refuse to be the thing that puts a bearer token on
+   * the wire in cleartext: a NETWORK bind with ENFORCED auth means every
+   * request carries a credential, and unless something in front of us spoke
+   * TLS to the client, that credential crossed the network readable. So:
+   *
+   *   - at startup, a non-loopback bind with enforced auth is refused unless
+   *     the operator asserts CAIRN_BEHIND_TLS_PROXY=1 (a TLS-terminating proxy
+   *     is in front) — or CAIRN_ALLOW_CLEARTEXT_AUTH=1, the explicit "I know"
+   *     escape hatch for a private network where that is genuinely intended;
+   *   - per request, under CAIRN_BEHIND_TLS_PROXY, the proxy must SAY the
+   *     client hop was TLS: `X-Forwarded-Proto` (or RFC 7239 `Forwarded`
+   *     `proto=`) must be present and every listed hop must be `https`. A
+   *     request with no such header did not come through the proxy (someone
+   *     reached the gateway port directly) and one that says `http` came
+   *     through it in cleartext; both are refused (403) before the token is
+   *     even looked at, and recorded as an auth failure.
+   *
+   * The gateway cannot see the wire, so the per-request check is only as good
+   * as two deployment guarantees it must be given and cannot verify: the proxy
+   * SETS X-Forwarded-Proto itself (overwriting any client-supplied value) and
+   * the gateway port is reachable only from the proxy. Both are stated in
+   * GATEWAY.md ("Running it exposed"). A loopback bind is exempt: nothing
+   * crosses a network.
+   */
+  const behindTlsProxy = process.env.CAIRN_BEHIND_TLS_PROXY === '1';
+  const allowCleartextAuth = process.env.CAIRN_ALLOW_CLEARTEXT_AUTH === '1';
+  /** Every proto the proxy chain reports for this request, from X-Forwarded-Proto
+   * and RFC 7239 Forwarded; empty when neither header is present. */
+  const forwardedProtos = (req: http.IncomingMessage): string[] => {
+    const out: string[] = [];
+    const xfp = req.headers['x-forwarded-proto'];
+    for (const v of Array.isArray(xfp) ? xfp : xfp ? [xfp] : []) for (const p of v.split(',')) if (p.trim()) out.push(p.trim().toLowerCase());
+    const fwd = req.headers.forwarded;
+    for (const v of Array.isArray(fwd) ? fwd : fwd ? [fwd] : []) {
+      for (const elem of v.split(',')) {
+        const m = /(?:^|;)\s*proto\s*=\s*"?([A-Za-z][A-Za-z0-9+.-]*)"?/i.exec(elem);
+        if (m) out.push(m[1].toLowerCase());
+      }
+    }
+    return out;
+  };
+  /*
+   * In-flight bounds, per principal and for body bytes in total (see
+   * MAX_INFLIGHT_*). Both are reserved synchronously before any await and
+   * released in a finally, the same discipline as the session reservations.
+   */
+  const inflightByPrincipal = new Map<string, number>();
+  let inflightBodyBytes = 0;
+  /*
+   * An AUTHENTICATED principal hammering a cap (sessions, in-flight) would write
+   * one deny row per attempt: the cap itself becomes the amplifier that grows the
+   * audit log without bound — the same shape the anonymous auth-fail coalescing
+   * closed for unauthenticated floods. Coalesce cap denials per (principal,
+   * reason): at most one row a second, carrying the suppressed count, so the
+   * signal survives without the volume. Ordinary RBAC denials are NOT coalesced;
+   * each of those is a distinct decision the log exists to record.
+   */
+  const capDenyWindows = new Map<string, { since: number; suppressed: number }>();
+  function auditCapDeny(principal: Principal, reason: string): void {
+    if (principal === LOCAL_ADMIN) return;
+    const dir = auditDirOf();
+    if (!dir) return;
+    const key = `${principal.id}|${reason}`;
+    const now = Date.now();
+    const w = capDenyWindows.get(key);
+    if (w && now - w.since < 1000) { w.suppressed++; return; }
+    if (capDenyWindows.size > 4096) capDenyWindows.clear(); // bounded: the key is a principal id, not client-chosen
+    const suppressed = w?.suppressed ?? 0;
+    capDenyWindows.set(key, { since: now, suppressed: 0 });
+    try { appendAudit(dir, { principal: principal.id, decision: 'deny', reason: suppressed > 0 ? `${reason} (+${suppressed} more in the last second)` : reason }); } catch { /* never block on a log */ }
+  }
   /*
    * Last-resort net: this gateway is a passenger and must never crash the
    * vehicle. Node 22 exits the process on an unhandled rejection, and a hosted
@@ -3277,6 +3389,22 @@ async function main() {
         res.end(JSON.stringify({ jsonrpc: '2.0', error: { code: -32002, message: 'gateway unavailable: a network-bound gateway requires enforced authentication; refusing all requests until the org policy enforces auth' }, id: null }));
         return;
       }
+      /*
+       * The TLS edge (see behindTlsProxy above): on a network bind with enforced
+       * auth, the proxy must attest that the client hop was TLS, on every
+       * request, before the bearer is examined. Absent = did not come through
+       * the proxy; any hop `http` = the credential crossed a network readable.
+       */
+      if (!httpLoopback && policy?.auth.required && !allowCleartextAuth) {
+        const protos = forwardedProtos(req);
+        const bad = protos.length === 0 ? 'no X-Forwarded-Proto/Forwarded header — the request did not arrive through the TLS-terminating proxy' : protos.some((p) => p !== 'https') ? `a forwarded hop was ${protos.filter((p) => p !== 'https').join('/')} — the credential crossed the network in cleartext` : null;
+        if (bad) {
+          auditAuthFail(`cleartext credential refused: ${bad}`);
+          res.writeHead(403, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ jsonrpc: '2.0', error: { code: -32003, message: `forbidden: authenticated traffic must reach this gateway through its TLS-terminating proxy (${bad})` }, id: null }));
+          return;
+        }
+      }
       const authResult = authenticate(policy, req.headers.authorization);
       if (!authResult.principal) {
         auditAuthFail(authResult.reason);
@@ -3285,6 +3413,24 @@ async function main() {
         return;
       }
       const principal: Principal = authResult.principal;
+      /*
+       * Per-principal in-flight bound, reserved SYNCHRONOUSLY here (before the
+       * body is read, before any dispatch) and released in the finally below, so
+       * an exception on any path cannot leak a slot. LOCAL_ADMIN (a personal
+       * loopback gateway) shares one bucket: a runaway local agent is bounded too.
+       */
+      const inflightKey = principal !== LOCAL_ADMIN ? principal.id : '(local)';
+      const mine = inflightByPrincipal.get(inflightKey) ?? 0;
+      if (mine >= MAX_INFLIGHT_PER_PRINCIPAL) {
+        auditCapDeny(principal, `in-flight request cap reached (${MAX_INFLIGHT_PER_PRINCIPAL})`);
+        res.writeHead(429, { 'content-type': 'application/json', 'retry-after': '1' });
+        res.end(JSON.stringify({ jsonrpc: '2.0', error: { code: -32005, message: 'too many requests in flight for this principal; retry later' }, id: null }));
+        return;
+      }
+      inflightByPrincipal.set(inflightKey, mine + 1);
+      let bodyBytesHeld = 0;
+      let sessionMeta: { inflight: number } | undefined;
+      try {
       let body: unknown;
       if (req.method === 'POST') {
         // Cap the body: we read and parse it ourselves, which bypasses the SDK's
@@ -3294,15 +3440,26 @@ async function main() {
         const chunks: Buffer[] = [];
         let total = 0;
         let tooBig = false;
+        let overBudget = false;
         for await (const c of req) {
           total += (c as Buffer).length;
           if (total > MAX_BODY) { tooBig = true; break; }
+          // The per-request cap bounds ONE body; the global budget bounds all of
+          // them at once, so N concurrent senders cannot hold N × 4 MB. Counted as
+          // the bytes arrive (a slow sender holds only what it has sent) and
+          // released with the request.
+          inflightBodyBytes += (c as Buffer).length;
+          bodyBytesHeld += (c as Buffer).length;
+          if (inflightBodyBytes > MAX_INFLIGHT_BODY_BYTES) { overBudget = true; break; }
           chunks.push(c as Buffer);
         }
-        if (tooBig) {
+        if (tooBig || overBudget) {
+          // Record first, then cut the sender off: the destroy resets the socket
+          // and the sender may act on that before this process gets to the log.
+          if (overBudget) auditCapDeny(principal, `in-flight body budget exhausted (${MAX_INFLIGHT_BODY_BYTES} bytes)`);
           try { req.destroy(); } catch { /* already gone */ }
-          res.writeHead(413, { 'content-type': 'application/json' });
-          res.end(JSON.stringify({ jsonrpc: '2.0', error: { code: -32001, message: 'request body too large' }, id: null }));
+          res.writeHead(tooBig ? 413 : 503, { 'content-type': 'application/json', ...(overBudget ? { 'retry-after': '1' } : {}) });
+          res.end(JSON.stringify({ jsonrpc: '2.0', error: { code: -32001, message: tooBig ? 'request body too large' : 'gateway busy: too many request bodies in flight; retry later' }, id: null }));
           return;
         }
         try { body = JSON.parse(Buffer.concat(chunks).toString('utf8') || 'null'); } catch { body = null; }
@@ -3339,6 +3496,10 @@ async function main() {
             return;
           }
           meta.session.lastSeen = Date.now();
+          // In flight on THIS session until handleRequest resolves: the reaper
+          // never closes a session with a request in flight (see IDLE_MS).
+          meta.inflight++;
+          sessionMeta = meta;
         } else {
           // The transport is still in `transports` but its `live` entry is gone —
           // the reaper/onclose deletes `live` before the transport finishes
@@ -3359,10 +3520,11 @@ async function main() {
         // A global cap protects the process; a per-principal cap keeps one tenant
         // from starving others. Both are generous; the reaper frees them on idle.
         // Count reservations into both caps so concurrent inits cannot all pass.
+        // Cap denials are coalesced per principal (auditCapDeny): a tenant at its
+        // cap re-trying in a loop must not turn the cap into an audit-log amplifier.
         if (live.size + reservedTotal >= MAX_SESSIONS_TOTAL) {
-          const dir = auditDirOf();
-          if (dir && principal !== LOCAL_ADMIN) { try { appendAudit(dir, { principal: principal.id, decision: 'deny', reason: `session cap reached (${MAX_SESSIONS_TOTAL})` }); } catch { /* never block on a log */ } }
-          res.writeHead(429, { 'content-type': 'application/json' });
+          auditCapDeny(principal, `session cap reached (${MAX_SESSIONS_TOTAL})`);
+          res.writeHead(429, { 'content-type': 'application/json', 'retry-after': '1' });
           res.end(JSON.stringify({ jsonrpc: '2.0', error: { code: -32005, message: 'too many active sessions; retry later' }, id: null }));
           return;
         }
@@ -3370,9 +3532,8 @@ async function main() {
           let mine = reservedByPrincipal.get(principal.id) ?? 0;
           for (const m of live.values()) if (m.session.principal !== LOCAL_ADMIN && m.session.principal.id === principal.id) mine++;
           if (mine >= MAX_SESSIONS_PER_PRINCIPAL) {
-            const dir = auditDirOf();
-            if (dir) { try { appendAudit(dir, { principal: principal.id, decision: 'deny', reason: `per-principal session cap reached (${MAX_SESSIONS_PER_PRINCIPAL})` }); } catch { /* never block on a log */ } }
-            res.writeHead(429, { 'content-type': 'application/json' });
+            auditCapDeny(principal, `per-principal session cap reached (${MAX_SESSIONS_PER_PRINCIPAL})`);
+            res.writeHead(429, { 'content-type': 'application/json', 'retry-after': '1' });
             res.end(JSON.stringify({ jsonrpc: '2.0', error: { code: -32005, message: 'too many active sessions for this principal; retry later' }, id: null }));
             return;
           }
@@ -3390,7 +3551,11 @@ async function main() {
             onsessionclosed: (id) => { transports.delete(id); live.delete(id); },
           });
           const server = buildServer(session, await instructionsFor(session));
-          live.set(session.id, { transport, server, session });
+          // The initialize itself is in flight on the new session until it
+          // completes, so a short TTL cannot reap a session mid-handshake.
+          const meta = { transport, server, session, inflight: 1 };
+          sessionMeta = meta;
+          live.set(session.id, meta);
           transport.onclose = () => { transports.delete(session.id); live.delete(session.id); servers.delete(server); serverSession.delete(server); };
           await server.connect(transport);
           await transport.handleRequest(req, res, body);
@@ -3402,6 +3567,13 @@ async function main() {
       }
       res.writeHead(400, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ jsonrpc: '2.0', error: { code: -32000, message: 'no session; send initialize first' }, id: null }));
+      } finally {
+        // Release every in-flight reservation this request took, on every path.
+        const n = (inflightByPrincipal.get(inflightKey) ?? 1) - 1;
+        if (n <= 0) inflightByPrincipal.delete(inflightKey); else inflightByPrincipal.set(inflightKey, n);
+        inflightBodyBytes -= bodyBytesHeld;
+        if (sessionMeta) sessionMeta.inflight--;
+      }
     } catch (e) {
       /* Any failure serving one request is that request's problem, not the
        * server's. Respond if we still can; never let it reject unhandled. */
@@ -3451,6 +3623,15 @@ async function main() {
     // unauthenticated, unaudited gateway this guard exists to stop.
     if (!httpLoopback && !authEnforced && process.env.CAIRN_ALLOW_UNGOVERNED !== '1') {
       process.stderr.write(`cairn-proxy: refusing to start — binding a non-loopback host (${host}) without ENFORCED auth means an open, unauthenticated, unaudited tool gateway.${startupGov.mode === 'governed' ? ' The policy exists but auth.required is false — set it true.' : ' Add a policy (cairn:org init-policy --require-auth).'} Or set CAIRN_ALLOW_UNGOVERNED=1 if that is truly intended.\n`);
+      process.exit(1);
+    }
+    // And a non-loopback bind WITH enforced auth puts a bearer token on the wire
+    // on every request. This gateway does not speak TLS; unless the operator
+    // asserts a TLS-terminating proxy is in front (and then every request must
+    // prove it came through it — see behindTlsProxy), that token crosses the
+    // network in cleartext. Refuse, unless told in so many words that is intended.
+    if (!httpLoopback && authEnforced && !behindTlsProxy && !allowCleartextAuth) {
+      process.stderr.write(`cairn-proxy: refusing to start — binding a non-loopback host (${host}) with enforced auth would put every bearer token on the network in cleartext: this gateway does not terminate TLS. Put a TLS-terminating reverse proxy in front of it and set CAIRN_BEHIND_TLS_PROXY=1 (the proxy must set X-Forwarded-Proto, and the gateway port must be reachable only from the proxy), or set CAIRN_ALLOW_CLEARTEXT_AUTH=1 if cleartext credentials on this network are truly intended. See GATEWAY.md, "Running it exposed".\n`);
       process.exit(1);
     }
   }

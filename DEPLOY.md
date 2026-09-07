@@ -90,3 +90,12 @@ npm run cairn:install -- --into . \
 `--key` takes the fingerprint from step 5, obtained anywhere but the host. With
 it, a compromised or impersonated host produces a signature failure instead of
 silent code execution.
+
+## 7. The MCP gateway, if you host it
+
+This document is the web app. The gateway (`cairn-proxy --http`) is a separate
+process with its own deployment contract, in GATEWAY.md under "Running it
+exposed": it terminates no TLS and runs no identity provider — those go in
+front of it — and it refuses to start, or to serve, when it can see they are
+missing (a network bind with enforced auth requires `CAIRN_BEHIND_TLS_PROXY=1`
+and, on every request, the proxy's `X-Forwarded-Proto: https`).

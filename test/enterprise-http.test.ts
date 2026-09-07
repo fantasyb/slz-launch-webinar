@@ -16,26 +16,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'fs';
-import os from 'os';
 import path from 'path';
-import http from 'http';
-import { spawn, type ChildProcess } from 'child_process';
+import { spawn } from 'child_process';
 import { tokenHash, verifyAudit, readAudit, _resetAuditCache } from '../src/lib/cairn/enterprise';
+import { REPO, PROXY_BIN, FIXTURE, baseHome, startProxy, startProxyExpectingExit, stopProxy, hit, closeOpenReqs, initBody, mcpHeaders, rpcResult } from './helpers/hosted';
 
-const REPO = process.cwd();
-const PROXY_BIN = path.join(REPO, 'bin', 'cairn-proxy.js'); // built launcher: requires the fresh bundle (pretest builds it) instead of a per-spawn tsx compile — cheap enough that many concurrent gateway children no longer starve each other (cairn-0050)
-const FIXTURE = path.join(REPO, 'fixtures', 'mcp', 'upstream.mjs');
 /* Fixture tokens, assembled at runtime so no bearer-credential literal is in
  * the source for the secret-scanner to flag. */
 const TOKEN = ['fixture', 'bearer', 'value'].join('-');
 const TOKEN_BOB = ['fixture', 'bearer', 'bob'].join('-');
-
-/** A home with a (minimal) corpus so cairnHome resolves. */
-function baseHome(prefix: string): string {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  fs.mkdirSync(path.join(home, 'cairn')); // cairnHome requires a cairn/ dir to exist
-  return home;
-}
 
 /** A home whose org policy requires auth and defines two principals. */
 function governedHome(): string {
@@ -54,81 +43,10 @@ function governedHome(): string {
   return home;
 }
 
-/** Start the proxy in HTTP mode; resolve with base URL once it reports listening. */
-function startProxy(home: string, env: Record<string, string> = {}, serverArgs: string[] = ['--server', `node ${FIXTURE}`]): Promise<{ child: ChildProcess; base: string }> {
-  // detached so we can kill the whole process group — `npx tsx` spawns a
-  // grandchild node that would otherwise keep our inherited stdio pipes open.
-  const child = spawn(process.execPath, [PROXY_BIN, ...serverArgs, '--http', '0'], {
-    cwd: REPO,
-    env: { ...process.env, CAIRN_HOME: home, ...env } as NodeJS.ProcessEnv,
-    stdio: ['ignore', 'pipe', 'pipe'],
-    detached: true,
-  });
-  let buf = '';
-  return new Promise((resolve, reject) => {
-    const t = setTimeout(() => reject(new Error(`proxy did not report listening\n${buf}`)), 20_000);
-    child.stderr!.on('data', (d) => {
-      buf += String(d);
-      const m = /listening on (http:\/\/[^/]+)\/mcp/.exec(buf);
-      // A wildcard bind (0.0.0.0/::) reports the bind host but is reached over
-      // loopback; rewrite the base so the test connects to a routable address.
-      if (m) { clearTimeout(t); resolve({ child, base: m[1].replace('0.0.0.0', '127.0.0.1').replace('[::]', '127.0.0.1') }); }
-    });
-    child.on('error', reject);
-  });
-}
-
-/** Kill the proxy and free our stdio pipes so the test process can exit. */
-function stopProxy(child: ChildProcess): void {
-  try { if (child.pid) process.kill(-child.pid, 'SIGKILL'); } catch { /* gone */ }
-  try { child.kill('SIGKILL'); } catch { /* gone */ }
-  child.stdout?.destroy();
-  child.stderr?.destroy();
-}
-
-/**
- * One request via raw http. Resolves with status/headers/body. `Connection:
- * close` and an explicit destroy mean no keep-alive socket lingers; an SSE
- * response (which never ends) resolves shortly after its headers arrive.
- */
-/* Requests kept open (an SSE session we must not tear down mid-test); destroyed at test end. */
-const openReqs: http.ClientRequest[] = [];
-function hit(base: string, pathname: string, opts: { method?: string; headers?: Record<string, string>; body?: string; keepOpen?: boolean } = {}): Promise<{ status: number; headers: http.IncomingHttpHeaders; body: string }> {
-  const u = new URL(base + pathname);
-  return new Promise((resolve, reject) => {
-    let done = false;
-    const finish = (status: number, headers: http.IncomingHttpHeaders, body: string) => { if (!done) { done = true; resolve({ status, headers, body }); } };
-    const req = http.request(
-      { hostname: u.hostname, port: u.port, path: u.pathname, method: opts.method ?? 'GET', headers: { ...(opts.headers ?? {}), ...(opts.keepOpen ? {} : { connection: 'close' }) } },
-      (res) => {
-        // keepOpen: resolve as soon as headers arrive (the session id is on the
-        // response header) and DO NOT destroy — destroying an init's SSE stream
-        // tears the session down before the next request can attach to it.
-        if (opts.keepOpen) { openReqs.push(req); finish(res.statusCode ?? 0, res.headers, ''); res.on('data', () => {}); return; }
-        let body = '';
-        res.on('data', (c) => { if (body.length < 8192) body += String(c); });
-        res.on('end', () => finish(res.statusCode ?? 0, res.headers, body));
-        res.on('error', () => finish(res.statusCode ?? 0, res.headers, body));
-        // An SSE 200 keeps the stream open: resolve just after headers+first chunk, then close.
-        setTimeout(() => { try { res.destroy(); } catch { /* gone */ } finish(res.statusCode ?? 0, res.headers, body); }, 400);
-      },
-    );
-    req.on('error', reject);
-    if (opts.body) req.write(opts.body);
-    req.end();
-  });
-}
-function closeOpenReqs(): void { while (openReqs.length) { try { openReqs.pop()?.destroy(); } catch { /* gone */ } } }
-
-const initBody = () => JSON.stringify({
-  jsonrpc: '2.0', id: 1, method: 'initialize',
-  params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 't', version: '1' } },
-});
-const mcpHeaders = (auth?: string): Record<string, string> => ({
-  'content-type': 'application/json',
-  accept: 'application/json, text/event-stream',
-  ...(auth ? { authorization: `Bearer ${auth}` } : {}),
-});
+/** A network bind behind a (simulated) TLS-terminating proxy: the env the
+ * gateway requires to start, and the header every request must then carry. */
+const BEHIND_TLS = { CAIRN_HTTP_HOST: '0.0.0.0', CAIRN_BEHIND_TLS_PROXY: '1' };
+const VIA_TLS = { 'x-forwarded-proto': 'https' };
 
 test('a governed gateway rejects an unauthenticated request at the door, audits it, and accepts a valid token', async () => {
   const home = governedHome();
@@ -258,11 +176,14 @@ test('a network-bound gateway fails closed (503) if its policy stops enforcing a
   // on a network interface is the open, unauthenticated gateway the guard exists
   // to stop. Governance is re-read per request, so the guard re-runs and refuses.
   const home = governedHome();
-  const { child, base } = await startProxy(home, { CAIRN_HTTP_HOST: '0.0.0.0' });
+  // A network bind with enforced auth starts only behind a TLS-terminating proxy
+  // (or with the explicit cleartext escape hatch); every request then carries
+  // the proxy's X-Forwarded-Proto: https.
+  const { child, base } = await startProxy(home, BEHIND_TLS);
   try {
     // Enforced auth on a non-loopback bind: a missing token is a 401 (this path
     // opens no SSE stream, so it leaves no socket to perturb the next request).
-    const before = await hit(base, '/mcp', { method: 'POST', headers: mcpHeaders(), body: initBody() });
+    const before = await hit(base, '/mcp', { method: 'POST', headers: mcpHeaders(undefined, VIA_TLS), body: initBody() });
     assert.equal(before.status, 401, 'auth is enforced at the start — no token is refused');
 
     // The live policy is weakened to auth.required:false (still valid JSON).
@@ -278,7 +199,7 @@ test('a network-bound gateway fails closed (503) if its policy stops enforcing a
     // On a network bind that no longer enforces auth: fail closed, even WITH a
     // valid token — the point is that ANY request would now be unauthenticated,
     // so the guard refuses before it authenticates or dispatches anything.
-    const after = await hit(base, '/mcp', { method: 'POST', headers: mcpHeaders(TOKEN), body: initBody() });
+    const after = await hit(base, '/mcp', { method: 'POST', headers: mcpHeaders(TOKEN, VIA_TLS), body: initBody() });
     assert.equal(after.status, 503, 'a non-loopback bind that stops enforcing auth refuses to serve');
     assert.match(after.body, /enforced authentication|unavailable/, 'the body says why');
   } finally {
@@ -326,15 +247,6 @@ test("a governed gateway attributes a tenant's ledger rows to its principal, not
     stopProxy(child);
   }
 });
-
-/** The JSON-RPC result inside a POST reply — an SSE stream (`data: {...}` lines) or plain JSON. */
-function rpcResult(body: string): { isError?: boolean; content?: { text?: string }[] } | undefined {
-  for (const line of body.split('\n')) {
-    if (!line.startsWith('data:')) continue;
-    try { const m = JSON.parse(line.slice(5).trim()); if (m.result) return m.result; } catch { /* not this line */ }
-  }
-  try { return JSON.parse(body).result; } catch { return undefined; }
-}
 
 test("an upstream log line withheld from a governed session is written to the gateway's stderr, defanged and capped", async () => {
   // The governed drop (red-team #3) claimed the operator "still sees them on the
@@ -558,6 +470,72 @@ test('a NETWORK-bound gateway never discloses the full health shape, even ungove
     assert.ok(!('upstreams' in health), 'no upstream names on a network bind');
     assert.ok(!('corpus' in health), 'no corpus path on a network bind');
     assert.ok(!('sessions' in health), 'no session count on a network bind');
+  } finally {
+    stopProxy(child);
+  }
+});
+
+test('a network-bound gateway with enforced auth refuses to START without a TLS-terminating proxy in front (cleartext bearer)', async () => {
+  // The gateway speaks plain HTTP and does not terminate TLS. Bound to a network
+  // interface with auth enforced, every request carries a bearer token — in
+  // cleartext, unless something in front spoke TLS to the client. That is not
+  // the gateway's to implement (certificates belong to the proxy), but it IS the
+  // gateway's to refuse: it must not be the thing that puts the credential on
+  // the wire readable. Loopback is exempt (nothing crosses a network), and the
+  // ungoverned network bind (CAIRN_ALLOW_UNGOVERNED) carries no tokens at all.
+  const home = governedHome();
+  const { code, stderr } = await startProxyExpectingExit(home, { CAIRN_HTTP_HOST: '0.0.0.0' });
+  assert.equal(code, 1, 'the gateway exits rather than serving bearer tokens in cleartext on a network');
+  assert.match(stderr, /cleartext/, 'and says why');
+  assert.match(stderr, /CAIRN_BEHIND_TLS_PROXY=1/, 'and names the deployment fix');
+  // The explicit escape hatch, for a private network where cleartext is intended.
+  const { child } = await startProxy(home, { CAIRN_HTTP_HOST: '0.0.0.0', CAIRN_ALLOW_CLEARTEXT_AUTH: '1' });
+  stopProxy(child);
+});
+
+test('behind a TLS proxy, a request that did not come through it (no X-Forwarded-Proto) or came through in cleartext (http) is refused before auth, even with a valid token', async () => {
+  const home = governedHome();
+  const { child, base } = await startProxy(home, BEHIND_TLS);
+  try {
+    const body = initBody();
+    // No forwarded-proto at all: the request reached the gateway port directly,
+    // bypassing the proxy. Refused BEFORE the token is examined — a valid token
+    // does not help, and the response does not say whether it was valid.
+    const direct = await hit(base, '/mcp', { method: 'POST', headers: mcpHeaders(TOKEN), body });
+    assert.equal(direct.status, 403, 'a direct hit that bypassed the proxy is refused');
+    assert.match(direct.body, /TLS-terminating proxy/, 'and told why');
+    assert.doesNotMatch(direct.body, /unauthorized|unknown token/, 'without leaking whether the token was valid');
+
+    // The proxy says the client hop was cleartext.
+    const clear = await hit(base, '/mcp', { method: 'POST', headers: mcpHeaders(TOKEN, { 'x-forwarded-proto': 'http' }), body });
+    assert.equal(clear.status, 403, 'a hop reported as http is refused');
+    assert.match(clear.body, /cleartext/);
+
+    // A chain with one cleartext hop is refused too (every hop must be TLS).
+    const mixed = await hit(base, '/mcp', { method: 'POST', headers: mcpHeaders(TOKEN, { 'x-forwarded-proto': 'https, http' }), body });
+    assert.equal(mixed.status, 403, 'a chain with any cleartext hop is refused');
+
+    // RFC 7239 Forwarded is honoured the same way.
+    const fwdClear = await hit(base, '/mcp', { method: 'POST', headers: mcpHeaders(TOKEN, { forwarded: 'for=203.0.113.9;proto=http;by=lb' }), body });
+    assert.equal(fwdClear.status, 403, 'Forwarded: proto=http is refused');
+
+    // The refusals are recorded as auth failures (coalesced), and the chain verifies.
+    _resetAuditCache();
+    const rows = readAudit(path.join(home, 'audit'));
+    assert.ok(rows.some((e) => e.decision === 'auth-fail' && /cleartext credential refused/.test(e.reason ?? '')), 'the cleartext refusal is an auth-fail row');
+    assert.equal(verifyAudit(path.join(home, 'audit')).ok, true);
+
+    // /healthz is liveness and needs no proxy attestation (a probe from the LB itself).
+    const health = await hit(base, '/healthz');
+    assert.equal(health.status, 200, 'liveness stays open');
+
+    // A wrong token THROUGH the proxy is still a 401 (auth runs after the edge check).
+    const bad = await hit(base, '/mcp', { method: 'POST', headers: mcpHeaders('not-the-token', VIA_TLS), body });
+    assert.equal(bad.status, 401, 'through TLS, a bad token is the ordinary 401');
+
+    // And a valid token through TLS (last: this opens an SSE stream) is served.
+    const ok = await hit(base, '/mcp', { method: 'POST', headers: mcpHeaders(TOKEN, { forwarded: 'for=203.0.113.9;proto=https' }), body });
+    assert.equal(ok.status, 200, 'a valid token through a TLS hop (RFC 7239 form) is accepted');
   } finally {
     stopProxy(child);
   }
