@@ -217,8 +217,12 @@ test('--quiet suppresses the preflight miss message', () => {
     }).trim();
   assert.match(run(['--preflight', 'totally-unknown-program-xyz']), /nothing known about/);
   assert.equal(run(['--preflight', '--quiet', 'totally-unknown-program-xyz']), '');
-  // And a real trigger still speaks under --quiet.
-  assert.match(run(['--preflight', '--quiet', 'playwright install']), /cairn-\d{4}/);
+  // And a real trigger still speaks under --quiet. Use a trigger whose finding
+  // has NO precondition (cairn-0003, `rg`), so the warning fires on any machine:
+  // `playwright install` (cairn-0007) is gated on PLAYWRIGHT_BROWSERS_PATH /
+  // /opt/pw-browsers, which hold on the dev sandbox but not a clean CI runner,
+  // so preflight rightly suppressed it there and the assertion was machine-coupled.
+  assert.match(run(['--preflight', '--quiet', 'rg']), /cairn-\d{4}/);
 });
 
 /**
