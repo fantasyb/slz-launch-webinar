@@ -7,6 +7,8 @@
  * findings, and `ENOSPC` returned none. Neither was visible without measuring.
  */
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { loadCorpus } from '../src/lib/cairn/load';
@@ -16,6 +18,19 @@ import {
 } from '../src/lib/cairn/retrieval';
 import { assertLocalCorpus, runCommand } from '../src/lib/cairn/confirm';
 import { coOccurrence, alsoSeenWith } from '../src/lib/cairn/graph';
+import { cairnHome } from '../src/lib/cairn/home';
+
+/*
+ * Hermetic execution policy. The provenance-gate tests (assertLocalCorpus) go
+ * through assertExecutionAllowed, which needs execution enabled for THIS corpus.
+ * A dev box has that in ~/.cairn/policy.json; a clean CI runner does not, so the
+ * gate threw the execution-disabled error before the provenance check and the
+ * tests failed on the wrong branch. Point CAIRN_POLICY at a temp file that
+ * enables exactly this corpus, so the suite is self-contained on any machine.
+ */
+const _polDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cairn-retrieval-policy-'));
+fs.writeFileSync(path.join(_polDir, 'policy.json'), JSON.stringify({ [path.resolve(cairnHome())]: { enabled: true } }) + '\n');
+process.env.CAIRN_POLICY = path.join(_polDir, 'policy.json');
 
 const corpus = loadCorpus();
 
@@ -570,7 +585,14 @@ test('preflight warns before the command that causes the trap', () => {
     ['df -h /', 'cairn-0008'],
   ];
   for (const [cmd, expected] of cases) {
-    const ids = preflight(cmd, corpus, { useLocalEnvironment: true }).map((w) => w.finding.id);
+    // This asserts the trigger -> warning mapping, which is machine-independent.
+    // NOT useLocalEnvironment: with it, preflight suppresses a warning whose
+    // precondition does not match the live box (retrieval.ts:3068) — true on this
+    // sandbox (it has the DNS/df/playwright traps), false on a clean CI runner,
+    // so the assertion would depend on where it runs. The applicability gate is a
+    // separate property, exercised where the trap is actually live (the dogfood),
+    // not in a portable unit test.
+    const ids = preflight(cmd, corpus).map((w) => w.finding.id);
     assert.ok(ids.includes(expected), `"${cmd}" did not warn about ${expected} (got ${ids.join(' ') || 'nothing'})`);
   }
 });
