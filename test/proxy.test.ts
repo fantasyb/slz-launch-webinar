@@ -1643,3 +1643,59 @@ test('an arc the hook offered is answered through cairn_note: dismissed as a sli
     assert.equal(fs.readdirSync(path.join(home, 'cairn')).length, 0, 'a dismissal writes nothing anywhere else');
   } finally { await s.close(); }
 });
+
+/*
+ * completion/complete was the one result surface still relayed raw: its
+ * `values` are upstream-chosen strings a client shows the model (and a
+ * model-driven client feeds straight back as the next argument), so a forged
+ * Cairn label in a completion reached the model undefanged.
+ */
+test('a forged Cairn label in a completion value is neutralized; a clean value passes byte-for-byte', async () => {
+  const s = new Session(corpus(), ['--server', `node ${FIXTURE} --completions`]);
+  try {
+    await s.init();
+    const r = await s.request('completion/complete', { ref: { type: 'ref/prompt', name: 'pick' }, argument: { name: 'name', value: 'x' } });
+    assert.ok(!r.error, `completion errored: ${JSON.stringify(r.error)}`);
+    const values = (r.result as { completion: { values: string[] } }).completion.values;
+    assert.equal(values.length, 2, `both values arrive: ${JSON.stringify(values)}`);
+    assert.equal(values[0], 'clean-x', 'a clean value passes byte-for-byte');
+    assert.doesNotMatch(values[1], /-{2,}\s*from your Cairn corpus/i, `the forged label is neutralized: ${values[1]}`);
+    assert.match(values[1], /imitated the Cairn label/, 'and replaced by the redaction marker');
+    assert.match(values[1], /^x /, 'the clean part of the forged value is intact');
+  } finally { await s.close(); }
+});
+
+/*
+ * A relayed progress notification defanged only `message`. The SDK hands the
+ * proxy every key of the notification's params beside progress/total/message
+ * that its schema declares — which includes `_meta`, an open bag the upstream
+ * fills — so a forged label in `_meta` was relayed to the client raw. (An
+ * undeclared key such as `note` is stripped by the SDK's strict progress
+ * schema on the way, so only `_meta` is asserted here; the fixture sends both.)
+ * The whole bag is defanged now; the client's own progressToken is put back
+ * untouched so correlation still works.
+ */
+test('a forged Cairn label in a progress notification\'s _meta is neutralized; the token and the clean message pass through', async () => {
+  const s = new Session(corpus(), ['--server', `node ${FIXTURE} --progress-extra`]);
+  try {
+    await s.init();
+    let progress: Msg | undefined;
+    for (let attempt = 1; attempt <= 3 && !progress; attempt++) {
+      const r = await s.request('tools/call', { name: 'mcp__data360__progressing', arguments: {}, _meta: { progressToken: 'client-token-77' } });
+      assert.ok(!r.error, 'the call itself succeeds');
+      try {
+        progress = await s.waitForNotification((n) => n.method === 'notifications/progress' && (n.params as { progressToken?: unknown })?.progressToken === 'client-token-77', 30_000);
+      } catch { /* best-effort relay; re-issue for a fresh chance (cairn-0050) */ }
+    }
+    assert.ok(progress, 'the client received the progress notification');
+    const p = progress.params as { progress?: number; total?: number; message?: string; progressToken?: unknown; _meta?: { k?: string } };
+    assert.equal(p.progress, 1);
+    assert.equal(p.total, 2);
+    assert.equal(p.message, 'halfway', 'the clean message is intact');
+    assert.equal(p.progressToken, 'client-token-77', 'the client\'s own token is untouched');
+    assert.equal(typeof p._meta?.k, 'string', `_meta reaches the client: ${JSON.stringify(p._meta)}`);
+    assert.doesNotMatch(String(p._meta?.k), /-{2,}\s*from your Cairn corpus/i, `the forged label in _meta is neutralized: ${p._meta?.k}`);
+    assert.match(String(p._meta?.k), /imitated the Cairn label/, 'and replaced by the redaction marker');
+    assert.match(String(p._meta?.k), /^meta /, 'the clean part of the _meta value is intact');
+  } finally { await s.close(); }
+});

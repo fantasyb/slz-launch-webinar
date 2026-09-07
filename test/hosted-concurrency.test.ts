@@ -363,3 +363,87 @@ test('reconnaissance: every unauthenticated response on a governed gateway is un
     stopProxy(child);
   }
 });
+
+test('a JSON-RPC batch counts every request in it against the per-tenant in-flight cap: a batch over the cap is refused whole, one within it is served, and its slots are released', async () => {
+  // One HTTP request carrying N tools/call entries used to take ONE in-flight
+  // slot while the SDK dispatched all N concurrently — so the per-principal
+  // bound was really cap × batch size (a 4 MB body holds ~40k calls).
+  const home = tenantsHome('cairn-mt-batch-', { adminIds: [0] });
+  const CAP = 3;
+  const { child, base } = await startProxy(home, { CAIRN_MAX_INFLIGHT_PER_PRINCIPAL: String(CAP) });
+  try {
+    const s = await openSession(base, tokenFor(0), { retry: true });
+    assert.equal(s.status, 200);
+    const batch = (n: number, from: number) => JSON.stringify(Array.from({ length: n }, (_, i) => ({ jsonrpc: '2.0', id: from + i, method: 'tools/call', params: { name: 'mcp__data360__slow', arguments: {} } })));
+    const post = async (body: string, settleMs: number) => {
+      const once = () => hit(base, '/mcp', { method: 'POST', headers: { ...mcpHeaders(tokenFor(0)), 'mcp-session-id': s.sid }, body, settleMs });
+      let r = await once();
+      for (let a = 0; a < 5 && r.status === 400 && !r.body; a++) { await sleep(150); r = await once(); } // cairn-0050
+      return r;
+    };
+    // Over the cap in ONE request: refused before any of its calls is dispatched.
+    const over = await post(batch(CAP + 5, 100), 1000);
+    assert.equal(over.status, 429, `a batch of ${CAP + 5} calls on a cap of ${CAP} is refused whole (${over.status} ${over.body.slice(0, 160)})`);
+    assert.match(over.body, /in flight/);
+    assert.ok(over.headers['retry-after'], 'and is retryable');
+    // Within the cap: served, and every call in it answered.
+    const within = await post(batch(CAP, 200), 6500);
+    assert.equal(within.status, 200, `a batch of ${CAP} is served (${within.status} ${within.body.slice(0, 160)})`);
+    const ids = [...within.body.matchAll(/"id":(\d+)/g)].map((m) => Number(m[1])).sort((a, b) => a - b);
+    assert.deepEqual(ids, Array.from({ length: CAP }, (_, i) => 200 + i), 'every request in the batch gets its result');
+    // Released: once the batch drains, the tenant is served again (no slot leaked).
+    const after = await rpc(base, tokenFor(0), s.sid, 300, 'tools/list', {}, { retry: true });
+    assert.equal(after.status, 200, 'the batch released every slot it reserved');
+    // Notifications in a batch are not requests and take no slot.
+    const notes = JSON.stringify(Array.from({ length: CAP + 5 }, () => ({ jsonrpc: '2.0', method: 'notifications/initialized' })));
+    const onlyNotes = await post(notes, 500);
+    assert.equal(onlyNotes.status, 202, `a batch of notifications alone is accepted (${onlyNotes.status})`);
+    // The refusal is audited under the tenant, as a cap denial.
+    assert.ok(audit(home).some((e) => e.principal === idFor(0) && /in-flight request cap/.test(e.reason ?? '') && /batch/.test(e.reason ?? '')), 'the batch refusal is audited');
+    assert.equal(verifyAudit(path.join(home, 'audit')).ok, true);
+  } finally {
+    closeOpenReqs();
+    stopProxy(child);
+  }
+});
+
+test('the in-flight body budget is also per principal: one tenant holding bodies is refused its own next body while another tenant, within the global budget, is served', async () => {
+  // 256 slots × 4 MB is a gigabyte, so one credential could fill the whole
+  // global body budget with slow bodies and 503 every other tenant. A
+  // per-principal share bounds the tenant first.
+  const home = tenantsHome('cairn-mt-bodyshare-', { adminIds: [0, 1] });
+  const { child, base } = await startProxy(home, { CAIRN_MAX_INFLIGHT_BODY_BYTES: String(4 << 20), CAIRN_MAX_INFLIGHT_BODY_BYTES_PER_PRINCIPAL: String(1 << 20) });
+  try {
+    const u = new URL(base);
+    // tenant0 holds 700 KB unfinished.
+    const hold = http.request({ hostname: u.hostname, port: u.port, path: '/mcp', method: 'POST', agent: false, headers: { ...mcpHeaders(tokenFor(0)), 'content-length': String(700 * 1024 + 2), connection: 'close' } });
+    hold.on('error', () => {});
+    hold.on('response', (r) => r.resume());
+    hold.write('[' + 'x'.repeat(700 * 1024));
+    const probe = (i: number) => hit(base, '/mcp', { method: 'POST', headers: mcpHeaders(tokenFor(i)), body: '{"a":"' + 'y'.repeat(700 * 1024) + '"}' }).catch((e: NodeJS.ErrnoException) => ({ status: 0, headers: {} as http.IncomingHttpHeaders, body: String(e.code) }));
+    const refused = (r: { status: number; body: string }) => r.status === 429 || /ECONNRESET|EPIPE/.test(r.body);
+    // tenant0's OWN next 700 KB crosses its 1 MB share (1.4 MB, well under the 4 MB global): refused.
+    let own = await probe(0);
+    for (let a = 0; a < 15 && !refused(own); a++) { await sleep(200); own = await probe(0); }
+    assert.ok(refused(own), `the holding tenant's next body is refused by its per-principal share (${own.status} ${own.body.slice(0, 120)})`);
+    if (own.status === 429) assert.match(own.body, /for this principal/);
+    // tenant1's 700 KB, meanwhile, is within both its share and the global budget: served (not refused).
+    const other = await probe(1);
+    assert.ok(!refused(other), `another tenant is served while tenant0 is at its share (${other.status} ${other.body.slice(0, 80)})`);
+    const shareRow = () => audit(home).some((e) => e.principal === idFor(0) && /per-principal in-flight body budget exhausted/.test(e.reason ?? ''));
+    for (let a = 0; a < 10 && !shareRow(); a++) await sleep(100);
+    assert.ok(shareRow(), 'the refusal is audited under the holding tenant as a per-principal budget denial');
+    assert.ok(!audit(home).some((e) => e.principal === idFor(1) && /body budget/.test(e.reason ?? '')), 'and the other tenant has no budget denial');
+    // Released: once the held body ends, tenant0 is served again. The drain +
+    // release can lag under full-suite load, so retry as the refusal check above
+    // does rather than assume a fixed sleep is enough.
+    hold.end(']');
+    let after = await probe(0);
+    for (let a = 0; a < 15 && refused(after); a++) { await sleep(200); after = await probe(0); }
+    assert.ok(!refused(after), `once its held body drains the tenant is served again (${after.status} ${after.body.slice(0, 80)})`);
+    assert.equal(verifyAudit(path.join(home, 'audit')).ok, true);
+  } finally {
+    closeOpenReqs();
+    stopProxy(child);
+  }
+});

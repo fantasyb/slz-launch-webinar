@@ -372,6 +372,17 @@ const MAX_SESSIONS_PER_PRINCIPAL = Math.max(1, Number(process.env.CAIRN_MAX_SESS
  */
 const MAX_INFLIGHT_PER_PRINCIPAL = Math.max(1, Number(process.env.CAIRN_MAX_INFLIGHT_PER_PRINCIPAL) || 256);
 const MAX_INFLIGHT_BODY_BYTES = Math.max(1 << 20, Number(process.env.CAIRN_MAX_INFLIGHT_BODY_BYTES) || 256 << 20);
+/*
+ * The global body budget protects the PROCESS; it does not, on its own, keep
+ * one tenant from taking it all: 256 in-flight slots × 4 MB is a gigabyte, so
+ * 64 half-sent bodies on ONE credential (a slow-loris, each held to Node's
+ * request timeout) filled the whole 256 MB and every other tenant's POST got
+ * 503 until they drained. A per-principal share (a quarter of the global by
+ * default, never above it — sixteen full bodies at once is a runaway, not a
+ * workload) keeps the global bound a bound on the process and not a lever one
+ * tenant can pull on the rest.
+ */
+const MAX_INFLIGHT_BODY_BYTES_PER_PRINCIPAL = Math.min(MAX_INFLIGHT_BODY_BYTES, Math.max(1 << 20, Number(process.env.CAIRN_MAX_INFLIGHT_BODY_BYTES_PER_PRINCIPAL) || Math.floor(MAX_INFLIGHT_BODY_BYTES / 4)));
 
 
 /**
@@ -2557,8 +2568,13 @@ async function main() {
                 void Promise.resolve(
                   extra.sendNotification({
                     method: 'notifications/progress',
-                    // `message` is free upstream text the model reads — defang it (red-team A5).
-                    params: { ...p, progressToken, ...(typeof p.message === 'string' ? { message: defangUpstream(p.message) } : {}) },
+                    // `message` is free upstream text the model reads — defang it (red-team
+                    // A5). And not only `message`: the SDK parses notification params
+                    // loosely and spreads EVERY extra key into `p`, so an upstream can
+                    // ride a forged label in any field it invents (or in `_meta`).
+                    // Defang the whole bag; the progressToken is the CLIENT's own
+                    // correlation key and is put back untouched.
+                    params: { ...(defangDeep(p) as typeof p), progressToken },
                   }),
                 ).catch(() => { /* client gone or slow; the result still returns */ });
               }
@@ -3043,7 +3059,16 @@ async function main() {
         // resource names) on servers its role is denied. Filter the fan-out.
         targets = targets.filter((t) => mayReachServer(session, t.up));
         for (const t of targets) {
-          try { const r = await t.up.client!.complete(t.params, FORWARD); audit(session, 'call', t.up.spec.name, '(completion)'); return r; } catch { /* next */ }
+          try {
+            const r = await t.up.client!.complete(t.params, FORWARD);
+            audit(session, 'call', t.up.spec.name, '(completion)');
+            // `completion.values` are upstream-chosen strings a client shows the
+            // model (and a model-driven client feeds straight back as the next
+            // argument) — the one result surface that was still relayed raw, so a
+            // forged Cairn label in a completion arrived undefanged. defangDeep is
+            // a no-op on every clean value; `_meta` and keys are covered with it.
+            return defangDeep(r) as typeof r;
+          } catch { /* next */ }
         }
         return { completion: { values: [] } };
       });
@@ -3247,6 +3272,8 @@ async function main() {
    */
   const inflightByPrincipal = new Map<string, number>();
   let inflightBodyBytes = 0;
+  /** Body bytes in flight PER principal (see MAX_INFLIGHT_BODY_BYTES_PER_PRINCIPAL). */
+  const inflightBodyByPrincipal = new Map<string, number>();
   /*
    * An AUTHENTICATED principal hammering a cap (sessions, in-flight) would write
    * one deny row per attempt: the cap itself becomes the amplifier that grows the
@@ -3438,6 +3465,9 @@ async function main() {
         return;
       }
       inflightByPrincipal.set(inflightKey, mine + 1);
+      // How many in-flight slots THIS request holds: one for the request itself,
+      // plus one per additional JSON-RPC request inside a batch body (below).
+      let inflightSlotsHeld = 1;
       let bodyBytesHeld = 0;
       let sessionMeta: { inflight: number } | undefined;
       try {
@@ -3450,29 +3480,69 @@ async function main() {
         const chunks: Buffer[] = [];
         let total = 0;
         let tooBig = false;
-        let overBudget = false;
+        let overBudget: null | 'global' | 'principal' = null;
         for await (const c of req) {
           total += (c as Buffer).length;
           if (total > MAX_BODY) { tooBig = true; break; }
           // The per-request cap bounds ONE body; the global budget bounds all of
           // them at once, so N concurrent senders cannot hold N × 4 MB. Counted as
           // the bytes arrive (a slow sender holds only what it has sent) and
-          // released with the request.
+          // released with the request. The per-principal share is counted the
+          // same way, so one tenant's slow bodies cannot spend the global budget
+          // for everyone else. The global check runs first: when both trip, the
+          // process bound is the one reported.
           inflightBodyBytes += (c as Buffer).length;
           bodyBytesHeld += (c as Buffer).length;
-          if (inflightBodyBytes > MAX_INFLIGHT_BODY_BYTES) { overBudget = true; break; }
+          const mineBody = (inflightBodyByPrincipal.get(inflightKey) ?? 0) + (c as Buffer).length;
+          inflightBodyByPrincipal.set(inflightKey, mineBody);
+          if (inflightBodyBytes > MAX_INFLIGHT_BODY_BYTES) { overBudget = 'global'; break; }
+          if (mineBody > MAX_INFLIGHT_BODY_BYTES_PER_PRINCIPAL) { overBudget = 'principal'; break; }
           chunks.push(c as Buffer);
         }
         if (tooBig || overBudget) {
           // Record first, then cut the sender off: the destroy resets the socket
           // and the sender may act on that before this process gets to the log.
-          if (overBudget) auditCapDeny(principal, `in-flight body budget exhausted (${MAX_INFLIGHT_BODY_BYTES} bytes)`);
+          if (overBudget === 'global') auditCapDeny(principal, `in-flight body budget exhausted (${MAX_INFLIGHT_BODY_BYTES} bytes)`);
+          if (overBudget === 'principal') auditCapDeny(principal, `per-principal in-flight body budget exhausted (${MAX_INFLIGHT_BODY_BYTES_PER_PRINCIPAL} bytes)`);
           try { req.destroy(); } catch { /* already gone */ }
-          res.writeHead(tooBig ? 413 : 503, { 'content-type': 'application/json', ...(overBudget ? { 'retry-after': '1' } : {}) });
-          res.end(JSON.stringify({ jsonrpc: '2.0', error: { code: -32001, message: tooBig ? 'request body too large' : 'gateway busy: too many request bodies in flight; retry later' }, id: null }));
+          // 413: this body alone is too large. 503: the gateway is busy (global
+          // budget — retryable). 429: this PRINCIPAL is holding too much (its own
+          // doing — retryable once its bodies drain).
+          res.writeHead(tooBig ? 413 : overBudget === 'global' ? 503 : 429, { 'content-type': 'application/json', ...(overBudget ? { 'retry-after': '1' } : {}) });
+          const message = tooBig ? 'request body too large' : overBudget === 'global' ? 'gateway busy: too many request bodies in flight; retry later' : 'too many request bodies in flight for this principal; retry later';
+          res.end(JSON.stringify({ jsonrpc: '2.0', error: { code: -32001, message }, id: null }));
           return;
         }
         try { body = JSON.parse(Buffer.concat(chunks).toString('utf8') || 'null'); } catch { body = null; }
+        /*
+         * A JSON-RPC BATCH is one HTTP request carrying N requests, and the SDK
+         * dispatches every one of them concurrently. Counting the HTTP request
+         * alone let one body of ~40k tools/call entries (4 MB at ~100 bytes each)
+         * run under a single in-flight slot — the per-principal bound was really
+         * cap × batch size, and one tenant could fan thousands of concurrent
+         * forwards onto the shared upstreams and the shared event loop. So every
+         * REQUEST in a batch (an entry with an id; notifications and responses
+         * are cheap and not counted) takes its own slot, reserved synchronously
+         * here and released with the rest in the finally. A batch that would
+         * overshoot is refused whole, before any of its calls is dispatched.
+         */
+        if (Array.isArray(body)) {
+          const requests = body.filter((m) => !!m && typeof m === 'object' && typeof (m as { method?: unknown }).method === 'string' && (m as { id?: unknown }).id !== undefined && (m as { id?: unknown }).id !== null).length;
+          const extra = requests - 1;
+          if (extra > 0) {
+            const cur = inflightByPrincipal.get(inflightKey) ?? 0;
+            if (cur + extra > MAX_INFLIGHT_PER_PRINCIPAL) {
+              // The reason is the coalescing key (auditCapDeny): keep it constant —
+              // a batch SIZE in it would give every size its own row per second.
+              auditCapDeny(principal, `in-flight request cap reached (${MAX_INFLIGHT_PER_PRINCIPAL}); a batch exceeding the remaining allowance was refused whole`);
+              res.writeHead(429, { 'content-type': 'application/json', 'retry-after': '1' });
+              res.end(JSON.stringify({ jsonrpc: '2.0', error: { code: -32005, message: `too many requests in flight for this principal (a batch of ${requests} requests exceeds the remaining allowance); retry later` }, id: null }));
+              return;
+            }
+            inflightByPrincipal.set(inflightKey, cur + extra);
+            inflightSlotsHeld += extra;
+          }
+        }
       }
       const sid = req.headers['mcp-session-id'];
       const existing = typeof sid === 'string' ? transports.get(sid) : undefined;
@@ -3578,10 +3648,15 @@ async function main() {
       res.writeHead(400, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ jsonrpc: '2.0', error: { code: -32000, message: 'no session; send initialize first' }, id: null }));
       } finally {
-        // Release every in-flight reservation this request took, on every path.
-        const n = (inflightByPrincipal.get(inflightKey) ?? 1) - 1;
+        // Release every in-flight reservation this request took, on every path —
+        // every slot a batch reserved included, never more than was taken.
+        const n = (inflightByPrincipal.get(inflightKey) ?? inflightSlotsHeld) - inflightSlotsHeld;
         if (n <= 0) inflightByPrincipal.delete(inflightKey); else inflightByPrincipal.set(inflightKey, n);
         inflightBodyBytes -= bodyBytesHeld;
+        if (bodyBytesHeld > 0) {
+          const b = (inflightBodyByPrincipal.get(inflightKey) ?? bodyBytesHeld) - bodyBytesHeld;
+          if (b <= 0) inflightBodyByPrincipal.delete(inflightKey); else inflightBodyByPrincipal.set(inflightKey, b);
+        }
         if (sessionMeta) sessionMeta.inflight--;
       }
     } catch (e) {
