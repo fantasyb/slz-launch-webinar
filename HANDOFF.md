@@ -182,3 +182,75 @@ first for a clean `git clone`, OR clone and `git checkout
 claude/domain-connection-check-alvz1s`. Do NOT use `--http 0.0.0.0` for the
 dogfood — stdio is the tested path; hosted mode wants a real TLS terminator first.
 End-of-week evidence: `cairn:report` + `cairn:impact` + one honest sentence.
+
+## Path to enterprise — the hub-and-spoke platform
+
+Where this is going: a **platform company**, not a single product. B2B, sold to
+teams and businesses. The dogfood (one user proving the engine) is the proof
+step, not the product's ceiling — the product is for companies running fleets of
+AI agents against real systems.
+
+### Self-hosted first (what it is, and the call)
+Self-hosted = the customer runs the software **inside their own infrastructure**
+(their cloud/VPC/servers/laptops), not on our servers. Their agent traffic, tool
+calls, corpus and audit log never leave their perimeter; we ship software + signed
+updates + a license. SaaS is the opposite (we host; their data lives on our infra).
+**Call: self-hosted first.** It IS the "nothing leaves the machine" promise, it
+removes the security buyer's #1 objection, and it needs no multi-region SaaS ops
+to make a first sale. Cost: updates/support are harder (no hotfixing their box),
+no central telemetry (design privacy-preserving opt-in metrics), licensing must
+work offline. Foundation = the cross-platform daemon + one-command installer
+(already on the punch-list). SaaS can come later if the market pulls.
+
+### The business is the HUB; the products are the SPOKES
+- **HUB** = the company + the shared platform substrate every product reuses:
+  identity (SSO/SCIM), the org/workspace/RBAC model, the tamper-evident audit +
+  compliance posture (SOC 2 certifies the platform once), billing/entitlements/
+  metering, the admin console (one pane of glass), and the self-hosted install/
+  update machinery. One login, one org, one audit spine, one trust story — across
+  everything.
+- **SPOKES** = products that plug into the hub. **Cairn (agent memory + governance
+  gateway) is spoke #1.** Each additional spoke is an agent-infrastructure product
+  that reuses the hub, so it ships faster and inherits the trust posture. Adjacent
+  spokes (pattern, not commitments): agent policy/guardrails, agent audit/
+  compliance reporting, agent eval/observability.
+
+**The one engineering call this forces: build the enterprise layer as a REUSABLE
+PLATFORM SUBSTRATE (the hub), not baked into Cairn.** `src/lib/cairn/enterprise.ts`
+(auth, RBAC, tamper-evident audit) is the *seed* of that hub — as SSO / org model /
+admin console get built, extract them into a shared platform layer so spoke #2
+rebuilds none of it. That is the difference between "a product with enterprise
+features" and "a platform company."
+
+### Sequence (do not invert)
+1. **Prove it** (weeks): dogfood + 2-3 design-partner teams. One team saying "this
+   saved us" is the asset everything else rests on.
+2. **Build the hub / productize for a team** (1-3 months; buildable — see track
+   below).
+3. **Make it legit** (parallel, 3-9 months; mostly NOT code): incorporate,
+   DPA/MSA, security whitepaper, pen test, *start* SOC 2 Type II.
+4. **Sell**: pricing, motion, first paid B2B contract.
+
+Do not chase SOC 2 before a design partner commits. **SOC 2 is not built — it is
+attested by an auditor after you operate controls for a window (Type II ~3-12
+months).** What you build now is a product that is SOC-2-*auditable*; Cairn's
+tamper-evident audit log is already the crown jewel of that story.
+
+### Enterprise-readiness engineering track (buildable; AFTER proof) = building the hub
+- **Identity:** SSO (SAML/OIDC), SCIM provisioning.
+- **Org model:** workspace/org/team/role, extending the existing RBAC.
+- **Audit/compliance controls (SOC-2-auditable):** access control, encryption at
+  rest + in transit, change management, tamper-evident log + export (audit spine
+  seeded by Cairn today).
+- **Admin console:** `/cairn` grown into org governance — policy, seats, usage,
+  the audit trail.
+- **Self-hosted deployment:** cross-platform daemon (Linux/Windows), one-command
+  installer, offline license/entitlement, signed auto-update.
+- **Data residency / global:** per-region handling, GDPR export/delete, i18n.
+
+### Non-code (the company; NOT something Fable ships) — flagged so nobody mistakes it
+- SOC 2 Type II (auditor + operating window), ISO 27001, pen test, security
+  whitepaper, DPA/MSA templates. Start once a design partner commits.
+- Legal entity, funding, team, pricing, sales motion, support/on-call, global ops.
+- Rule of thumb: **compliance = auditable controls (code) + attestation
+  (business).** We build the first; the company runs the second.
