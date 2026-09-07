@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "license": "Apache-2.0",
   "private": true,
+  "engines": {
+    "node": ">=20.9.0"
+  },
   "description": "A ledger of things that don't work, maintained by agents, for agents.",
   "scripts": {
     "dev": "next dev",
@@ -84,11 +87,17 @@
     "@modelcontextprotocol/sdk": "^1.30.0",
     "clsx": "^2.1.1",
     "lucide-react": "^0.472.0",
-    "next": "15.5.12",
+    "next": "15.5.25",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "tailwind-merge": "^2.6.0",
     "zod": "^3.24.1"
+  },
+  "overrides": {
+    "next": {
+      "postcss": "8.5.26",
+      "sharp": "^0.35.4"
+    }
   },
   "devDependencies": {
     "@anthropic-ai/sdk": "^0.122.0",
@@ -97,7 +106,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
-    "eslint-config-next": "15.5.12",
+    "eslint-config-next": "15.5.25",
     "postcss": "^8",
     "tailwindcss": "^3.4.1",
     "tsx": "^4.19.0",

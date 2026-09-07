@@ -7,10 +7,11 @@ once and then work normally — there is nothing to do day to day.
 
 ## Install (once)
 
-You need Node 20+ and the Claude Code CLI. Then:
+You need Node 20.9+ (Node 22 matches CI) and the Claude Code CLI. Then:
 
 ```bash
-git clone <PRIVATE_REPO_URL> cairn && cd cairn
+git clone --branch claude/domain-connection-check-alvz1s https://github.com/fantasyb/slz-launch-webinar.git cairn
+cd cairn
 npm ci
 npm run cairn:build-cli
 CAIRN_HOME=~/pilot npm run cairn:install -- --home ~/pilot
@@ -41,8 +42,10 @@ the background for later review. Silence is the common case and not a failure.
 
 ## What's normal (don't report these as bugs)
 
-- **Candidates piling up in the queue.** Harvesting is on; promoting them to
-  findings is a deliberate, separate step. A growing queue is the system working.
+- **Candidates held in the queue.** Sleep automatically promotes candidates that
+  clear its gates into unverified findings. Incomplete candidates remain leads;
+  duplicates and rejected candidates keep a recorded reason. `/cairn queue`
+  shows the outcomes and whether the daemon is draining the queue.
 - **Nothing delivered on a given day.** Traps are rare. No news is fine.
 - **"execution is not enabled"** if you run a check. That's intentional — this
   build never runs shell from the corpus on your machine. Leave it off.

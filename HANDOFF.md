@@ -4,8 +4,52 @@ Working document. Captures what was done this session, where we are, the
 decisions waiting on a human, and the remaining work — written so a fresh Fable
 pass (or whoever drives it) can execute top to bottom. Delete once consumed.
 
-Branch: `claude/domain-connection-check-alvz1s` — HEAD `cfb9924`, ~346 commits
-ahead of `main`, open as **PR #3**.
+Branch: `claude/domain-connection-check-alvz1s` — inspected base `7029f43`, 348
+commits ahead of `main`, open as **PR #3**. Dependency/doc follow-up below is
+on this same branch; use `git log -1` for its current HEAD.
+
+## Dependency and handoff follow-up (2026-09-07)
+
+- Updated `next` and `eslint-config-next` from 15.5.12 to 15.5.25.
+  Next still declares PostCSS 8.4.31, so a scoped override selects patched
+  PostCSS 8.5.26. A scoped Sharp override selects the supported ^0.35.4 range
+  rather than retaining vulnerable 0.34.x through Next's alternative range.
+  The lockfile resolves Sharp 0.35.4 and the direct CSS tooling to PostCSS 8.5.28.
+  Sharp's patched line requires Node >=20.9.0; package engines and dogfood
+  prerequisites now state that minimum (CI already selects Node 22).
+  Remove/revisit these overrides when upstream's declared dependencies are safe.
+- The original branch lockfile audit reproduced **3 high-severity affected
+  packages**, not 13: Next, its nested PostCSS, and Sharp. The updated installed
+  tree reports **0 vulnerabilities** in `npm audit`. This is an advisory scan,
+  not a proof of gateway security or deployment isolation. PostCSS's high
+  findings include source-map file disclosure, not just its moderate XSS issue.
+- Guard CI now installs the exact lockfile with `npm ci` and fails on high or
+  critical dependency advisories. Neither change lowers retrieval quality floors.
+- `DOGFOOD.md` now clones the working branch explicitly and describes automatic
+  consolidation rather than implying all promotions wait for human review.
+- Validation: production `npm run build` passed (including lint/type checking),
+  CLI bundles built, corpus lint reported 0 errors / 57 warnings, ledger audit
+  reported 0 failures, and Sharp resized/encoded an image successfully. The
+  full suite via `node --import tsx --test --test-concurrency=2 test/*.test.ts`
+  completed with 441 pass / 62 fail / 1 todo. This host denies the local socket
+  created by the `tsx` CLI (`listen EPERM`); subprocess-dependent tests fail
+  directly or through missing child output. A normal CI-host rerun is still
+  required; this is not a fresh 503-pass attestation.
+- Retrieval failures reproduced with the unchanged corpus and ranker:
+  held-out P@5 0.8929, field quiet 19/23 (0.8261), and the
+  `cairn-0001 -> cairn-0027` case. Three confidently answered negative queries
+  about 429/retry/thundering-herd match `cairn-0051`, whose subject is socket
+  reuse. The proxy case is pulled toward `cairn-0027` by the generated-question
+  and coverage rankings despite the typed ranker preferring `cairn-0001`.
+  No cases were re-labelled and no baselines were lowered.
+- On a fresh checkout, doctor explicitly refuses execution under the default-off
+  host policy and exits before SUMMARY. Do not classify missing SUMMARY as Node
+  version noise without inspecting its stderr. The agent suite also depends on
+  real commands producing the expected errors; an empty output aborts its CLI
+  latency probe. Both need an explicit CI measurement design, not a blanket bypass.
+
+The two merge blockers below remain open. The dependency patch does not certify
+the earlier full-suite green claim on a fresh host.
 
 ## TL;DR
 
@@ -67,7 +111,9 @@ Reproduced locally on the branch — **3 real regressions**:
   query that should return the allowlist-proxy one — a genuine miss, not a reshuffle)
 
 CI additionally showed `agent covered hits: 2 < 5` and `could not parse doctor
-SUMMARY` — both PASS locally, so they are Node-24/CI-env noise, not real.
+SUMMARY`. Earlier local runs passed, but that does not establish a CI root cause;
+see the fresh-checkout policy and command-output findings above. The committed
+workflow selects Node 22.
 
 Cause: quality-baseline (`research/quality-baseline.json`, frozen at commit
 `330dd79`) predates corpus growth; the corpus now has 51 findings (incl.
@@ -79,12 +125,15 @@ the gate exists to stop exactly that.
 
 ### 2. `review` CI job runs the wrong workflow context
 The `review` job installs Prisma and fails on `Missing script: "cairn:lint"` — it
-is executing against the **old `main` package.json** (for `pull_request` events
-GitHub runs the workflow from the *base* branch; old `main` is the pre-Cairn
-Next.js app with Prisma and no `cairn:lint`). Pre-existing CI-config issue,
-independent of this branch's code. Options: fix/replace the base-branch workflow,
-or land the Cairn workflows on `main` first, or (if the checks aren't required by
-branch protection) merge despite it. Confirm branch-protection required-checks.
+is executing against the **old `main` package.json** because the checkout
+explicitly selects `github.event.pull_request.base.sha`. Old `main` is the
+pre-Cairn Next.js app with Prisma and no `cairn:lint`. This is intentional trust
+separation: review tooling comes from the trusted base, and only corpus/key data
+comes from the PR. Switching to the PR head would run contributor-controlled
+tooling with provider secrets. Bootstrap a separately reviewed Cairn review
+toolchain onto the base before this corpus review can run; changing only the
+workflow YAML on main is insufficient because its package/scripts must exist
+there too. Confirm branch-protection required-checks before planning the merge.
 
 ## Open decisions (need the user)
 

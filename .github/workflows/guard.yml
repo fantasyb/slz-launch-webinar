@@ -18,7 +18,8 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-      - run: npm install --no-audit --no-fund
+      - run: npm ci --no-audit --no-fund
+      - run: npm audit --audit-level=high
       - run: npm test
       - run: npx tsc --noEmit -p tsconfig.json
       # Every floor in research/quality-baseline.json, plus the per-case regression
