@@ -1,0 +1,30 @@
+[Unit]
+Description=Cairn approved-workload execution supervisor
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+User=root
+Group=cairn-gateway
+ExecStart=/usr/bin/node /opt/cairn/dist/cli/container-supervisor.js
+RuntimeDirectory=cairn-supervisor
+RuntimeDirectoryMode=0750
+StateDirectory=cairn-supervisor
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+RestrictAddressFamilies=AF_UNIX
+CapabilityBoundingSet=
+MemoryMax=256M
+CPUQuota=100%
+TasksMax=128
+TimeoutStopSec=45
+# No automatic restart loop: failed reconciliation requires operator review.
+
+[Install]
+WantedBy=multi-user.target

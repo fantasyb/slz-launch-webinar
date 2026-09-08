@@ -42,6 +42,7 @@ const ENTRIES = [
   ['scripts/mcp-server.ts', 'dist/cli/mcp-server.js'],
   // Push without a client feature: a result is the one text a model always reads.
   ['scripts/mcp-proxy.ts', 'dist/cli/mcp-proxy.js'],
+  ['scripts/container-supervisor.ts', 'dist/cli/container-supervisor.js'],
   // The offline consolidation pass runs as a SessionStart/SessionEnd hook, so it
   // is on the session-open and session-close path — the tsx boot it replaces was
   // paid on every single session.

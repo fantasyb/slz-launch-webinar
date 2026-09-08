@@ -1,8 +1,9 @@
 # Restricted upstream execution — experimental
 
-For the staged supervisor admission core and which controls are automatic, see
-[`SUPERVISOR.md`](SUPERVISOR.md). The gateway's Docker authority has not yet been
-removed; that requires the separate service, runtime adapter, and OS identity tests.
+For the optional separate execution supervisor and which controls are automatic,
+see [`SUPERVISOR.md`](SUPERVISOR.md). Removing gateway Docker authority requires
+supervisor mode plus the documented service and OS permissions. The legacy direct
+container mode described below still gives the gateway Docker access.
 
 This implementation adds an opt-in Linux Docker execution boundary for local
 stdio upstreams. Dedicated Docker CI tests exercise its restrictions. CI evidence
@@ -115,8 +116,9 @@ on durable local storage, accessible only to the trusted gateway/operator. A
 missing marker admits an approved configuration; an existing marker denies it,
 including corrupt or empty evidence. An inaccessible store refuses launches.
 Gateway restart does not clear quarantine. The upstream cannot access this store
-through the container profile, but a compromised host or gateway can; moving
-execution and admission into an independent narrow supervisor remains future work.
+through the container profile, but a compromised host or direct-mode gateway can.
+In supervisor mode, a separate OS identity owns stable-ID quarantine and launch;
+the gateway must lack access to that state and to Docker (see `SUPERVISOR.md`).
 
 Recovery is an operator activity: stop affected gateway instances, confirm the
 container was removed, review the pinned image/configuration and fault, and then
@@ -163,7 +165,7 @@ review and vulnerability management.
   separate-kernel microVM or an escape-proof boundary. The gateway has access to
   a powerful local Docker service; do not expose that socket to upstreams or
   untrusted gateway extensions. Use a dedicated execution host. A narrower
-  supervisor API is a future architectural improvement.
+  supervisor API is available through the separately installed supervisor mode.
 - Lifetime cleanup is enforced by the running gateway. Gateway SIGKILL, host
   crashes, daemon outages or hung cleanup can leave containers behind. Each
   container has `cairn.isolated=true` and an expiry timestamp label. The provided independent host supervisor removes expired containers on a

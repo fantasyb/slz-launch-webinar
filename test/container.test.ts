@@ -40,6 +40,9 @@ test('gateway refuses container configuration mistakes before launching host cod
       ['container', { command: '/bin/sh', args: ['-c', `touch ${marker}`] }],
       ['host', { ...spec, command: '/bin/sh', args: ['-c', `touch ${marker}`] }],
       ['contaner', spec],
+      ['supervisor', { command: '/bin/sh', args: ['-c', `touch ${marker}`] }],
+      ['supervisor', { supervisorWorkload: 'approved', command: '/bin/sh', args: ['-c', `touch ${marker}`] }],
+      ['host', { supervisorWorkload: 'approved' }],
     ] as const) {
       fs.writeFileSync(file, JSON.stringify({ servers: { isolated: entry } }));
       const result = await startProxyExpectingExit(home, { CAIRN_EXECUTION_MODE: mode }, ['--config', file]);

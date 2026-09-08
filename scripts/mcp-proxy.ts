@@ -80,6 +80,7 @@ import { recordSubmission } from '../src/lib/cairn/recordFinding';
 import { redactForLedger } from '../src/lib/cairn/safety';
 import { shapeOf, promptShapeOf, diffSurface, findingNames, type ToolShape, type SurfaceChange } from '../src/lib/cairn/toolsurface';
 import { containerTransport, containerPlan, executionMode, type ContainerPolicy } from '../src/lib/cairn/container';
+import { SupervisorClientTransport } from '../src/lib/cairn/supervisor-client';
 import { trustMode, trustBootstrap, readPinState, writePin, pinPrompts, evaluateTrust } from '../src/lib/cairn/trust';
 import { readOrgPolicy, orgPolicyPath, authenticate, authorize, appendAudit, LOCAL_ADMIN, PROTOCOL_READ, type OrgPolicy, type Principal } from '../src/lib/cairn/enterprise';
 import { summarise, detect, type CallSummary } from '../src/lib/cairn/contradiction';
@@ -95,6 +96,7 @@ import { standing } from '../src/lib/cairn/decay';
 /* ------------------------------------------------------------------------ */
 
 interface UpstreamSpec {
+  supervisorWorkload?: string;
   isolation?: ContainerPolicy;
   name: string;
   /** A stdio upstream: the command to spawn. Mutually exclusive with `url`. */
@@ -153,6 +155,7 @@ function parseArgs(argv: string[]): UpstreamSpec[] {
       const file = argv[++i];
       if (!file) usage();
       type Entry = {
+        supervisorWorkload?: string;
         command?: string; args?: string[]; env?: Record<string, string>; isolation?: ContainerPolicy;
         url?: string; headers?: Record<string, string>; type?: string; transport?: string;
       };
@@ -161,7 +164,10 @@ function parseArgs(argv: string[]): UpstreamSpec[] {
         servers?: Record<string, Entry>;
       };
       for (const [name, s] of Object.entries(raw.mcpServers ?? raw.servers ?? {})) {
-        if (s?.command) {
+        if (s && Object.hasOwn(s, 'supervisorWorkload')) {
+          if (Object.keys(s).some((k) => k !== 'supervisorWorkload') || typeof s.supervisorWorkload !== 'string') throw new Error('Supervisor entries accept only supervisorWorkload');
+          specs.push({ name, supervisorWorkload: s.supervisorWorkload });
+        } else if (s?.command) {
           specs.push({ name, command: s.command, args: s.args ?? [], env: s.env, isolation: s.isolation });
         } else if (s?.url) {
           // An HTTP/SSE upstream. `type`/`transport` may say 'sse'; default to
@@ -986,6 +992,8 @@ const FORWARD = { timeout: 10 * 60 * 1000, resetTimeoutOnProgress: true } as con
  * rather than pretending — see the install, which warns before wrapping one.
  */
 async function upstreamTransport(spec: UpstreamSpec) {
+  if (executionMode() === 'supervisor') return new SupervisorClientTransport(spec.supervisorWorkload!);
+  if (spec.supervisorWorkload !== undefined) throw new Error('Supervisor workload requires CAIRN_EXECUTION_MODE=supervisor');
   if (executionMode() === 'container') return containerTransport(spec);
   if (spec.isolation !== undefined) throw new Error('An isolation policy requires CAIRN_EXECUTION_MODE=container; refusing host execution');
   if (spec.url) {
@@ -1056,7 +1064,7 @@ async function spawn(up: Upstream, onNotification: (u: Upstream, method: string,
   const client = new Client({ name: 'cairn-proxy', version: '0.2.0' }, { capabilities: {} });
   const isHttp = !!up.spec.url;
   const transport = await upstreamTransport(up.spec);
-  if (isHttp || executionMode() === 'container') {
+  if (isHttp || executionMode() !== 'host') {
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       await Promise.race([
@@ -1315,7 +1323,11 @@ async function main() {
   const specs = parseArgs(process.argv.slice(2));
   const mode = executionMode();
   for (const spec of specs) {
-    if (mode === 'container') containerPlan(spec);
+    if (mode === 'supervisor') {
+      if (!spec.supervisorWorkload || !/^[a-z][a-z0-9_-]{0,63}$/.test(spec.supervisorWorkload)
+        || Object.keys(spec).some((k) => !['name', 'supervisorWorkload'].includes(k))) throw new Error('Supervisor mode requires an approved workload ID only');
+    } else if (spec.supervisorWorkload !== undefined) throw new Error('Supervisor workload requires CAIRN_EXECUTION_MODE=supervisor');
+    else if (mode === 'container') containerPlan(spec);
     else if (spec.isolation !== undefined) throw new Error('An isolation policy requires CAIRN_EXECUTION_MODE=container');
   }
   const single = specs.length === 1;

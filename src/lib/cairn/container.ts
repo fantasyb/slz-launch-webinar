@@ -25,9 +25,9 @@ export interface ContainerSpec {
   url?: string;
   isolation?: ContainerPolicy;
 }
-export function executionMode(): 'host' | 'container' {
+export function executionMode(): 'host' | 'container' | 'supervisor' {
   const mode = process.env.CAIRN_EXECUTION_MODE ?? 'host';
-  if (mode !== 'host' && mode !== 'container') throw new Error('CAIRN_EXECUTION_MODE must be host or container');
+  if (mode !== 'host' && mode !== 'container' && mode !== 'supervisor') throw new Error('CAIRN_EXECUTION_MODE must be host, container, or supervisor');
   return mode;
 }
 function bound(value: number | undefined, fallback: number, min: number, max: number, integer = true): number {
@@ -74,12 +74,12 @@ export async function removeContainer(name: string, run: (args: string[]) => Pro
 }
 
 /** Creates first, verifies prerequisites, then attaches. Docker is a trusted host service. */
-export async function containerTransport(spec: ContainerSpec): Promise<StdioClientTransport> {
+export async function containerTransport(spec: ContainerSpec, admission?: { quarantine: ContainerQuarantine; identity: string }): Promise<StdioClientTransport> {
   if (cleanupFailure) throw new Error('Container cleanup failed; operator recovery and gateway restart required');
   if (process.platform !== 'linux') throw new Error('Container execution requires a Linux Docker host');
   const plan = containerPlan(spec);
-  const quarantine = new ContainerQuarantine();
-  const identity = workloadId({ image: plan.image, command: spec.command!, args: plan.args });
+  const quarantine = admission?.quarantine ?? new ContainerQuarantine();
+  const identity = admission?.identity ?? workloadId({ image: plan.image, command: spec.command!, args: plan.args });
   quarantine.assertAdmitted(identity);
   const privateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cairn-container-'));
   const runtimeEnv = { PATH: '/usr/bin:/bin', HOME: privateDir, DOCKER_CONFIG: privateDir, NODE_ENV: 'production' as const };
