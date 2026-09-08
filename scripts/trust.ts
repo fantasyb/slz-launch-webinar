@@ -2,7 +2,8 @@
  * cairn:trust — see and manage the gateway's trust pins.
  *
  *   CAIRN_HOME=~/pilot npm run cairn:trust                       # list pinned servers
- *   CAIRN_HOME=~/pilot npm run cairn:trust -- --reapprove <srv>  # accept its CURRENT surface
+ *   CAIRN_HOME=~/pilot npm run cairn:trust -- --reapprove <srv>  # TOFU: forget for next process
+ *   CAIRN_HOME=~/pilot npm run cairn:trust -- --approve-file <file> --server <srv> --sha256 <reviewed-digest>
  *
  * A pin is the approved surface of a wrapped MCP server — every tool's name,
  * description, annotations, and schema hash, its instructions, and every
@@ -12,12 +13,15 @@
  * defense) until it is re-approved. When a change is a LEGITIMATE upgrade, re-approve: this forgets
  * the pin, and the next session re-pins to whatever the server offers then.
  *
- * Reads and writes only under CAIRN_HOME/trust. Nothing leaves the machine.
+ * Explicit bootstrap forbids automatic approval, including a new prompt channel.
+ * --approve-file reads local review material; approval writes stay under
+ * CAIRN_HOME/trust. The digest binds the reviewed bytes, not reviewer identity.
+ * Nothing leaves the machine.
  */
 import fs from 'fs';
 import path from 'path';
 import { cairnHome } from '../src/lib/cairn/home';
-import { readPin, forgetPin, type Pin } from '../src/lib/cairn/trust';
+import { readPin, forgetPin, approvePin, pinPath, trustBootstrap, type Pin } from '../src/lib/cairn/trust';
 import { readLedger, type RetrievalRecord } from '../src/lib/cairn/ledger';
 
 /**
@@ -61,10 +65,33 @@ try {
 }
 const trustDir = path.join(home, 'trust');
 
+const approveFile = opt('approve-file');
+if (approveFile) {
+  const server = opt('server');
+  const digest = opt('sha256');
+  if (!server || !digest) {
+    console.error('cairn:trust: --approve-file requires --server and --sha256 of the reviewed file');
+    process.exit(2);
+  }
+  try {
+    const raw = fs.readFileSync(approveFile, 'utf8');
+    if (!approvePin(server, raw, digest, trustDir)) throw new Error('digest or server/shape validation failed, or approval could not be saved');
+    console.log(`cairn:trust — approved reviewed surface for "${server}" (sha256 ${digest}). Refresh the gateway listing or restart.`);
+  } catch (error) {
+    console.error(`cairn:trust: ${(error as Error).message}`);
+    process.exit(2);
+  }
+  process.exit(0);
+}
+
 const drift = recordedDrift();
 
 const reapprove = opt('reapprove');
 if (reapprove) {
+  if (trustBootstrap() === 'explicit') {
+    console.error('cairn:trust: explicit approval does not use deletion. Import reviewed material with --approve-file --server --sha256.');
+    process.exit(2);
+  }
   // Show what the gateway saw drift BEFORE forgetting the pin. Re-approving is
   // trusting whatever the server offers next; the operator should decide that
   // against the actual change, not blind. If we recorded no drift, say so —
@@ -96,7 +123,8 @@ try {
 }
 if (!files.length) {
   console.log('cairn:trust — no servers pinned yet.');
-  console.log('  A wrapped server is pinned on its first session (with CAIRN_TRUST_MODE monitor or enforce).');
+  console.log('  Explicit bootstrap requires --approve-file <file> --server <server> --sha256 <reviewed-digest>.');
+  console.log('  TOFU bootstrap pins on first sight with CAIRN_TRUST_MODE monitor or enforce.');
   process.exit(0);
 }
 // Lead with the live security state: any server the gateway recorded as
@@ -114,12 +142,19 @@ if (drifted.length) {
   console.log('\n  Inspect the change, then either re-approve it (if a legitimate upgrade) or leave it blocked (if tampering):');
   console.log('  cairn:trust --reapprove <server>\n');
 } else {
-  console.log('cairn:trust — no drift recorded: every pinned server still matches its approval.\n');
+  console.log('cairn:trust — no drift recorded: live surfaces were not checked by this command.\n');
 }
 
 console.log(`Pinned server(s) under ${trustDir}:\n`);
 for (const f of files.sort()) {
-  const server = path.basename(f, '.json');
+  let server: string;
+  try {
+    server = JSON.parse(fs.readFileSync(path.join(trustDir, f), 'utf8')).server;
+    if (typeof server !== 'string' || path.basename(pinPath(server, trustDir)) !== f) throw new Error('invalid server identity');
+  } catch {
+    console.log(`  ${f}  (unreadable pin)`);
+    continue;
+  }
   const pin: Pin | null = readPin(server, trustDir);
   if (!pin) { console.log(`  ${server}  (unreadable pin)`); continue; }
   const flag = drift.has(pin.server) ? '  ⚠ drifted' : '';
@@ -129,4 +164,5 @@ for (const f of files.sort()) {
   console.log(`  ${pin.server.padEnd(20)} ${pin.tools.length} tool(s)${prompts} approved ${pin.approvedAt}${flag}`);
 }
 console.log('\n  A tool or prompt whose definition drifts from its pin is flagged (monitor) or withheld (enforce).');
-console.log('  Re-approve a legitimate change with:  cairn:trust --reapprove <server>');
+console.log('  Explicit bootstrap: --approve-file <file> --server <server> --sha256 <reviewed-digest>.');
+console.log('  TOFU bootstrap: --reapprove <server> forgets approval for the next process.');

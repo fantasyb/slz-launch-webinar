@@ -12,9 +12,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'fs';
+import { createHash } from 'crypto';
 import os from 'os';
 import path from 'path';
-import { evaluateTrust, writePin, readPin, readPinState, pinPath, forgetPin, pinPrompts, type TrustMode } from '../src/lib/cairn/trust';
+import { evaluateTrust, writePin, approvePin, readPin, readPinState, pinPath, forgetPin, pinPrompts, type TrustMode } from '../src/lib/cairn/trust';
 import { shapeOf, promptShapeOf } from '../src/lib/cairn/toolsurface';
 
 const tool = (name: string, description: string, props: Record<string, unknown> = {}) =>
@@ -204,4 +205,21 @@ test('approval reads distinguish absent, damaged, and valid evidence without rep
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+
+test('approval imports bind reviewed bytes to the intended server and leave existing pins intact on rejection', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cairn-approve-import-'));
+  try {
+    assert.equal(writePin('sf', [tool('query', 'Query', {})], dir), true);
+    const file = pinPath('sf', dir);
+    const raw = fs.readFileSync(file, 'utf8');
+    const digest = createHash('sha256').update(raw).digest('hex');
+    assert.equal(approvePin('sf', raw + ' ', digest, dir), false, 'changed bytes require a new review digest');
+    assert.equal(approvePin('another', raw, digest, dir), false, 'approval cannot cross server identity');
+    assert.equal(approvePin('sf', raw, '', dir), false);
+    assert.equal(fs.readFileSync(file, 'utf8'), raw, 'rejected imports cannot modify approval');
+    assert.equal(approvePin('sf', raw, digest, dir), true);
+    assert.deepEqual(readPin('sf', dir)!.tools, JSON.parse(raw).tools);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });

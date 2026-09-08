@@ -35,6 +35,14 @@ export function trustMode(): TrustMode {
   return m === 'monitor' || m === 'enforce' ? m : 'off';
 }
 
+/** Explicit bootstrap never creates or extends approvals in the gateway. */
+export function trustBootstrap(): 'tofu' | 'explicit' {
+  const mode = (process.env.CAIRN_TRUST_BOOTSTRAP ?? 'tofu').toLowerCase();
+  if (mode !== 'tofu' && mode !== 'explicit') throw new Error('CAIRN_TRUST_BOOTSTRAP must be tofu or explicit');
+  if (mode === 'explicit' && trustMode() !== 'enforce') throw new Error('Explicit approval requires CAIRN_TRUST_MODE=enforce');
+  return mode;
+}
+
 export interface Pin {
   server: string;
   approvedAt: string;
@@ -98,15 +106,29 @@ export function readPinState(server: string, trustDir: string): PinState {
   } catch (error) {
     return { status: (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'invalid' };
   }
+  const pin = parsePin(server, raw);
+  return pin ? { status: 'valid', pin } : { status: 'invalid' };
+}
+
+/** Validate review material without granting approval or touching storage. */
+export function parsePin(server: string, raw: string): Pin | null {
   try {
     const p = JSON.parse(raw) as Pin;
     if (!p || p.server !== server || typeof p.approvedAt !== 'string' || !Number.isFinite(Date.parse(p.approvedAt))
       || !validShapes(p.tools) || (p.instructions !== undefined && typeof p.instructions !== 'string')
-      || (p.prompts !== undefined && !validShapes(p.prompts))) return { status: 'invalid' };
-    return { status: 'valid', pin: p };
+      || (p.prompts !== undefined && !validShapes(p.prompts))) return null;
+    return p;
   } catch {
-    return { status: 'invalid' };
+    return null;
   }
+}
+
+/** Approve the exact reviewed bytes for an explicit server identity. */
+export function approvePin(server: string, raw: string, expectedSha256: string, trustDir: string): boolean {
+  if (!/^[a-f0-9]{64}$/.test(expectedSha256) || createHash('sha256').update(raw).digest('hex') !== expectedSha256) return false;
+  const pin = parsePin(server, raw);
+  if (!pin) return false;
+  return persistPin({ ...pin, approvedAt: new Date().toISOString() }, trustDir);
 }
 
 export function readPin(server: string, trustDir: string): Pin | null {

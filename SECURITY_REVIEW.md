@@ -117,3 +117,21 @@ failures. A final change keeps approval disk reads out of the per-prompt listing
 loop while retaining the dispatch check, and adds denied prompt delivery to the
 damage attacks; the focused security selection and type check were rerun after
 that change. The new GitHub matrix has not run: these commits are not published.
+
+## Explicit enrollment follow-up — 2026-09-08
+
+Added opt-in `CAIRN_TRUST_BOOTSTRAP=explicit`, requiring enforce mode. Production
+cannot establish first-use pins or extend approvals to a previously unapproved
+prompt channel. Deletion plus a gateway restart stays denied. Invalid bootstrap
+configuration refuses startup. The operator imports reviewed content with a
+SHA-256 digest and explicit server identity; rejected imports preserve existing
+approval. This is an admission control, not process isolation or signed reviewer
+identity. Deployment instructions and scope are in `SECURITY_MODEL.md`.
+
+Validation: 40 focused security tests and seven existing proxy trust tests pass,
+including HTTP first-use denial, actual approved execution, prompt-channel
+separation, reviewed import, CLI roster, deletion-workflow refusal, deletion plus
+restart, malformed configuration, digest mismatch and server mismatch. Types
+pass. No dependency versions changed. The broad suite was not repeated for this
+follow-up; its prior 450 pass / 62 fail / one TODO result remains the latest broad
+run, not an attestation for this commit. Remote publication is still blocked.

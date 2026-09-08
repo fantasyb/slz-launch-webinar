@@ -79,7 +79,7 @@ import {
 import { recordSubmission } from '../src/lib/cairn/recordFinding';
 import { redactForLedger } from '../src/lib/cairn/safety';
 import { shapeOf, promptShapeOf, diffSurface, findingNames, type ToolShape, type SurfaceChange } from '../src/lib/cairn/toolsurface';
-import { trustMode, readPinState, writePin, pinPrompts, evaluateTrust } from '../src/lib/cairn/trust';
+import { trustMode, trustBootstrap, readPinState, writePin, pinPrompts, evaluateTrust } from '../src/lib/cairn/trust';
 import { readOrgPolicy, orgPolicyPath, authenticate, authorize, appendAudit, LOCAL_ADMIN, PROTOCOL_READ, type OrgPolicy, type Principal } from '../src/lib/cairn/enterprise';
 import { summarise, detect, type CallSummary } from '../src/lib/cairn/contradiction';
 import { tierOf } from '../src/lib/cairn/brief';
@@ -1307,6 +1307,7 @@ function countArc(arc: string, choice: 'bank' | 'my-mistake' | 'not-surprising',
 /* ------------------------------------------------------------------------ */
 
 async function main() {
+  const bootstrap = trustBootstrap(); // validate before connecting or serving traffic
   const specs = parseArgs(process.argv.slice(2));
   const single = specs.length === 1;
   /*
@@ -1666,8 +1667,13 @@ async function main() {
   function approvalState(up: Upstream, dir: string): ReturnType<typeof readPinState> {
     const state = readPinState(up.spec.name, dir);
     if (state.status !== 'missing') observedApprovals.add(up.spec.name);
-    if (state.status === 'missing' && observedApprovals.has(up.spec.name)) return { status: 'invalid' };
+    if (state.status === 'missing' && (bootstrap === 'explicit' || observedApprovals.has(up.spec.name))) return { status: 'invalid' };
     return state;
+  }
+  function approvalHelp(up: Upstream): string {
+    return bootstrap === 'explicit'
+      ? 'An operator must restore the approval or import reviewed material with cairn:trust --approve-file <file> --server <server> --sha256 <reviewed-digest>.'
+      : `Re-approve the server with cairn:trust --reapprove ${up.spec.name} once you have confirmed the change is legitimate.`;
   }
   function approvalUnavailable(up: Upstream): boolean {
     const dir = trustDirOf();
@@ -1689,7 +1695,7 @@ async function main() {
     const state = approvalState(up, dir);
     if (state.status === 'invalid') {
       up.trustBlocked = new Set(mode === 'enforce' ? shapes.map((s) => s.name) : []);
-      process.stderr.write(`cairn-proxy: TRUST ${up.spec.name}: approval missing after use, unreadable or malformed — ${mode === 'enforce' ? 'tools WITHHELD' : 'flagged (monitor)'}; restore or explicitly reapprove the pin\n`);
+      process.stderr.write(`cairn-proxy: TRUST ${up.spec.name}: required approval missing, unreadable or malformed — ${mode === 'enforce' ? 'tools WITHHELD' : 'flagged (monitor)'}; restore or explicitly reapprove the pin\n`);
       return;
     }
     if (state.status === 'missing') {
@@ -1769,6 +1775,10 @@ async function main() {
     }
     const pin = state.pin;
     if (!pin.prompts) {
+      if (bootstrap === 'explicit') {
+        up.promptTrustBlocked = new Set(shapes.map((s) => s.name));
+        return; // the prompt channel needs its own reviewed approval
+      }
       const ok = pinPrompts(up.spec.name, shapes, dir);
       if (!ok && mode === 'enforce') up.promptTrustBlocked = new Set(shapes.map((s) => s.name));
       process.stderr.write(ok
@@ -2550,7 +2560,7 @@ async function main() {
         audit(session, 'deny', owner.up.spec.name, owner.raw, owner.up.listIncomplete ? 'trust: upstream listed incompletely, surface not evaluated (withheld)' : 'trust: approval unavailable or tool surface changed (withheld)');
         return textResult(
           `cairn-proxy: "${req.params.name}" is withheld — its approval is unavailable or its definition changed since approval, ` +
-            `which is how a tool-poisoning / rug-pull attack looks. Re-approve the server with \`cairn:trust --reapprove ${owner.up.spec.name}\` once you have confirmed the change is legitimate.`,
+            approvalHelp(owner.up),
           true,
         );
       }
@@ -3061,7 +3071,7 @@ async function main() {
           audit(session, 'deny', owner.up.spec.name, '(prompt:get)', owner.up.promptListIncomplete ? 'trust: upstream listed prompts incompletely, surface not evaluated (withheld)' : 'trust: approval unavailable or prompt surface changed (withheld)');
           throw new Error(
             `cairn-proxy: prompt "${req.params.name}" is withheld — its approval is unavailable or its definition changed since approval, ` +
-              `which is how a prompt-poisoning / rug-pull attack looks. Re-approve the server with \`cairn:trust --reapprove ${owner.up.spec.name}\` once you have confirmed the change is legitimate.`,
+              approvalHelp(owner.up),
           );
         }
         let out;

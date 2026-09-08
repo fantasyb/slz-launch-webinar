@@ -2,8 +2,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'fs';
 import path from 'path';
+import { createHash } from 'crypto';
+import { spawnSync } from 'child_process';
+import { pinPath } from '../src/lib/cairn/trust';
 import { authorize, tokenHash, readAudit, type OrgPolicy } from '../src/lib/cairn/enterprise';
-import { baseHome, startProxy, stopProxy, closeOpenReqs, openSession, rpc, rpcResult, FIXTURE } from './helpers/hosted';
+import { baseHome, startProxy, startProxyExpectingExit, stopProxy, closeOpenReqs, openSession, rpc, rpcResult, FIXTURE } from './helpers/hosted';
 
 test('strict read-only is never more permissive than read-only across annotation combinations', () => {
   const principal = { id: 'viewer', role: 'viewer' };
@@ -162,3 +165,107 @@ for (const damage of ['invalid-json', 'invalid-prompts', 'removed'] as const) {
     }
   });
 }
+
+test('explicit approval mode never bootstraps an unknown upstream', async () => {
+  const home = baseHome('cairn-explicit-approval-');
+  const marker = path.join(home, 'upstream-called');
+  const { child, base } = await startProxy(home, { CAIRN_TRUST_MODE: 'enforce', CAIRN_TRUST_BOOTSTRAP: 'explicit' },
+    ['--server', `service=node ${FIXTURE} --conflicting-read-marker ${marker}`]);
+  try {
+    const session = await openSession(base, undefined);
+    const result = await rpc(base, undefined, session.sid, 2, 'tools/call', { name: 'get_records', arguments: {} });
+    assert.equal(fs.existsSync(marker), false, 'first connection must not create its own authority');
+    assert.equal(rpcResult(result.body)?.isError, true, result.body);
+    assert.equal(fs.existsSync(path.join(home, 'trust')), false, 'explicit mode must not create approvals');
+  } finally {
+    closeOpenReqs();
+    stopProxy(child);
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+
+test('explicit approval requires reviewed imports, covers each channel, and survives restart deletion', async () => {
+  const staging = baseHome('cairn-approval-capture-');
+  const home = baseHome('cairn-approval-production-');
+  const marker = path.join(home, 'upstream-called');
+  const args = ['--server', `service=node ${FIXTURE} --conflicting-read-marker ${marker}`];
+  const env = { CAIRN_TRUST_MODE: 'enforce', CAIRN_TRUST_BOOTSTRAP: 'explicit' };
+  let running: Awaited<ReturnType<typeof startProxy>> | undefined;
+  try {
+    // Disposable enrollment fixture: listing only, never tools/call.
+    running = await startProxy(staging, { CAIRN_TRUST_MODE: 'monitor', CAIRN_TRUST_BOOTSTRAP: 'tofu' }, args);
+    const enrollment = await openSession(running.base, undefined);
+    await rpc(running.base, undefined, enrollment.sid, 2, 'tools/list', {});
+    await rpc(running.base, undefined, enrollment.sid, 3, 'prompts/list', {});
+    const candidate = JSON.parse(fs.readFileSync(pinPath('service', path.join(staging, 'trust')), 'utf8'));
+    assert.ok(candidate.prompts.length > 0);
+    assert.equal(fs.existsSync(marker), false);
+    closeOpenReqs(); stopProxy(running.child); running = undefined;
+
+    const file = path.join(staging, 'reviewed.json');
+    const approve = (raw: string) => {
+      fs.writeFileSync(file, raw);
+      const digest = createHash('sha256').update(raw).digest('hex');
+      const result = spawnSync(process.execPath, ['--import', 'tsx', 'scripts/trust.ts', '--approve-file', file, '--server', 'service', '--sha256', digest],
+        { env: { ...process.env, ...env, CAIRN_HOME: home }, encoding: 'utf8' });
+      assert.equal(result.status, 0, result.stderr);
+    };
+    const toolsOnly = { ...candidate }; delete toolsOnly.prompts;
+    approve(JSON.stringify(toolsOnly));
+    const pinFile = pinPath('service', path.join(home, 'trust'));
+    const original = fs.readFileSync(pinFile, 'utf8');
+    running = await startProxy(home, env, args);
+    let session = await openSession(running.base, undefined);
+    const permitted = await rpc(running.base, undefined, session.sid, 2, 'tools/call', { name: 'get_records', arguments: {} });
+    assert.match(permitted.body, /operation performed/);
+    assert.equal(fs.readFileSync(marker, 'utf8'), 'called');
+    const prompt = await rpc(running.base, undefined, session.sid, 3, 'prompts/get', { name: 'greet', arguments: {} });
+    assert.match(prompt.body, /withheld/);
+    assert.doesNotMatch(prompt.body, /prompt body text from upstream/);
+    assert.equal(fs.readFileSync(pinFile, 'utf8'), original, 'production cannot auto-approve the missing prompt channel');
+
+    approve(JSON.stringify(candidate));
+    await rpc(running.base, undefined, session.sid, 4, 'prompts/list', {});
+    const approvedPrompt = await rpc(running.base, undefined, session.sid, 5, 'prompts/get', { name: 'greet', arguments: {} });
+    assert.match(approvedPrompt.body, /prompt body text from upstream/);
+    const roster = spawnSync(process.execPath, ['--import', 'tsx', 'scripts/trust.ts'],
+      { env: { ...process.env, ...env, CAIRN_HOME: home }, encoding: 'utf8' });
+    assert.equal(roster.status, 0, roster.stderr);
+    assert.match(roster.stdout, /service\s+\d+ tool/);
+    assert.doesNotMatch(roster.stdout, /unreadable pin/);
+    const deletion = spawnSync(process.execPath, ['--import', 'tsx', 'scripts/trust.ts', '--reapprove', 'service'],
+      { env: { ...process.env, ...env, CAIRN_HOME: home }, encoding: 'utf8' });
+    assert.equal(deletion.status, 2, 'legacy deletion workflow is refused in explicit mode');
+    assert.ok(fs.existsSync(pinFile));
+
+    closeOpenReqs(); stopProxy(running.child); running = undefined;
+    fs.unlinkSync(pinFile); fs.unlinkSync(marker);
+    running = await startProxy(home, env, args);
+    session = await openSession(running.base, undefined);
+    const denied = await rpc(running.base, undefined, session.sid, 6, 'tools/call', { name: 'get_records', arguments: {} });
+    assert.equal(rpcResult(denied.body)?.isError, true, denied.body);
+    assert.equal(fs.existsSync(marker), false, 'restarting cannot restore lost approval');
+    assert.equal(fs.existsSync(pinFile), false, 'production never recreates the deleted pin');
+  } finally {
+    closeOpenReqs();
+    if (running) stopProxy(running.child);
+    fs.rmSync(staging, { recursive: true, force: true });
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('unsafe or misspelled explicit bootstrap configuration refuses startup', async () => {
+  const home = baseHome('cairn-bootstrap-config-');
+  try {
+    for (const env of [
+      { CAIRN_TRUST_MODE: 'off', CAIRN_TRUST_BOOTSTRAP: 'explicit' },
+      { CAIRN_TRUST_MODE: 'monitor', CAIRN_TRUST_BOOTSTRAP: 'explicit' },
+      { CAIRN_TRUST_MODE: 'enforce', CAIRN_TRUST_BOOTSTRAP: 'explict' },
+    ]) {
+      const result = await startProxyExpectingExit(home, env);
+      assert.notEqual(result.code, 0);
+      assert.match(result.stderr, /Explicit approval requires|CAIRN_TRUST_BOOTSTRAP must/);
+    }
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});

@@ -1,5 +1,20 @@
 # Cairn — session handoff & punch-list (2026-09-07)
 
+## Explicit approval follow-up (2026-09-08)
+
+Opt-in production configuration: `CAIRN_TRUST_MODE=enforce` plus
+`CAIRN_TRUST_BOOTSTRAP=explicit`. Missing approvals remain blocked across restart,
+and the gateway cannot automatically add the prompt channel to a tools-only pin.
+An operator imports exact reviewed material using `cairn:trust --approve-file
+<file> --server <name> --sha256 <reviewed-digest>`. See `SECURITY_MODEL.md` for
+capture, review and isolation requirements. Default TOFU behavior is preserved.
+
+The trust CLI also now reads the actual server identity from hashed pin filenames
+instead of hashing the already-hashed basename again; its roster is covered by
+the HTTP lifecycle test. Absence of recorded drift is no longer described as
+proof that live servers match approval.
+
+
 ## Approval integrity follow-up (2026-09-08)
 
 The gateway now rejects corrupt/unreadable approval pins and rechecks approval

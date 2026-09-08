@@ -42,8 +42,10 @@ cancelled when policy or a pin changes.
 
 Missing evidence is remembered for the lifetime of a gateway process after a pin
 has been observed or saved. Deleting a pin and starting a new gateway still
-triggers the existing trust-on-first-use behavior. `cairn:trust --reapprove`
-uses that deliberate next-process workflow. First use is not proof of safety;
+triggers trust-on-first-use only with the default `CAIRN_TRUST_BOOTSTRAP=tofu`.
+The opt-in `explicit` bootstrap below keeps a missing approval blocked across
+process restarts. `cairn:trust --reapprove`
+uses that deliberate next-process workflow in TOFU mode; explicit mode refuses it. First use is not proof of safety;
 operators must review initial servers and secure the approval directory.
 
 An upstream can retain identical metadata while changing its implementation.
@@ -66,3 +68,48 @@ resolve the existing quality regressions and trusted-base review bootstrap,
 exercise deployment isolation and load limits, and obtain independent review.
 The action versions in this workflow follow the repository's existing v4 tags;
 immutable action pinning remains a supply-chain hardening follow-up.
+
+
+## Explicit approval: the production admission boundary
+
+Set both `CAIRN_TRUST_MODE=enforce` and `CAIRN_TRUST_BOOTSTRAP=explicit`.
+The gateway then never creates or extends approval pins. An unknown server is
+withheld on first connection; deleting an approval does not enable it after a
+restart. A tools-only approval cannot automatically approve prompts when they
+first appear. Unknown bootstrap values and explicit mode paired with monitor or
+off refuse startup before upstream connections are established.
+
+Enrollment is a separate operator activity:
+
+1. In a disposable environment with no production credentials, capture a
+   candidate pin using the existing monitor/TOFU mode. Request both `tools/list`
+   and `prompts/list` to capture both channels. Listing runs upstream code;
+   keep this environment isolated. Do not run tools to collect their metadata.
+2. Review the candidate JSON, server identity, descriptions, instructions,
+   annotations and schema hashes against the intended upstream. Review the raw
+   advertised schemas separately: pins contain schema hashes, not full schemas.
+   Capture a SHA-256 digest of the exact file that was reviewed.
+3. An operator imports those reviewed bytes into the production home:
+
+   ```sh
+   CAIRN_HOME=/srv/cairn npm run cairn:trust -- \
+     --approve-file /path/to/reviewed-pin.json \
+     --server service --sha256 <reviewed-sha256>
+   ```
+
+4. Start the gateway with explicit/enforce mode and the same configured server
+   name (`service` in this example). Refresh listings after subsequent imports,
+   or restart. Use an OS identity that can read approvals but cannot change them
+   to enforce separation from the approval-writing operator.
+
+Import validates the digest and the expected server identity before an atomic
+write. A rejected import leaves existing approval untouched. The approval date
+records the import time. SHA-256 binds content to the supplied digest; it is not
+an approver signature or proof that a human reviewed the material. OS access to
+the approval command/store remains the authorization boundary.
+
+This mode covers pinned tool/prompt metadata and server instructions. It is not
+an OS sandbox, an action-argument capability system, or a policy for every
+resource read. A malicious implementation can still lie with unchanged metadata.
+The next architectural layer is to constrain actual upstream credentials and
+execution, so a gateway mistake has a bounded consequence.
