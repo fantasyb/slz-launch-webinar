@@ -25,8 +25,8 @@
  * collision needs two records that BOTH carry keys, with DIFFERENT maps, and
  * a path that really reads the entry store back. So:
  *
- *   - CAIRN_HOME is a temp directory, set before retrieval.ts is imported,
- *     because CACHE_DIR is fixed at import. That gives this test its own
+ *   - CAIRN_HOME is a temp directory, set before retrieval.ts is imported.
+ *     That gives this test its own
  *     cache and takes the parallel runner out of the picture.
  *   - The two corpora differ in JSON ([A] against [B, filler]) so the
  *     COLUMNAR fast path misses on its own fingerprint and buildIndex falls
@@ -62,7 +62,9 @@ function pair() {
   return { verifies, doesNot };
 }
 
-test('two findings with different key maps do not share a cached confidence', async () => {
+test('two findings with different key maps do not share a cached confidence', async (t) => {
+  // Confidence decays with time: compare cache identities, not elapsed I/O time.
+  t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-09-08T00:00:00.000Z') });
   const { buildIndex } = await import('../src/lib/cairn/retrieval');
   const { confidence } = await import('../src/lib/cairn/decay');
   const { verifies, doesNot } = pair();
@@ -89,25 +91,27 @@ test('two findings with different key maps do not share a cached confidence', as
 /**
  * The same blindness in the other cache, and this one is consulted FIRST.
  *
- * corpusFingerprint (retrieval.ts, indexIdentity) also hashes
- * JSON.stringify(f) per finding, and the columnar file it names carries
- * confidence too (columnar.ts, fromColumnar). Two corpora that are the same
- * records under different key maps therefore share one columnar index, and
- * buildIndex returns it before the entry store is ever read -- so the fix to
- * entryKey is reachable only when this path misses. Marked todo rather than
- * skipped: it runs, it fails today, and the runner reports it without failing
- * the suite. Remove the marker when indexIdentity folds the key identity in.
+ * The columnar fingerprint must include key identity too, because its cached
+ * confidence is returned before the entry store is consulted. Both paths now
+ * use recordIdentity; keep this as an enforced regression, not a TODO.
  */
-test.todo('two corpora with the same records and different key maps do not share a columnar index', async () => {
-  const { buildIndex } = await import('../src/lib/cairn/retrieval');
+test('two corpora with the same records and different key maps do not share a columnar index', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-09-08T00:00:00.000Z') });
+  const { buildIndex, indexIdentity, columnarFile } = await import('../src/lib/cairn/retrieval');
   const { confidence } = await import('../src/lib/cairn/decay');
   const { verifies, doesNot } = pair();
+  const cA = confidence(verifies, new Date());
   const cB = confidence(doesNot, new Date());
+  assert.ok(cA > cB, 'the two key maps must produce different confidence');
+  assert.notEqual(indexIdentity([verifies]), indexIdentity([doesNot]), 'columnar identity must distinguish key maps');
 
   buildIndex([verifies]);
+  assert.ok(fs.existsSync(columnarFile(indexIdentity([verifies]))), 'first writer must persist the columnar index');
   const reread = buildIndex([doesNot]); // a distinct array: the in-memory memo misses, the disk does not
   assert.ok(
     Math.abs(reread.docs[0].confidence - cB) < 1e-9,
     `the columnar index served another key map's confidence: got ${reread.docs[0].confidence}, wanted ${cB}`,
   );
+  const cached = buildIndex([doesNot]); // another array forces a persisted-cache lookup
+  assert.equal(cached.docs[0].confidence, reread.docs[0].confidence, 'disk reload must preserve confidence');
 });
