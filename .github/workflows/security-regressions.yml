@@ -27,7 +27,7 @@ jobs:
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm audit --audit-level=high
       - run: npm run cairn:build-cli
-      - run: node --import tsx --test test/gateway-adversarial.test.ts test/trust.test.ts test/defang.test.ts test/container.test.ts test/container-reaper.test.ts test/container-quarantine.test.ts
+      - run: node --import tsx --test test/gateway-adversarial.test.ts test/trust.test.ts test/defang.test.ts test/container.test.ts test/container-reaper.test.ts test/container-quarantine.test.ts test/supervisor-admission.test.ts
       - run: npm run typecheck
 
   container-isolation:

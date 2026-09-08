@@ -1,5 +1,9 @@
 # Restricted upstream execution — experimental
 
+For the staged supervisor admission core and which controls are automatic, see
+[`SUPERVISOR.md`](SUPERVISOR.md). The gateway's Docker authority has not yet been
+removed; that requires the separate service, runtime adapter, and OS identity tests.
+
 This implementation adds an opt-in Linux Docker execution boundary for local
 stdio upstreams. Dedicated Docker CI tests exercise its restrictions. CI evidence
 applies to the tested revision and runner, not to an untested production host or
