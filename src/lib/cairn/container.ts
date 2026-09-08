@@ -6,6 +6,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { ContainerQuarantine, workloadId } from './container-quarantine';
 
 const exec = promisify(execFile);
 const DOCKER = '/usr/bin/docker';
@@ -77,6 +78,9 @@ export async function containerTransport(spec: ContainerSpec): Promise<StdioClie
   if (cleanupFailure) throw new Error('Container cleanup failed; operator recovery and gateway restart required');
   if (process.platform !== 'linux') throw new Error('Container execution requires a Linux Docker host');
   const plan = containerPlan(spec);
+  const quarantine = new ContainerQuarantine();
+  const identity = workloadId({ image: plan.image, command: spec.command!, args: plan.args });
+  quarantine.assertAdmitted(identity);
   const privateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cairn-container-'));
   const runtimeEnv = { PATH: '/usr/bin:/bin', HOME: privateDir, DOCKER_CONFIG: privateDir, NODE_ENV: 'production' as const };
   // No inherited DOCKER_HOST/context, credential helpers, proxies or CLI plugins.
@@ -97,29 +101,65 @@ export async function containerTransport(spec: ContainerSpec): Promise<StdioClie
     fs.writeFileSync(envFile, plan.environment, { mode: 0o600 });
     // Mark before create: if the CLI times out after creation, cleanup still runs.
     created = true;
+    const expiresAt = Date.now() + plan.lifetime * 1000;
     await run(['create', '--pull=never', '--name', name, '--label=cairn.isolated=true',
-      `--label=cairn.expires=${Date.now() + plan.lifetime * 1000}`, '--interactive',
+      `--label=cairn.expires=${expiresAt}`, '--interactive',
       ...plan.options, '--env-file', envFile, plan.image, ...plan.args]);
     fs.unlinkSync(envFile);
     class IsolatedTransport extends StdioClientTransport {
       private expiry?: NodeJS.Timeout;
       private closing?: Promise<void>;
+      private accepting = false;
+      private started = false;
       constructor() {
         super({ command: DOCKER, args: [...prefix, 'start', '--attach', '--interactive', name], env: runtimeEnv, stderr: 'ignore', maxBufferSize: 1024 * 1024 });
       }
       async start(): Promise<void> {
+        if (this.started || this.closing) throw new Error('Container transport cannot be restarted');
+        this.started = true;
+        const downstreamMessage = this.onmessage;
+        const downstreamError = this.onerror;
         const downstreamClose = this.onclose;
+        this.onmessage = (message) => {
+          if (!this.accepting) return;
+          try { quarantine.assertAdmitted(identity); }
+          catch (error) { this.onerror?.(error as Error); return; }
+          downstreamMessage?.(message);
+        };
+        this.onerror = (error) => {
+          if (this.accepting) {
+            // Revoke synchronously: already-buffered messages after a malformed
+            // frame must not reach the client while Docker removal is pending.
+            this.accepting = false;
+            try { quarantine.record(identity); }
+            catch (failure) { cleanupFailure = failure as Error; }
+            void this.close().catch((failure: Error) => downstreamError?.(failure));
+            downstreamError?.(error);
+          }
+        };
         this.onclose = () => {
-          void this.close().catch((e: Error) => this.onerror?.(e));
+          void this.close().catch((e: Error) => downstreamError?.(e));
           downstreamClose?.();
         };
         try {
+          quarantine.assertAdmitted(identity);
+          if (Date.now() >= expiresAt) throw new Error('Container lifetime expired before start');
+          this.accepting = true;
           await super.start();
-          this.expiry = setTimeout(() => { void this.close().catch((e: Error) => this.onerror?.(e)); }, plan.lifetime * 1000);
-          this.expiry.unref();
+          if (this.accepting) {
+            this.expiry = setTimeout(() => { void this.close().catch((e: Error) => downstreamError?.(e)); }, Math.max(0, expiresAt - Date.now()));
+            this.expiry.unref();
+          }
         } catch (e) { await this.close(); throw e; }
       }
+      async send(message: Parameters<StdioClientTransport['send']>[0]): Promise<void> {
+        if (!this.accepting) throw new Error('Container transport is closed or quarantined');
+        try { quarantine.assertAdmitted(identity); }
+        catch (error) { this.onerror?.(error as Error); throw error; }
+        return super.send(message);
+      }
       async close(): Promise<void> {
+        this.accepting = false;
         if (!this.closing) this.closing = (async () => {
           clearTimeout(this.expiry);
           try {

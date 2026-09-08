@@ -27,7 +27,7 @@ jobs:
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm audit --audit-level=high
       - run: npm run cairn:build-cli
-      - run: node --import tsx --test test/gateway-adversarial.test.ts test/trust.test.ts test/defang.test.ts test/container.test.ts test/container-reaper.test.ts
+      - run: node --import tsx --test test/gateway-adversarial.test.ts test/trust.test.ts test/defang.test.ts test/container.test.ts test/container-reaper.test.ts test/container-quarantine.test.ts
       - run: npm run typecheck
 
   container-isolation:
@@ -47,9 +47,27 @@ jobs:
       - name: Verify actual container boundaries
         env:
           CAIRN_CONTAINER_INTEGRATION: '1'
+          CAIRN_CONTAINER_QUARANTINE_DIR: ${{ runner.temp }}/cairn-container-quarantine
         run: |
           CAIRN_CONTAINER_TEST_IMAGE="$(docker image inspect --format '{{.Id}}' cairn-containment-probe)" \
             node --import tsx --test test/container-integration.test.ts
+      - name: Install the independent supervisor on this disposable runner
+        run: |
+          test -x /usr/bin/node
+          sudo install -D -o root -g root -m 0644 scripts/container-reaper.mjs /opt/cairn/scripts/container-reaper.mjs
+          sudo install -o root -g root -m 0644 deploy/systemd/cairn-container-reaper.service deploy/systemd/cairn-container-reaper.timer /etc/systemd/system/
+          sudo systemctl daemon-reload
+          sudo systemctl enable --now cairn-container-reaper.timer
+      - name: Verify timer-driven orphan removal
+        env:
+          CAIRN_CONTAINER_SYSTEMD_INTEGRATION: '1'
+          CAIRN_CONTAINER_QUARANTINE_DIR: ${{ runner.temp }}/cairn-container-quarantine
+        run: |
+          CAIRN_CONTAINER_TEST_IMAGE="$(docker image inspect --format '{{.Id}}' cairn-containment-probe)" \
+            node --import tsx --test test/container-systemd.test.ts
+      - name: Stop the disposable supervisor
+        if: always()
+        run: sudo systemctl disable --now cairn-container-reaper.timer || true
       - name: Remove only this job's isolated fixture containers
         if: always()
         run: |

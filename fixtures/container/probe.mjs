@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import net from 'node:net';
-const [hostFile, hostPort] = process.argv.slice(2);
+import { reachWitness } from './network-witness.mjs';
+const [hostFile, hostPort, witnessHost, witnessPort, witnessToken] = process.argv.slice(2);
 const denied = (fn) => { try { fn(); return false; } catch { return true; } };
 const connect = (host, port) => new Promise((resolve) => {
   const socket = net.connect({ host, port });
@@ -12,6 +13,7 @@ const connect = (host, port) => new Promise((resolve) => {
 fs.writeFileSync('/tmp/private', 'scratch');
 const result = {
   uid: process.getuid(),
+  privilegeEscalationDenied: denied(() => process.setuid(0)),
   hostReadDenied: denied(() => fs.readFileSync(hostFile)),
   rootWriteDenied: (() => {
     try { fs.writeFileSync('/write-probe/escape', 'bad'); return false; }
@@ -22,7 +24,7 @@ const result = {
   explicit: process.env.ALLOWED_FIXTURE,
   scratch: fs.readFileSync('/tmp/private', 'utf8'),
   hostReachable: await connect('127.0.0.1', Number(hostPort)),
-  externalReachable: await connect('192.0.2.1', 9),
+  witnessReachable: witnessHost ? await reachWitness(witnessHost, Number(witnessPort), witnessToken) : false,
   memoryMax: fs.readFileSync('/sys/fs/cgroup/memory.max', 'utf8').trim(),
   swapMax: fs.readFileSync('/sys/fs/cgroup/memory.swap.max', 'utf8').trim(),
   pidsMax: fs.readFileSync('/sys/fs/cgroup/pids.max', 'utf8').trim(),
