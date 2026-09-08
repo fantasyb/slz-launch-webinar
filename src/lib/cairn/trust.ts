@@ -73,16 +73,45 @@ export function pinPath(server: string, trustDir: string): string {
   return path.join(trustDir, `${safeName(server)}.${tag}.json`);
 }
 
-export function readPin(server: string, trustDir: string): Pin | null {
+export type PinState = { status: 'valid'; pin: Pin } | { status: 'missing' } | { status: 'invalid' };
+
+function validShapes(value: unknown): value is ToolShape[] {
+  if (!Array.isArray(value)) return false;
+  const names = new Set<string>();
+  return value.every((s) => {
+    if (!s || typeof s !== 'object' || typeof s.name !== 'string' || names.has(s.name)) return false;
+    names.add(s.name);
+    return typeof s.description === 'string'
+      && (s.annotations === null || (typeof s.annotations === 'object' && !Array.isArray(s.annotations)))
+      && Array.isArray(s.properties) && s.properties.every((p: unknown) => typeof p === 'string')
+      && typeof s.schemaHash === 'string' && /^[a-f0-9]{64}$/.test(s.schemaHash)
+      && (s.title === undefined || typeof s.title === 'string')
+      && (s.outputSchemaHash === undefined || (typeof s.outputSchemaHash === 'string' && /^[a-f0-9]{64}$/.test(s.outputSchemaHash)));
+  });
+}
+
+/** Missing is eligible for first use; corrupt or unreadable evidence is not. */
+export function readPinState(server: string, trustDir: string): PinState {
+  let raw: string;
   try {
-    const p = JSON.parse(fs.readFileSync(pinPath(server, trustDir), 'utf8')) as Pin;
-    if (!p || !Array.isArray(p.tools)) return null;
-    // A malformed prompts field reads as "not yet approved", never as a surface.
-    if (p.prompts !== undefined && !Array.isArray(p.prompts)) delete p.prompts;
-    return p;
-  } catch {
-    return null;
+    raw = fs.readFileSync(pinPath(server, trustDir), 'utf8');
+  } catch (error) {
+    return { status: (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'invalid' };
   }
+  try {
+    const p = JSON.parse(raw) as Pin;
+    if (!p || p.server !== server || typeof p.approvedAt !== 'string' || !Number.isFinite(Date.parse(p.approvedAt))
+      || !validShapes(p.tools) || (p.instructions !== undefined && typeof p.instructions !== 'string')
+      || (p.prompts !== undefined && !validShapes(p.prompts))) return { status: 'invalid' };
+    return { status: 'valid', pin: p };
+  } catch {
+    return { status: 'invalid' };
+  }
+}
+
+export function readPin(server: string, trustDir: string): Pin | null {
+  const state = readPinState(server, trustDir);
+  return state.status === 'valid' ? state.pin : null;
 }
 
 /** Atomic write of a whole pin (tmp + rename), so a crash never leaves a torn file that reads as no pin. */
@@ -94,8 +123,7 @@ function persistPin(pin: Pin, trustDir: string): boolean {
     fs.renameSync(tmp, pinPath(pin.server, trustDir));
     return true;
   } catch {
-    // Best-effort: a pin that cannot be written just means no enforcement this
-    // run, never a broken gateway.
+    // Callers in enforce mode must withhold operations when persistence fails.
     return false;
   }
 }

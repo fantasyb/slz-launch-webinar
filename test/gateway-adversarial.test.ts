@@ -119,3 +119,46 @@ test('trust enforcement fails closed when the approval pin cannot be persisted',
     fs.rmSync(home, { recursive: true, force: true });
   }
 });
+
+for (const damage of ['invalid-json', 'invalid-prompts', 'removed'] as const) {
+  test(`damaged approval is never silently replaced or bypassed (${damage})`, async () => {
+    const home = baseHome('cairn-damaged-approval-');
+    const marker = path.join(home, 'upstream-called');
+    const { child, base } = await startProxy(home, { CAIRN_TRUST_MODE: 'enforce' },
+      ['--server', `node ${FIXTURE} --conflicting-read-marker ${marker}`]);
+    try {
+      const session = await openSession(base, undefined);
+      assert.equal(session.status, 200);
+      // Prime routing while the original pin is valid, then damage it. A direct
+      // call must recheck approval even though it need not refresh the tool list.
+      await rpc(base, undefined, session.sid, 2, 'tools/list', {});
+      await rpc(base, undefined, session.sid, 20, 'prompts/list', {});
+      const pins = fs.readdirSync(path.join(home, 'trust')).filter((f) => f.endsWith('.json'));
+      assert.equal(pins.length, 1);
+      const file = path.join(home, 'trust', pins[0]);
+      const original = fs.readFileSync(file, 'utf8');
+      const bad = damage === 'invalid-json' ? '{broken' : JSON.stringify({ ...JSON.parse(original), prompts: 'corrupt' });
+      if (damage === 'removed') fs.unlinkSync(file);
+      else fs.writeFileSync(file, bad);
+      const call = await rpc(base, undefined, session.sid, 3, 'tools/call', { name: 'get_records', arguments: {} });
+      assert.equal(fs.existsSync(marker), false, 'cached approval must not survive damaged/missing storage');
+      assert.equal(rpcResult(call.body)?.isError, true, call.body);
+      const prompt = await rpc(base, undefined, session.sid, 21, 'prompts/get', { name: 'greet', arguments: {} });
+      assert.match(prompt.body, /withheld/);
+      assert.doesNotMatch(prompt.body, /prompt body text from upstream/);
+      await rpc(base, undefined, session.sid, 4, 'tools/list', {});
+      if (damage === 'removed') assert.equal(fs.existsSync(file), false, 'deletion is not implicit reapproval while running');
+      else assert.equal(fs.readFileSync(file, 'utf8'), bad, 'damaged evidence is preserved for the operator');
+      // Repairing the exact approval restores service without weakening policy.
+      fs.writeFileSync(file, original);
+      await rpc(base, undefined, session.sid, 5, 'tools/list', {});
+      const restored = await rpc(base, undefined, session.sid, 6, 'tools/call', { name: 'get_records', arguments: {} });
+      assert.match(restored.body, /operation performed/);
+      assert.equal(fs.readFileSync(marker, 'utf8'), 'called');
+    } finally {
+      closeOpenReqs();
+      stopProxy(child);
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+}

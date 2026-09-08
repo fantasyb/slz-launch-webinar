@@ -1,5 +1,26 @@
 # Cairn — session handoff & punch-list (2026-09-07)
 
+## Approval integrity follow-up (2026-09-08)
+
+The gateway now rejects corrupt/unreadable approval pins and rechecks approval
+availability before cached dispatch. Removing an already-observed pin cannot
+silently reapprove an upstream within the running process. Three real HTTP
+attacks reproduced forbidden execution before the fix and verify denial plus
+recovery afterward. See `SECURITY_MODEL.md` and `SECURITY_REVIEW.md`.
+
+An independent `security-regressions.yml` checks these boundaries on Node 22/24
+without provider secrets or write permissions. The existing quality guard and
+trusted-base review requirements remain. The live remote guard run at `7029f43`
+passed its full-test step but failed the quality guard; that does not attest to
+these unpublished changes. The Node 24 warning in that log concerns the Actions
+runtime, not a project Node-version mismatch (the job selects Node 22).
+
+GitHub publication remains blocked: the connected integration's tree-creation
+request returned HTTP 403, including an independent fresh-agent retry. Account
+push permission is not evidence that this integration can write. Keep the local
+commits on `claude/domain-connection-check-alvz1s`; do not merge old main.
+
+
 Working document. Captures what was done this session, where we are, the
 decisions waiting on a human, and the remaining work — written so a fresh Fable
 pass (or whoever drives it) can execute top to bottom. Delete once consumed.

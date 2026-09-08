@@ -87,3 +87,33 @@ comparison is useful regression evidence, but is not a green CI attestation.
 4. Obtain an independent security review before making enterprise security
    claims, and use real pilot outcomes to validate usefulness and false-positive
    costs. Security and useful retrieval are separate acceptance criteria.
+
+
+## Approval-integrity follow-up — 2026-09-08
+
+Three additional HTTP attacks at `fb4f6c4` corrupted JSON, replaced the prompts
+field with a string, or deleted an approval after priming the routing cache.
+All three executed the upstream operation before the fix. Cached trust decisions
+were surviving the loss of their supporting evidence.
+
+Pin reads now distinguish missing, valid, and invalid evidence. Malformed or
+unreadable pins cannot trigger first-use replacement. Once a running gateway has
+observed a pin, its disappearance cannot trigger replacement either. Enforce
+mode checks evidence again before cached tool dispatch and prompt delivery.
+Restoring the original pin and refreshing the listing restores service; each
+attack test verifies that recovery with a real permitted operation.
+
+`SECURITY_MODEL.md` records the authority-conservation contract and its limits,
+including first use, process restarts, administrator-controlled files and work
+already dispatched. The independent security CI workflow supplements existing
+quality and full-suite gates; it does not weaken them.
+
+Validation for this follow-up: the dedicated security selection passed 36/36
+on Node 24.19.0; type checking passed; npm audit reported zero vulnerabilities;
+corpus lint reported zero errors and 57 warnings. The full suite completed
+513 tests: 450 passed, 62 failed, one TODO. Its failing test names exactly match
+the prior 509-test run. The host's denied `tsx` CLI IPC remains visible in the
+failures. A final change keeps approval disk reads out of the per-prompt listing
+loop while retaining the dispatch check, and adds denied prompt delivery to the
+damage attacks; the focused security selection and type check were rerun after
+that change. The new GitHub matrix has not run: these commits are not published.

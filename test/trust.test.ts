@@ -14,7 +14,7 @@ import assert from 'node:assert/strict';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { evaluateTrust, writePin, readPin, forgetPin, pinPrompts, type TrustMode } from '../src/lib/cairn/trust';
+import { evaluateTrust, writePin, readPin, readPinState, pinPath, forgetPin, pinPrompts, type TrustMode } from '../src/lib/cairn/trust';
 import { shapeOf, promptShapeOf } from '../src/lib/cairn/toolsurface';
 
 const tool = (name: string, description: string, props: Record<string, unknown> = {}) =>
@@ -131,9 +131,10 @@ test('the pin carries the prompt surface, and a pin from before prompts were cov
   // With no pin to attach to, nothing is written — the tool listing pins first.
   assert.equal(pinPrompts('never-seen', prompts, dir), false);
   assert.equal(readPin('never-seen', dir), null, 'no prompts-only pin is invented');
-  // A malformed prompts field reads as not-yet-approved, never as a surface.
+  // A malformed field invalidates approval; it is never first-use permission.
   fs.writeFileSync(path.join(dir, fs.readdirSync(dir).find((f) => f.startsWith('older.'))!), JSON.stringify({ ...upgraded, prompts: 'nope' }));
-  assert.equal(readPin('older', dir)!.prompts, undefined, 'a non-array prompts field is dropped on read');
+  assert.equal(readPin('older', dir), null, 'a malformed prompts field invalidates the pin');
+  assert.equal(pinPrompts('older', prompts, dir), false, 'corruption cannot trigger first-use approval');
 });
 
 test('the full-width schema hash makes a nested-type change collide-resistant', () => {
@@ -169,4 +170,38 @@ test('a slash or dotdot in a server name cannot escape the trust dir', () => {
 test('trust modes are the three the gateway branches on', () => {
   const modes: TrustMode[] = ['off', 'monitor', 'enforce'];
   assert.deepEqual(modes, ['off', 'monitor', 'enforce']);
+});
+
+
+test('approval reads distinguish absent, damaged, and valid evidence without repairing it', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cairn-pin-state-'));
+  try {
+    assert.deepEqual(readPinState('sf', dir), { status: 'missing' });
+    assert.equal(writePin('sf', [tool('query', 'Query', {})], dir), true);
+    const file = pinPath('sf', dir);
+    const original = fs.readFileSync(file, 'utf8');
+    const pin = JSON.parse(original);
+    const damaged = [
+      '{broken',
+      JSON.stringify({ ...pin, server: 'another-server' }),
+      JSON.stringify({ ...pin, approvedAt: null }),
+      JSON.stringify({ ...pin, tools: [null] }),
+      JSON.stringify({ ...pin, tools: [{ ...pin.tools[0], schemaHash: 'short' }] }),
+      JSON.stringify({ ...pin, tools: [pin.tools[0], pin.tools[0]] }),
+      JSON.stringify({ ...pin, prompts: 'corrupt' }),
+      JSON.stringify({ ...pin, instructions: {} }),
+    ];
+    for (const raw of damaged) {
+      fs.writeFileSync(file, raw);
+      assert.deepEqual(readPinState('sf', dir), { status: 'invalid' }, raw);
+      assert.equal(fs.readFileSync(file, 'utf8'), raw, 'reading cannot rewrite approval evidence');
+    }
+    fs.writeFileSync(file, original);
+    assert.equal(readPinState('sf', dir).status, 'valid');
+    fs.unlinkSync(file);
+    fs.mkdirSync(file); // deterministic unreadable pin, including for root
+    assert.deepEqual(readPinState('sf', dir), { status: 'invalid' });
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

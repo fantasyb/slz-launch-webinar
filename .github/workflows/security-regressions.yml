@@ -1,0 +1,35 @@
+name: security-regressions
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  security:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['22', '24']
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm audit --audit-level=high
+      - run: npm run cairn:build-cli
+      - run: node --import tsx --test test/gateway-adversarial.test.ts test/trust.test.ts test/defang.test.ts
+      - run: npm run typecheck
+
+# Independent evidence for gateway boundaries, even when retrieval quality is
+# red. This does not replace the full suite, guard, or trusted-base PR review.
+# No provider secrets or write token are given to PR-controlled code.
