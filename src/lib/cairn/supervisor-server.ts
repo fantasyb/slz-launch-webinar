@@ -16,6 +16,8 @@ export async function serveSupervisor(socketPath: string, admission: SupervisorA
   const sockets = new Set<net.Socket>();
   const tasks = new Set<Promise<void>>();
   let stopping = false;
+  let cleanupUncertain = false;
+  const failAdmission = () => { cleanupUncertain = true; admission.cleanupFailed(); };
   const server = net.createServer({ highWaterMark: 16384 }, (socket) => {
     if (stopping || sockets.size >= 64) { socket.destroy(); return; }
     sockets.add(socket);
@@ -74,10 +76,10 @@ export async function serveSupervisor(socketPath: string, admission: SupervisorA
       clearTimeout(timer);
       socket.destroy();
       if (lease) {
-        if (!transport) admission.cleanupFailed(); // creation outcome uncertain
+        if (!transport) failAdmission(); // creation outcome uncertain
         else {
           try { await transport.close(); admission.confirmRemoved(lease); }
-          catch { admission.cleanupFailed(); }
+          catch { failAdmission(); }
         }
       }
     }
@@ -91,7 +93,7 @@ export async function serveSupervisor(socketPath: string, admission: SupervisorA
   });
   try { fs.chmodSync(socketPath, 0o660); }
   catch (error) { await new Promise<void>((resolve) => server.close(() => resolve())); throw error; }
-  server.on('error', () => { admission.cleanupFailed(); });
+  server.on('error', failAdmission);
   return {
     async close() {
       stopping = true;
@@ -99,6 +101,7 @@ export async function serveSupervisor(socketPath: string, admission: SupervisorA
       for (const socket of sockets) socket.destroy();
       await Promise.all([...tasks]);
       await closed;
+      if (cleanupUncertain) throw new Error('Supervisor cleanup uncertain; operator recovery required');
     },
   };
 }

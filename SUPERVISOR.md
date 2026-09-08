@@ -125,6 +125,9 @@ checks require operator reconciliation. No gateway-accessible recovery endpoint
 exists. Quarantine files require reviewed operator recovery; an audited recovery
 tool and richer operational telemetry remain future work. Record manual recovery
 in the operator's audit process. Never clear evidence merely to make a restart pass.
+The service uses `KillMode=mixed`: graceful stop signals the supervisor first so
+its removal helpers can complete, with whole-group termination on timeout. A
+cleanup failure must result in a failed service exit, not a successful shutdown.
 
 ## Verification and limits
 

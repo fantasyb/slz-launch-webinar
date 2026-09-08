@@ -24,6 +24,9 @@ MemoryMax=256M
 CPUQuota=100%
 TasksMax=128
 TimeoutStopSec=45
+# TERM only the supervisor first, so its Docker removal helpers can finish.
+# systemd still KILLs the entire control group if graceful cleanup times out.
+KillMode=mixed
 # No automatic restart loop: failed reconciliation requires operator review.
 
 [Install]

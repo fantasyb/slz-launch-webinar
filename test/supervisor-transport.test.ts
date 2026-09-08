@@ -31,7 +31,7 @@ async function fixture(launch: () => Promise<Transport>, maxConcurrent = 2) {
   }, { assertAdmitted() {}, record() { throw new Error('Gateway input must not quarantine'); } });
   admission.activateAfterEmptyRuntimeCheck(0);
   const service = await serveSupervisor(socket, admission, { launch });
-  return { socket, async close() { await service.close(); fs.rmSync(dir, { recursive: true, force: true }); } };
+  return { socket, async close() { try { await service.close(); } finally { fs.rmSync(dir, { recursive: true, force: true }); } } };
 }
 async function raw(socketPath: string, data: string) {
   const socket = net.createConnection(socketPath);
@@ -114,7 +114,7 @@ test('uncertain creation blocks further launches and never leaks private runtime
     assert.equal(await raw(f.socket, '{"workload":"approved"}\n'), '');
     assert.equal(await raw(f.socket, '{"workload":"approved"}\n'), '');
     assert.equal(calls, 1);
-  } finally { await f.close(); }
+  } finally { await assert.rejects(f.close(), /cleanup uncertain/); }
 });
 
 test('cleanup remains reserved until confirmed and failure blocks new admission', { timeout: 5000 }, async () => {
@@ -128,5 +128,21 @@ test('cleanup remains reserved until confirmed and failure blocks new admission'
     assert.equal(await raw(f.socket, '{"workload":"approved"}\n'), '');
     confirm.resolve();
     assert.equal(await raw(f.socket, '{"workload":"approved"}\n'), '');
-  } finally { confirm.resolve(); await client.close(); await f.close(); }
+  } finally { confirm.resolve(); await client.close(); await assert.rejects(f.close(), /cleanup uncertain/); }
+});
+
+test('graceful supervisor shutdown awaits container removal before reporting success', { timeout: 5000 }, async () => {
+  const removing = deferred(), removed = deferred();
+  const echo = new Echo();
+  echo.close = async () => { removing.resolve(); await removed.promise; };
+  const f = await fixture(async () => echo);
+  const client = new SupervisorClientTransport('approved', f.socket);
+  await client.start();
+  let finished = false;
+  const closing = f.close().then(() => { finished = true; });
+  await removing.promise;
+  assert.equal(finished, false);
+  removed.resolve(); await closing;
+  assert.equal(finished, true);
+  await client.close();
 });

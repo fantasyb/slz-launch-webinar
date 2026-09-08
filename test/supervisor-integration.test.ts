@@ -80,4 +80,5 @@ test('restricted gateway uses the root supervisor but cannot access Docker, poli
     for (const child of held) { child.kill('SIGTERM'); child.stdout?.destroy(); child.stderr?.destroy(); }
   }
   assert.equal(containers(), '');
+  assert.equal(systemctl('show', 'cairn-supervisor.service', '--property=Result', '--value'), 'success');
 });
