@@ -65,6 +65,10 @@ test('restricted gateway uses the root supervisor but cannot access Docker, poli
     systemctl('kill', '--signal=SIGKILL', 'cairn-supervisor.service');
     await until(() => !fs.existsSync('/run/cairn-supervisor/control.sock'));
     assert.notEqual(containers(), '', 'supervisor death leaves an orphan for the independent reaper');
+    // Restart is an operator action AFTER reconciliation, not an assumption
+    // that a 30-second timer plus scheduling delay fits the quiet period.
+    // Do not invoke the reaper here; observe the independently installed timer.
+    await until(() => containers() === '', 90000);
     systemctl('reset-failed', 'cairn-supervisor.service');
     const restarted = Date.now();
     systemctl('start', 'cairn-supervisor.service');

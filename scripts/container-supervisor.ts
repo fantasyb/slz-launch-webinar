@@ -11,6 +11,7 @@ import { SUPERVISOR_SOCKET } from '../src/lib/cairn/supervisor-wire';
 
 const POLICY = '/etc/cairn/supervisor.json';
 const STATE = '/var/lib/cairn-supervisor';
+let phase = 'configuration';
 
 function rootOwned(target: string): void {
   for (let current = target;; current = path.dirname(current)) {
@@ -35,12 +36,16 @@ async function main() {
   try {
     // A full quiet window on EVERY process start prevents restart from refunding
     // the previous process's rolling start budget. No env/CLI skip switch.
+    phase = 'startup quiet period';
     await new Promise((resolve) => setTimeout(resolve, 60000));
+    phase = 'runtime enumeration';
     const { stdout } = await promisify(execFile)('/usr/bin/docker', [
       '--host=unix:///var/run/docker.sock', 'ps', '-aq', '--filter=label=cairn.isolated=true',
     ], { timeout: 15000, maxBuffer: 1024 * 1024, env: { PATH: '/usr/bin:/bin', HOME: dockerConfig, DOCKER_CONFIG: dockerConfig, NODE_ENV: 'production' } });
+    phase = 'empty-runtime reconciliation';
     admission.activateAfterEmptyRuntimeCheck(stdout.trim() ? stdout.trim().split(/\s+/).length : 0);
   } finally { fs.rmdirSync(dockerConfig); }
+  phase = 'socket binding';
   const service = await serveSupervisor(SUPERVISOR_SOCKET, admission, {
     launch: (lease) => containerTransport(lease.spec, { quarantine, identity: lease.quarantineIdentity }),
   });
@@ -54,4 +59,4 @@ async function main() {
   console.error('cairn supervisor ready');
 }
 
-main().catch(() => { console.error('cairn supervisor startup refused; operator reconciliation required'); process.exitCode = 1; });
+main().catch(() => { console.error(`cairn supervisor startup refused during ${phase}; operator reconciliation required`); process.exitCode = 1; });

@@ -85,7 +85,9 @@ jobs:
             /usr/bin/node --import tsx --test test/supervisor-integration.test.ts
       - name: Diagnose failed supervisor installation
         if: failure()
-        run: sudo journalctl -u cairn-supervisor.service --no-pager -n 40
+        run: |
+          sudo journalctl -u cairn-supervisor.service -u cairn-container-reaper.service --no-pager -n 80
+          docker ps -a --filter label=cairn.isolated=true --format '{{.ID}} {{.Status}} {{.Labels}}'
       - name: Stop the disposable supervisors
         if: always()
         run: |
