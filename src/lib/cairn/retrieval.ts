@@ -150,7 +150,7 @@ const KIND_WEIGHT: Record<TokenKind, number> = {
  * error codes keep their case — because those are exactly the tokens a
  * word-splitter destroys and they carry nearly all the signal.
  */
-export function tokenize(text: string): Token[] {
+export function tokenize(text: string, expandAliases = true): Token[] {
   const out: Token[] = [];
   const seen = new Set<string>();
 
@@ -189,7 +189,7 @@ export function tokenize(text: string): Token[] {
   for (const m of text.matchAll(/\b([A-Z]{2,}[A-Z0-9_]{1,20})\b/g)) {
     const sym = m[1];
     push(sym, ERRNO_ALIASES[sym] ? 'errno' : 'word');
-    for (const alias of ERRNO_ALIASES[sym] ?? []) {
+    for (const alias of expandAliases ? ERRNO_ALIASES[sym] ?? [] : []) {
       for (const w of alias.split(/\s+/)) push(w, 'word');
     }
   }
@@ -198,7 +198,7 @@ export function tokenize(text: string): Token[] {
     const code = m[1];
     if (!STATUS_ALIASES[code]) continue;
     push(code, 'status');
-    for (const alias of STATUS_ALIASES[code]) {
+    for (const alias of expandAliases ? STATUS_ALIASES[code] : []) {
       for (const w of alias.split(/\s+/)) push(w, 'word');
     }
   }
@@ -1791,12 +1791,29 @@ export function retrieve(
    * unanswerable fell from 4/8 to 1/8 without a single ranking change — the
    * corpus had not learned anything, it had just stopped hedging.
    */
+  // Aliases help find candidates but are not independent words the caller
+  // supplied. Counting every expansion of a status code as explained query
+  // content lets one incidental code outweigh the actual symptom.
+  const literalTokens = tokenize(query, false);
+  const literalInformation = new Map(literalTokens.map((tok) => [
+    tok.text, Math.max(idf(index.df.get(tok.text) ?? 0, index.n), MIN_TERM_INFORMATION),
+  ]));
+  const literalTotal = [...literalInformation.values()].reduce((a, b) => a + b, 0);
   const attestedExplains = (h: Hit) => {
-    if (totalQueryInformation <= 0) return 0;
+    if (literalTotal <= 0) return 0;
     const attested = attestedTokens(h.finding);
+    const matched = new Set(h.matched.filter((m) => attested.has(m.term)).map((m) => m.term));
     let sum = 0;
-    for (const m of h.matched) if (attested.has(m.term)) sum += queryInformation.get(m.term) ?? 0;
-    return sum / totalQueryInformation;
+    for (const tok of literalTokens) {
+      const aliases = tok.kind === 'errno' ? ERRNO_ALIASES[tok.text.toUpperCase()] ?? []
+        : tok.kind === 'status' ? STATUS_ALIASES[tok.text] ?? [] : [];
+      // An alias can explain its source symbol (ENOSPC -> disk space), but
+      // earns one source token's information, never one vote per alias word.
+      if (matched.has(tok.text) || aliases.some((a) => tokenize(a, false).some((t) => matched.has(t.text)))) {
+        sum += literalInformation.get(tok.text) ?? 0;
+      }
+    }
+    return sum / literalTotal;
   };
 
   /*
@@ -1990,9 +2007,19 @@ export function retrieve(
        */
       name: 'question',
       order: coverageIsMeaningful ? byCoverage(nearestQuestion) : [],
-      weight: Number(process.env.CAIRN_QUESTION_WEIGHT ?? QUESTION_WEIGHT),
+      // RRF otherwise awards full first-place credit even when the best
+      // generated question accounts for only a small fraction of the query.
+      weight: Number(process.env.CAIRN_QUESTION_WEIGHT ?? QUESTION_WEIGHT) *
+        Math.min(1, Math.max(0, ...head.map(({ h }) => nearestQuestion(h))) / minQueryExplained()),
     },
   ];
+  const questionRanker = rankers[rankers.length - 1];
+  // A weak question match can still corroborate an independent ranker's
+  // leader. Attenuate only unsupported dissent; otherwise the expansion
+  // signal that closes the symptom/diagnosis vocabulary gap is discarded.
+  if (questionRanker.order.length && rankers.slice(0, -1).some((r) => r.order[0] === questionRanker.order[0])) {
+    questionRanker.weight = Number(process.env.CAIRN_QUESTION_WEIGHT ?? QUESTION_WEIGHT);
+  }
   if (opts.trace) opts.trace.rankers = rankers.map((r) => ({ ...r, order: [...r.order] }));
   const fused = fuse(rankers);
 
@@ -2189,7 +2216,10 @@ export function retrieve(
         h.caveats = caveats;
         // Two independent reservations is where a match stops standing on its
         // own. One is normal: plenty of correct matches share no path.
-        h.strength = caveats.length >= 2 ? 'weak' : 'strong';
+        // A shared status code does not compensate for leaving most of the
+        // symptom unexplained. Preserve the explicit program-match override.
+        h.strength = caveats.length >= 2 ||
+          (h.explained < minQueryExplained() && !concerned?.has(h.finding.id)) ? 'weak' : 'strong';
       }
     }
   }
@@ -3362,6 +3392,7 @@ export function docTerms(index: CorpusIndex, doc: number): Map<string, number> {
 
 export function rankerSignature(): string {
   const constants = [
+    'question-corroboration-and-source-alias-coverage-v1',
     rrfK(),
     Number(process.env.CAIRN_BM25_WEIGHT ?? BM25_WEIGHT),
     Number(process.env.CAIRN_EXPLAINED_WEIGHT ?? EXPLAINED_WEIGHT),

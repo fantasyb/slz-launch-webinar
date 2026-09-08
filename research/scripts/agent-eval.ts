@@ -2,6 +2,11 @@
  * cairn:agent-eval — the corpus used the way an agent would actually use it.
  *
  *   npm run cairn:agent-eval
+ *   npm run cairn:agent-eval -- --controlled
+ *
+ * The guard uses controlled mode: a local proxy denies a real curl CONNECT,
+ * and an empty PATH makes the DNS commands fail even on a fully equipped host.
+ * Default mode still reports what this machine actually encounters.
  *
  * Every other measurement here has been a proxy. `cairn:eval` asks whether a
  * finding's own prose retrieves it, which tests the retriever against text a
@@ -34,7 +39,10 @@
  */
 import { execFile } from 'child_process';
 import { promisify } from 'util';
-import { existsSync } from 'fs';
+import { existsSync, mkdtempSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
+import { createServer } from 'http';
 import { loadCorpus } from '../../src/lib/cairn/load';
 import { retrieve } from '../../src/lib/cairn/retrieval';
 
@@ -52,11 +60,14 @@ interface Scenario {
   /** Any of these counts as correct. Empty when silence is the right answer. */
   accept: string[];
   why: string;
+  /** Reproduce the actual failure on hosts that lack the original sandbox. */
+  controlled?: 'proxy-denial' | 'missing-tool';
 }
 
 const SCENARIOS: Scenario[] = [
   {
     what: 'fetching a host the sandbox proxy does not allow',
+    controlled: 'proxy-denial',
     cmd: 'curl -sS --max-time 10 https://creativecommons.org',
     accept: ['cairn-0001'],
     why: 'a 403 from the allowlist proxy reads as a dead host',
@@ -69,6 +80,7 @@ const SCENARIOS: Scenario[] = [
   },
   {
     what: 'looking up DNS the obvious way',
+    controlled: 'missing-tool',
     cmd: 'dig +short example.com',
     accept: ['cairn-0002'],
     why: 'no dig, no nslookup in this image',
@@ -91,6 +103,7 @@ const SCENARIOS: Scenario[] = [
    */
   {
     what: 'trying to resolve an MX record with what is on the box',
+    controlled: 'missing-tool',
     cmd: 'getent ahosts example.com >/dev/null && nslookup -type=mx example.com',
     accept: ['cairn-0002'],
     why: 'getent answers A/AAAA only, and nslookup is absent',
@@ -142,11 +155,29 @@ function asQuery(output: string): string {
 }
 
 async function main() {
+  const controlled = process.argv.includes('--controlled');
+  const emptyPath = controlled ? mkdtempSync(join(tmpdir(), 'cairn-agent-empty-path-')) : undefined;
+  const proxy = controlled ? createServer((_req, res) => { res.writeHead(403); res.end(); }) : undefined;
+  proxy?.on('connect', (_req, socket) => socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n'));
+  try {
+    if (proxy) await new Promise<void>((resolve, reject) => {
+      proxy.once('error', reject);
+      proxy.listen(0, '127.0.0.1', resolve);
+    });
+    await evaluate(controlled, proxy, emptyPath);
+  } finally {
+    if (proxy?.listening) await new Promise<void>((resolve, reject) => proxy.close((err) => err ? reject(err) : resolve()));
+    if (emptyPath) rmSync(emptyPath, { recursive: true, force: true });
+  }
+}
+
+async function evaluate(controlled: boolean, proxy: ReturnType<typeof createServer> | undefined, emptyPath: string | undefined) {
   const all = loadCorpus();
   const bundled = existsSync('dist/cli/find.js');
 
   console.log('\nAGENT SIMULATION — real commands, real stderr, cold-path latency');
   console.log('='.repeat(66));
+  if (controlled) console.log('CONTROLLED: real curl against a local denying proxy; DNS tools hidden via an empty PATH. Other scenarios run normally.');
   if (!bundled) console.log('(dist/cli not built — latency will show the tsx fallback)\n');
 
   let correct = 0;
@@ -154,9 +185,16 @@ async function main() {
   const latencies: number[] = [];
 
   for (const s of SCENARIOS) {
+    const address = proxy?.address();
+    const cmd = controlled && s.controlled === 'proxy-denial' && address && typeof address !== 'string'
+      ? `curl -sS --max-time 10 --noproxy '' --proxy http://127.0.0.1:${address.port} https://example.invalid`
+      : s.cmd;
     let output = '';
     try {
-      const r = await exec('/bin/sh', ['-c', s.cmd], { maxBuffer: 1 << 22 });
+      const r = await exec('/bin/sh', ['-c', cmd], {
+        maxBuffer: 1 << 22,
+        env: controlled && s.controlled === 'missing-tool' ? { ...process.env, PATH: emptyPath! } : process.env,
+      });
       output = r.stdout + r.stderr;
     } catch (e) {
       const err = e as { stdout?: string; stderr?: string; message?: string };
@@ -197,7 +235,7 @@ async function main() {
       ? silent ? 'QUIET' : 'NOISE'
       : rank === 0 ? 'HIT  ' : rank > 0 ? `#${rank + 1}   ` : 'MISS ';
     console.log(`\n${verdict} ${s.what}`);
-    console.log(`  $ ${s.cmd}`);
+    console.log(`  $ ${cmd}`);
     console.log(`  saw:      ${JSON.stringify(q.slice(0, 88))}`);
     console.log(
       `  returned: ${hits.slice(0, 3).map((h) => h.finding.id + (h.strength === 'weak' ? '(weak)' : '')).join(', ') || '(nothing)'}` +

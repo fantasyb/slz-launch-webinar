@@ -52,6 +52,18 @@ decaying score declares `force-dynamic`. See cairn-0005 for why that matters.
 
 ## 4. Verify the deployment
 
+For a gateway using container isolation, also complete the target-host gate in
+[CONTAINMENT.md](CONTAINMENT.md) before enabling that profile:
+
+- Verify Docker runs Linux with cgroup v2, seccomp, and enforced resource limits;
+  run the opted-in container integration tests on that host to verify dropped
+  privileges, no-new-privileges, isolation, and expiry cleanup.
+- Install and enable the independent `cairn-container-reaper.timer` following
+  the runbook, and verify its service runs successfully and removes expired
+  containers after the gateway exits.
+- Record the tested commit, host, test results, and timer/service status with
+  the deployment. CI success on an ephemeral runner does not establish host parity.
+
 ```bash
 # The block must be signed, and its base must be the canonical origin.
 curl -s https://cairny.io/api/block | jq '{base, signed: (.signature != null)}'

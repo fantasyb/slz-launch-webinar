@@ -17,8 +17,23 @@ jobs:
   review:
     runs-on: ubuntu-latest
     steps:
-      # The tooling comes from the BASE branch; only the corpus comes from the
-      # pull request.
+      # Maintainers may bootstrap the migration with an independently approved
+      # immutable tooling revision. Never derive this pin from the PR head.
+      - name: Resolve trusted tooling revision
+        id: tooling
+        env:
+          APPROVED_SHA: ${{ vars.CAIRN_REVIEW_TOOLING_SHA }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          ref="${APPROVED_SHA:-$BASE_SHA}"
+          if ! [[ "$ref" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::CAIRN_REVIEW_TOOLING_SHA must be an independently approved full commit SHA, never a branch or tag."
+            exit 1
+          fi
+          echo "sha=$ref" >> "$GITHUB_OUTPUT"
+
+      # The tooling comes from the BASE branch or the maintainer-approved
+      # immutable pin above; only the corpus comes from the pull request.
       #
       # `paths:` decides whether this workflow runs, not what gets checked out.
       # Checking out the merge ref and running `npm ci && npm run cairn:adjudicate`
@@ -29,8 +44,26 @@ jobs:
       # and this repository works on same-repo branches.
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ steps.tooling.outputs.sha }}
           fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Require trusted review tooling
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const scripts = JSON.parse(fs.readFileSync('package.json', 'utf8')).scripts || {};
+          const required = ['cairn:lint', 'cairn:audit', 'test', 'cairn:adjudicate', 'cairn:review'];
+          const missing = required.filter(name => typeof scripts[name] !== 'string' || !scripts[name].trim());
+          if (missing.length) {
+            console.error(`::error::The trusted revision lacks review tooling: ${missing.join(', ')}. Land the independently reviewed Cairn tooling on the base branch, or have a maintainer set CAIRN_REVIEW_TOOLING_SHA to an independently approved full commit SHA. Do not substitute PR code in this job: later steps receive provider secrets.`);
+            process.exit(1);
+          }
+          NODE
 
       - name: Take only the corpus from the pull request
         env:
@@ -42,10 +75,7 @@ jobs:
           git checkout "$HEAD_SHA" -- cairn/ keys/ || true
           git --no-pager diff --stat "${{ github.event.pull_request.base.sha }}" -- cairn/ keys/
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-      - run: npm ci
+      - run: npm ci --ignore-scripts --no-audit --no-fund
 
       # Schema, scope rules, signatures, prose-check detection, and the
       # pattern layer over every finding in the corpus.
@@ -60,9 +90,9 @@ jobs:
           npm run cairn:lint
           code=$?
           set -e
-          if [ "$code" -eq 1 ]; then exit 1; fi
           if [ "$code" -eq 2 ]; then echo "::warning::corpus lint reported warnings"; fi
-          exit 0
+          if [ "$code" -eq 2 ]; then exit 0; fi
+          exit "$code"
 
       # Commitment and git-ancestry audit: seals must precede reveals.
       - name: Ledger audit

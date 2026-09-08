@@ -74,6 +74,34 @@ test('an errno symbol finds the finding written in prose', () => {
   assert.ok(!raw.includes('ENOSPC'), 'precondition for this test: corpus must not contain ENOSPC');
   const hits = retrieve('ENOSPC', corpus, { limit: 1 });
   assert.equal(hits[0]?.finding.id, 'cairn-0008', 'errno aliasing did not reach the disk finding');
+  assert.equal(hits[0]?.explained, 1, 'aliases explain their source symbol once');
+});
+
+test('status aliases do not manufacture confidence about an unrelated symptom', () => {
+  const query = 'rate limiting 429 retry backoff workers thundering herd';
+  const literal = tokenize(query, false).map((t) => t.text);
+  assert.ok(!literal.includes('throttle'));
+  assert.ok(tokenize(query).some((t) => t.text === 'throttle'), 'retrieval still expands status aliases');
+  const hit = retrieve(query, corpus)[0];
+  assert.ok(hit, 'a weak candidate remains available to the caller');
+  assert.ok(hit.explained < 0.6, 'incidental 429 evidence must not explain the rest of the symptom');
+  assert.equal(hit.strength, 'weak');
+  const relevant = retrieve('node http keep-alive reused socket ECONNRESET', corpus)[0];
+  assert.equal(relevant.finding.id, 'cairn-0051', 'the socket finding remains retrievable on its own subject');
+  assert.equal(relevant.strength, 'strong');
+});
+
+test('weak unsupported question matches cannot overturn a proxy diagnosis', () => {
+  const trace: FusionTrace = {};
+  const hits = retrieve('Hit this directly while auditing a domain. Spent real effort believing the host was dead before recognising the proxy signature.', corpus, { trace });
+  assert.equal(hits[0]?.finding.id, 'cairn-0001');
+  const question = trace.rankers!.find((r) => r.name === 'question')!;
+  assert.ok(question.weight < Number(process.env.CAIRN_QUESTION_WEIGHT ?? 0.8));
+});
+
+test('corroborated question evidence still bridges symptom and diagnosis vocabulary', () => {
+  const hits = retrieve("author-supplied field used to decide whether the author's own work gets audited", corpus);
+  assert.equal(hits[0]?.finding.id, 'cairn-0019');
 });
 
 test('plural and singular reach the same findings', () => {

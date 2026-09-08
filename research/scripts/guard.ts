@@ -105,7 +105,7 @@ async function main() {
 
   const [evalOut, agentOut, lintOut, doctorOut, caseOut, fieldOut] = await Promise.all([
     run('npx', ['tsx', 'research/scripts/eval.ts']),
-    run('npx', ['tsx', 'research/scripts/agent-eval.ts']),
+    run('npx', ['tsx', 'research/scripts/agent-eval.ts', '--controlled']),
     run('npx', ['tsx', 'scripts/lint-corpus.ts']),
     run('npx', ['tsx', 'scripts/doctor.ts']),
     run('npx', ['tsx', 'research/scripts/case-guard.ts']),
@@ -162,7 +162,9 @@ async function main() {
   // threshold of one millisecond. A guard that cannot fail is not a guard.
   const summary = doctorOut.match(/SUMMARY .*slowest_ms=(\d+)/);
   if (!summary) {
-    failures.push('could not parse doctor SUMMARY — the guard is blind to check cost');
+    failures.push(doctorOut.includes('execution is not enabled')
+      ? 'doctor execution policy is disabled: authorize this checkout with an external CAIRN_POLICY file before measuring check cost'
+      : 'could not parse doctor SUMMARY — the guard is blind to check cost');
   } else {
     check('slowest check (seconds)', Number(summary[1]) / 1000, baseline.corpus.maxCheckSeconds, false);
   }
