@@ -113,3 +113,13 @@ an OS sandbox, an action-argument capability system, or a policy for every
 resource read. A malicious implementation can still lie with unchanged metadata.
 The next architectural layer is to constrain actual upstream credentials and
 execution, so a gateway mistake has a bounded consequence.
+
+
+## Container execution follow-up
+
+`CAIRN_EXECUTION_MODE=container` now implements a separate, opt-in offline Linux
+Docker profile. Read `CONTAINMENT.md` for the fixed boundary, configuration,
+Docker integration gate and remaining deployment requirements. This does not
+change the approval contract. Actual isolation has not been exercised on this
+host. An independent reaper and systemd units are provided but not installed or
+validated here; controlled SaaS egress remains unbuilt.

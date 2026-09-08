@@ -135,3 +135,37 @@ restart, malformed configuration, digest mismatch and server mismatch. Types
 pass. No dependency versions changed. The broad suite was not repeated for this
 follow-up; its prior 450 pass / 62 fail / one TODO result remains the latest broad
 run, not an attestation for this commit. Remote publication is still blocked.
+
+## Execution containment follow-up — 2026-09-08
+
+Implemented an experimental opt-in offline Linux Docker profile for stdio
+upstreams. Reviewed immutable images run without host mounts or network, as a
+non-root user with dropped capabilities, no-new-privileges, required seccomp,
+read-only root, bounded scratch space and cgroup resource limits. The gateway
+requires runtime prerequisites, never falls back to host execution, never pulls
+images at runtime, and refuses invalid or conflicting configuration. It does not
+pass ambient gateway credentials to the upstream. Declared credentials use a
+private temporary env file; Docker administrators remain trusted.
+
+The transport removes the entire container on close/failure/expiry. Cleanup
+accepts an already-removed container only after the live daemon confirms absence;
+real cleanup failure prevents further container launches until operator recovery.
+An independent labelled-container reaper and systemd service/timer are included
+for gateway-crash cleanup. `CONTAINMENT.md` documents installation, scope and
+remaining requirements, including host aggregate quotas and controlled SaaS
+egress. No Docker access is granted to upstream code.
+
+Validation: 46 focused tests passed with two Docker integration tests skipped;
+eight existing proxy compatibility tests also passed. Types and staged-content
+scanning passed. Corpus lint reported zero errors / 57 warnings. The affected
+container/reaper tests and types were rerun after explicitly setting never-pull
+on container creation. The broad suite was not repeated for this follow-up.
+
+This host has no Docker/Podman, and Bubblewrap namespace setup failed. Systemd
+unit verification reported missing `docker.service` and `/usr/bin/node`; no unit
+was installed or enabled. Actual file/network/privilege/resource isolation and
+SIGKILL-plus-independent-reaper behavior have NOT been demonstrated here. The
+new Docker CI job opts into those tests and must fail if Docker prerequisites
+are absent, rather than skip. Passing that job and installing/monitoring the
+supervisor on the target host are required before production use. These are
+unpublished local changes; the prior GitHub write restriction still applies.

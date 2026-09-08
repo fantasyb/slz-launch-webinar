@@ -1,5 +1,19 @@
 # Cairn — session handoff & punch-list (2026-09-07)
 
+## Container execution follow-up (2026-09-08)
+
+Added an opt-in offline Linux Docker profile through
+`CAIRN_EXECUTION_MODE=container`, with immutable image references, no host mounts
+or network, non-root execution, kernel resource limits and container cleanup.
+See `CONTAINMENT.md` before enabling it. Default execution remains host mode.
+
+This host cannot run the isolation proof: Docker/Podman are absent and Bubblewrap
+namespace setup fails. Dedicated Docker CI must pass before deployment. No claim
+of tested kernel isolation is made here. The independent reaper/systemd units require installation and the kill-and-reap
+CI test. Aggregate host quotas and a controlled egress broker remain deployment
+work; do not advertise the profile as a complete production containment system.
+
+
 ## Explicit approval follow-up (2026-09-08)
 
 Opt-in production configuration: `CAIRN_TRUST_MODE=enforce` plus

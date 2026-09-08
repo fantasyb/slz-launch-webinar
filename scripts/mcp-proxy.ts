@@ -79,6 +79,7 @@ import {
 import { recordSubmission } from '../src/lib/cairn/recordFinding';
 import { redactForLedger } from '../src/lib/cairn/safety';
 import { shapeOf, promptShapeOf, diffSurface, findingNames, type ToolShape, type SurfaceChange } from '../src/lib/cairn/toolsurface';
+import { containerTransport, containerPlan, executionMode, type ContainerPolicy } from '../src/lib/cairn/container';
 import { trustMode, trustBootstrap, readPinState, writePin, pinPrompts, evaluateTrust } from '../src/lib/cairn/trust';
 import { readOrgPolicy, orgPolicyPath, authenticate, authorize, appendAudit, LOCAL_ADMIN, PROTOCOL_READ, type OrgPolicy, type Principal } from '../src/lib/cairn/enterprise';
 import { summarise, detect, type CallSummary } from '../src/lib/cairn/contradiction';
@@ -94,6 +95,7 @@ import { standing } from '../src/lib/cairn/decay';
 /* ------------------------------------------------------------------------ */
 
 interface UpstreamSpec {
+  isolation?: ContainerPolicy;
   name: string;
   /** A stdio upstream: the command to spawn. Mutually exclusive with `url`. */
   command?: string;
@@ -151,7 +153,7 @@ function parseArgs(argv: string[]): UpstreamSpec[] {
       const file = argv[++i];
       if (!file) usage();
       type Entry = {
-        command?: string; args?: string[]; env?: Record<string, string>;
+        command?: string; args?: string[]; env?: Record<string, string>; isolation?: ContainerPolicy;
         url?: string; headers?: Record<string, string>; type?: string; transport?: string;
       };
       const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as {
@@ -160,12 +162,12 @@ function parseArgs(argv: string[]): UpstreamSpec[] {
       };
       for (const [name, s] of Object.entries(raw.mcpServers ?? raw.servers ?? {})) {
         if (s?.command) {
-          specs.push({ name, command: s.command, args: s.args ?? [], env: s.env });
+          specs.push({ name, command: s.command, args: s.args ?? [], env: s.env, isolation: s.isolation });
         } else if (s?.url) {
           // An HTTP/SSE upstream. `type`/`transport` may say 'sse'; default to
           // Streamable HTTP, which is what current MCP servers speak.
           const t = String(s.type ?? s.transport ?? '').toLowerCase();
-          specs.push({ name, url: s.url, headers: s.headers, transport: t === 'sse' ? 'sse' : 'http' });
+          specs.push({ name, url: s.url, headers: s.headers, isolation: s.isolation, transport: t === 'sse' ? 'sse' : 'http' });
         }
       }
     }
@@ -984,6 +986,8 @@ const FORWARD = { timeout: 10 * 60 * 1000, resetTimeoutOnProgress: true } as con
  * rather than pretending — see the install, which warns before wrapping one.
  */
 async function upstreamTransport(spec: UpstreamSpec) {
+  if (executionMode() === 'container') return containerTransport(spec);
+  if (spec.isolation !== undefined) throw new Error('An isolation policy requires CAIRN_EXECUTION_MODE=container; refusing host execution');
   if (spec.url) {
     const url = new URL(spec.url);
     /*
@@ -1052,7 +1056,7 @@ async function spawn(up: Upstream, onNotification: (u: Upstream, method: string,
   const client = new Client({ name: 'cairn-proxy', version: '0.2.0' }, { capabilities: {} });
   const isHttp = !!up.spec.url;
   const transport = await upstreamTransport(up.spec);
-  if (isHttp) {
+  if (isHttp || executionMode() === 'container') {
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       await Promise.race([
@@ -1309,6 +1313,11 @@ function countArc(arc: string, choice: 'bank' | 'my-mistake' | 'not-surprising',
 async function main() {
   const bootstrap = trustBootstrap(); // validate before connecting or serving traffic
   const specs = parseArgs(process.argv.slice(2));
+  const mode = executionMode();
+  for (const spec of specs) {
+    if (mode === 'container') containerPlan(spec);
+    else if (spec.isolation !== undefined) throw new Error('An isolation policy requires CAIRN_EXECUTION_MODE=container');
+  }
   const single = specs.length === 1;
   /*
    * Exposed name -> wire name, when several upstreams share one tool list.
