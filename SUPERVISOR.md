@@ -140,6 +140,16 @@ then kills/restarts the supervisor and checks cooldown, reaper cleanup, and dura
 denial. This test writes fixed system paths: never opt into it on a shared or
 production host. Missing prerequisites must fail, not skip, when explicitly enabled.
 
+The same disposable-host test also launches the real gateway before the supervisor
+is started and after it is stopped, requiring refusal without a fallback container.
+It temporarily makes the quarantine directory path unverifiable while preserving
+its contents, requires both direct admission and the real gateway to refuse, then
+restores the original evidence byte-for-byte. The quarantined workload must remain
+denied while a healthy workload becomes usable again. This covers unavailable
+state at admission; it does not claim disk-full persistence, Docker cleanup-failure
+injection, or production alert-delivery coverage. TAP diagnostics identify each
+completed drill in the CI job log.
+
 The local socket tests use a fake runtime to exercise protocol/admission races;
 they are not a substitute for the real Docker and OS-identity test. Verify the
 exact revision's CI and then the target host before relying on this boundary.

@@ -6,7 +6,7 @@ import { promisify } from 'node:util';
 import { supervisorWorkloadId } from '../src/lib/cairn/supervisor-admission';
 
 const enabled = process.env.CAIRN_SUPERVISOR_INTEGRATION === '1';
-test('restricted gateway uses the root supervisor but cannot access Docker, policy, recovery, or excess capacity', { skip: !enabled, timeout: 240000 }, async () => {
+test('restricted gateway uses the root supervisor but cannot access Docker, policy, recovery, or excess capacity', { skip: !enabled, timeout: 240000 }, async (t) => {
   assert.equal(process.platform, 'linux'); assert.equal(process.getuid?.(), 0);
   const run = (command: string, args: string[]) => execFileSync(command, args, { encoding: 'utf8', timeout: 15000 }).trim();
   const systemctl = (...args: string[]) => run('/usr/bin/systemctl', args);
@@ -41,6 +41,10 @@ test('restricted gateway uses the root supervisor but cannot access Docker, poli
     });
   };
   try {
+    assert.equal(fs.existsSync('/run/cairn-supervisor/control.sock'), false);
+    assert.equal(await client('gateway-denied'), 'gateway-refused-without-fallback');
+    assert.equal(containers(), '', 'missing supervisor must not create a fallback container');
+    t.diagnostic('missing-supervisor drill: real gateway refused; runtime remained empty');
     systemctl('start', 'cairn-supervisor.service');
     await until(() => fs.existsSync('/run/cairn-supervisor/control.sock'), 90000);
     assert.equal(await client('permissions'), 'permissions-denied');
@@ -79,10 +83,41 @@ test('restricted gateway uses the root supervisor but cannot access Docker, poli
     assert.equal(containers(), '', 'reaper removed the orphan before readmission');
     assert.equal(await client('denied', 'hostile'), 'launch-denied', 'stable quarantine survives supervisor restart');
     assert.equal(await client('gateway'), 'gateway-roundtrip-ok');
+    await until(() => containers() === '');
+
+    // Root cannot simulate an unavailable store with chmod alone. Preserve the
+    // entire evidence directory and replace only its path with a regular file.
+    // This is privileged fixture fault injection, never gateway recovery API.
+    const quarantine = '/var/lib/cairn-supervisor/quarantine';
+    const preserved = '/var/lib/cairn-supervisor/quarantine-preserved-for-test';
+    const markerBefore = fs.readFileSync(marker);
+    assert.equal(fs.existsSync(preserved), false);
+    fs.renameSync(quarantine, preserved);
+    try {
+      fs.writeFileSync(quarantine, 'deliberately unavailable fixture store', { flag: 'wx', mode: 0o600 });
+      assert.equal(await client('denied', 'healthy'), 'launch-denied');
+      assert.equal(await client('gateway-denied'), 'gateway-refused-without-fallback');
+      assert.equal(containers(), '', 'unverifiable quarantine must refuse before launching');
+      t.diagnostic('unavailable-quarantine drill: approved workload and real gateway refused; no launch');
+    } finally {
+      // Only remove the exact regular file this test created, never evidence.
+      if (fs.existsSync(quarantine)) {
+        assert.ok(fs.lstatSync(quarantine).isFile());
+        fs.unlinkSync(quarantine);
+      }
+      fs.renameSync(preserved, quarantine);
+    }
+    assert.deepEqual(fs.readFileSync(marker), markerBefore, 'fault injection must preserve quarantine evidence byte-for-byte');
+    assert.equal(await client('denied', 'hostile'), 'launch-denied');
+    assert.equal(await client('gateway'), 'gateway-roundtrip-ok');
+    t.diagnostic('storage restoration drill: quarantine unchanged; hostile still denied; healthy roundtrip works');
   } finally {
     systemctl('stop', 'cairn-supervisor.service');
     for (const child of held) { child.kill('SIGTERM'); child.stdout?.destroy(); child.stderr?.destroy(); }
   }
   assert.equal(containers(), '');
   assert.equal(systemctl('show', 'cairn-supervisor.service', '--property=Result', '--value'), 'success');
+  assert.equal(await client('gateway-denied'), 'gateway-refused-without-fallback');
+  assert.equal(containers(), '', 'stopped supervisor must not trigger host/container fallback');
+  t.diagnostic('stopped-supervisor drill: real gateway refused without fallback');
 });

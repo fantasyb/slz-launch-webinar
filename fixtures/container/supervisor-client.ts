@@ -40,6 +40,11 @@ async function main() {
   const transport = new StdioClientTransport({ command: '/usr/bin/node', args: [
     '/opt/cairn/dist/cli/mcp-proxy.js', '--config', '/etc/cairn/gateway.json', '--no-cairn-tools',
   ], env: { PATH: '/usr/bin:/bin', HOME: '/var/lib/cairn-gateway', CAIRN_HOME: '/var/lib/cairn-gateway', CAIRN_EXECUTION_MODE: 'supervisor' }, stderr: 'ignore' });
+  if (mode === 'gateway-denied') {
+    try { await assert.rejects(client.connect(transport)); }
+    finally { await client.close(); await transport.close(); }
+    console.log('gateway-refused-without-fallback'); return;
+  }
   await client.connect(transport);
   const tools = await client.listTools();
   assert.ok(tools.tools.some((t) => t.name === 'echo'));
