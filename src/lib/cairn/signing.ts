@@ -240,6 +240,16 @@ export function observationPayload(
     o.at,
     o.environment ? environmentSignature(o.environment as Environment) : '',
     crypto.createHash('sha256').update(o.note ?? '').digest('hex'),
+    /*
+     * The attest-only marker is part of what is signed, and ONLY when set, so
+     * every signature made before the marker existed still verifies against
+     * the same eight-element payload. Bound rather than left as a loose
+     * field: an attest-only signature with the flag stripped would otherwise
+     * read as operator promotion (confirm.ts), and a real promotion with the
+     * flag added would read as attest-only. Either edit now breaks the
+     * signature instead of changing its meaning.
+     */
+    ...(o.attestOnly === true ? ['attest-only'] : []),
   ]);
 }
 

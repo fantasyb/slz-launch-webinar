@@ -31,6 +31,7 @@ import { standing, lastConfirmedAt, daysSince, type Standing } from './decay';
 import { scanInjection, scanSensitive, draftSurface } from './safety';
 import { signObservation, findingBodyHash, CURRENT_HASH_VERSION } from './signing';
 import { reloadKeys } from './keys';
+import { useSignal, useLabel, type UseSignal } from './use';
 
 export const VERDICTS = ['confirmed', 'refuted', 'inconclusive'] as const;
 export type Verdict = (typeof VERDICTS)[number];
@@ -96,25 +97,35 @@ export function attest(raw: unknown, opts: { by?: string; via?: string; keyId?: 
   const rawFinding = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, unknown>;
   const key = opts.keyId ? reloadKeys().get(opts.keyId) : undefined;
   const privFile = opts.keyId ? homePath('.cairn-secrets', `${opts.keyId}.key`) : null;
-  // origin:'agent' — the caller is a MODEL, never the operator. It must NOT sign,
-  // because a signature is what isOperatorPromoted() reads to make an
-  // agent-recorded finding's check EXECUTABLE. Letting a model self-sign an
-  // observation would let a hostile upstream drive the model to record a malicious
-  // check.command and then promote it into execution (red-team creative #2).
-  // Operator promotion is an explicit human/CLI act, not a model side effect.
-  const signable = !!(key && privFile && fs.existsSync(privFile)) && opts.origin !== 'agent';
+  const signable = !!(key && privFile && fs.existsSync(privFile));
   /*
-   * A caller-supplied (model) `by` must not claim a reserved identity — the
+   * origin:'agent' — the caller is a MODEL, never the operator. Its observation
+   * is signed ATTEST-ONLY (schema.ts `attestOnly`): attributable, so it can
+   * contest a finding and lower its confidence — the one observer who ever
+   * re-uses a finding must be able to cull it — but never operator promotion,
+   * so a signature here can never make an agent-recorded finding's check
+   * executable (confirm.ts:isOperatorPromoted ignores attest-only signatures,
+   * and the flag is inside the signed bytes). That closes red-team creative
+   * #2 — a hostile upstream drives the model to record a malicious
+   * check.command and then self-sign it into execution — without leaving the
+   * agent's `refuted` attributable to nobody. Operator promotion stays an
+   * explicit human/CLI act.
+   */
+  const attestOnly = opts.origin === 'agent';
+  /*
+   * A caller-supplied `by` must not claim a reserved identity — the
    * machine-observer label (which makes verification read as "verified by its
    * check") or a local signing key's label — unless it is actually being signed
-   * by that key here. Only a `by` the model itself set (raw.by) is untrusted;
-   * a code-set opts.by (doctor's own path) is fine.
+   * by that key here. Policed on the identity that will actually be WRITTEN
+   * when it came from the caller: a code-set opts.by (doctor's own path) is
+   * fine; a raw `by` that survived because no principal overrode it (the
+   * standalone MCP server under origin:'agent') is the caller's and is checked
+   * — that path used to skip this entirely.
    */
-  // Under origin:'agent' the raw `by` was discarded above (forced to opts.by), so
-  // there is no model-chosen identity to police here.
-  const modelBy = opts.origin !== 'agent' && typeof raw === 'object' && raw !== null && typeof (raw as Record<string, unknown>).by === 'string'
+  const rawBy = typeof raw === 'object' && raw !== null && typeof (raw as Record<string, unknown>).by === 'string'
     ? String((raw as Record<string, unknown>).by)
     : undefined;
+  const modelBy = rawBy !== undefined && a.by === rawBy ? rawBy : undefined;
   if (modelBy) {
     const reserved = modelBy === MACHINE_OBSERVER || [...reloadKeys().values()].some((k) => k.label === modelBy);
     if (reserved && !(signable && key!.label === modelBy)) {
@@ -127,6 +138,7 @@ export function attest(raw: unknown, opts: { by?: string; via?: string; keyId?: 
     verdict: a.verdict,
     ...(a.note?.trim() ? { note: a.note.trim() } : {}),
     environment: { os: process.platform, arch: process.arch, runtime: `node ${process.version}`, note: `${os.type()} ${os.release()}${opts.via ? `; via ${opts.via}` : ''}` },
+    ...(signable && attestOnly ? { attestOnly: true as const } : {}),
   };
   let signed: Record<string, unknown> = observation;
   if (signable) {
@@ -151,7 +163,9 @@ export function attest(raw: unknown, opts: { by?: string; via?: string; keyId?: 
     message:
       `Recorded ${a.verdict} on ${a.finding} by ${observation.by}; it now stands ${s}.` +
       (signable
-        ? ` Signed by ${opts.keyId}.` + (a.verdict === 'refuted' ? ' A refutation stands until confirmations from distinct signers outnumber refuters two to one.' : '')
+        ? ` Signed${attestOnly ? ' attest-only' : ''} by ${opts.keyId}.` +
+          (a.verdict === 'refuted' ? ' A refutation stands until confirmations from distinct signers outnumber refuters two to one.' : '') +
+          (attestOnly ? ' Attest-only: it counts toward standing and never makes the check executable.' : '')
         : a.verdict === 'refuted'
           ? ' Unsigned, so it is shown on the finding but does not move its standing; give the gateway a key (CAIRN_KEY) for refutations to count.'
           : ' Unsigned, so it counts as one environment.'),
@@ -192,8 +206,17 @@ export function verification(f: Finding, now = new Date()): Verification {
 
 const ago = (days: number) => (days < 1 ? 'today' : days < 2 ? '1 day ago' : `${Math.floor(days)} days ago`);
 
-/** One line a reader can weigh: what the standing rests on. */
-export function verificationLine(f: Finding, now = new Date()): string {
+/**
+ * One line a reader can weigh: what the standing rests on.
+ *
+ * `stale` is split by USE (use.ts), at render time only: `dormant` when the
+ * clock ran down and nobody retrieved the finding since it was last confirmed
+ * — untested because unneeded, not less true — and `stale (served N times
+ * since, never re-confirmed)` when people were in the territory and nobody
+ * said it still held, which is real doubt. `verification()` and `standing()`
+ * stay pure over the finding; only this line reads the ledger.
+ */
+export function verificationLine(f: Finding, now = new Date(), use: UseSignal = useSignal(f, undefined, now)): string {
   const v = verification(f, now);
   const how =
     v.source === 'none'
@@ -203,5 +226,12 @@ export function verificationLine(f: Finding, now = new Date()): string {
         : `attested by ${v.confirmedBy} ${ago(v.daysSinceConfirmed!)}, not by a check`;
   const check = v.checkable ? 'check runnable' : 'check is manual: no machine can re-run it';
   const contested = v.refuted ? `; ${v.refuted} refutation${v.refuted > 1 ? 's' : ''} on record` : '';
-  return `${v.standing} — ${how}; ${check}${contested}`;
+  const label = useLabel(f, use, now);
+  const stale =
+    label === 'dormant'
+      ? 'dormant (not retrieved since last confirmed — untested because unneeded)'
+      : label === 'stale'
+        ? `stale (served ${use.sinceConfirmed} time${use.sinceConfirmed === 1 ? '' : 's'} since, never re-confirmed)`
+        : label;
+  return `${stale} — ${how}; ${check}${contested}`;
 }

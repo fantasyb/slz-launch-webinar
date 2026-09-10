@@ -3,7 +3,7 @@
  * signal. These pin the two properties the launchd/service wrapper depends on —
  * the tick fires repeatedly without being re-invoked, and SIGTERM ends it with a
  * clean exit rather than leaving launchd to KeepAlive-restart a wedged process.
- * A tick override (CAIRN_DAEMON_TICK_CMD) stands in for the real triage trigger.
+ * A tick override (CAIRN_DAEMON_TICK_CMD) is the only thing a tick ever runs; unset, a tick is a no-op.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

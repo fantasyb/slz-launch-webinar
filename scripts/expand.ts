@@ -96,7 +96,9 @@ export function visibleToModel(f: Finding): string {
     `ACTUALLY: ${f.reality}`,
     f.workaround ? `WORKAROUND: ${f.workaround}` : '',
     `CHECK: ${f.check.command}`,
-    f.mechanism ? `WHY: ${f.mechanism}` : '',
+    /* The mechanism is the author's post-hoc story; every check the corpus has
+     * is symptom-level, so nothing ever verified it. Labelled wherever rendered. */
+    f.mechanism ? `MECHANISM (author's inference, unverified): ${f.mechanism}` : '',
     f.appliesTo ? `WHERE: ${f.appliesTo}` : '',
     ...(f.evidence ?? []).map((e) => `EVIDENCE: ${e.command ?? ''} => ${e.output ?? ''}`),
   ].filter(Boolean).join('\n');

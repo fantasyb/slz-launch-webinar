@@ -130,7 +130,7 @@ function defaultBuild(repoDir: string): boolean {
   try {
     // A real timeout with SIGKILL: maybeSelfUpdate is synchronous and runs on the
     // daemon's tick, so a build that hangs (a wedged postinstall, a stuck network
-    // fetch) would wedge the daemon — no triage ticks, no audit verify — forever.
+    // fetch) would wedge the daemon — no ticks, no audit verify — forever.
     // Time it out and treat that as a failed build → rollback (red-team 2.3).
     const timeout = Math.max(30_000, Number(process.env.CAIRN_UPDATE_BUILD_TIMEOUT_MS) || 300_000);
     execFileSync('npm', ['run', 'cairn:build-cli'], { cwd: repoDir, stdio: ['ignore', 'pipe', 'pipe'], timeout, killSignal: 'SIGKILL' });

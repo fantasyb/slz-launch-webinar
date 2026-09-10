@@ -134,6 +134,12 @@ server.registerTool(
         .describe(
           'Only when a near-duplicate refusal named findings that are NOT your trap: one entry per id, with `because` saying what makes yours different. The refusal prints the exact value to send.',
         ),
+      reflexBecause: z
+        .string()
+        .min(20)
+        .max(500)
+        .optional()
+        .describe('Only when a generic-reflex refusal fired (retry / paginate / re-run): why that reflex alone does not recover this trap.'),
     },
   },
   async (args) => {
@@ -185,7 +191,13 @@ server.registerTool(
     },
   },
   async (args) => {
-    const outcome = attest(args, { via: 'cairn mcp server' });
+    /*
+     * origin:'agent': the caller is a model. With CAIRN_KEY in this server's
+     * environment its observation is signed ATTEST-ONLY — it can contest a
+     * finding, it can never make a check executable (attest.ts, confirm.ts).
+     * Without a key it is recorded unsigned and moves nothing, as before.
+     */
+    const outcome = attest(args, { via: 'cairn mcp server', origin: 'agent', keyId: process.env.CAIRN_KEY });
     if (outcome.ok) reloadCorpus(); // so a finding's standing reflects the observation just attested
     return { isError: !outcome.ok, content: [{ type: 'text' as const, text: outcome.message }] };
   },

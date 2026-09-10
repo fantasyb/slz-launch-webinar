@@ -47,6 +47,9 @@ import type { Finding } from './schema';
 import { loadCorpus } from './load';
 import { assertExecutionAllowed } from './policy';
 import { matchEnvironment } from './precondition';
+import { verifyObservation, bodyHashForObservation, type KeyRecord } from './signing';
+import { loadKeys } from './keys';
+import { attestKeys } from './decay';
 
 export type Fired = 'fires' | 'does-not-fire' | 'inconclusive' | 'skipped';
 
@@ -150,13 +153,30 @@ export async function runCommand(
 /**
  * A finding recorded by an agent/tenant over the gateway carries a
  * caller-controlled `check.command`. It must NOT run on the operator's box until
- * an operator vouches for it — a SIGNED operator observation (an observation
- * carrying a signature). Until then its check is skipped, not executed: this is
- * the guard against a tenant planting a command that runs when the operator (or
- * an agent following CLAUDE.md) verifies the corpus.
+ * an operator vouches for it — a SIGNED operator observation. Until then its
+ * check is skipped, not executed: this is the guard against a tenant planting a
+ * command that runs when the operator (or an agent following CLAUDE.md)
+ * verifies the corpus.
+ *
+ * TWO THINGS TIGHTENED, both because a signature is now also how an agent's
+ * observation gets to COUNT (schema.ts `attestOnly`):
+ *
+ *   - The signature must VERIFY against a known key. "Any signature-shaped
+ *     object present" was the old test, and three schema-shaped strings would
+ *     have promoted a tenant's check into execution. decay.ts learned this
+ *     lesson in partyOf; the promotion gate learns it here.
+ *   - An `attestOnly` signature is NOT promotion. It is the gateway signing an
+ *     agent's observation so the agent can contest a finding; it says nothing
+ *     about whether the check is safe to run. The flag is inside the signed
+ *     payload, so it cannot be stripped to upgrade the signature.
  */
-export function isOperatorPromoted(f: Finding): boolean {
-  return (f.observations ?? []).some((o) => (o as { signature?: unknown }).signature != null);
+export function isOperatorPromoted(f: Finding, keys: Map<string, KeyRecord> = loadKeys()): boolean {
+  return (f.observations ?? []).some(
+    (o) =>
+      o.signature != null &&
+      o.attestOnly !== true &&
+      verifyObservation(f.id, o, attestKeys(f, keys), bodyHashForObservation(f, o)) === 'signed',
+  );
 }
 
 async function runCheck(f: Finding, timeoutMs: number): Promise<Confirmation> {

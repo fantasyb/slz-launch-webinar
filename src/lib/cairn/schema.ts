@@ -179,6 +179,26 @@ export const ObservationSchema = z.object({
    * status and the resonance signature.
    */
   hashVersion: z.number().int().min(2).max(9).optional(),
+  /**
+   * THE CULL WIRE. A signed observation used to mean two things at once: "an
+   * attributable party said this" (which is what lets it contest a finding in
+   * decay.ts) and "an operator vouches for this finding's check" (which is what
+   * lets confirm.ts EXECUTE the check). Coupling them meant a model's
+   * observation over the gateway could never be signed — red-team #2: a hostile
+   * upstream drives the model to record a malicious check.command, the model
+   * self-signs an observation, the check becomes executable — so an agent's
+   * `refuted` was unsigned, attributable to nobody, and moved nothing. The one
+   * observer who ever re-uses a finding could not cull it.
+   *
+   * `attestOnly: true` splits the two meanings. The gateway signs an agent's
+   * observation under the operator's key WITH this flag: it is an attributable
+   * party (it can make a finding `contested`, drop its confidence, and count in
+   * disagreement), and it is NOT operator promotion (isOperatorPromoted ignores
+   * it, so the finding's check stays un-executable). The flag is bound into the
+   * signed payload (signing.ts): stripping it, or adding it to a real operator
+   * signature, breaks verification rather than changing what the signature means.
+   */
+  attestOnly: z.boolean().optional(),
 });
 export type Observation = z.infer<typeof ObservationSchema>;
 
@@ -322,6 +342,13 @@ export const FindingSchema = z.object({
     .array(z.object({ id: z.string().regex(/^[a-z0-9.-]*cairn-\d{4}$/), because: z.string().min(20).max(500) }))
     .max(3)
     .optional(),
+  /**
+   * The same idea for the generic-reflex refusal on the write path
+   * (recordFinding.ts): the submitter's reason why a plain retry / paginate /
+   * re-run does not recover this trap. Present only when that refusal was
+   * overridden, so its false-positive rate is countable rather than guessed.
+   */
+  reflexBecause: z.string().min(20).max(500).optional(),
   tags: z.array(z.string().max(40)).max(12).default([]),
   /** What rediscovering this from scratch costs. Drives triage. */
   cost: CostSchema,
@@ -427,25 +454,6 @@ export const FindingSchema = z.object({
    * a command that runs when the operator verifies the corpus.
    */
   agentRecorded: z.boolean().optional(),
-  /**
-   * Set when the CONSOLIDATION PASS (cairn:sleep) promoted this finding from a
-   * harvested transcript candidate — no person decided to record it and no
-   * check was ever run. It names the transcript and the candidate file so the
-   * promotion is auditable end to end (drafts/admitted/ keeps the candidate,
-   * the yield ledger keeps the verdict), and so every reader can tell a
-   * machine-consolidated finding from one a person or a live gate vouched for.
-   * Such a finding is always agentRecorded (never executed, never signed by the
-   * machine key) and carries a manual check; its standing starts at `aging` and
-   * decays to `stale` unless someone later observes it. Not part of
-   * findingBodyHash: it describes where the record came from, not what it claims.
-   */
-  consolidated: z
-    .object({
-      transcript: z.string().min(1).max(300),
-      candidate: z.string().min(1).max(300),
-      at: z.string().datetime(),
-    })
-    .optional(),
   status: z.enum(['active', 'retired']).default('active'),
   retiredReason: z.string().optional(),
 

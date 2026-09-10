@@ -60,6 +60,39 @@ test('a refused secret comes back with the redaction that would be accepted', as
   assert.match(r.message, /auth-header: [^\n]*\n\s+accepted if written as "Bearer <redacted:credential>"/);
 });
 
+test('an agent-recorded finding is born AGING, never fresh: one unsigned observer, one environment', async () => {
+  const { recordSubmission } = await import('../src/lib/cairn/recordFinding');
+  const { standing, confidence } = await import('../src/lib/cairn/decay');
+  const r = await recordSubmission({ ...base, title: 'born-standing probe alpha' }, { origin: 'agent', by: 'claude-in-session' });
+  assert.equal(r.ok, true, r.message);
+  const f = r.finding!;
+  assert.equal(f.provenance, 'firsthand', 'honest provenance: the agent saw it');
+  assert.equal(f.scope, 'environment-specific', 'and claims only where it saw it');
+  assert.equal(f.observations[0].environment?.os, process.platform, 'the recording machine is stamped when the submitter reported none');
+  assert.match(f.observations[0].environment?.note ?? '', /submitter reported no environment/);
+  assert.equal(standing(f), 'aging', 'served at once, but not as an established fact');
+  const c = confidence(f);
+  assert.ok(Math.abs(c - 0.45) < 0.01, `freshness 1.0 x (0.5 + 0.5 x 0) x scopeSupport 0.9 = 0.45, got ${c}`);
+  assert.notEqual(standing(f), 'fresh');
+});
+
+test('a generic-reflex workaround is refused softly, and accepted with a stored reason', async () => {
+  const { recordSubmission } = await import('../src/lib/cairn/recordFinding');
+  const reflex = { ...base, title: 'timeout on first call of the uploader', workaround: 'Just retry the call; it works the second time.' };
+  const r = await recordSubmission(reflex, { origin: 'agent' });
+  assert.equal(r.ok, false);
+  assert.match(r.message, /generic reflex \("retry"\)/);
+  assert.match(r.message, /"reflexBecause": "<why a plain retry does not get past this>"/, 'the refusal names the exact field to send');
+  assert.doesNotMatch(r.message, /--force/, 'an agent is not offered the CLI-only override');
+  /* The reality field may SAY "retry" — that is the tool talking, not the reflex. */
+  const toolSays = { ...base, title: 'uploader prints please repeat and never recovers', reality: 'It prints "please retry" on every call and never succeeds.' };
+  assert.equal((await recordSubmission(toolSays, { origin: 'agent' })).ok, true, 'matched against workaround and mechanism only');
+  const because = 'a plain retry hits the same warm cache; only a retry after clearing ~/.deploy-cache succeeds';
+  const ok = await recordSubmission({ ...reflex, reflexBecause: because }, { origin: 'agent' });
+  assert.equal(ok.ok, true, ok.message);
+  assert.equal((ok.finding as { reflexBecause?: string }).reflexBecause, because, 'the override is stored, so its rate is countable');
+});
+
 test('a governed/agent submission cannot forge machine provenance, is private, and is marked non-executable', async () => {
   const { recordSubmission } = await import('../src/lib/cairn/recordFinding');
   const { isOperatorPromoted } = await import('../src/lib/cairn/confirm');

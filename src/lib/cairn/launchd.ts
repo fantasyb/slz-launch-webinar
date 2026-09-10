@@ -1,9 +1,8 @@
 /**
- * The macOS launchd LaunchAgent for the always-on triage daemon.
+ * The macOS launchd LaunchAgent for the always-on housekeeping daemon
+ * (scripts/daemon.ts: audit-chain verification and self-update; no checks run).
  *
- * Session-start triage only fires when you open a session and stops the moment
- * you stop working — GBrain's lesson is the reverse: ship a daemon that runs
- * 24/7. On macOS the honest way to "always on, survives logout and reboot, no
+ * On macOS the honest way to "always on, survives logout and reboot, no
  * terminal to babysit" is a per-user LaunchAgent: launchd owns the process,
  * restarts it if it dies (KeepAlive), and starts it at login (RunAtLoad).
  *
@@ -50,8 +49,8 @@ const esc = (s: string) =>
  * The LaunchAgent plist. RunAtLoad starts it at login; KeepAlive restarts it if
  * it exits; the daemon itself sleeps between ticks, so KeepAlive is a crash net,
  * not a busy-spin. --home and --interval carry the same contract the CLI takes,
- * and CAIRN_HOME is set too so the trigger the daemon spawns resolves the corpus
- * even before it reads --home.
+ * and CAIRN_HOME is set too so every in-process corpus lookup resolves the
+ * corpus even before it reads --home.
  */
 export function plistContent(o: PlistOpts): string {
   const args = [o.nodeBin, o.daemonBin, '--home', o.home, '--interval', String(o.intervalSeconds)];

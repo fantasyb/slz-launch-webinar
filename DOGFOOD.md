@@ -43,23 +43,29 @@ line — it prints every edit and writes nothing.
 
 Use Claude Code on your normal Salesforce work. You don't call anything. When
 your agent reaches for a tool a trap is recorded about, the warning rides in on
-that call. When your agent hits and solves a *new* trap, Cairn harvests it in
-the background for later review. Silence is the common case and not a failure.
+that call. When your agent hits and solves a *new* trap, it records it in the
+moment (`cairn_record`, or `cairn_note` when there is no time) and it is served
+from then on, marked `aging` — firsthand, one agent, this machine. Nothing
+harvests your transcripts behind your back. Silence is the common case and not
+a failure.
 
 ## How to tell it's alive
 
-- `/cairn` in Claude Code → a dashboard of what it remembers and what's queued.
-- `/cairn queue` → the sleep queue (traps harvested from your sessions), what
-  sleep has already consolidated from it into unverified findings on its own,
-  and whether the daemon is draining it. Review is optional, never required.
-- `tail -f ~/pilot/daemon.log` → the daemon's heartbeat (macOS).
+- `/cairn` in Claude Code → a dashboard of what it remembers and how fresh it is.
+- `/cairn queue` → unfinished notes, and what is contested / stale / dormant.
+  Review is optional, never required.
+- `tail -f ~/pilot/drafts/daemon.log` → the daemon's heartbeat (macOS). It only
+  verifies the audit chain and keeps the code current; it runs no checks.
 
 ## What's normal (don't report these as bugs)
 
-- **Candidates held in the queue.** Sleep automatically promotes candidates that
-  clear its gates into unverified findings. Incomplete candidates remain leads;
-  duplicates and rejected candidates keep a recorded reason. `/cairn queue`
-  shows the outcomes and whether the daemon is draining the queue.
+- **A finding your agent recorded reads `aging`, not `fresh`.** One unsigned
+  observer on one machine is what it is. It becomes `fresh` when a signed
+  observation (yours, at the CLI) or a second machine confirms it. If a later
+  session is served it and it does not hold, the agent says so with
+  `cairn_observe` and it reads `contested`.
+- **`dormant`.** The clock ran down and nobody has needed the finding since it
+  was last confirmed. It is not less true; nobody built there. Leave it.
 - **Nothing delivered on a given day.** Traps are rare. No news is fine.
 - **"execution is not enabled"** if you run a check. That's intentional — this
   build never runs shell from the corpus on your machine. Leave it off.

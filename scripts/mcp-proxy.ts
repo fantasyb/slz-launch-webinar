@@ -89,6 +89,7 @@ import { resonates } from '../src/lib/cairn/resonance';
 import { recordNote, discardNote, finishNotes, openNotesFor, ageDays } from '../src/lib/cairn/notes';
 import { attest, verification, verificationLine } from '../src/lib/cairn/attest';
 import { recordArc, readArcs } from '../src/lib/cairn/arcs';
+import { recordMisled } from '../src/lib/cairn/misled';
 import { standing } from '../src/lib/cairn/decay';
 
 /* ------------------------------------------------------------------------ */
@@ -1193,6 +1194,10 @@ const GATEWAY_TOOLS: Tool[] = [
             required: ['id', 'because'],
           },
         },
+        reflexBecause: {
+          type: 'string', minLength: 20, maxLength: 500,
+          description: 'Only when a generic-reflex refusal fired (retry / paginate / re-run): why that reflex alone does not recover this trap.',
+        },
       },
       required: ['title', 'claim', 'expectation', 'reality', 'evidence', 'check'],
     },
@@ -1310,6 +1315,11 @@ function countArc(arc: string, choice: 'bank' | 'my-mistake' | 'not-surprising',
   try {
     recordArc({ arc, key: offered.key, failing: offered.failing, choice, by: ledgerBy(session) });
     observe(`${offered.key} [arc ${choice}]`, [], `mcp-proxy:arc-${choice}`, { by: ledgerBy(session), session: session.id });
+    /* An answered arc is the moment to turn earlier arcs into outcomes: a
+     * finding served on this program shortly before an arc did not prevent the
+     * trap — `misled` (misled.ts). Idempotent by arc id; a slip ("my mistake")
+     * is excluded, which is why this runs after the answer is recorded. */
+    recordMisled(localFindings().findings);
   } catch { /* never fatal */ }
   return true;
 }
@@ -2717,18 +2727,18 @@ async function main() {
          */
         observe(callRecord(req.params.name, args), [], isError ? 'mcp-proxy:error' : 'mcp-proxy:call', ctx);
         // The hole → auto-draft loop captures a governed tenant's own call args and
-        // upstream output into drafts the daemon feeds to a shell-capable triage
-        // agent. That is a personal, single-tenant convenience; on a governed
-        // multi-tenant gateway it is a cross-tenant channel into the operator's
-        // triage context, so it is switched off there. Governed tenants author
-        // findings through cairn_record instead, which is authorized, attributed,
-        // and marked non-executable. Personal/ungoverned sessions keep the loop.
+        // upstream output into drafts/ on the operator's disk. That is a personal,
+        // single-tenant convenience; on a governed multi-tenant gateway it is a
+        // cross-tenant channel into the operator's files, so it is switched off
+        // there. Governed tenants author findings through cairn_record instead,
+        // which is authorized, attributed, and marked non-executable.
+        // Personal/ungoverned sessions keep the loop.
         const autoDraft = !governed(session);
         // What the hole/draft/contradiction paths STORE (session memory, drafts/ on
         // disk) and later RENDER is the nonce-stripped copy of the arguments, like
         // the copy forwarded upstream and the own-tool arguments: a model that
         // echoed a Cairn block into an argument must not write the session's
-        // secret into a draft file the triage agent later reads.
+        // secret into a draft file a person later reads.
         const safeArgs = stripSessionToken(args, session.blockNonce) as Record<string, unknown>;
         if (isError && autoDraft) session.holes.set(req.params.name, { args: safeArgs, output: ownText, at: new Date().toISOString() });
         let note = annotate(session, req.params.name, about, isError, args, ownText);

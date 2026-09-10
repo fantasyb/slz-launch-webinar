@@ -114,16 +114,32 @@ export const SubmissionSchema = z.object({
   note: z.string().max(4000).optional(),
   /**
    * Both default to what a submission recorded at the keyboard means —
-   * `firsthand`, 180 days — and exist for a writer that must say otherwise. The
-   * consolidation pass (consolidate.ts) records findings it did NOT execute, so
-   * it must be able to say `secondhand` and give them a shorter half-life than
-   * a finding somebody watched fail; the alternative was rewriting the file
-   * after the one write path had validated it. Bounded exactly as FindingSchema
-   * bounds them, so nothing here can make a claim outlive its own decay.
+   * `firsthand`, 180 days — and exist for a writer that must say otherwise: a
+   * finding relayed from somebody else's session is `secondhand`, and a
+   * subject that ships weekly deserves a shorter half-life than one that has
+   * not changed in years. The half-life is the author's statement of how fast
+   * the SUBJECT drifts, not of how true the finding is (decay.ts). Bounded
+   * exactly as FindingSchema bounds them, so nothing here can make a claim
+   * outlive its own decay.
    */
   provenance: ProvenanceSchema.optional(),
   halfLifeDays: z.number().int().min(7).max(3650).optional(),
+  /*
+   * The reasoned way past the generic-reflex refusal (recordFinding.ts): why a
+   * plain retry/paginate/re-run does NOT recover this trap. Stored on the
+   * finding, like distinctFrom, so the refusal's false-positive rate is countable.
+   */
+  reflexBecause: z.string().min(20).max(500).optional(),
 });
+
+/**
+ * A workaround that is a generic reflex a capable agent already has. Banking
+ * it pays ~nothing (the records-opus nulls, cairn-0034), so the write path
+ * refuses it softly unless the submitter says why the reflex alone is not
+ * enough. Matched against the workaround and mechanism, never the reality: a
+ * tool that SAYS "retry" in its error is the trap, not the reflex.
+ */
+export const DERIVABLE = /\b(paginate|pagination|retry|re-?run|try again|increase (the )?limit|per[_ ]?page|distrust|ignore the flag|read the docs?|just wait|is obvious|well[- ]known|standard practice|common knowledge)\b/;
 export type Submission = z.infer<typeof SubmissionSchema>;
 
 export const ObservationSubmissionSchema = z.object({
@@ -207,6 +223,7 @@ export function normalise(s: Submission, now = new Date(), mintedId?: string) {
           : { name: 'unknown', ecosystem: 'unknown', versions: '*' }),
       ...(s.tool ? { triggers: [s.tool] } : {}),
       ...(s.distinctFrom?.length ? { distinctFrom: s.distinctFrom } : {}),
+      ...(s.reflexBecause ? { reflexBecause: s.reflexBecause } : {}),
       tags: s.tags,
       cost: s.cost,
       expectation: s.expectation,

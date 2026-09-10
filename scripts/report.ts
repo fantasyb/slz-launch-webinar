@@ -26,6 +26,7 @@ import { listNotes, ageDays, ABANDON_AFTER_DAYS } from '../src/lib/cairn/notes';
 import { loadCorpus } from '../src/lib/cairn/load';
 import { verification, REVERIFY_AFTER_DAYS } from '../src/lib/cairn/attest';
 import { tally as arcTally, arcsFile } from '../src/lib/cairn/arcs';
+import { recordMisled } from '../src/lib/cairn/misled';
 
 const argv = process.argv.slice(2);
 const JSON_OUT = argv.includes('--json');
@@ -127,6 +128,10 @@ const abandonedNotes = notes.filter((n) => n.state === 'abandoned');
 const finishedNotes = notes.filter((n) => n.state === 'finished');
 /* Arc tallies come from the per-machine arcs file, never the corpus. */
 const arcs = arcTally(30);
+/* Turn arcs into outcomes: a finding served shortly before a fail-then-recover
+ * arc on its program did not prevent the trap — `misled`, written to the ledger
+ * (misled.ts). Reconciled here, and by the gateway whenever an arc is answered. */
+const misledWritten = recordMisled(loadCorpus());
 
 if (JSON_OUT) {
   console.log(
@@ -209,6 +214,7 @@ if (arcs.offered) {
   const pct = (n: number) => (answered ? `${Math.round((100 * n) / answered)}%` : '—');
   console.log(`\n  FAIL-THEN-RECOVER ARCS — the Bash detector, calibrated by the answers (last 30 days, ${arcsFile()}):`);
   console.log(`    offered ${arcs.offered}  banked ${arcs.bank} (${pct(arcs.bank)})  my mistake ${arcs.myMistake} (${pct(arcs.myMistake)})  not surprising ${arcs.notSurprising} (${pct(arcs.notSurprising)})  unanswered ${arcs.unanswered}`);
+  if (misledWritten) console.log(`    ${misledWritten} arc(s) followed a finding served on the same program — recorded as \`misled\` in the ledger (the finding did not prevent the trap it describes).`);
   if (answered >= 5) {
     const verdict = arcs.myMistake / answered > 0.6 ? 'mostly slips: the detector is firing on typos and should tighten'
       : arcs.notSurprising / answered > 0.6 ? 'mostly expected failures: it is firing on ordinary work'

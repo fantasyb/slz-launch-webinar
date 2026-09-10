@@ -136,8 +136,6 @@ function defaultLabel(): string {
 /* The Cairn code checkout: two levels up from scripts/. */
 const REPO = path.resolve(__dirname, '..');
 const SERVER_BIN = path.join(REPO, 'bin', 'cairn-mcp.js');
-const SLEEP_BIN = path.join(REPO, 'bin', 'cairn-sleep.js');
-const TRIGGER_BIN = path.join(REPO, 'bin', 'cairn-triage-trigger.js');
 const HEALTH_BIN = path.join(REPO, 'bin', 'cairn-health.js');
 const PROXY_BIN = path.join(REPO, 'bin', 'cairn-proxy.js');
 const DAEMON_BIN = path.join(REPO, 'bin', 'cairn-daemon.js');
@@ -165,11 +163,9 @@ function block(): string {
     '  non-zero when the trap is absent, or `cairn_note` if you are mid-task and only',
     '  have the failing call and the fix.',
     '- Read a finding\'s standing before you rely on it: fresh is safe, aging is worth',
-    '  re-checking, stale is a lead and not a fact.',
-    '- If a note at session start says consolidated candidates are waiting, they were',
-    '  harvested automatically from earlier transcripts and are not yet findings. Look',
-    '  only if one names a trap you can state a check for; promote that one with',
-    '  `cairn_record`. Ignoring them is fine — they decay unused.',
+    '  re-checking, stale is a lead and not a fact, dormant means nobody has needed',
+    '  it since it was last confirmed. A finding you were served and then saw hold',
+    '  or fail: say so with `cairn_observe` — that is what keeps standing honest.',
     END,
   ].join('\n');
 }
@@ -483,20 +479,21 @@ function unwrapServers(file: string): string[] {
   return restored;
 }
 
-/* --- the automatic hooks in ~/.claude/settings.json ---------------------- */
+/* --- session hooks in ~/.claude/settings.json ----------------------------- */
 /*
- * This is what makes sleep run at all. A `npm run cairn:sleep` nobody types is a
- * feature that does not exist, so consolidation is wired to the session
- * lifecycle: SessionEnd harvests the transcript that just closed, SessionStart
- * reports what a prior session left. Both point at bin/cairn-sleep.js, which
- * never throws and always exits 0 — a hook on the session-open/close path must
- * not be able to break a session (cairn-0046).
+ * Cairn installs NO session hooks any more. Earlier versions wired a
+ * SessionEnd/SessionStart pair (bin/cairn-sleep.js, bin/cairn-triage-trigger.js)
+ * that harvested transcripts into drafts/ and promoted or triaged them offline.
+ * Measured on a real pilot it admitted 0 of 24 candidates (every one was
+ * rejected by the check-writer as narration or as recoverable in one turn),
+ * so the whole pipeline was removed: capture is in-session, firsthand, through
+ * cairn_record / cairn_note, and standing is kept honest by cairn_observe on
+ * use. What remains here is the REMOVAL of the hooks an earlier install left
+ * behind — a settings.json still pointing at a deleted bin would print an
+ * ENOENT on every session open.
  *
- * Ownership is by command substring: every group whose inner command names
- * cairn-sleep.js is ours. Upsert removes ours and re-adds one fresh group per
- * event (so a changed --home updates in place, never duplicates); uninstall
- * removes ours and leaves every other hook untouched. We never read or rewrite
- * a hook we did not write.
+ * Ownership is by command substring: every inner hook whose command names one
+ * of OUR_BINS is ours; every other hook the user has is left untouched.
  */
 interface HookEntry {
   type?: string;
@@ -507,9 +504,12 @@ interface HookGroup {
   hooks?: HookEntry[];
   [k: string]: unknown;
 }
-/* Every bin we own a hook for. Ownership is by command substring, so uninstall
- * and re-upsert touch only groups whose inner command names one of these and
- * leave every other hook the user has untouched. */
+/* Bins we manage a hook for. cairn-health.js is the one we install now;
+ * cairn-sleep.js and cairn-triage-trigger.js are deleted and kept here only so
+ * an earlier install's leftover hooks naming them are stripped on upsert.
+ * Ownership is by command substring, so uninstall and re-upsert touch only
+ * groups whose inner command names one of these and leave every other hook the
+ * user has untouched. */
 const OUR_BINS = ['cairn-sleep.js', 'cairn-triage-trigger.js', 'cairn-health.js'];
 const ownedCommand = (h: HookEntry) => typeof h.command === 'string' && OUR_BINS.some((b) => (h.command as string).includes(b));
 const isOurs = (g: HookGroup) => Array.isArray(g.hooks) && g.hooks.some(ownedCommand);
@@ -519,13 +519,12 @@ const isOurs = (g: HookGroup) => Array.isArray(g.hooks) && g.hooks.some(ownedCom
  *  session hook (and `$`/backticks in a path would expand). */
 const shq = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
 
-/** The hooks we install: sleep at both ends, and the triage trigger at start. */
+/** The only hook we install now: a readiness probe at session start. The old
+ *  sleep/surface/triage hooks are gone — capture is in-session — and any leftover
+ *  hook naming a deleted bin is stripped by the same upsert (see OUR_BINS). */
 function desiredHooks(home: string): Array<{ event: string; command: string }> {
   return [
     { event: 'SessionStart', command: `${shq(process.execPath)} ${shq(HEALTH_BIN)} --hook --home ${shq(home)} --claude-json ${shq(expand(opt('claude-json') ?? path.join(HOME, '.claude.json')))}` },
-    { event: 'SessionEnd', command: `node ${shq(SLEEP_BIN)} --hook --home ${shq(home)}` },
-    { event: 'SessionStart', command: `node ${shq(SLEEP_BIN)} --surface --home ${shq(home)}` },
-    { event: 'SessionStart', command: `node ${shq(TRIGGER_BIN)} --home ${shq(home)}` },
   ];
 }
 
@@ -553,13 +552,21 @@ function upsertHooks(file: string, home: string): 'added' | 'updated' | 'unchang
   const before = JSON.stringify(cfg.hooks ?? null);
   const had = Object.values(hooks).some((arr) => Array.isArray(arr) && (arr as HookGroup[]).some(isOurs));
 
-  /* Group our desired hooks by event, strip any of ours already there, and append
-   * one fresh group per desired command — so a changed --home updates in place and
-   * two SessionStart hooks (surface + trigger) coexist without duplicating. */
+  /* Group our desired hooks by event, strip any of ours already there (including
+   * leftover sleep/triage hooks from an earlier install), and append one fresh
+   * group per desired command — so a changed --home updates the probe in place. */
   const byEvent = new Map<string, string[]>();
   for (const { event, command } of desiredHooks(home)) {
     if (!byEvent.has(event)) byEvent.set(event, []);
     byEvent.get(event)!.push(command);
+  }
+  /* Strip our leftovers from every event, not only the events we re-add, so a
+   * deleted-bin SessionEnd hook is removed even though we install no SessionEnd. */
+  for (const event of Object.keys(hooks)) {
+    if (!byEvent.has(event) && Array.isArray(hooks[event])) {
+      const kept = withoutOurs(hooks[event]);
+      if (kept.length) hooks[event] = kept; else delete hooks[event];
+    }
   }
   for (const [event, commands] of byEvent) {
     const kept = withoutOurs(hooks[event]);
@@ -600,17 +607,17 @@ function removeHooks(file: string): boolean {
 
 /* --- the always-on daemon under launchd (macOS) -------------------------- */
 /*
- * The hooks above make triage fire at session start — bursty, and dead the
- * moment you stop opening sessions. The daemon drains the queue on a timer
- * forever; on macOS launchd is what keeps it alive across logout and reboot
- * without a terminal to babysit. This is best-effort and macOS-only: if
- * launchctl is absent or refuses, the session-start trigger still works, so a
- * failure here is reported, never fatal. Linux/other: run bin/cairn-daemon.js
- * under your own service manager (systemd --user, nohup) — noted in the summary.
+ * The daemon keeps the enterprise audit chain verified and the code current
+ * (scripts/daemon.ts) without anyone remembering to; on macOS launchd is what
+ * keeps it alive across logout and reboot without a terminal to babysit. It
+ * runs no checks and promotes nothing — the triage tick it used to spawn was
+ * removed with the sleep pipeline. Best-effort and macOS-only: if launchctl is
+ * absent or refuses, everything else still works, so a failure here is
+ * reported, never fatal. Linux/other: run bin/cairn-daemon.js under your own
+ * service manager (systemd --user, nohup) — noted in the summary.
  *
  * The interval defaults to 300s; --daemon-interval overrides it. Logs land in
- * the corpus's own drafts/ beside the triage log, so "is the daemon working"
- * has one place to look.
+ * the corpus's own drafts/, so "is the daemon working" has one place to look.
  */
 const DAEMON_INTERVAL_DEFAULT = 300;
 
@@ -654,7 +661,7 @@ function daemonPath(): string {
  * PATH via daemonPath().
  */
 function ensureDaemonBundle(): void {
-  const need = [path.join(REPO, 'dist', 'cli', 'daemon.js'), path.join(REPO, 'dist', 'cli', 'triage-trigger.js')];
+  const need = [path.join(REPO, 'dist', 'cli', 'daemon.js')];
   if (need.every((p) => { try { return fs.existsSync(p); } catch { return false; } })) return;
   try {
     execFileSync('npm', ['run', 'cairn:build-cli'], { cwd: REPO, stdio: 'ignore' });
@@ -677,7 +684,7 @@ function plistHome(plist: string): string | null {
 function installDaemon(home: string): void {
   if (process.platform !== 'darwin') {
     console.log('  skipped    always-on daemon — launchd is macOS-only; run bin/cairn-daemon.js under your own');
-    console.log('             service manager (systemd --user, nohup) to drain the queue continuously');
+    console.log('             service manager (systemd --user, nohup) for audit verification and self-update');
     return;
   }
   const plist = plistPath(HOME);
@@ -704,7 +711,7 @@ function installDaemon(home: string): void {
     if (fs.existsSync(plist)) backup(plist); // the header promises every write is backed up first
     fs.writeFileSync(plist, content);
     execFileSync('launchctl', ['load', '-w', plist], { stdio: 'ignore' });
-    console.log(`  loaded     always-on daemon ${LAUNCHD_LABEL} — triage every ${interval}s, survives logout/reboot`);
+    console.log(`  loaded     always-on daemon ${LAUNCHD_LABEL} — audit verify + self-update, ticks every ${interval}s, survives logout/reboot`);
     console.log(`             plist ${plist}`);
     console.log(`             log   ${logPath}`);
   } catch (e) {
@@ -747,7 +754,7 @@ function main() {
     const s = removeServer(claudeJson);
     console.log(`  ${s ? 'removed' : 'absent '}  server "${MCP_NAME}" in ${claudeJson}`);
     const h = removeHooks(settingsJson);
-    console.log(`  ${h ? 'removed' : 'absent '}  sleep hooks in ${settingsJson}`);
+    console.log(`  ${h ? 'removed' : 'absent '}  leftover session hooks in ${settingsJson}`);
     removeDaemon();
     for (const f of instructionFiles) {
       const r = removeBlock(f);
@@ -867,16 +874,18 @@ function main() {
   const s = upsertServer(claudeJson, home);
   console.log(`  ${s.padEnd(9)}  server "${MCP_NAME}" -> node ${SERVER_BIN}`);
   console.log(`             CAIRN_HOME=${home}`);
+  /* Install the SessionStart readiness probe. The same upsert strips any leftover
+   * sleep/triage hooks an earlier version wired (they name deleted bins), so a
+   * settings.json does not error on session open. Capture itself is in-session. */
   const h = upsertHooks(settingsJson, home);
-  console.log(`  ${h.padEnd(9)}  hooks (SessionEnd: harvest · SessionStart: health + surface + triage trigger) in ${settingsJson}`);
+  console.log(`  ${h.padEnd(9)}  SessionStart readiness probe (leftover sleep/triage hooks stripped) in ${settingsJson}`);
 
-  /* Always-on: the session-start trigger is bursty and stops when you do; the
-   * daemon drains the queue on a timer, forever. macOS registers it under
-   * launchd here; --no-daemon opts out. */
+  /* Always-on: the daemon verifies the audit chain and keeps the code current
+   * on a timer, forever. macOS registers it under launchd here; --no-daemon opts out. */
   if (!has('--no-daemon')) {
     installDaemon(home);
   } else {
-    console.log('  --no-daemon left the always-on daemon unregistered — triage fires only at session start');
+    console.log('  --no-daemon left the always-on daemon unregistered — audit verify and self-update run only by hand');
   }
 
   /* Default-on: route the user's other stdio servers through the gateway so PUSH
@@ -918,18 +927,15 @@ function main() {
   console.log('    finding surfaces on a tool result at the moment of the trap — unasked.');
   console.log('    Resonance keeps it silent and near-free on every call that is not a trap.');
   console.log('  · every session\'s instructions tell it when to consult them');
-  console.log('  · sleep runs itself: every session\'s transcript is harvested at its end,');
-  console.log('    and the candidates that clear an automatic gate are consolidated into');
-  console.log('    the corpus as UNVERIFIED findings — marked so, never executed, never');
-  console.log('    signed, decaying until someone observes them — with nobody in the loop.');
-  console.log('    The next session start reports what was promoted. Nobody types a command.');
-  console.log('  · triage runs itself WHEN IT CAN: at session start, if execution is enabled');
-  console.log('    for this corpus and candidates wait, a triage agent is spawned in the');
-  console.log('    background to gate them by a LIVE check on this machine instead. Off by');
-  console.log('    default (it runs checks) — enable per-corpus in ~/.cairn/policy.json.');
-  console.log('  · and it runs even when you do not: on macOS an always-on daemon ticks the');
-  console.log('    same trigger under launchd (survives logout/reboot), so consolidation');
-  console.log('    (or, where enabled, live triage) no longer depends on you opening a session.');
+  console.log('  · a finding an agent records is served at once, born `aging`: firsthand,');
+  console.log('    one agent, this machine. Nothing harvests transcripts or promotes drafts');
+  console.log('    behind your back; a stored check never runs unattended (execution policy).');
+  console.log('  · standing is kept honest on USE: the agent that is served a finding and');
+  console.log('    sees it hold or fail says so with cairn_observe, and with CAIRN_KEY on the');
+  console.log('    gateway that observation is signed attest-only — it can contest a finding');
+  console.log('    but can never make its check executable.');
+  console.log('  · on macOS an always-on daemon under launchd (survives logout/reboot) keeps');
+  console.log('    the audit chain verified and the code current; it runs no checks.');
   console.log('\nStill scoped, on purpose:');
   console.log('  · Stdio and HTTP (token-auth) MCP servers are wrapped; a headerless HTTP server');
   console.log('    (likely OAuth) is left direct until --http-no-auth names it. Re-run install');

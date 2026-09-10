@@ -18,7 +18,7 @@ Keep replies tight. The user wants to *see* their memory and act on it — summa
 The memory lives at the machine's `CAIRN_HOME` (the `--home` it was installed with, e.g. `~/pilot`), never in the code checkout. Before running anything, resolve it in this order:
 
 1. `$CAIRN_HOME` if set.
-2. Otherwise read the installed home from `~/.claude/settings.json` — the `cairn-sleep.js` hook command carries `--home <path>` — or the `~/.claude.json` MCP server entry's `env.CAIRN_HOME`.
+2. Otherwise read the installed home from the `~/.claude.json` MCP server entry's `env.CAIRN_HOME` (the `cairn` server, or any server wrapped through `cairn-proxy.js`).
 3. Otherwise ask the user, defaulting to `~/pilot`.
 
 Run every command below from the Cairn checkout with that home, e.g. `CAIRN_HOME=<home> npm run cairn:status`. If a project corpus (`<repo>/.cairn`) is also present in the working directory, say so — the agent reads both.
@@ -36,7 +36,7 @@ Run every command below from the Cairn checkout with that home, e.g. `CAIRN_HOME
 | `/cairn observe <id> confirmed\|refuted "<note>"` | record what you just saw (see **Managing**) |
 | `/cairn retire <id> "<reason>"` | retire it — never delete (see **Managing**) |
 | `/cairn holes` \| `/cairn drafts` | `cairn:unanswered` and the drafts in `cairn:report` — what's noticed but unwritten |
-| `/cairn queue` | the **sleep queue** and daemon health — what is harvested and waiting for triage, and whether the always-on daemon is draining it (see **The queue**) |
+| `/cairn queue` | the **unfinished notes** and daemon health — what was noticed in-session and not yet made a finding, and whether the always-on daemon is alive (see **The queue**) |
 | `/cairn trust` | the **security pins** — which wrapped servers are approved, and any tool that drifted from its approval (tool-poisoning / rug-pull). `cairn:trust`; `--reapprove <server>` after a legitimate change (see **Trust**) |
 | `/cairn org` | the **enterprise access policy** — who may reach which servers, and mint/revoke tokens. `cairn:org list`; `init-policy`, `mint-token`, `revoke` (see **Enterprise**) |
 | `/cairn audit-log` | the gateway's **tamper-evident access log** — every allow/deny/auth-fail under a policy, hash-chained. `cairn:audit-log view`; `verify`, `export` (see **Enterprise**). NOT `cairn:audit`, which checks the forecast ledger |
@@ -58,19 +58,17 @@ Present four things: **how much it remembers**, **how fresh** (the standing brea
 
 ## Viewing a finding
 
-Always show, in this order: **title**; **WHAT HAPPENS** (`reality`); **INSTEAD** (`workaround`); **STANDING** (fresh/aging/stale/contested, when last confirmed, and whether a machine can even re-run its `check` — "attested once, never re-run" and "verified by its check today" must never read the same); **COST/tier** (full-push vs hint); and **SIGNATURE** if present (when it resonates). Offer: verify it, observe it, or retire it.
+Always show, in this order: **title**; **WHAT HAPPENS** (`reality`); **INSTEAD** (`workaround`); **STANDING** (fresh/aging/stale/dormant/contested, when last confirmed, and whether a machine can even re-run its `check` — "attested once, never re-run" and "verified by its check today" must never read the same; `dormant` means the clock ran down and nobody retrieved it since — untested because unneeded, not less true; `stale` means people were served it and nobody confirmed it); **COST/tier** (full-push vs hint); and **SIGNATURE** if present (when it resonates). If the user asks *why* it happens, show `mechanism` labelled **"the author's inference, unverified"** — every check the corpus has tests the symptom, never the story. Offer: verify it, observe it, or retire it.
 
 ## The queue (`/cairn queue`)
 
-The sleep queue is the harvested-but-not-yet-settled candidates: raw leads scraped from past sessions. They live in `CAIRN_HOME/drafts/` (never `cairn/` — a draft is unreachable by every reader until it is admitted). The queue drains **on its own**: where execution is off (the default), the consolidation pass (`cairn:sleep --consolidate`, fired at session end, at session start, and on every daemon tick) promotes each candidate that clears its automatic no-shell gate into `cairn/` as an **unverified** finding (`consolidated` stamp, `by: cairn-sleep`, manual check, secondhand, `aging` at birth) and settles the rest with a reason; where execution is on, a triage agent gates them by a live check instead. No human step is required. Show:
+There is no harvest queue any more. The offline pipeline (transcript harvest → drafts → consolidation/triage) admitted 0 of 24 candidates on the pilot and was removed; capture is in-session, firsthand, through `cairn_record` (served at once, born `aging`) and `cairn_note` (a stub kept in `CAIRN_HOME/drafts/`, offered back once in-territory, never served). Standing is kept honest on **use**: the agent that is served a finding says whether it held with `cairn_observe`; with `CAIRN_KEY` on the gateway that observation is signed *attest-only* — it can contest the finding, it can never make its check executable. Show:
 
-- **Waiting** — count and a one-line digest of `CAIRN_HOME/drafts/*.json` (skip `note-*`, which are the human note tier, not triage candidates). Newest first; name the tool each is about. A non-empty queue on a machine with execution off is transient (the next pass settles it); a persistent one means the pass is not running (check `drafts/.consolidate.log` and the daemon).
-- **Promoted lately** — `CAIRN_HOME/drafts/.yield.jsonl` rows with outcome `admitted` whose detail says `consolidated as cairn-NNNN`; these are the served-but-unverified findings. Offer to **observe** one (`/cairn observe`) if the user has just seen the trap, or **retire** one that is noise — that is the human veto, and it is optional.
-- **Settled without promotion** — `drafts/rejected/` (duplicates, scanner hits, below the bar) and `drafts/leads/` (real signal a machine could not write honestly: no stated expectation, or a structural contradiction with no correction in prose). Each carries `_consolidate.reasons`. A person can hand-record a lead with `cairn_record`.
-- **Draining?** — is the always-on daemon alive and ticking. On macOS: `launchctl list | grep com.cairn.daemon` (present = loaded), and the freshness of `CAIRN_HOME/daemon.log` (its mtime is the last tick's breadcrumb). If it is not loaded, say so and point at `cairn:install` to register it, or `cairn:daemon` to run it in the foreground. Without the daemon the pass still runs at every session end and start.
-- **Stuck?** — a queue that only grows means neither pass is settling anything: `CAIRN_AUTO_CONSOLIDATE=0` is set, or the trigger cannot spawn (see `.consolidate.log`). Nothing clearing the bar is not stuck — it is the gate working.
+- **Unfinished notes** — `cairn:report`'s notes section: open notes (offered back on the next result from their tool), abandoned ones (older than 14 days, never offered again, kept as honest data). Offer to finish one with `cairn_record` if the user still knows the claim, or discard it.
+- **Contested / stale / dormant** — from the standing breakdown in the overview: contested findings are the most informative to re-check (`/cairn check <id>`); stale ones were served and never re-confirmed; dormant ones nobody has needed — leave them.
+- **Daemon alive?** — it now only verifies the audit chain and keeps the code current (no checks run). On macOS: `launchctl list | grep com.cairn.daemon`, and the mtime of `CAIRN_HOME/drafts/daemon.log`. Not loaded is fine on a personal box; say so and point at `cairn:install` if the user wants it.
 
-Lead with whether the queue is being worked, then how deep it is. Never dump the raw candidate JSON.
+Never dump raw note JSON.
 
 ## Updating (`/cairn update`)
 

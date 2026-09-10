@@ -14,9 +14,10 @@
  * checks -- prove the check discriminates before writing.
  */
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { FindingSchema, type Finding } from './schema';
-import { SubmissionSchema, normalise, likelyDuplicates, slugify, readsAsProse } from './submission';
+import { SubmissionSchema, normalise, likelyDuplicates, slugify, readsAsProse, DERIVABLE } from './submission';
 import { MACHINE_OBSERVER } from './attest';
 import { scanExecutable, scanInjection, scanSensitive, draftSurface, redact } from './safety';
 import type { ZodIssue } from 'zod';
@@ -142,18 +143,8 @@ export async function recordSubmission(
     by?: string;
     origin?: 'human' | 'agent';
     force?: boolean;
-    /**
-     * Set only by the consolidation pass (consolidate.ts): the transcript and
-     * candidate this finding was promoted from, with no person deciding. It is
-     * accepted only alongside origin 'agent', so a consolidated finding can never
-     * be recorded as executable or journalled for the machine key to sign.
-     */
-    consolidated?: { transcript: string; candidate: string; at: string };
   } = {},
 ): Promise<RecordOutcome> {
-  if (opts.consolidated && opts.origin !== 'agent') {
-    return { ok: false, message: 'A consolidated finding must be recorded as an agent submission (origin "agent"); nothing was written.' };
-  }
   // For an AGENT submission (a model over MCP, incl. a governed tenant) the
   // author is set by the gateway, never by the caller: a tenant that supplies
   // `by: "doctor"` would otherwise seed a machine-verified observation and forge
@@ -216,6 +207,40 @@ export async function recordSubmission(
     };
   }
 
+  /*
+   * THE GENERIC-REFLEX CLASS, refused softly.
+   *
+   * A workaround that is a reflex a capable agent already has — "just retry",
+   * "paginate", "increase the limit" — pays nothing when banked: measured in
+   * the records-opus trial, pushing the full account at a trap the model
+   * recovers from on its own cost ~2x MORE than leaving it alone, and
+   * cairn-0034 measured the thin, mechanism-free entry as retrieved and
+   * worthless. This cull used to live only in the offline consolidation gate,
+   * which is gone; a finding recorded in-session is served at birth, so the
+   * cull belongs on the one write path.
+   *
+   * Soft, and the override carries a reason (the same shape as distinctFrom):
+   * a real trap can have a workaround that CONTAINS "retry" — retry with a
+   * different flag, after a specific fix — and a bare flag would teach us
+   * nothing about how often this gate is wrong. `reflexBecause` says why the
+   * reflex alone does not recover it, and is stored on the finding so every
+   * override is a labelled instance.
+   */
+  const reflexSurface = `${data.workaround ?? ''}\n${data.mechanism ?? ''}`.toLowerCase();
+  const reflex = opts.force || data.reflexBecause ? null : DERIVABLE.exec(reflexSurface);
+  if (reflex) {
+    return {
+      ok: false,
+      message:
+        `Refused — the workaround reads as a generic reflex ("${reflex[0]}") a capable agent already has, and banking one pays nothing: ` +
+        'the next agent would have tried it unaided.\n' +
+        'If the trap is real and the reflex ALONE does not recover it, say why and record it again — this is accepted:\n' +
+        '  "reflexBecause": "<why a plain ' + reflex[0] + ' does not get past this>"' +
+        (opts.origin === 'human' ? '\nOr --force, which records it without saying why.' : '') +
+        '\nNothing was written.',
+    };
+  }
+
   const local = freshLocal();
   let upstream: Finding[] = [];
   try {
@@ -268,9 +293,27 @@ export async function recordSubmission(
     };
   }
 
+  /*
+   * BORN AGING, NOT STALE. The founding observation's environment is what
+   * scopeSupport reads breadth from (decay.ts): an environment-specific claim
+   * with NO environment scores 0.6, so an agent submission that omitted the
+   * field — every one over MCP; the tool schemas do not ask for it — was born
+   * at 1.0 x 0.5 x 0.6 = 0.30, exactly on the aging/stale line, and read
+   * `stale` on the float. The write path knows the machine it is running on,
+   * and "firsthand, one agent, this machine" is the whole provenance claim, so
+   * it is stamped here when the submitter did not say. That is one unsigned
+   * environment's worth (capped at half breadth): 0.45, `aging`. Not `fresh`;
+   * nothing recorded through this door can be born fresh.
+   */
+  const environment = data.environment ?? {
+    os: process.platform,
+    arch: process.arch,
+    runtime: `node ${process.version}`,
+    note: `${os.type()} ${os.release()}; the machine that recorded it — the submitter reported no environment`,
+  };
   const max = local.reduce((m, f) => Math.max(m, parseInt(f.id.slice(6), 10) || 0), 0);
   const num = String(max + 1).padStart(4, '0');
-  const checked = FindingSchema.safeParse(normalise({ ...data, check }, new Date(), `cairn-${num}`).finding);
+  const checked = FindingSchema.safeParse(normalise({ ...data, check, environment }, new Date(), `cairn-${num}`).finding);
   if (!checked.success) {
     return { ok: false, message: `The finding did not validate after normalisation:\n${checked.error.issues.map((i) => `  ${i.path.join('.')}: ${i.message}`).join('\n')}` };
   }
@@ -282,9 +325,6 @@ export async function recordSubmission(
   if (opts.origin === 'agent') {
     (finding as Record<string, unknown>).visibility = 'private';
     (finding as Record<string, unknown>).agentRecorded = true;
-    // The consolidation stamp rides on the agent path only (guarded above), so it
-    // inherits every property of that path: private, non-executable, unsigned.
-    if (opts.consolidated) (finding as Record<string, unknown>).consolidated = opts.consolidated;
   }
 
   let gateNote = '';

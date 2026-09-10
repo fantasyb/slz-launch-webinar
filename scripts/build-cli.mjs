@@ -43,13 +43,6 @@ const ENTRIES = [
   // Push without a client feature: a result is the one text a model always reads.
   ['scripts/mcp-proxy.ts', 'dist/cli/mcp-proxy.js'],
   ['scripts/container-supervisor.ts', 'dist/cli/container-supervisor.js'],
-  // The offline consolidation pass runs as a SessionStart/SessionEnd hook, so it
-  // is on the session-open and session-close path — the tsx boot it replaces was
-  // paid on every single session.
-  ['scripts/sleep.ts', 'dist/cli/sleep.js'],
-  // Also on the session-open path: it decides whether to spawn a triage agent
-  // and detaches, so the boot cost is the whole cost — pay node's, not tsx's.
-  ['scripts/triage-trigger.ts', 'dist/cli/triage-trigger.js'],
   // The always-on daemon launchd runs 24/7. It runs unattended for days, so it
   // must not depend on tsx being resolvable or on a warm transpile cache.
   ['scripts/daemon.ts', 'dist/cli/daemon.js'],

@@ -1,5 +1,39 @@
 # Cairn — session handoff & punch-list (2026-09-07)
 
+## Born-trusted capture, lazy verify-on-use (2026-09-10)
+
+The offline promotion pipeline is GONE: `sleep.ts` (harvest), `consolidate.ts`,
+`triage.ts`, `triage-trigger.ts`, `triageBrief.ts`, `triageScore.ts`, their
+launchers, session hooks and tests. Measured on the pilot it admitted 0 of 24
+candidates (`/tmp/cairn-live-pilot/drafts/.yield.jsonl`); every candidate was
+narration or one-turn-recoverable, and it was the only place a stored command
+ran with nobody watching. Everything below this heading that describes
+"autonomous consolidation", the sleep queue or a triage agent is historical.
+
+What replaced it, and where the invariants are pinned:
+- Capture is in-session via `cairn_record` / `cairn_note`, unchanged, plus a
+  soft generic-reflex refusal on the write path (`reflexBecause` overrides it,
+  stored on the finding). An agent finding is born `aging` (0.45): the write
+  path stamps the recording machine as the founding environment when the
+  submitter omitted one (`test/record.test.ts`).
+- THE CULL WIRE: an agent's `cairn_observe` is signed *attest-only* under
+  `CAIRN_KEY` (`ObservationSchema.attestOnly`, bound into the signed payload).
+  It counts in `disagreement()` — contests, zeroes confidence — and
+  `confirm.ts:isOperatorPromoted` ignores it, so red-team #2 stays shut;
+  `isOperatorPromoted` now also requires a VERIFYING signature, not a
+  signature-shaped object (`test/cull-wire.test.ts`).
+- Standing stays clock-based and pure. `use.ts` reads the ledger only to split
+  `stale` into `dormant` / `stale (served N times since)` at render time and to
+  weight `decayUrgency` by recent retrievals (`staleQueue`). `test/use.test.ts`.
+- `mechanism` is labelled "author's inference, unverified" wherever rendered
+  and never in the served block (`test/mechanism-label.test.ts`). `misled.ts`
+  writes the ledger's first `misled` rows from fail-then-recover arcs
+  (`test/misled.test.ts`); reconciled by `cairn:report` and the gateway's arc
+  answer path.
+- `cairn:daemon` keeps audit-verify + self-update only; the execution policy
+  is untouched. No stored command runs unattended anywhere.
+- An install strips the SessionEnd/SessionStart hooks an earlier version wired.
+
 ## Container execution follow-up (2026-09-08)
 
 Added an opt-in offline Linux Docker profile through

@@ -12,6 +12,7 @@ import {
 } from './decay';
 import { retrieve } from './retrieval';
 import { homePath } from './home';
+import { cachedLedger, useWeightedUrgency } from './use';
 
 /**
  * The corpus is a directory of JSON files in git. That is the whole store.
@@ -128,10 +129,20 @@ function sortByKey<T>(items: T[], key: (x: T) => number): T[] {
     .map((r) => r.x);
 }
 
-/** Findings whose re-verification would be most informative, most urgent first. */
+/**
+ * Findings whose re-verification would be most informative, most urgent first.
+ *
+ * Weighted by USE (use.ts): the pure expected-information-gain in
+ * decayUrgency, scaled by how often each finding was actually retrieved
+ * lately, so re-check effort goes where the corpus is being leaned on and a
+ * dormant finding waits its turn without being forgotten (its weight floors at
+ * 0.5, never 0). One ledger read for the whole sort.
+ */
 export function staleQueue(limit = 20): Finding[] {
   const active = loadCorpus().filter((f) => f.status === 'active');
-  return sortByKey(active, (f) => decayUrgency(f)).slice(0, limit);
+  const ledger = cachedLedger();
+  const now = new Date();
+  return sortByKey(active, (f) => useWeightedUrgency(f, ledger, now)).slice(0, limit);
 }
 
 export function byConfidence(findings = loadCorpus()): Finding[] {

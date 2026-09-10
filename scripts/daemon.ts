@@ -1,21 +1,25 @@
 /**
- * cairn:daemon — drain the triage queue on a fixed interval, forever.
- *
- * Session-start triage is bursty and fragile: it only fires when you open a
- * session, only if the hook's environment is right, and it stops the moment you
- * stop working. GBrain's lesson is the opposite — "easier to ship a daemon that
- * runs 24/7 to ingest, enrich and consolidate than to keep an agent in chat
- * working hard." This is that daemon: it runs the same triage trigger every
- * INTERVAL seconds in the background, so the queue drains continuously.
+ * cairn:daemon — the always-on housekeeping loop: verify the enterprise audit
+ * chain and keep the code current, on a fixed interval, forever.
  *
  *   CAIRN_HOME=~/pilot npm run cairn:daemon -- --home ~/pilot --interval 300
  *
- * The trigger it fires is already safe and idempotent: it no-ops unless
- * execution is enabled and candidates clear the cheap gate, it takes a lock so
- * two runs never overlap, and it spawns the agent detached. So ticking it on a
- * timer just means "check often, act when there is honest work." On macOS the
- * installer registers this under launchd (survives logout/reboot); elsewhere,
- * run it under your own service manager or nohup.
+ * WHAT IT NO LONGER DOES. It used to tick a triage trigger that harvested
+ * transcripts into drafts/, spawned a headless check-writing agent, and ran
+ * candidate checks through the one-machine gate. That pipeline was measured on
+ * a real pilot at 0 admitted of 24 (every candidate was narration or
+ * recoverable in one turn), and it was the only place a stored command was
+ * executed with nobody watching. It is gone. This daemon runs NO shell from
+ * any finding, draft or corpus: the execution policy (policy.ts) is untouched
+ * and nothing here consults it, because nothing here needs to.
+ *
+ * The per-tick hook that remains, CAIRN_DAEMON_TICK_CMD, is an OPERATOR-set
+ * environment variable — a command the person who runs the daemon typed, not
+ * text out of a corpus — and exists so a test can prove the loop ticks and so
+ * an operator can hang their own periodic job on it. Unset, a tick does
+ * nothing at all. On macOS the installer registers this under launchd
+ * (survives logout/reboot); elsewhere, run it under your own service manager
+ * or nohup.
  */
 import { spawn, execFileSync } from 'child_process';
 import fs from 'fs';
@@ -250,17 +254,6 @@ function maybeVerifyAudit(): void {
   } catch { /* the log line is the primary signal; the marker is a convenience */ }
 }
 
-/** Find <repo>/bin/cairn-triage-trigger.js from here, whether run as source (scripts/) or bundle (dist/cli/). */
-function findTrigger(): string {
-  let d = __dirname;
-  for (let i = 0; i < 6; i++) {
-    const p = path.join(d, 'bin', 'cairn-triage-trigger.js');
-    try { if (fs.existsSync(p)) return p; } catch { /* ignore */ }
-    d = path.dirname(d);
-  }
-  return path.join(__dirname, '..', 'bin', 'cairn-triage-trigger.js');
-}
-
 let stopping = false;
 let current: ReturnType<typeof spawn> | null = null;
 /* On a stop signal: flag it AND kill any in-flight tick, so SIGTERM exits
@@ -271,26 +264,18 @@ process.on('SIGINT', stop);
 process.on('SIGTERM', stop);
 
 /**
- * One tick: the trigger by default; CAIRN_DAEMON_TICK_CMD overrides it (tests).
- * Never throws. Two things learned from review: spawn `process.execPath`, not the
- * bare name `node` — under launchd PATH is just /usr/bin:/bin:/usr/sbin:/sbin, so
- * a Homebrew/nvm/pkg `node` is ENOENT and the whole daemon becomes a silent
- * no-op; and inherit stderr so the trigger's breadcrumb and any spawn error land
- * in daemon.log (the one place the installer tells people to look), instead of
- * an empty log next to a healthy-looking daemon.
+ * One tick: nothing, unless the OPERATOR set CAIRN_DAEMON_TICK_CMD (see the
+ * header — an env var the person running the daemon typed, never text from a
+ * corpus). Never throws. Stderr is inherited so any spawn error lands in
+ * daemon.log (the one place the installer tells people to look), instead of an
+ * empty log next to a healthy-looking daemon.
  */
 function tick(): Promise<void> {
   return new Promise((resolve) => {
     try {
       const override = process.env.CAIRN_DAEMON_TICK_CMD;
-      const child = override
-        ? spawn('/bin/sh', ['-c', override], { stdio: ['ignore', 'inherit', 'inherit'], env: process.env, timeout: TICK_TIMEOUT_MS, killSignal: 'SIGKILL' })
-        : spawn(process.execPath, [findTrigger(), ...(home ? ['--home', home] : [])], {
-            stdio: ['ignore', 'inherit', 'inherit'],
-            env: { ...process.env, ...(home ? { CAIRN_HOME: home } : {}) },
-            timeout: TICK_TIMEOUT_MS,
-            killSignal: 'SIGKILL',
-          });
+      if (!override) { resolve(); return; }
+      const child = spawn('/bin/sh', ['-c', override], { stdio: ['ignore', 'inherit', 'inherit'], env: process.env, timeout: TICK_TIMEOUT_MS, killSignal: 'SIGKILL' });
       current = child;
       child.on('error', (e) => { process.stderr.write(`cairn:daemon tick failed to spawn: ${(e as Error).message}\n`); current = null; resolve(); });
       child.on('close', () => { current = null; resolve(); });
@@ -371,7 +356,7 @@ function maybeSelfUpdate(): void {
 
 async function main(): Promise<void> {
   process.stderr.write(
-    `cairn:daemon up — triage every ${intervalMs / 1000}s, home ${home ?? '(default)'}` +
+    `cairn:daemon up — tick every ${intervalMs / 1000}s (no checks run), home ${home ?? '(default)'}` +
       `, self-update ${selfUpdateEnabled ? `every ${selfUpdateMs / 1000}s` : 'off'}` +
       `, audit-verify ${auditVerifyMs ? `every ${auditVerifyMs / 1000}s` : 'off'}\n`,
   );

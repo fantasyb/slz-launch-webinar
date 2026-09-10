@@ -120,41 +120,56 @@ test('does not wrap url/http servers (they cannot be stdio-wrapped)', () => {
   assert.match(cfg.mcpServers['sf-all'].args.join(' '), /cairn-proxy/, 'the stdio server is still wrapped');
 });
 
-test('install registers both sleep hooks and preserves existing ones', () => {
+/*
+ * The sleep/triage session hooks are GONE (the pipeline admitted 0 of 24 on the
+ * pilot and was deleted). Install now wires ONE session hook — a SessionStart
+ * readiness probe — adds no SessionEnd hook, leaves the user's own hooks alone,
+ * and strips the hooks an EARLIER install wired (a settings.json still naming
+ * bin/cairn-sleep.js would ENOENT on every session).
+ */
+test('install wires only the readiness probe and preserves the existing hooks', () => {
   const f = fixture();
-  run(f.home, ['--home', f.corpus]);
-
+  const out = run(f.home, ['--home', f.corpus]);
   const s = JSON.parse(fs.readFileSync(f.settings, 'utf8'));
-  const end = s.hooks.SessionEnd.map((g: { hooks: { command: string }[] }) => g.hooks[0].command);
+  assert.ok(!('SessionEnd' in s.hooks), 'no SessionEnd hook is installed');
   const start = s.hooks.SessionStart.map((g: { hooks: { command: string }[] }) => g.hooks[0].command);
-  assert.ok(end.some((c: string) => c.includes('cairn-sleep.js') && c.includes('--hook')), 'SessionEnd runs the consolidation pass');
-  assert.ok(start.some((c: string) => c.includes('cairn-sleep.js') && c.includes('--surface')), 'SessionStart surfaces candidates');
-  assert.ok(start.some((c: string) => c.includes('cairn-triage-trigger.js')), 'SessionStart also fires the triage trigger');
   assert.ok(start.some((c: string) => c.includes('cairn-health.js') && c.includes('--hook')), 'SessionStart checks readiness automatically');
-  assert.ok(end.every((c: string) => c.includes(f.corpus)), 'the hook carries the corpus home');
   assert.ok(start.some((c: string) => c === 'echo mine'), 'the pre-existing hook survives');
+  assert.ok(!JSON.stringify(s).includes('cairn-sleep.js') && !JSON.stringify(s).includes('cairn-triage-trigger.js'), 'nothing names a deleted bin');
+  assert.match(out, /readiness probe/, 'and the install says so');
   assert.equal(s.theme, 'dark', 'unrelated settings survive');
 });
 
-test('install is idempotent on hooks: twice does not duplicate', () => {
+test('install strips the sleep/triage hooks an earlier version left behind, and only those', () => {
   const f = fixture();
-  run(f.home, ['--home', f.corpus]);
-  run(f.home, ['--home', f.corpus]);
+  const s0 = JSON.parse(fs.readFileSync(f.settings, 'utf8'));
+  s0.hooks.SessionEnd = [{ hooks: [{ type: 'command', command: `node '/old/bin/cairn-sleep.js' --hook --home '${f.corpus}'` }] }];
+  s0.hooks.SessionStart.push(
+    { hooks: [{ type: 'command', command: `node '/old/bin/cairn-sleep.js' --surface --home '${f.corpus}'` }] },
+    { hooks: [{ type: 'command', command: `node '/old/bin/cairn-triage-trigger.js' --home '${f.corpus}'` }, { type: 'command', command: 'echo shared-group' }] },
+  );
+  fs.writeFileSync(f.settings, JSON.stringify(s0, null, 2));
+  const out = run(f.home, ['--home', f.corpus]);
+  assert.match(out, /leftover sleep\/triage hooks stripped/, 'the install reports the cleanup');
   const s = JSON.parse(fs.readFileSync(f.settings, 'utf8'));
-  const ours = (cmds: { hooks: { command: string }[] }[]) =>
-    cmds.filter((g) => /cairn-sleep\.js|cairn-triage-trigger\.js|cairn-health\.js/.test(g.hooks[0].command)).length;
-  assert.equal(ours(s.hooks.SessionEnd), 1, 'exactly one SessionEnd group is ours');
-  assert.equal(ours(s.hooks.SessionStart), 3, 'three SessionStart groups are ours: health + surface + trigger');
-  assert.equal(s.hooks.SessionStart.length, 4, 'and the pre-existing one is still there');
-  assert.match(run(f.home, ['--home', f.corpus]), /unchanged/, 'a third run reports unchanged');
+  assert.ok(!('SessionEnd' in s.hooks), 'the SessionEnd group that was only ours is gone, key and all');
+  const start = s.hooks.SessionStart.flatMap((g: { hooks: { command: string }[] }) => g.hooks.map((h) => h.command));
+  /* Our sleep/trigger inner hooks are stripped; the user's survive (even one sharing a
+   * group with ours); the readiness probe is added. */
+  assert.ok(start.includes('echo mine'), 'the pre-existing hook survives');
+  assert.ok(start.includes('echo shared-group'), 'the user hook sharing a group with ours survives');
+  assert.ok(start.some((c: string) => c.includes('cairn-health.js')), 'the readiness probe is installed');
+  assert.ok(!start.some((c: string) => c.includes('cairn-sleep.js') || c.includes('cairn-triage-trigger.js')), 'no sleep/triage leftover remains');
+  assert.equal(start.length, 3, 'exactly: echo mine, echo shared-group, readiness probe');
+  /* Idempotent: a second run has the probe already and nothing left to strip. */
+  assert.match(run(f.home, ['--home', f.corpus]), /unchanged/, 'a second run reports unchanged');
 });
 
-test('uninstall removes exactly the sleep hooks it added', () => {
+test('uninstall leaves the user\'s hooks untouched', () => {
   const f = fixture();
   run(f.home, ['--home', f.corpus]);
   run(f.home, ['--uninstall']);
   const s = JSON.parse(fs.readFileSync(f.settings, 'utf8'));
-  assert.ok(!('SessionEnd' in s.hooks), 'the empty SessionEnd key is cleaned up');
   assert.equal(s.hooks.SessionStart.length, 1, 'only the pre-existing hook remains');
   assert.equal(s.hooks.SessionStart[0].hooks[0].command, 'echo mine', 'and it is untouched');
   assert.equal(s.theme, 'dark', 'unrelated settings survive uninstall');
@@ -176,7 +191,7 @@ test('install generates the machine a signing identity, once', () => {
   assert.equal(fs.readdirSync(path.join(f.corpus, 'keys')).filter((n) => n.endsWith('.json')).length, 1, 'still one key');
 });
 
-test('--enable-execution turns on triage for this corpus only, off by default', () => {
+test('--enable-execution turns on check execution for this corpus only, off by default', () => {
   const f = fixture();
   const policy = path.join(f.home, '.cairn', 'policy.json');
 

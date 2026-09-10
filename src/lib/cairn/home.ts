@@ -104,8 +104,8 @@ export function cairnHome(): string {
  * several modules resolve `homePath()` at import scope, can happen before a
  * script has parsed its own `--home`. Setting only `process.env.CAIRN_HOME`
  * afterwards then does nothing (the memo already holds the wrong home), so a
- * `cairn:triage --home X` consulted the DEFAULT corpus's execution policy and
- * sealed into the code checkout — a fail-open across corpora. A `--home` parser
+ * `cairn:daemon --home X` consulted the DEFAULT corpus's org policy and a
+ * `--home` seal wrote into the code checkout — a fail-open across corpora. A `--home` parser
  * must call this: it resets the memo AND the env so policy, seal, and every
  * homePath() agree on the corpus actually being worked on.
  */

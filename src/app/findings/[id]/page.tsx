@@ -204,8 +204,12 @@ export default async function FindingPage({ params }: { params: Promise<{ id: st
       </Section>
 
       {f.mechanism && (
-        <Section title="Why">
+        <Section title="Why — the author's inference, unverified">
           <p className="break-words text-[14px] leading-relaxed text-ink-soft">{f.mechanism}</p>
+          <p className="mt-2 text-[12px] leading-relaxed text-ink-faint">
+            Mechanism (author&apos;s inference, unverified): the check above tests the symptom, not this explanation. The fix
+            was demonstrated; the story behind it was not.
+          </p>
         </Section>
       )}
 

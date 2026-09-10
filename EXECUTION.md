@@ -63,6 +63,22 @@ never run. Pointing an agent at a remote corpus that supplies commands is a
 remote code execution primitive, which this project recorded as a finding
 (cairn-0014) before building around it.
 
+**An agent-recorded finding's check runs only after an operator promotes it,
+and a signature is not promotion by itself.** `isOperatorPromoted`
+(`src/lib/cairn/confirm.ts`) requires an observation whose signature
+*verifies* against a published key and is not marked `attestOnly`. The
+gateway signs a model's `cairn_observe` under the operator's key with that
+marker (`src/lib/cairn/attest.ts`), so the agent that re-uses a finding can
+contest it — the marker is inside the signed bytes, so it cannot be stripped
+to upgrade the signature — but nothing a model does over MCP can make a
+check executable. Promotion is an operator's own signed observation from the
+CLI (`cairn:observe`, `cairn:doctor`).
+
+**Nothing runs unattended from a stored command.** The offline pipeline that
+used to harvest transcripts and run candidate checks through the gate from a
+daemon tick was removed; `cairn:daemon` now verifies the audit chain and
+self-updates, and consults no finding.
+
 ## `record` is the exception, and why
 
 `cairn:record` runs the check contained in the submission it is recording —

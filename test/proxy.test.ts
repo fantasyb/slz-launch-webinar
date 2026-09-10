@@ -1604,7 +1604,7 @@ test('a served finding says what its standing rests on and asks the agent to re-
     assert.match(q.description!, /\(cairn-0001, (fresh|aging|stale)\)/, 'the standing word rides on the description');
     const r = await s.call('mcp__data360__query_records', { object: 'A' });
     const note = texts(r).find((x) => x.includes('cairn-0001'))!;
-    assert.match(note, /STANDING: (fresh|aging|stale) — attested by joey\.ahern 20 days ago, not by a check; check is manual: no machine can re-run it/);
+    assert.match(note, /STANDING: (fresh|aging|stale \(served \d+ times? since, never re-confirmed\)|dormant \([^)]*\)) — attested by joey\.ahern 20 days ago, not by a check; check is manual: no machine can re-run it/);
     assert.match(note, /Not re-confirmed in 20 days\. If this call showed the trap still holds — or that it no longer does — say so: cairn_observe/);
 
     const bare = await s.call('cairn_observe', { finding: 'cairn-0001', verdict: 'refuted' });

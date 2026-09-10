@@ -107,6 +107,11 @@
           },
           "maxItems": 3
         },
+        "reflexBecause": {
+          "type": "string",
+          "minLength": 20,
+          "maxLength": 500
+        },
         "tags": {
           "type": "array",
           "items": {
@@ -307,6 +312,9 @@
                 "type": "integer",
                 "minimum": 2,
                 "maximum": 9
+              },
+              "attestOnly": {
+                "type": "boolean"
               }
             },
             "required": [
@@ -410,31 +418,6 @@
         },
         "agentRecorded": {
           "type": "boolean"
-        },
-        "consolidated": {
-          "type": "object",
-          "properties": {
-            "transcript": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 300
-            },
-            "candidate": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 300
-            },
-            "at": {
-              "type": "string",
-              "format": "date-time"
-            }
-          },
-          "required": [
-            "transcript",
-            "candidate",
-            "at"
-          ],
-          "additionalProperties": false
         },
         "status": {
           "type": "string",
