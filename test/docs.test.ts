@@ -181,7 +181,11 @@ test('each launcher launches its own target, and that target exists', () => {
     );
   }
   const launchers = fs.readdirSync(path.join(process.cwd(), 'bin')).filter((f) => f.startsWith('cairn-'));
-  assert.deepEqual(launchers.sort(), Object.keys(expected).sort(), 'a new launcher was added without a target here');
+  // Health is deliberately standalone JavaScript so a broken/missing build can
+  // be diagnosed without invoking the bundle-or-transpiler fallback itself.
+  const health = fs.readFileSync(path.join(process.cwd(), 'bin', 'cairn-health.js'), 'utf8');
+  assert.match(health, /require\.main === module/);
+  assert.deepEqual(launchers.sort(), [...Object.keys(expected), 'cairn-health.js'].sort(), 'a new launcher was added without a target here');
 });
 
 /**

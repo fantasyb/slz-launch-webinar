@@ -138,6 +138,7 @@ const REPO = path.resolve(__dirname, '..');
 const SERVER_BIN = path.join(REPO, 'bin', 'cairn-mcp.js');
 const SLEEP_BIN = path.join(REPO, 'bin', 'cairn-sleep.js');
 const TRIGGER_BIN = path.join(REPO, 'bin', 'cairn-triage-trigger.js');
+const HEALTH_BIN = path.join(REPO, 'bin', 'cairn-health.js');
 const PROXY_BIN = path.join(REPO, 'bin', 'cairn-proxy.js');
 const DAEMON_BIN = path.join(REPO, 'bin', 'cairn-daemon.js');
 
@@ -509,7 +510,7 @@ interface HookGroup {
 /* Every bin we own a hook for. Ownership is by command substring, so uninstall
  * and re-upsert touch only groups whose inner command names one of these and
  * leave every other hook the user has untouched. */
-const OUR_BINS = ['cairn-sleep.js', 'cairn-triage-trigger.js'];
+const OUR_BINS = ['cairn-sleep.js', 'cairn-triage-trigger.js', 'cairn-health.js'];
 const ownedCommand = (h: HookEntry) => typeof h.command === 'string' && OUR_BINS.some((b) => (h.command as string).includes(b));
 const isOurs = (g: HookGroup) => Array.isArray(g.hooks) && g.hooks.some(ownedCommand);
 
@@ -521,6 +522,7 @@ const shq = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
 /** The hooks we install: sleep at both ends, and the triage trigger at start. */
 function desiredHooks(home: string): Array<{ event: string; command: string }> {
   return [
+    { event: 'SessionStart', command: `${shq(process.execPath)} ${shq(HEALTH_BIN)} --hook --home ${shq(home)} --claude-json ${shq(expand(opt('claude-json') ?? path.join(HOME, '.claude.json')))}` },
     { event: 'SessionEnd', command: `node ${shq(SLEEP_BIN)} --hook --home ${shq(home)}` },
     { event: 'SessionStart', command: `node ${shq(SLEEP_BIN)} --surface --home ${shq(home)}` },
     { event: 'SessionStart', command: `node ${shq(TRIGGER_BIN)} --home ${shq(home)}` },
@@ -866,7 +868,7 @@ function main() {
   console.log(`  ${s.padEnd(9)}  server "${MCP_NAME}" -> node ${SERVER_BIN}`);
   console.log(`             CAIRN_HOME=${home}`);
   const h = upsertHooks(settingsJson, home);
-  console.log(`  ${h.padEnd(9)}  hooks (SessionEnd: harvest · SessionStart: surface + triage trigger) in ${settingsJson}`);
+  console.log(`  ${h.padEnd(9)}  hooks (SessionEnd: harvest · SessionStart: health + surface + triage trigger) in ${settingsJson}`);
 
   /* Always-on: the session-start trigger is bursty and stops when you do; the
    * daemon drains the queue on a timer, forever. macOS registers it under

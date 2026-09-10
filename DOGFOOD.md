@@ -22,6 +22,20 @@ every session, gave your machine its own signing identity, put your Salesforce
 MCP server (`sf-all`) behind the gateway, and (on macOS) started a small
 background daemon. No keys to make, no files to edit.
 
+Each new session now runs a bounded, read-only readiness check automatically.
+It checks the Cairn registration and corpus, then initializes Cairn's own built
+MCP server and lists its tools. Healthy checks are silent. Missing/broken setup
+produces a short notice but never blocks opening Claude Code. This does not
+launch other upstreams, run corpus shell checks, install updates, clear quarantine,
+or establish Linux containment. It verifies a fresh probe, not the connection
+state of an already-open Claude session or the background daemon.
+
+For an explicit machine-readable result, run
+`node bin/cairn-health.js --home /absolute/path/to/your/corpus --json` from the
+approved checkout. `ready` and `containment` are intentionally separate. Existing
+installations receive the hook by rerunning the approved installer; source pushes
+alone do not modify a user's Claude configuration.
+
 To see exactly what it changed before committing, add `--dry-run` to the install
 line — it prints every edit and writes nothing.
 
