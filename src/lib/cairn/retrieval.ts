@@ -1154,6 +1154,8 @@ const NOISE_FLOOR = 0.15;
  * of 31 this is roughly "appears in no more than half of it".
  */
 const SIGNAL_FLOOR = 0.6;
+/** Exported for brief.ts, so "distinctive" means one thing in both places. Ranking is unchanged. */
+export const DISTINCTIVE_FLOOR = SIGNAL_FLOOR;
 
 /**
  * Information credited to a query term the corpus has never seen.

@@ -33,7 +33,7 @@
  * correct answer for most tasks and must stay cheap.
  */
 import type { Finding } from './schema';
-import { retrieve } from './retrieval';
+import { retrieve, DISTINCTIVE_FLOOR, type Hit } from './retrieval';
 
 export interface BriefOptions {
   /** Most findings to include. More than a few stops being read. */
@@ -90,7 +90,7 @@ const DEFAULTS = { limit: 3, maxChars: 2400 } as const;
  * judges the task needs it. The hint is the anti-blocking guarantee: nothing
  * relevant is ever withheld, only demoted from spent-unasked to one-call-away.
  */
-export type Tier = 'full' | 'hint';
+export type Tier = 'full' | 'hint' | 'topical';
 
 /** cost is 'minutes' | 'hours' | 'days'; only 'minutes' is cheap enough to demote. */
 export function tierOf(cost: Finding['cost']): Tier {
@@ -103,8 +103,60 @@ export interface BriefEntry {
   title: string;
   reality: string;
   workaround?: string;
-  /** full = worth spending on every task; hint = named, expandable on request. */
+  /**
+   * full = worth spending on every task; hint = named, expandable on request;
+   * topical = the retriever labelled it weak, but it matched on several
+   * distinctive terms of the task — named in one line, never the full block.
+   */
   tier: Tier;
+}
+
+/**
+ * WEAK BUT TOPICAL. The `strong` label flips to weak at two caveats
+ * (retrieval.ts), and a task phrased as intent — "wiring an MCP tool with zod
+ * schema validation" — earns exactly two on the finding it is about: it covers
+ * only ~60% of the query, and it carries no error code, path or flag. Every
+ * genuinely-unknown task the second external crew and the 15-domain sweep
+ * tried carries a THIRD: it matched on one distinctive term, or on none. So the
+ * retriever already separates "soft phrasing of a known trap" from "the corpus
+ * has nothing", and the strong-only filter was discarding that separation —
+ * the brief blanked on the same query `find` answered first.
+ *
+ * This is the rule the caveat is computed from, applied directly rather than
+ * by matching its text: at least two matched terms that are informative in
+ * this corpus AND not ordinary English — counted after folding plurals, since
+ * "hooks" and "hook" are one term of the task, not two (a refactor-to-React-
+ * hooks task fired on the per-invocation-hook finding through exactly that
+ * gap). Plus the same coverage floor, an active finding, and a non-zero
+ * confidence (a retired or contested finding is not something to nudge a
+ * reader toward). Applied to the TOP-RANKED hit only: the one the reader
+ * would have seen first from `find`, and the one the quiet-on-unknown suites
+ * judge. One entry, one line, only when nothing strong was found — it never
+ * adds to a strong brief and never renders the full block, so a wrong
+ * topical line costs a reader one sentence.
+ */
+const fold = (term: string): string => term.toLowerCase().replace(/(ies|sses|xes|ches|shes|s)$/, (m) => (m === 'ies' ? 'y' : m === 's' ? '' : m.slice(0, -2)));
+function weakButTopical(h: Hit): boolean {
+  if (h.strength === 'strong') return false;
+  if (h.explained < MIN_EXPLAINED) return false;
+  if (h.finding.status === 'retired' || h.confidence <= 0) return false;
+  const distinctive = new Set(h.matched.filter((m) => m.anchorInformation >= DISTINCTIVE_FLOOR && !m.common).map((m) => fold(m.term)));
+  return distinctive.size >= 2;
+}
+
+function entryOf(h: Hit, tier: Tier): BriefEntry {
+  return {
+    /*
+     * The namespaced id for an upstream finding. The brief is read by an
+     * agent that may then cite the id back, and on a corpus subscribed to
+     * an upstream "cairn-0001" names two different claims.
+     */
+    id: (h.finding as { displayId?: string }).displayId ?? h.finding.id,
+    title: h.finding.title,
+    reality: h.finding.reality,
+    ...(h.finding.workaround ? { workaround: h.finding.workaround } : {}),
+    tier,
+  };
 }
 
 /**
@@ -116,31 +168,25 @@ export interface BriefEntry {
 export function briefEntries(task: string, corpus: Finding[], opts: BriefOptions = {}): BriefEntry[] {
   const limit = opts.limit ?? DEFAULTS.limit;
   if (!task.trim() || corpus.length === 0) return [];
-  return retrieve(task, corpus, {
+  const hits = retrieve(task, corpus, {
     useLocalEnvironment: opts.useLocalEnvironment,
     limit: Math.max(limit * 3, 9),
-  })
-    /*
-     * The retriever's own weak/strong label rather than a score threshold: it
-     * already accounts for whether the terms that matched were ordinary
-     * English, and rebuilding that judgement from a raw score here would be a
-     * second, worse copy of it. The label alone is calibrated for a reader who
-     * asked, though, so injection adds the coverage floor above.
-     */
+  });
+  /*
+   * The retriever's own weak/strong label rather than a score threshold: it
+   * already accounts for whether the terms that matched were ordinary
+   * English, and rebuilding that judgement from a raw score here would be a
+   * second, worse copy of it. The label alone is calibrated for a reader who
+   * asked, though, so injection adds the coverage floor above.
+   */
+  const strong = hits
     .filter((h) => h.strength === 'strong' && h.explained >= MIN_EXPLAINED)
     .slice(0, limit)
-    .map((h) => ({
-      /*
-       * The namespaced id for an upstream finding. The brief is read by an
-       * agent that may then cite the id back, and on a corpus subscribed to
-       * an upstream "cairn-0001" names two different claims.
-       */
-      id: (h.finding as { displayId?: string }).displayId ?? h.finding.id,
-      title: h.finding.title,
-      reality: h.finding.reality,
-      ...(h.finding.workaround ? { workaround: h.finding.workaround } : {}),
-      tier: tierOf(h.finding.cost),
-    }));
+    .map((h) => entryOf(h, tierOf(h.finding.cost)));
+  if (strong.length) return strong;
+  /* Nothing strong: at most ONE weak-but-topical line, and only if the TOP-RANKED hit earns it. */
+  const top = hits[0];
+  return top && weakButTopical(top) ? [entryOf(top, 'topical')] : [];
 }
 
 /**
@@ -179,8 +225,11 @@ export function renderBrief(entries: BriefEntry[], budget: number = DEFAULTS.max
         ? `\n${e.id} — ${e.title}\n  WHAT HAPPENS: ${clip(e.reality, 420)}` +
           (e.workaround ? `\n  INSTEAD: ${clip(e.workaround, 420)}` : '') +
           '\n'
-        : `\n${e.id} — ${e.title} — a known, cheap-to-work-around trap on this path; ` +
-          `call cairn_find("${e.id}") for the fix if the results look off.\n`;
+        : e.tier === 'topical'
+          ? `\n${e.id} — ${e.title} — a weak but topical match on your task, not a verdict; ` +
+            `call cairn_find("${e.id}") if it looks like the same trap.\n`
+          : `\n${e.id} — ${e.title} — a known, cheap-to-work-around trap on this path; ` +
+            `call cairn_find("${e.id}") for the fix if the results look off.\n`;
     // `continue`, not `break`: an entry that overflows the budget is dropped
     // whole, but a smaller entry behind it can still fit — the comment above
     // promises exactly this ("a long first finding cannot swallow the two

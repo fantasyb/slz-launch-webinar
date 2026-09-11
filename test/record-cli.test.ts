@@ -72,6 +72,26 @@ test('a pipe nobody writes to fails fast, naming --file and stdin, with no stack
   assert.equal(fs.readdirSync(path.join(home, 'cairn')).length, 0, 'nothing was written');
 });
 
+test('--help and -h print usage and exit 0 at once, before the stdin window opens', async () => {
+  for (const flag of ['--help', '-h']) {
+    const home = fixtureHome();
+    const started = Date.now();
+    /* stdin is a pipe that is never written to and never closed: the shape that used to wait 5s. */
+    const r = await new Promise<Run>((resolve) => {
+      const child = spawn(TSX, [SCRIPT, flag], { cwd: REPO, env: { ...process.env, CAIRN_HOME: home }, stdio: ['pipe', 'pipe', 'pipe'] });
+      let out = '';
+      child.stdout!.on('data', (d) => (out += d));
+      child.stderr!.on('data', (d) => (out += d));
+      child.on('close', (code) => resolve({ code, out }));
+    });
+    const elapsed = Date.now() - started;
+    assert.equal(r.code, 0, `${flag}: ${r.out}`);
+    assert.match(r.out, /usage: cairn-record --file <finding\.json>/, r.out);
+    assert.doesNotMatch(r.out, /stdin is not a TTY/, 'help does not consult stdin');
+    assert.ok(elapsed < 4000, `${flag} answered in ${elapsed}ms — it must not sit in the 5s stdin window`);
+  }
+});
+
 test('an `ignore` stdin (fd from /dev/null) gets the same actionable refusal', async () => {
   const home = fixtureHome();
   const r = await run(home, 'ignore');

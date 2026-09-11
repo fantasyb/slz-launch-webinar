@@ -34,12 +34,30 @@ const args = process.argv.slice(2);
 const fileArg = args.indexOf('--file');
 const force = args.includes('--force');
 
+const USAGE = [
+  '  usage: cairn-record --file <finding.json>   (or pipe the JSON on stdin)',
+  '  the JSON is a submission: title, claim, expectation, reality, check, by.',
+  '  --force records it anyway when a similar finding already exists.',
+  '  --help, -h  print this and exit.',
+].join('\n');
+
 function usage(msg: string): never {
   console.error(`\n  ${msg}\n`);
-  console.error('  usage: cairn-record --file <finding.json>   (or pipe the JSON on stdin)');
-  console.error('  the JSON is a submission: title, claim, expectation, reality, check, by.');
-  console.error('  --force records it anyway when a similar finding already exists.\n');
+  console.error(`${USAGE}\n`);
   process.exit(2);
+}
+
+/*
+ * --help is answered BEFORE stdin is looked at. The non-TTY stdin read below
+ * waits up to STDIN_IDLE_MS for a document to arrive, which is right for a
+ * harness that pipes JSON a beat late and wrong for `record --help`, which the
+ * second external crew watched sit for five seconds and then complain about
+ * stdin. Help is a question about the command, not a submission; it needs no
+ * input and must not wait for any.
+ */
+if (args.includes('--help') || args.includes('-h')) {
+  console.log(`\n${USAGE}\n`);
+  process.exit(0);
 }
 
 /** How long a non-TTY stdin may stay silent before we conclude nothing is coming. */

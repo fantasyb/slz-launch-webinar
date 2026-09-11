@@ -103,9 +103,61 @@ test('tierOf: only minutes is cheap enough to demote', () => {
   assert.equal(tierOf('days'), 'full');
 });
 
-/* Every real finding still tiers to exactly one of the two channels. */
+/* Every real finding still tiers to exactly one of the two cost channels; `topical` is a match quality, never a cost tier. */
 test('every finding in the live corpus resolves to a valid tier', () => {
   for (const f of corpus) assert.ok(tierOf(f.cost) === 'full' || tierOf(f.cost) === 'hint', f.id);
+});
+
+/*
+ * WEAK BUT TOPICAL. Intent phrasing of a known trap earns exactly two caveats
+ * (coverage, no error token) and so reads `weak`; the strong-only filter
+ * blanked the brief on the same query `find` answered first. A genuinely
+ * unknown task carries a third caveat — one distinctive term, or none — and
+ * that is the line: a topical line for the first class, silence for the second.
+ */
+const SOFT_MCP = 'wiring MCP tool with zod schema validation for the inputs';
+const TRAP_SHAPED = 'MCP tool argument is undefined in the handler even though the client sent it';
+const PROXY_PARAPHRASE = 'connection refused when calling an external service from the agent';
+
+test('a soft, intent-phrased task about a recorded trap gets one topical line, not a blank', () => {
+  for (const [task, id] of [[SOFT_MCP, 'cairn-0043'], [TRAP_SHAPED, 'cairn-0043']] as const) {
+    const entries = briefEntries(task, corpus, { useLocalEnvironment: true });
+    assert.equal(entries.length, 1, `${task}: exactly one topical entry`);
+    assert.equal(entries[0].id, id);
+    assert.equal(entries[0].tier, 'topical');
+    const text = brief(task, corpus, { useLocalEnvironment: true });
+    assert.match(text, new RegExp(`${id} — .* — a weak but topical match on your task, not a verdict`));
+    assert.doesNotMatch(text, /WHAT HAPPENS:/, 'one line, never the full block');
+  }
+});
+
+test('brief and find agree on the proxy/403 paraphrase: cairn-0001 comes back, as a topical line', () => {
+  const entries = briefEntries(PROXY_PARAPHRASE, corpus, { useLocalEnvironment: true });
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].id, 'cairn-0001');
+  assert.equal(entries[0].tier, 'topical');
+});
+
+test('a topical line is never added to a strong brief, and a strong brief still renders the full block', () => {
+  const entries = briefEntries(CLOCK, corpus, { useLocalEnvironment: true });
+  assert.ok(entries.length > 0);
+  assert.ok(entries.every((e) => e.tier !== 'topical'), 'strong findings are delivered as full/hint, not demoted');
+  assert.match(brief(CLOCK, corpus, { useLocalEnvironment: true }), /WHAT HAPPENS:/);
+});
+
+test('the topical tier does not fire on genuinely-unknown tasks: one distinctive term is not topical', () => {
+  const unknown = [
+    UNRELATED,
+    'add a dark mode toggle to the settings page',
+    'write a python script to parse csv files',
+    'refactor the react component to use hooks',
+    'set up a postgres migration for the users table',
+    'kubectl rollout restart deployment frontend',
+    'implement rate limiting on the login endpoint',
+    'fix the flaky integration test for the payment webhook',
+  ];
+  const fired = unknown.filter((t) => brief(t, corpus, { useLocalEnvironment: true }) !== '');
+  assert.deepEqual(fired, [], `topical line fired on unknown work: ${fired.join(' | ')}`);
 });
 
 test('ordinary work in uncovered domains stays quiet', () => {
