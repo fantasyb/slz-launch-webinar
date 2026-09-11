@@ -61,8 +61,9 @@
       "signature": {
         "algorithm": "ed25519",
         "keyId": "56f7a413738936bd",
-        "value": "LFy93vr4iQyRVqPldbBANs4xxThbYqdQ5z0IUuuhiftVqxtUCbUOBevjszK6hunxvp2VgRKLTBJBJLLuArXZDA=="
-      }
+        "value": "JWwXIf9FOmSdbI0ULGzjp1ulZvgeuWMxnsTLHy/dXrkPp+FWvT+w13y17or01FXcAcBDh09NKqeKCzTFKE25Bw=="
+      },
+      "hashVersion": 3
     },
     {
       "at": "2026-08-31T00:22:13.353Z",
@@ -78,11 +79,12 @@
       "signature": {
         "algorithm": "ed25519",
         "keyId": "56f7a413738936bd",
-        "value": "9NsfJOUQJfxTGnNNHIYZwPQ1HkKrjSQuCAT9qadWIYNL84kIZKJDEr0Yg3VcuPLbMtD6bk/vJ+f/2hdSeiH2AA=="
-      }
+        "value": "46QqlbLRo+bZwKgruJy730J2AQnk/3YQVoOeybBAvH6lNYQsn99uPOfM0BCyK32/8T2zVykD1/31auPjW87pDw=="
+      },
+      "hashVersion": 3
     }
   ],
-  "status": "active",
+  "status": "retired",
   "createdAt": "2026-08-30T16:56:21.324Z",
   "basis": "structural",
   "derivation": "An admissibility rule is a property of the data, but implementing it per-consumer makes it a property of each consumer. The set of consumers is open and grows over time, so the invariant holds only over the subset that happened to apply it. Since any one consumer can determine the output on its own — a short-circuit returns before the others run — the effective guarantee is the intersection of what every reader enforces, which is the minimum, not the maximum. Adding a reader can therefore weaken a system without modifying any existing rule.",
@@ -104,5 +106,6 @@
       "outcome": "confirmed",
       "resolvedAt": "2026-08-31T00:22:23.982Z"
     }
-  ]
+  ],
+  "retiredReason": "Self-referential: its check greps this repository's own source (src/lib/cairn), so it is a design note about Cairn, not an externally-reproducible tool trap — no machine outside this checkout can ever run it. Retired 2026-09-11 to keep the served corpus to real portable traps. The claim was true of this codebase when recorded; the observations below attest to that."
 }

@@ -61,8 +61,9 @@
       "signature": {
         "algorithm": "ed25519",
         "keyId": "56f7a413738936bd",
-        "value": "8Yt8ubwppkqjniHyiNM2bgy3SDtQhdxQmszINliglDB8b6RoihtelEknGTh4XiFZF6IqywFSbNMUkWh8uJyWDQ=="
-      }
+        "value": "Ost1DX9GHS4QcrggSQeU7qRfXZOoe5WU2HzLfpIJz3VuNaBMWhoiGkdSA3zwOi2aO3pyOw/IoC/lVHwsGceQBA=="
+      },
+      "hashVersion": 3
     },
     {
       "at": "2026-08-31T00:22:12.765Z",
@@ -78,11 +79,12 @@
       "signature": {
         "algorithm": "ed25519",
         "keyId": "56f7a413738936bd",
-        "value": "Juf4UUh+/X7eUvxgtpb8/DAmmm2soOToQQ+pNSQhz4ce2a+JwgxfpQG01OoudDO7T3YPJzhCCHH5psC8T0SLCw=="
-      }
+        "value": "lKflHM+dr1lyUF1n8mc8vKDC/xpb4WdgxBJFm0V3kespLhBoHrK4r+vl+RSkNxAKIZEgLs0IU5gTYA5QkLe8CQ=="
+      },
+      "hashVersion": 3
     }
   ],
-  "status": "active",
+  "status": "retired",
   "createdAt": "2026-08-30T16:28:57.803Z",
   "basis": "structural",
   "derivation": "A signature binds a key to a byte string. It says the holder of the key signed these bytes; it cannot say the bytes were chosen well. When any part of the signed payload is attacker-controlled, the signer becomes an oracle for that part: the adversary supplies input, the signer returns it authenticated. The verifier's checks — correct key, correct fingerprint, intact signature — all pass, because none of them is a statement about the input's provenance. So the guarantee a consumer draws ('this came from the real service, therefore its contents are the real service's') does not follow from what was actually proved.",
@@ -104,5 +106,6 @@
       "outcome": "confirmed",
       "resolvedAt": "2026-08-31T00:22:23.980Z"
     }
-  ]
+  ],
+  "retiredReason": "Self-referential: its check greps this repository's own source (src/lib/cairn), so it is a design note about Cairn, not an externally-reproducible tool trap — no machine outside this checkout can ever run it. Retired 2026-09-11 to keep the served corpus to real portable traps. The claim was true of this codebase when recorded; the observations below attest to that."
 }
