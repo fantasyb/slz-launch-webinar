@@ -1,5 +1,52 @@
 # Cairn — session handoff & punch-list (2026-09-07)
 
+## Gateway status: a proven pipe, not yet in the crew's path (2026-09-11)
+
+The crew learn-pass closed: one real work hour, Dig/Edge/Make logs agree, and
+the through-proxy ratio for real work is ≈0. The tools that carry their work
+(curl, WebSearch, WebFetch, site ops) never enter `cairn-proxy`; only the trial
+`records` MCP does. So `cairn:report` on the main corpus shows findings=0 for
+real work, and that number is correct, not a bug.
+
+Why the main corpus cannot fire per call through the gateway as it stands —
+matching is TOOL-NAME-ONLY, verified by reading and by a probe:
+- Every push surface (connect-index, description, argument, result) funnels
+  through `findingsAbout()` (`scripts/mcp-proxy.ts:325-349`), which calls
+  `preflight(<tool name>)` (`:331` → `src/lib/cairn/retrieval.ts:3105-3136`,
+  exact trigger match on the name), plus the `<tool> <prop>` trigger form
+  matched against argument NAMES (`:338-347`) — never values.
+- No argument or result TEXT is ever run through `retrieve()`. Result text is
+  read only by `resonates()` (`:720`) to regex-gate an already name-matched
+  finding's `signature`; no main-corpus finding has one. `retrieve()` appears
+  once in the proxy, inside `cairn_find` (`:2516`) — a pull, the model must ask.
+- The main corpus's triggers name shell programs (`dig`, `df`, `rg`, `next
+  build`, `playwright install`) and methodology prose; 34 findings have none.
+  A `run {command:"df -h"}` through the wrap returned the upstream block only:
+  cairn-0008 did not ride. Same for `dig example.com` and cairn-0002.
+
+The program index on connect and on the first result of a session
+(`mcp-proxy.ts:2091-2115`, delivered at `:2292` and `:2759`) is the one push
+surface that carries main-corpus shell triggers. It is CALL-INDEPENDENT: it
+fired identically on `echo hi`, and its ledger rows land under
+`connect-program-index` / `first-contact-program-index`, not `result`. Easy to
+misread as a per-call finding in the report; it is not one.
+
+Decision, locked with the user:
+- Do NOT build the argument-text preflight channel (option a). The crew does
+  not run shell through an MCP tool — Shell/CallDynamicTool bypass the proxy —
+  so it would fire on nothing they do.
+- Do NOT manufacture findings that name MCP tools to make a demo (option b as
+  a shortcut). No born-fresh findings.
+
+Honest status: the hub is proven as a PIPE — transparent wrap (`cairn:gateway-
+smoke`) and real delivery on the sealed `records` corpus (`cairn:gateway-prove`,
+`test/gateway-prove.test.ts`) — but it is NOT in the path of the crew's real
+work. Two real unlocks, PARKED until the user green-lights either:
+1. Put a tool they must use behind the proxy: wrap something load-bearing, or
+   make keys reachable only via the gateway.
+2. Once such tools are on the wrap, record findings that name the MCP tools
+   they actually call, from real traps, with evidence.
+
 ## Born-trusted capture, lazy verify-on-use (2026-09-10)
 
 The offline promotion pipeline is GONE: `sleep.ts` (harvest), `consolidate.ts`,
