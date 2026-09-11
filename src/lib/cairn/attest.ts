@@ -31,7 +31,7 @@ import { standing, lastConfirmedAt, daysSince, type Standing } from './decay';
 import { scanInjection, scanSensitive, draftSurface } from './safety';
 import { signObservation, findingBodyHash, CURRENT_HASH_VERSION } from './signing';
 import { reloadKeys } from './keys';
-import { useSignal, useLabel, type UseSignal } from './use';
+import { usageSignal, usageLabel, type UseSignal } from './use';
 
 export const VERDICTS = ['confirmed', 'refuted', 'inconclusive'] as const;
 export type Verdict = (typeof VERDICTS)[number];
@@ -216,7 +216,7 @@ const ago = (days: number) => (days < 1 ? 'today' : days < 2 ? '1 day ago' : `${
  * said it still held, which is real doubt. `verification()` and `standing()`
  * stay pure over the finding; only this line reads the ledger.
  */
-export function verificationLine(f: Finding, now = new Date(), use: UseSignal = useSignal(f, undefined, now)): string {
+export function verificationLine(f: Finding, now = new Date(), use: UseSignal = usageSignal(f, undefined, now)): string {
   const v = verification(f, now);
   const how =
     v.source === 'none'
@@ -226,7 +226,7 @@ export function verificationLine(f: Finding, now = new Date(), use: UseSignal = 
         : `attested by ${v.confirmedBy} ${ago(v.daysSinceConfirmed!)}, not by a check`;
   const check = v.checkable ? 'check runnable' : 'check is manual: no machine can re-run it';
   const contested = v.refuted ? `; ${v.refuted} refutation${v.refuted > 1 ? 's' : ''} on record` : '';
-  const label = useLabel(f, use, now);
+  const label = usageLabel(f, use, now);
   const stale =
     label === 'dormant'
       ? 'dormant (not retrieved since last confirmed — untested because unneeded)'

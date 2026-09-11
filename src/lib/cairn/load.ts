@@ -12,7 +12,7 @@ import {
 } from './decay';
 import { retrieve } from './retrieval';
 import { homePath } from './home';
-import { cachedLedger, useWeightedUrgency } from './use';
+import { cachedLedger, usageWeightedUrgency } from './use';
 
 /**
  * The corpus is a directory of JSON files in git. That is the whole store.
@@ -142,7 +142,7 @@ export function staleQueue(limit = 20): Finding[] {
   const active = loadCorpus().filter((f) => f.status === 'active');
   const ledger = cachedLedger();
   const now = new Date();
-  return sortByKey(active, (f) => useWeightedUrgency(f, ledger, now)).slice(0, limit);
+  return sortByKey(active, (f) => usageWeightedUrgency(f, ledger, now)).slice(0, limit);
 }
 
 export function byConfidence(findings = loadCorpus()): Finding[] {

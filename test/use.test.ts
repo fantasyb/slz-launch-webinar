@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 import fs from 'fs';
 import path from 'path';
 import { confidence, standing, decayUrgency } from '../src/lib/cairn/decay';
-import { useSignal, useLabel, useWeight, useWeightedUrgency } from '../src/lib/cairn/use';
+import { usageSignal, usageLabel, usageWeight, usageWeightedUrgency } from '../src/lib/cairn/use';
 import { verificationLine } from '../src/lib/cairn/attest';
 import type { RetrievalRecord } from '../src/lib/cairn/ledger';
 import { finding, signedFinding, makeKey, keyMap, env } from './helpers';
@@ -42,42 +42,42 @@ test('the score is a pure function of the file: decay.ts never reads the ledger'
 });
 
 test('stale splits by use: dormant when nobody retrieved it since it was last confirmed, stale with the count when they did', () => {
-  const none = useSignal(decayed, [], NOW);
+  const none = usageSignal(decayed, [], NOW);
   assert.deepEqual(none, { sinceConfirmed: 0, recent: 0, lastServedAt: null });
-  assert.equal(useLabel(decayed, none, NOW, KEYS), 'dormant');
+  assert.equal(usageLabel(decayed, none, NOW, KEYS), 'dormant');
   assert.match(verificationLine(decayed, NOW, none), /^dormant \(not retrieved since last confirmed — untested because unneeded\) — attested by someone 200 days ago/);
 
   /* Retrievals BEFORE the confirmation do not count: the confirmation answered them. */
-  const before = useSignal(decayed, [served('cairn-7001', daysAgo(300)), served('cairn-7001', daysAgo(250))], NOW);
+  const before = usageSignal(decayed, [served('cairn-7001', daysAgo(300)), served('cairn-7001', daysAgo(250))], NOW);
   assert.equal(before.sinceConfirmed, 0);
-  assert.equal(useLabel(decayed, before, NOW, KEYS), 'dormant');
+  assert.equal(usageLabel(decayed, before, NOW, KEYS), 'dormant');
 
   /* Retrievals after it: real doubt, with the number. Other findings' rows are not mine. */
-  const after = useSignal(decayed, [served('cairn-7001', daysAgo(100)), served('cairn-7001', daysAgo(30)), served('cairn-7001', daysAgo(2)), served('cairn-7002', daysAgo(2))], NOW);
+  const after = usageSignal(decayed, [served('cairn-7001', daysAgo(100)), served('cairn-7001', daysAgo(30)), served('cairn-7001', daysAgo(2)), served('cairn-7002', daysAgo(2))], NOW);
   assert.equal(after.sinceConfirmed, 3);
   assert.equal(after.recent, 2, 'two inside the 90-day window');
   assert.equal(after.lastServedAt, daysAgo(2));
-  assert.equal(useLabel(decayed, after, NOW, KEYS), 'stale');
+  assert.equal(usageLabel(decayed, after, NOW, KEYS), 'stale');
   assert.match(verificationLine(decayed, NOW, after), /^stale \(served 3 times since, never re-confirmed\) — /);
 });
 
 test('every other standing passes through untouched, whatever the ledger says', () => {
   assert.equal(standing(fresh, NOW, KEYS), 'fresh');
-  assert.equal(useLabel(fresh, useSignal(fresh, [], NOW), NOW, KEYS), 'fresh', 'fresh and unused is fresh, not dormant');
-  assert.equal(useLabel(fresh, useSignal(fresh, [served('cairn-7002', daysAgo(0.5))], NOW), NOW, KEYS), 'fresh');
+  assert.equal(usageLabel(fresh, usageSignal(fresh, [], NOW), NOW, KEYS), 'fresh', 'fresh and unused is fresh, not dormant');
+  assert.equal(usageLabel(fresh, usageSignal(fresh, [served('cairn-7002', daysAgo(0.5))], NOW), NOW, KEYS), 'fresh');
   /* verificationLine resolves keys from the corpus home, where alice's key is not published, so it reads the
    * observation as unsigned (aging) — the point here is only that nothing about the line says dormant or stale. */
-  assert.match(verificationLine(fresh, NOW, useSignal(fresh, [], NOW)), /^aging — attested by alice 1 day ago/);
+  assert.match(verificationLine(fresh, NOW, usageSignal(fresh, [], NOW)), /^aging — attested by alice 1 day ago/);
   const retired = finding({ ...decayed, status: 'retired' });
-  assert.equal(useLabel(retired, useSignal(retired, [], NOW), NOW, KEYS), 'retired');
+  assert.equal(usageLabel(retired, usageSignal(retired, [], NOW), NOW, KEYS), 'retired');
 });
 
 test('the use weight floors at 0.5, rises with recent retrievals, and saturates below 2', () => {
-  assert.equal(useWeight(0), 0.5);
-  assert.equal(useWeight(1), 1.25);
-  let prev = useWeight(0);
+  assert.equal(usageWeight(0), 0.5);
+  assert.equal(usageWeight(1), 1.25);
+  let prev = usageWeight(0);
   for (let n = 1; n <= 20; n++) {
-    const w = useWeight(n);
+    const w = usageWeight(n);
     assert.ok(w > prev && w < 2, `monotone and bounded at n=${n}: ${w}`);
     prev = w;
   }
@@ -87,8 +87,8 @@ test('re-check effort goes where use is: a used finding outranks an identical un
   const a = finding({ id: 'cairn-7003', halfLifeDays: 60, observations: [{ at: daysAgo(80), by: 'someone', verdict: 'confirmed' }] });
   const b = finding({ ...a, id: 'cairn-7004' });
   const ledger = [served('cairn-7003', daysAgo(3)), served('cairn-7003', daysAgo(1))];
-  const ua = useWeightedUrgency(a, ledger, NOW);
-  const ub = useWeightedUrgency(b, ledger, NOW);
+  const ua = usageWeightedUrgency(a, ledger, NOW);
+  const ub = usageWeightedUrgency(b, ledger, NOW);
   assert.equal(decayUrgency(a, NOW), decayUrgency(b, NOW), 'the pure urgency is identical');
   assert.ok(ua > ub, `used ${ua} > unused ${ub}`);
   assert.ok(ub > 0, 'a dormant finding still gets a turn');

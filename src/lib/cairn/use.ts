@@ -77,7 +77,7 @@ export function forgetLedgerCache(): void {
 
 const served = (r: RetrievalRecord, id: string): boolean => Array.isArray(r.returned) && r.returned.some((x) => x.id === id);
 
-export function useSignal(f: Finding, ledger: RetrievalRecord[] = cachedLedger(), now = new Date(), windowDays = USE_WINDOW_DAYS): UseSignal {
+export function usageSignal(f: Finding, ledger: RetrievalRecord[] = cachedLedger(), now = new Date(), windowDays = USE_WINDOW_DAYS): UseSignal {
   const since = lastConfirmedAt(f, now);
   const sinceMs = since ? new Date(since).getTime() : -Infinity;
   const windowMs = now.getTime() - windowDays * 86_400_000;
@@ -101,7 +101,7 @@ export function useSignal(f: Finding, ledger: RetrievalRecord[] = cachedLedger()
  * are the clock doing its job, and `retired` is a person's decision.
  */
 export type UseLabel = Standing | 'dormant';
-export function useLabel(f: Finding, use: UseSignal, now = new Date(), keys: Map<string, KeyRecord> = loadKeys()): UseLabel {
+export function usageLabel(f: Finding, use: UseSignal, now = new Date(), keys: Map<string, KeyRecord> = loadKeys()): UseLabel {
   const s = standing(f, now, keys);
   return s === 'stale' && use.sinceConfirmed === 0 ? 'dormant' : s;
 }
@@ -113,11 +113,11 @@ export function useLabel(f: Finding, use: UseSignal, now = new Date(), keys: Map
  * for the same reason corroboration does: the tenth retrieval says less than
  * the second.
  */
-export function useWeight(recent: number): number {
+export function usageWeight(recent: number): number {
   return 0.5 + 1.5 * (1 - Math.pow(0.5, Math.max(0, recent)));
 }
 
 /** decayUrgency (pure, in decay.ts) times the use weight. Where re-check effort should go. */
-export function useWeightedUrgency(f: Finding, ledger: RetrievalRecord[] = cachedLedger(), now = new Date()): number {
-  return decayUrgency(f, now) * useWeight(useSignal(f, ledger, now).recent);
+export function usageWeightedUrgency(f: Finding, ledger: RetrievalRecord[] = cachedLedger(), now = new Date()): number {
+  return decayUrgency(f, now) * usageWeight(usageSignal(f, ledger, now).recent);
 }
