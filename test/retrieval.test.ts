@@ -733,3 +733,22 @@ test('one heavily-weighted dissent cannot outvote three agreeing rankers', () =>
       'to the list length being fused, or position stops carrying information.',
   );
 });
+
+/*
+ * cairn-0004 (z.infer marks a .default() field optional) is a `find` answer,
+ * not a brief one: a zod/.default() task matches it on a single distinctive
+ * term ("z.infer"), so the brief correctly stays silent and the reader who
+ * asks gets it first. Pinned here, on retrieve(), because the brief's topical
+ * rule was tightened around it and the two channels must not drift apart --
+ * the brief going quiet on this query is by design; `find` going quiet would
+ * be a regression.
+ */
+test('a zod .default() question finds cairn-0004 first, even though the brief stays silent on it', () => {
+  for (const q of [
+    'z.infer with a .default() field makes the property optional',
+    'zod schema with .default() but the inferred type still says the key is optional',
+  ]) {
+    const hits = retrieve(q, corpus, { limit: 3 });
+    assert.equal(hits[0]?.finding.id, 'cairn-0004', `"${q}": top find result`);
+  }
+});

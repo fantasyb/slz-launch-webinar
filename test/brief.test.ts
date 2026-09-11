@@ -182,6 +182,80 @@ test('ordinary English that shares two rare-ish tokens with the corpus is NOT to
   }
 });
 
+/*
+ * The fourth crew's false nags. Both cleared the summed-information floor --
+ * the Stripe one at 9.55, HIGHER than either true topical -- because their
+ * distinctive terms ("choosing", "day", "form"; "ship", "page", "writing") are
+ * each rare in this corpus while being jointly ordinary startup-speak. What
+ * they share is that every one of those terms lands in a finding's workaround
+ * or machine text, not in its own account of the trap. These pin the rule that
+ * the account must carry the majority of the distinctive information, and the
+ * short forms stay pinned as controls so a fix for the long form cannot regress
+ * the short one.
+ */
+test('ordinary task prose that collides with a finding\'s WORKAROUND vocabulary is NOT topical (the fourth crew\'s false nags)', () => {
+  const falseNags = [
+    'writing a LinkedIn Company Page post about kill vs ship for founders',
+    'choosing between Stripe Checkout and a custom card form for a 5-day sprint deliverable',
+  ];
+  for (const task of falseNags) {
+    const entries = briefEntries(task, corpus, { useLocalEnvironment: true });
+    assert.deepEqual(entries, [], `${task}: fired ${entries.map((e) => `${e.id}/${e.tier}`).join(', ')}`);
+    assert.equal(brief(task, corpus, { useLocalEnvironment: true }), '');
+  }
+});
+
+test('the controls that were already silent stay silent under the account-share rule', () => {
+  const controls = [
+    'planning a pricing A/B test for a 9 SaaS memo product on IndieHackers',
+    'Pricing A/B on IH',
+    'drafting a marketing blog about founder decision paralysis with no code',
+    'marketing blog decision paralysis',
+    'picking lunch for a five person offsite in Brooklyn',
+    'picking lunch offsite',
+    'raise vs bootstrap',
+  ];
+  const fired = controls.filter((t) => brief(t, corpus, { useLocalEnvironment: true }) !== '');
+  assert.deepEqual(fired, [], `topical line fired on a control: ${fired.join(' | ')}`);
+});
+
+/*
+ * The other half of the same rule: silencing the false nags must not silence
+ * the true ones. Each of these was verified to fire at exactly this id and
+ * tier BEFORE the account-share rule was added, so a future tightening that
+ * costs any of them is a regression in delivery, not a precision win. The
+ * proxy rows carry `precondition: ["env:HTTPS_PROXY"]` and are pinned to a
+ * proxied box the same way the paraphrase test above is.
+ */
+test('true topical and strong briefs keep firing at the same id and tier', () => {
+  const keep: Array<[string, string, BriefEntry['tier']]> = [
+    ['wiring MCP tool with zod schema and the argument comes through undefined', 'cairn-0043', 'topical'],
+    ['MCP tool undocumented args zod', 'cairn-0043', 'full'],
+    ['App Router page shows stale time needs force-dynamic', 'cairn-0005', 'full'],
+    ['.githooks not running after clone hooksPath inert', 'cairn-0047', 'full'],
+    ['esbuild top-level await fails in cjs output', 'cairn-0041', 'full'],
+    ['socket hang up from a reused keep-alive http agent', 'cairn-0051', 'full'],
+  ];
+  for (const [task, id, tier] of keep) {
+    const entries = briefEntries(task, corpus, { useLocalEnvironment: true });
+    assert.ok(entries.length > 0, `${task}: went blank`);
+    assert.equal(entries[0].id, id, `${task}: top entry`);
+    assert.equal(entries[0].tier, tier, `${task}: tier`);
+  }
+  withProxyEnv('http://127.0.0.1:9', () => {
+    const proxied: Array<[string, string, BriefEntry['tier']]> = [
+      ['connection refused reaching an external host from the agent', 'cairn-0001', 'topical'],
+      ['curl CONNECT tunnel failed response 403 egress blocked but dig resolves', 'cairn-0001', 'full'],
+    ];
+    for (const [task, id, tier] of proxied) {
+      const entries = briefEntries(task, corpus, { useLocalEnvironment: true });
+      assert.ok(entries.length > 0, `${task}: went blank`);
+      assert.equal(entries[0].id, id, `${task}: top entry`);
+      assert.equal(entries[0].tier, tier, `${task}: tier`);
+    }
+  });
+});
+
 test('a topical line is never added to a strong brief, and a strong brief still renders the full block', () => {
   const entries = briefEntries(CLOCK, corpus, { useLocalEnvironment: true });
   assert.ok(entries.length > 0);

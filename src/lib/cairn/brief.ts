@@ -33,7 +33,7 @@
  * correct answer for most tasks and must stay cheap.
  */
 import type { Finding } from './schema';
-import { retrieve, DISTINCTIVE_FLOOR, type Hit } from './retrieval';
+import { retrieve, tokenize, DISTINCTIVE_FLOOR, type Hit } from './retrieval';
 
 export interface BriefOptions {
   /** Most findings to include. More than a few stops being read. */
@@ -153,24 +153,106 @@ export interface BriefEntry {
  *
  * 5.0 sits between the populations with the gap on the side of silence; the
  * per-term floor (DISTINCTIVE_FLOOR) still applies to each term counted.
+ *
+ * AND THE INFORMATION MUST LAND ON THE FINDING'S OWN ACCOUNT OF THE TRAP.
+ * The sum was not enough either. The fourth crew got two more nags from
+ * ordinary startup-speak, and this time a floor could not fix it:
+ *
+ *   "choosing between Stripe Checkout and a custom card form
+ *    for a 5-day sprint deliverable"         -> cairn-0039   9.55  (false nag)
+ *   "writing a LinkedIn Company Page post
+ *    about kill vs ship for founders"        -> cairn-0014   6.22  (false nag)
+ *   "connection refused reaching an external
+ *    host from the agent"                    -> cairn-0001   6.85  (right)
+ *   "wiring MCP tool with zod schema and the
+ *    argument comes through undefined"       -> cairn-0043   6.19  (right)
+ *
+ * The false nag OUTSCORES both true topicals, so no value of the sum floor
+ * separates them: raising it past 9.55 silences the MCP and proxy lines too.
+ * Summing per-term rarity double-counts correlated ordinary English --
+ * "choosing", "day" and "form" are each rare in a corpus that talks about
+ * proxies and hooks, but they are jointly unremarkable in a task about a
+ * sprint deliverable. What separates the populations is not how rare the
+ * terms are but WHERE they landed. Every term the false nags matched sits in
+ * the finding's WORKAROUND ("choosing", "form", "ship", "writing"): advice
+ * prose, written in the imperative English that ordinary tasks are also
+ * written in. Every term the true topicals matched sits in the finding's
+ * record of the trap itself: its title, subject, claim, expectation and
+ * reality ("zod", "mcp", "tool"; "host", "connection", "agent").
+ *
+ * So the distinctive information is split by which fields attest each term,
+ * and the finding's own ACCOUNT -- what it is (title, subject), what it
+ * asserts (claim) and what it recorded happening (expectation, reality) --
+ * must carry MORE THAN HALF of it. Excluded: the workaround (prescription,
+ * the collision surface above), mechanism and appliesTo (explanation, already
+ * damped to the weak tier in retrieval.ts for the same reason), the check and
+ * evidence (machine text, where "page" and "day" match by accident), tags
+ * (labels, not a record: the ones that decide a case here, "zod" and "mcp",
+ * are in the claim already, and the hyphenated ones, "connection-refused",
+ * are single tokens a prose query never hits) and the generated questions (a
+ * model's guess, not a record). Measured as the share of the distinctive sum
+ * the account carries:
+ *
+ *   "choosing between Stripe Checkout ... deliverable"  -> cairn-0039   0.34  (silent)
+ *   "writing a LinkedIn Company Page post ... founders"  -> cairn-0014   0.32  (silent)
+ *   "connection refused reaching an external host ..."  -> cairn-0001   0.74  (topical)
+ *   "connection refused when calling an external ..."   -> cairn-0001   0.80  (topical)
+ *   "wiring MCP tool with zod schema ..."                -> cairn-0043   1.00  (topical)
+ *   "MCP tool argument is undefined in the handler ..."  -> cairn-0043   1.00  (topical)
+ *
+ * The gap is 0.34 to 0.74 and "more than half" sits inside it with margin on
+ * both sides. Strong hits never reach this rule: it decides only whether a
+ * weak top hit earns its one line. The sum floor and the per-term floor stay
+ * as they were, so nothing that was silent before speaks now.
  */
 const TOPICAL_INFORMATION = 5.0;
+const ACCOUNT_SHARE = 0.5;
 const fold = (term: string): string => term.toLowerCase().replace(/(ies|sses|xes|ches|shes|s)$/, (m) => (m === 'ies' ? 'y' : m === 's' ? '' : m.slice(0, -2)));
+
+/*
+ * The tokens of a finding's own account of the trap, tokenised the same way the
+ * postings are so a matched term's membership is a like-for-like test.
+ * Memoised per finding object; the corpus is reloaded as new objects, so a
+ * WeakMap follows it without a cache to invalidate.
+ */
+const accountMemo = new WeakMap<Finding, Set<string>>();
+function accountTokens(f: Finding): Set<string> {
+  let set = accountMemo.get(f);
+  if (!set) {
+    set = new Set(
+      tokenize([f.title, f.subject.name, f.subject.ecosystem, f.claim, f.expectation, f.reality].join('\n')).map(
+        (t) => t.text,
+      ),
+    );
+    accountMemo.set(f, set);
+  }
+  return set;
+}
+
 function weakButTopical(h: Hit): boolean {
   if (h.strength === 'strong') return false;
   if (h.explained < MIN_EXPLAINED) return false;
   if (h.finding.status === 'retired' || h.confidence <= 0) return false;
   /* One entry per folded term, keeping the most informative spelling, so "hooks"/"hook" is counted once. */
-  const distinctive = new Map<string, number>();
+  const distinctive = new Map<string, { information: number; onAccount: boolean }>();
+  const account = accountTokens(h.finding);
   for (const m of h.matched) {
     if (m.common || m.anchorInformation < DISTINCTIVE_FLOOR) continue;
     const k = fold(m.term);
-    distinctive.set(k, Math.max(distinctive.get(k) ?? 0, m.anchorInformation));
+    const prev = distinctive.get(k);
+    if (!prev || m.anchorInformation > prev.information) {
+      distinctive.set(k, { information: m.anchorInformation, onAccount: account.has(m.term) });
+    }
   }
   if (distinctive.size < 2) return false;
   let information = 0;
-  for (const v of distinctive.values()) information += v;
-  return information >= TOPICAL_INFORMATION;
+  let onAccount = 0;
+  for (const v of distinctive.values()) {
+    information += v.information;
+    if (v.onAccount) onAccount += v.information;
+  }
+  if (information < TOPICAL_INFORMATION) return false;
+  return onAccount > information * ACCOUNT_SHARE;
 }
 
 function entryOf(h: Hit, tier: Tier): BriefEntry {
