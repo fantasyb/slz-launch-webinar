@@ -15,7 +15,14 @@
     "network",
     "sandbox",
     "diagnostics",
-    "false-negative"
+    "false-negative",
+    "403",
+    "forbidden",
+    "connect-tunnel",
+    "egress",
+    "blocked",
+    "unreachable",
+    "connection-refused"
   ],
   "cost": "hours",
   "expectation": "A blocked request surfaces as an explicit policy error naming the proxy, distinct from a connection failure.",

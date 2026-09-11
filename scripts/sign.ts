@@ -15,10 +15,21 @@ import { FindingSchema } from '../src/lib/cairn/schema';
 import { signObservation, deriveKeyId, findingBodyHash, CURRENT_HASH_VERSION } from '../src/lib/cairn/signing';
 import { loadKeys } from '../src/lib/cairn/keys';
 import { homePath } from '../src/lib/cairn/home';
+import { machineIdentity } from '../src/lib/cairn/autoseal';
 
-const keyId = process.env.CAIRN_KEY;
+/*
+ * CAIRN_KEY names the key; when it is unset, THIS MACHINE'S own identity (the
+ * one cairn:install or cairn:keygen created, whose private half is in
+ * .cairn-secrets/) is the only sensible default, so use it rather than refuse.
+ * With no identity at all, the refusal is the exact two commands to run — the
+ * first external crew read the old one-liner as a hard gate they could not see
+ * past.
+ */
+const keyId = process.env.CAIRN_KEY ?? machineIdentity()?.keyId;
 if (!keyId) {
-  console.error('CAIRN_KEY must be set. Run npm run cairn:keygen first.');
+  console.error('No signing identity on this machine. Create one, then sign:');
+  console.error('  npm run cairn:keygen -- "<your label>"     (once; prints the keyId)');
+  console.error('  CAIRN_KEY=<keyId> npm run cairn:sign');
   process.exit(2);
 }
 const key = loadKeys().get(keyId);

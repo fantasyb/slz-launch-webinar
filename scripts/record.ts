@@ -42,23 +42,48 @@ function usage(msg: string): never {
   process.exit(2);
 }
 
-let raw: string;
-if (fileArg !== -1) {
-  const file = args[fileArg + 1];
-  if (!file) usage('--file needs a path');
-  if (!fs.existsSync(file)) usage(`no such file: ${file}`);
-  raw = fs.readFileSync(file, 'utf8');
-} else if (!process.stdin.isTTY) {
-  raw = fs.readFileSync(0, 'utf8');
-} else {
-  usage('nothing to record');
-}
+/** How long a non-TTY stdin may stay silent before we conclude nothing is coming. */
+const STDIN_IDLE_MS = 5000;
 
-let parsedJson: unknown;
-try {
-  parsedJson = JSON.parse(raw);
-} catch (e) {
-  usage(`that is not JSON — ${(e as Error).message}`);
+/**
+ * The submission text: --file, else stdin.
+ *
+ * `fs.readFileSync(0)` was the stdin path, and it threw EAGAIN for every agent
+ * crew that tried this: an agent runs non-TTY, its harness spawns this with a
+ * pipe on fd 0 and writes the JSON a beat later, and a synchronous read of a
+ * non-blocking pipe with nothing in it yet is EAGAIN, not "wait". The first
+ * external dogfood hit it on their first record. So stdin is read as a
+ * stream, and a stdin that is not a TTY but never says anything (an `ignore`
+ * fd, a pipe nobody writes to) fails fast with the two things that would
+ * work, instead of a stack trace out of node:fs.
+ */
+function readInput(): Promise<string> {
+  if (fileArg !== -1) {
+    const file = args[fileArg + 1];
+    if (!file) usage('--file needs a path');
+    if (!fs.existsSync(file)) usage(`no such file: ${file}`);
+    return Promise.resolve(fs.readFileSync(file, 'utf8'));
+  }
+  if (process.stdin.isTTY) usage('nothing to record');
+  return new Promise((resolve) => {
+    let data = '';
+    let settled = false;
+    const finish = (v: string) => { if (!settled) { settled = true; resolve(v); } };
+    const noInput = () =>
+      usage(`stdin is not a TTY and nothing arrived on it within ${STDIN_IDLE_MS / 1000}s: pass --file <finding.json>, or pipe the JSON on stdin`);
+    let idle = setTimeout(() => (data ? finish(data) : noInput()), STDIN_IDLE_MS);
+    process.stdin.setEncoding('utf8');
+    process.stdin.on('data', (c: string) => {
+      data += c;
+      clearTimeout(idle);
+      idle = setTimeout(() => finish(data), STDIN_IDLE_MS); // a writer that pauses mid-document still gets a chance to finish
+    });
+    process.stdin.on('end', () => { clearTimeout(idle); if (data.trim()) finish(data); else noInput(); });
+    process.stdin.on('error', (e: NodeJS.ErrnoException) => {
+      clearTimeout(idle);
+      usage(`could not read stdin (${e.code ?? e.message}): pass --file <finding.json>, or pipe the JSON on stdin`);
+    });
+  });
 }
 
 const indent = (s: string) => s.split('\n').map((l) => `  ${l}`).join('\n');
@@ -66,6 +91,14 @@ const indent = (s: string) => s.split('\n').map((l) => `  ${l}`).join('\n');
 // tsx emits CJS for this script, where top-level await is unavailable, so
 // everything asynchronous runs inside main().
 async function main() {
+  const raw = await readInput();
+  let parsedJson: unknown;
+  try {
+    parsedJson = JSON.parse(raw);
+  } catch (e) {
+    usage(`that is not JSON — ${(e as Error).message}`);
+  }
+
   /*
    * `origin: 'human'`: a person at a keyboard, recording a check they wrote
    * seconds ago. That is the one origin whose absentWhen the gate may run,
@@ -132,7 +165,7 @@ async function main() {
   for (const w of warned) console.log(`    ${w.trim()}`);
   /* Everything recordSubmission had to say after the first line: the tool hand-over, the gate, the signing note. */
   for (const line of outcome.message.split('\n').slice(1)) console.log(`  ${line}`);
-  console.log('  Commit it to share it. To sign it: cairn:keygen, then cairn:sign.\n');
+  console.log('  Commit it to share it. To sign it (once per machine): npm run cairn:keygen -- "<your label>", then CAIRN_KEY=<keyId> npm run cairn:sign\n');
 }
 
 main();

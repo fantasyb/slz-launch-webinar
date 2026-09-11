@@ -1144,9 +1144,11 @@ const GATEWAY_TOOLS: Tool[] = [
   {
     name: 'cairn_find',
     description:
-      'Search the ledger of recorded traps behind this gateway: paste an error you cannot explain, ' +
-      'or describe what you are about to do. Silence means nothing is recorded, which is the common case.',
-    inputSchema: { type: 'object', properties: { query: { type: 'string', description: 'The error text, verbatim, or what you are about to do' } }, required: ['query'] },
+      'Search the ledger of recorded traps behind this gateway. Built for PASTED OUTPUT: give it the ' +
+      'error text verbatim, not a paraphrase. Findings about a tool you are about to call arrive on ' +
+      'their own with the result, so you rarely need to ask ahead. Silence means nothing is recorded, ' +
+      'which is the common case.',
+    inputSchema: { type: 'object', properties: { query: { type: 'string', description: 'The error text, verbatim — the exit line, the exception, the empty result as printed' } }, required: ['query'] },
   },
   {
     name: 'cairn_record',

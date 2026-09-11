@@ -56,10 +56,11 @@ server.registerTool(
   {
     description:
       'Search a ledger of recorded traps — things that do not work in this stack, and why. ' +
-      'Use it two ways: paste an error you cannot explain, or describe what you are about to ' +
-      'build before you build it. Silence means nothing is recorded about it, which is the ' +
+      'Built for PASTED OUTPUT: give it the error text verbatim (the exit line, the exception, the ' +
+      'empty result as printed). For "I am about to do X", use cairn_brief instead — it is built for ' +
+      'intent and retrieves better on it. Silence means nothing is recorded about it, which is the ' +
       'common case; proceed. A match is not a verdict — judge whether it applies.',
-    inputSchema: { query: z.string().min(1).describe('The error text, verbatim, or what you are about to do') },
+    inputSchema: { query: z.string().min(1).describe('The error text, verbatim — not a paraphrase. For what you are about to do, call cairn_brief.') },
   },
   async ({ query }) => {
     const searchable = loadSearchable();
@@ -86,9 +87,12 @@ server.registerTool(
   'cairn_brief',
   {
     description:
-      'Findings worth handing over before starting a task, strongest first. Empty for most ' +
-      'tasks, which is intended rather than a failure to match.',
-    inputSchema: { task: z.string().min(1).describe('What you are about to do') },
+      'Call this BEFORE starting a task, with what you are about to do in your own words ' +
+      '("add zod defaults to the form schema", "deploy a FlexiPage"): the findings worth handing ' +
+      'over first, strongest first. Built for intent — it retrieves better on a plan than cairn_find ' +
+      'does; keep cairn_find for pasted error text. Empty for most tasks, which is intended rather ' +
+      'than a failure to match.',
+    inputSchema: { task: z.string().min(1).describe('What you are about to do, in plain words — a plan, not an error') },
   },
   async ({ task }) => {
     const corpus = loadSearchable().findings;
