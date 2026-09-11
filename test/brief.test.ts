@@ -131,11 +131,55 @@ test('a soft, intent-phrased task about a recorded trap gets one topical line, n
   }
 });
 
-test('brief and find agree on the proxy/403 paraphrase: cairn-0001 comes back, as a topical line', () => {
-  const entries = briefEntries(PROXY_PARAPHRASE, corpus, { useLocalEnvironment: true });
-  assert.equal(entries.length, 1);
-  assert.equal(entries[0].id, 'cairn-0001');
-  assert.equal(entries[0].tier, 'topical');
+/*
+ * cairn-0001 carries `precondition: ["env:HTTPS_PROXY"]`, and the brief
+ * evaluates preconditions against THIS process's environment. On a box with a
+ * proxy (this sandbox, the crews' sandboxes) it is the top hit and topical;
+ * on a box without one (the CI runner — the failure on run 34600317497) the
+ * retriever drops it as provably inapplicable and the next hit, 0031 on
+ * "agent"/"service", is NOT topical. The first version of this test asserted
+ * the proxied answer without saying so and failed exactly where HTTPS_PROXY
+ * was unset. Both environments are pinned now, explicitly, so the test says
+ * what it depends on instead of inheriting it from whoever runs it.
+ */
+function withProxyEnv<T>(value: string | undefined, fn: () => T): T {
+  const saved = { HTTPS_PROXY: process.env.HTTPS_PROXY, https_proxy: process.env.https_proxy };
+  for (const k of ['HTTPS_PROXY', 'https_proxy'] as const) {
+    if (value === undefined) delete process.env[k];
+    else process.env[k] = value;
+  }
+  try {
+    return fn();
+  } finally {
+    for (const k of ['HTTPS_PROXY', 'https_proxy'] as const) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+  }
+}
+
+test('brief and find agree on the proxy/403 paraphrase ON A PROXIED BOX: cairn-0001 comes back, as a topical line', () => {
+  withProxyEnv('http://127.0.0.1:9', () => {
+    const entries = briefEntries(PROXY_PARAPHRASE, corpus, { useLocalEnvironment: true });
+    assert.equal(entries.length, 1);
+    assert.equal(entries[0].id, 'cairn-0001');
+    assert.equal(entries[0].tier, 'topical');
+  });
+});
+
+test('on a box with no proxy the precondition drops cairn-0001, and the runner-up does not become a false topical nag', () => {
+  withProxyEnv(undefined, () => {
+    const entries = briefEntries(PROXY_PARAPHRASE, corpus, { useLocalEnvironment: true });
+    assert.deepEqual(entries, [], `expected silence without a proxy, got ${entries.map((e) => `${e.id}/${e.tier}`).join(', ')}`);
+  });
+});
+
+test('ordinary English that shares two rare-ish tokens with the corpus is NOT topical (the third crew\'s false nags)', () => {
+  for (const task of ['Stripe Checkout vs custom form', 'LinkedIn post kill-vs-ship']) {
+    const entries = briefEntries(task, corpus, { useLocalEnvironment: true });
+    assert.deepEqual(entries, [], `${task}: fired ${entries.map((e) => `${e.id}/${e.tier}`).join(', ')}`);
+    assert.equal(brief(task, corpus, { useLocalEnvironment: true }), '');
+  }
 });
 
 test('a topical line is never added to a strong brief, and a strong brief still renders the full block', () => {

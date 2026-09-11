@@ -134,14 +134,43 @@ export interface BriefEntry {
  * judge. One entry, one line, only when nothing strong was found — it never
  * adds to a strong brief and never renders the full block, so a wrong
  * topical line costs a reader one sentence.
+ *
+ * AND THE TERMS MUST CARRY REAL INFORMATION, TOGETHER. Two distinctive terms
+ * was not enough: the third external crew got a topical nag on "Stripe
+ * Checkout vs custom form" from an eval-vocabulary finding, because "vs" and
+ * "form" each cleared the per-term floor (2.3 bits apiece, in a corpus that
+ * rarely says either) while the whole hit scored 1.9. Ordinary English can
+ * share two rare-ish tokens with a corpus this small; a real trap shares
+ * terms that NARROW it. So the distinctive terms' information is summed and
+ * must clear TOPICAL_INFORMATION. Measured on the cases that decided it:
+ *
+ *   "Stripe Checkout vs custom form"      -> cairn-0039   4.6   (false nag)
+ *   "LinkedIn post kill-vs-ship"          -> cairn-0051   4.0   (false nag)
+ *   proxy paraphrase, no proxy on the box -> cairn-0031   4.1   (false nag)
+ *   "wiring MCP tool with zod schema..."  -> cairn-0043   6.3   (right)
+ *   "MCP tool argument is undefined..."   -> cairn-0043   6.9   (right)
+ *   "connection refused ... from the agent" -> cairn-0001 8.8   (right)
+ *
+ * 5.0 sits between the populations with the gap on the side of silence; the
+ * per-term floor (DISTINCTIVE_FLOOR) still applies to each term counted.
  */
+const TOPICAL_INFORMATION = 5.0;
 const fold = (term: string): string => term.toLowerCase().replace(/(ies|sses|xes|ches|shes|s)$/, (m) => (m === 'ies' ? 'y' : m === 's' ? '' : m.slice(0, -2)));
 function weakButTopical(h: Hit): boolean {
   if (h.strength === 'strong') return false;
   if (h.explained < MIN_EXPLAINED) return false;
   if (h.finding.status === 'retired' || h.confidence <= 0) return false;
-  const distinctive = new Set(h.matched.filter((m) => m.anchorInformation >= DISTINCTIVE_FLOOR && !m.common).map((m) => fold(m.term)));
-  return distinctive.size >= 2;
+  /* One entry per folded term, keeping the most informative spelling, so "hooks"/"hook" is counted once. */
+  const distinctive = new Map<string, number>();
+  for (const m of h.matched) {
+    if (m.common || m.anchorInformation < DISTINCTIVE_FLOOR) continue;
+    const k = fold(m.term);
+    distinctive.set(k, Math.max(distinctive.get(k) ?? 0, m.anchorInformation));
+  }
+  if (distinctive.size < 2) return false;
+  let information = 0;
+  for (const v of distinctive.values()) information += v;
+  return information >= TOPICAL_INFORMATION;
 }
 
 function entryOf(h: Hit, tier: Tier): BriefEntry {
