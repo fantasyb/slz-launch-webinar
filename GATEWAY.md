@@ -43,11 +43,17 @@ this instead:
 ```json
 { "mcpServers": { "records": {
     "command": "node",
-    "args": ["/home/user/slz-launch-webinar/bin/cairn-proxy.js", "--config", "/home/user/you/mcp.json"],
-    "env": { "CAIRN_HOME": "/home/user/slz-launch-webinar", "CAIRN_AGENT": "dig" } } } }
+    "args": ["/ABS/PATH/TO/cairn/bin/cairn-proxy.js", "--config", "/ABS/PATH/TO/your/mcp.json"],
+    "env": { "CAIRN_HOME": "/ABS/PATH/TO/cairn", "CAIRN_AGENT": "dig" } } } }
 ```
 
-- `--config /home/user/you/mcp.json` is your original file, untouched: the
+`/ABS/PATH/TO/cairn` is your checkout of this repo — run `pwd` in it to get
+the path (on the dogfood box it is `/home/user/slz-launch-webinar`); wherever
+you cloned it, substitute that. `/ABS/PATH/TO/your/mcp.json` is the file
+above. Every path here is absolute because the client, not you, sets the
+working directory the server starts in.
+
+- `--config /ABS/PATH/TO/your/mcp.json` is your original file, untouched: the
   gateway spawns what it names and forwards to it. One server in it and the
   tool names are untouched; several and each becomes `name__tool`. Paths
   absolute, because the client decides the working directory.
@@ -73,7 +79,7 @@ of the trap — nobody runs `npm run cairn:brief`.
 ```bash
 npm run cairn:gateway-prove                                      # ~10s, no model, no network
 npm run cairn:gateway-smoke -- --server "<your server's command>"  # transparency against YOUR server
-CAIRN_HOME=/home/user/slz-launch-webinar npm run cairn:report      # what it has delivered so far
+CAIRN_HOME=/ABS/PATH/TO/cairn npm run cairn:report                 # this home: "recorded nothing yet" until a real session runs through it
 ```
 
 `cairn:gateway-prove` is `cairn:gateway-smoke` with a fourth arm: it launches
