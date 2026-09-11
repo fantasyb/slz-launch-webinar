@@ -298,6 +298,17 @@ test('exit 77 means the check could not decide, not that the claim failed', asyn
  * Verified at scale separately, where a 26x timing difference proves the paths
  * really do diverge (20.9s cold against 0.8s warm) and the outputs are still
  * byte-identical. This asserts the same property cheaply on the real corpus.
+ *
+ * It failed one run in thirty under the parallel suite, and the cause was in
+ * the product, not the test: confidence is cached as a wall-clock snapshot in
+ * both the entry store and the shared columnar file, so a parallel test file
+ * rebuilding the same corpus a few seconds later rewrote the columnar with a
+ * fractionally different snapshot, and the reload here read that file. Same
+ * ranking, scores apart in the fourth decimal. The snapshot instant is now
+ * the start of the hour (retrieval.ts, snapshotStart), so every process in
+ * the hour computes the identical number and this comparison is exact
+ * whichever file wrote last. Deliberately NOT isolated to a private cache dir:
+ * the shared cache is where the defect lived, and this test now exercises it.
  */
 test('a reloaded index ranks identically to a freshly built one', () => {
   const queries = [

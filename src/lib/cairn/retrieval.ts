@@ -524,8 +524,32 @@ export interface CorpusIndex {
  * is under 0.15%, well below the precision anything displays it at. Without a
  * TTL a long-running server would freeze these values for its whole lifetime,
  * which is a different and much worse bug.
+ *
+ * ON A GRID, NOT A TIMER. The snapshot is taken at the START of the current
+ * hour (snapshotStart), not at the millisecond a process happened to build,
+ * and an artefact — the in-memory memo, the columnar file, an entry-store row
+ * — is trusted only if it was taken in the SAME hour. A sliding window of
+ * "younger than an hour" let two processes hold snapshots minutes apart and
+ * both be valid, and the columnar file is shared: process A built, process B
+ * rebuilt a little later and rewrote the file, A reloaded and got B's
+ * numbers. Same ranking, scores differing in the fourth decimal, and a test
+ * asserting reload == fresh failed one run in thirty under the parallel
+ * suite. The 0.15% bound above is unchanged; what changes is that everyone in
+ * the same hour computes the identical number, so the two caches and any
+ * number of processes agree byte for byte. The residual is the hour boundary
+ * itself, where a rebuild is due anyway.
  */
 const INDEX_TTL_MS = 60 * 60 * 1000;
+/** The confidence snapshot instant every artefact in this hour must agree on. */
+const snapshotStart = (ms: number): number => Math.floor(ms / INDEX_TTL_MS) * INDEX_TTL_MS;
+/**
+ * The instant at which an index built now evaluates every finding's
+ * confidence. A caller comparing a hit's confidence against `confidence()`
+ * must evaluate at THIS instant, not at `new Date()`: the two can differ by up
+ * to an hour of decay by design, and a tolerance tight enough to catch a
+ * key-handling bug (order 0.1) is far tighter than that.
+ */
+export const indexSnapshotAt = (now = Date.now()): Date => new Date(snapshotStart(now));
 
 const indexCache = new WeakMap<object, CorpusIndex>();
 
@@ -910,9 +934,13 @@ function writeEntryStore(entries: Record<string, CachedDoc>): void {
  * difference between O(corpus x query) per call and O(query).
  */
 export function buildIndex(findings: Finding[]): CorpusIndex {
+  /* Every confidence in this build is evaluated at the start of the current
+   * hour, and every artefact reused must have been built in it. See INDEX_TTL_MS. */
+  const nowMs = Date.now();
+  const snapMs = snapshotStart(nowMs);
   const hit = indexCache.get(findings);
-  if (hit && Date.now() - hit.builtAt < INDEX_TTL_MS) return hit;
-  const at = new Date();
+  if (hit && snapshotStart(hit.builtAt) === snapMs) return hit;
+  const at = new Date(snapMs);
 
   /*
    * Fast path: the whole assembled index, read flat.
@@ -925,7 +953,7 @@ export function buildIndex(findings: Finding[]): CorpusIndex {
    */
   const fingerprint = indexIdentity(findings);
   const flat = readColumnar(columnarFile(fingerprint), fingerprint);
-  if (flat && Date.now() - flat.builtAt < INDEX_TTL_MS) {
+  if (flat && snapshotStart(flat.builtAt) === snapMs) {
     const rebuilt = fromColumnar(flat, findings);
     indexCache.set(findings, rebuilt);
     return rebuilt;
@@ -942,20 +970,20 @@ export function buildIndex(findings: Finding[]): CorpusIndex {
   const store = readEntryStore();
   let misses = 0;
   let refreshed = 0;
-  const nowMs = at.getTime();
 
   const docs: Indexed[] = findings.map((f) => {
     const key = entryKey(f);
     const hit = store.entries[key];
     if (hit) {
-      // The content-derived fields stand; only confidence decays. Recompute it
-      // in place once it is older than INDEX_TTL_MS (or predates confAt), and
-      // stamp the store so the fresher value is written back.
+      // The content-derived fields stand; only confidence decays. Reuse it only
+      // if it was taken at THIS hour's snapshot instant (or predates confAt —
+      // an older format — in which case recompute), and stamp the store so the
+      // value written back is the one every other process this hour computes.
       let conf = hit.confidence;
-      if (typeof hit.confAt !== 'number' || nowMs - hit.confAt >= INDEX_TTL_MS) {
+      if (hit.confAt !== snapMs) {
         conf = confidence(f, at);
         hit.confidence = conf;
-        hit.confAt = nowMs;
+        hit.confAt = snapMs;
         refreshed += 1;
       }
       return {
@@ -986,7 +1014,7 @@ export function buildIndex(findings: Finding[]): CorpusIndex {
     const bm25 = bm25Doc(f);
     const entry: CachedDoc = {
       confidence: confidence(f, at),
-      confAt: nowMs,
+      confAt: snapMs,
       surprise: surprise(f),
       terms: [...terms],
       strong: [...strong],
@@ -1068,7 +1096,7 @@ export function buildIndex(findings: Finding[]): CorpusIndex {
   }
 
   const index: CorpusIndex = {
-    docs, df, n: docs.length, builtAt: Date.now(), bm25Df, avgdl, avgTypedLen,
+    docs, df, n: docs.length, builtAt: nowMs, bm25Df, avgdl, avgTypedLen,
     byCommand, strongByTerm, weakByTerm,
     ...flatten(postings, bm25Postings),
   };
