@@ -19,6 +19,11 @@ against 89ms for the same work — npm's own startup, paid on every lookup, for
 nothing. Run `npm run cairn:build-cli` once after cloning; without it the
 launcher falls back to tsx and takes ~700ms, correctly but slowly.
 
+Single-quote pasted text, for `find` and `brief` alike. In double quotes the
+shell expands before the program runs: `"$99 plan"` arrives as `9 plan`, a
+backtick runs, and the brief blanks on a query nobody typed. The CLI keeps
+whatever it is handed (`test/brief-cli.test.ts`); the quotes are yours.
+
 Do not reach for `grep` here. It was the instruction in this file until it was
 measured against the queries an agent actually has: `grep -il ENOSPC cairn/*.json`
 returns nothing, because no finding contains that string, while the retriever

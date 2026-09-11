@@ -214,6 +214,21 @@ test('the controls that were already silent stay silent under the account-share 
     'picking lunch for a five person offsite in Brooklyn',
     'picking lunch offsite',
     'raise vs bootstrap',
+    /*
+     * Paraphrases of two later crew reports -- a Reddit/arctic-shift task that
+     * nagged cairn-0009, a detached-HEAD task that nagged cairn-0028 -- in the
+     * forms that ARE silent at 3c7d0bf, pinned so they stay so. The verbatim
+     * strings were not available when these were written; the forms that still
+     * nag are a different class from the account-share rule (their distinctive
+     * terms -- "store", "block"; "git", "head" -- sit in the finding's own
+     * claim, share 0.74 and 0.70) and are deliberately NOT pinned either way
+     * here: see the numbers in the commit that added these.
+     */
+    'pull Reddit posts from the arctic-shift API and cache them in the browser',
+    'Reddit data via arctic-shift, persist in localStorage for the dashboard',
+    'use arctic-shift to pull historical Reddit threads and store them',
+    'push from a detached HEAD after checking out a commit',
+    'the repo is in detached HEAD state, get back onto main without losing commits',
   ];
   const fired = controls.filter((t) => brief(t, corpus, { useLocalEnvironment: true }) !== '');
   assert.deepEqual(fired, [], `topical line fired on a control: ${fired.join(' | ')}`);

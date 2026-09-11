@@ -71,6 +71,7 @@
     "cairn:conform": "tsx scripts/conform.ts",
     "cairn:spec": "tsx scripts/spec.ts",
     "cairn:gateway-smoke": "tsx scripts/gateway-smoke.ts",
+    "cairn:gateway-prove": "tsx scripts/gateway-smoke.ts --server \"node fixtures/mcp/records.mjs\" --name records --corpus fixtures/trials/gateway/corpus --call query_records --args '{\"object\":\"Contact\",\"filter\":{\"status\":\"churned\"},\"limit\":1000}'",
     "prepare": "git config core.hooksPath .githooks 2>/dev/null || true",
     "cairn:daemon": "tsx scripts/daemon.ts",
     "cairn:update": "tsx scripts/update.ts",

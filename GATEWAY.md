@@ -23,6 +23,82 @@ CAIRN_HOME=/srv/cairn node ~/cairn/bin/cairn-proxy.js --config servers.json --ht
 `CAIRN_HOME` is the corpus: a directory with `cairn/` in it. Findings that
 name a tool in `triggers` are the ones the gateway delivers.
 
+## INSTALL — putting your own MCP behind it
+
+The gateway is a passenger: nothing arrives in a session until a server is
+routed through it. Two doors, and the second is five lines.
+
+**Everything at once.** `npm run cairn:install` wraps every stdio and
+token-auth HTTP server in `~/.claude.json` as `cairn-proxy --config
+<home>/wrapped/<name>.json`, adds the standalone `cairn` pull server, and
+writes the usage block into `~/.claude/CLAUDE.md`. `--only`/`--exclude` scope
+it, `--dry-run` shows the edits, `--uninstall` restores every original from
+its stash.
+
+**One config, by hand.** Take the `{"mcpServers": {...}}` file your client
+already launches — a project `.mcp.json`, a `--mcp-config` file, the block
+in `~/.claude.json` — leave it exactly as it is, and point the client at
+this instead:
+
+```json
+{ "mcpServers": { "records": {
+    "command": "node",
+    "args": ["/home/user/slz-launch-webinar/bin/cairn-proxy.js", "--config", "/home/user/you/mcp.json"],
+    "env": { "CAIRN_HOME": "/home/user/slz-launch-webinar", "CAIRN_AGENT": "dig" } } } }
+```
+
+- `--config /home/user/you/mcp.json` is your original file, untouched: the
+  gateway spawns what it names and forwards to it. One server in it and the
+  tool names are untouched; several and each becomes `name__tool`. Paths
+  absolute, because the client decides the working directory.
+- `CAIRN_HOME` is the corpus that annotates. On this box the checkout is one
+  (51 findings, 45 active; the execution policy already names it). Every emission and
+  every forwarded call lands in `data/retrievals/<CAIRN_AGENT>.jsonl` under
+  it — in the checkout, that file travels with the repo, which is the point
+  of a shared ledger (`merge=union` handles two writers). A private home is
+  `mkdir -p ~/pilot/cairn` and `CAIRN_HOME=~/pilot`.
+- `CAIRN_AGENT` is the name `cairn:report` shows as the client. Optional:
+  without it the client's own `clientInfo.name` is used.
+- Hosted instead of per-client: one `CAIRN_HOME=... node bin/cairn-proxy.js
+  --config mcp.json --http 8787` and every client's entry is
+  `{"type": "http", "url": "http://127.0.0.1:8787/mcp"}` — see "Running it
+  exposed" before binding anything but loopback.
+
+Restart the client. From then on a finding that names a tool arrives on
+that tool's description, on its argument, and on its result at the moment
+of the trap — nobody runs `npm run cairn:brief`.
+
+**Prove it before trusting it**, in that order:
+
+```bash
+npm run cairn:gateway-prove                                      # ~10s, no model, no network
+npm run cairn:gateway-smoke -- --server "<your server's command>"  # transparency against YOUR server
+CAIRN_HOME=/home/user/slz-launch-webinar npm run cairn:report      # what it has delivered so far
+```
+
+`cairn:gateway-prove` is `cairn:gateway-smoke` with a fourth arm: it launches
+the gateway in exactly the `--config` shape above against
+`fixtures/mcp/records.mjs`, with the sealed trial corpus
+(`fixtures/trials/gateway/corpus`, two findings naming `query_records`),
+calls `query_records` for the churned contacts, and asserts the upstream's
+result comes back first and intact with the finding behind it, labelled.
+Then it runs `cairn:report` against the temporary `CAIRN_HOME` it wrote to
+and asserts the tool is listed with the finding counted on the result
+surface — the same report that reads "recorded nothing yet" on a corpus no
+session has gone through. The home is kept and its path printed
+(`/tmp/cairn-smoke-delivered-*`), so `CAIRN_HOME=<that path> npm run
+cairn:report` reproduces the numbers by hand; a wrong `CAIRN_HOME` is the
+first thing the report itself warns about. The verbatim block the model
+would read and the verbatim report are in the output. To point the same arm
+at your own server and corpus:
+
+```bash
+npm run cairn:gateway-smoke -- --server "<command>" --name <client's name for it> \
+    --corpus <dir with cairn/ in it> --call <tool a finding names> --args '{...}'
+```
+
+`test/gateway-prove.test.ts` runs the prove on every `npm test`.
+
 ## What the agent sees
 
 Four surfaces, all of which are in context when a decision is made:
