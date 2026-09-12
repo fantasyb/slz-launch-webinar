@@ -105,6 +105,81 @@ npm run cairn:gateway-smoke -- --server "<command>" --name <client's name for it
 
 `test/gateway-prove.test.ts` runs the prove on every `npm test`.
 
+## Load-bearing door — make bypass hard (keys via the gateway)
+
+A gateway is a passenger, and a passenger is skipped by default: on the
+crew's first measured hour nothing they had to use ran through it
+(HANDOFF.md, 2026-09-11). The lever that changes that is not in the
+delivery code; it is where the server's key lives.
+
+A wrapped stdio server gets its environment from the gateway's `--config`
+entry: the proxy spawns it with a scrubbed inheritance (Cairn's control
+vars and anything credential-named dropped) and the entry's own `env`
+re-applied last (`scripts/mcp-proxy.ts`, `upstreamTransport`). So the key
+can live in exactly one file — the proxy's — and the agent's client config
+names the gateway and nothing else:
+
+```json
+// the proxy's config — the server, its arguments, and its key (chmod 600)
+{ "mcpServers": { "door": {
+    "command": "npx", "args": ["-y", "@acme/their-mcp"],
+    "env": { "ACME_API_KEY": "…" } } } }
+
+// the agent's client config — the gateway only; no raw server, no key
+{ "mcpServers": { "door": {
+    "command": "node",
+    "args": ["/ABS/PATH/TO/cairn/bin/cairn-proxy.js", "--config", "/ABS/PATH/TO/door.json"],
+    "env": { "CAIRN_HOME": "/ABS/PATH/TO/cairn", "CAIRN_AGENT": "dig" } } } }
+```
+
+Calling the server directly is now a call without its credential, and it
+fails. That is what makes the door load-bearing: the tool the agent must
+use works through the gateway and not around it, so every call to it is
+forwarded, ledgered and annotated. An HTTP server takes the same shape with
+its token in the entry's `headers`. `npm run cairn:install` already does
+this by hand for every server in `~/.claude.json`: the original entry,
+`env` included, is moved verbatim into a `0600` stash at
+`<home>/wrapped/<name>.json` and the client's entry becomes the gateway
+(`scripts/install-global.ts`).
+
+**Prove it:**
+
+```bash
+npm run cairn:gateway-door     # ~10s, no model, no network
+```
+
+`fixtures/mcp/keyed-echo.mjs` is a server whose one tool succeeds only when
+the process was started with the right `DOOR_KEY` (it is given the key's
+SHA-256 on its command line, never the key). The script writes the two
+files above into a temporary home with a random key, launches exactly what
+the client's config says, and asserts: `open` succeeds through the gateway;
+the same server launched without the gateway is refused (no key reached
+it); launched with a guessed key it is refused (the value is checked, not
+the presence). Then it audits where the key went: absent from the ledger
+rows the session wrote, the drafts directory, the tool list and schemas,
+the instructions, the result and every Cairn block on it, the proxy's
+stderr, both refusal messages, the client's config and the report — and
+present in one place, the proxy's config. The key is deliberately not
+credential-shaped, so the ledger redactor cannot be the reason it is
+absent: absence means it never arrived. The ledger row for the call is
+`open [args: message]` — the tool and the argument's name; values are not
+written unless `CAIRN_RECORD_ARGS=1`. `test/gateway-door.test.ts` runs it
+on every `npm test` with a key of its own and audits the kept home itself.
+
+**What this does and does not prevent.** It raises the bar from "skip the
+gateway" to "go and find the key". It is not containment. An agent that can
+read the proxy's config file, or the environment of the running proxy
+process (`/proc/<pid>/environ` on Linux), or the wrapped server's own
+environment, has the key; an agent that can edit the client config can add
+the raw server back if it also has the key. The residual is the permissions
+on that one file and on the process that holds it, which are the
+operator's, not the gateway's. The proof above shows the key reaches
+nothing the gateway writes or delivers; it shows nothing about what else on
+the box can read a `0600` file owned by the same user the agent runs as. If
+the agent runs as that user, this is a speed bump with a ledger, and that is
+still the difference between a passenger and a door — every call to the
+tool is now on record — but it should be described as that and not as more.
+
 ## What the agent sees
 
 Four surfaces, all of which are in context when a decision is made:
