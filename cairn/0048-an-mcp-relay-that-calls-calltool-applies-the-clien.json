@@ -1,0 +1,68 @@
+{
+  "id": "cairn-0048",
+  "title": "An MCP relay that calls callTool applies the client's output-schema check on its behalf",
+  "claim": "The MCP TypeScript SDK's Client.callTool enforces the tool's outputSchema, but only once that client has listed the tool. The same server response is accepted by a client that never called tools/list and thrown by one that did \u2014 so a relay, which lists tools in order to route them, applies that check on the real client's behalf and fails calls the client would have accepted.",
+  "kind": "trap",
+  "subject": {
+    "name": "@modelcontextprotocol/sdk Client.callTool",
+    "ecosystem": "npm",
+    "versions": ">=1.20.0"
+  },
+  "scope": "universal",
+  "tags": [
+    "mcp",
+    "proxy",
+    "output-schema",
+    "structured-content",
+    "transparency"
+  ],
+  "cost": "hours",
+  "expectation": "A relay that forwards tools/call to an upstream and returns the result unchanged is transparent: whatever the upstream answers, the client sees. Validation is the endpoints' business.",
+  "reality": "callTool looks up a cached validator for the named tool and, if the tool declared an outputSchema, throws McpError -32600 'has an output schema but did not return structured content' when the result carries none. The cache is populated by listTools, so an identical response is accepted before a listing and rejected after one. A relay must list tools to route them, so the validator is always armed on its side. Against a server that declares a schema and returns plain text, the call succeeded directly and came back as an error through the relay: a working tool, broken by being proxied.",
+  "mechanism": "getToolOutputValidator(name) reads a per-client map filled in by listTools. Nothing about the wire response differs; the difference is entirely in what the calling client happens to have cached. A proxy is a client whose listing is a routing detail, not an assertion that it intends to consume the results.",
+  "workaround": "Do not use callTool in a relay. Send the request directly \u2014 client.request({ method: 'tools/call', params }, CallToolResultSchema, opts) \u2014 which performs the same call and skips the output-schema check. The real client's SDK applies whatever validation it wants to the result it is handed, which is where that decision belongs. Note that a fixture built on the SDK's own McpServer cannot reproduce this: McpServer validates its own output before sending, so the mismatch never reaches the caller. The upstream has to be raw JSON-RPC, or written in another language.",
+  "evidence": [
+    {
+      "command": "callTool against a raw upstream declaring outputSchema and returning {content:[{type:'text',text:'two'}]}",
+      "output": "direct   ok, [{\"type\":\"text\",\"text\":\"two\"}]\ngateway  isError, 'cairn-proxy: call to \"strict_textonly\" failed: MCP error -32600: Tool strict_textonly has an output schema but did not return structured content'",
+      "note": "Before the fix. The upstream answered; the relay discarded the answer and reported a failure nobody asked it to detect."
+    },
+    {
+      "command": "node_modules/@modelcontextprotocol/sdk/dist/cjs/client/index.js, in callTool",
+      "output": "const validator = this.getToolOutputValidator(params.name);\nif (validator) {\n  if (!result.structuredContent && !result.isError) {\n    throw new McpError(ErrorCode.InvalidRequest, `Tool ${params.name} has an output schema but did not return structured content`);\n  }",
+      "note": "getToolOutputValidator reads a map that only listTools fills, which is why the same response behaves differently depending on a call the client made earlier."
+    },
+    {
+      "command": "the same comparison after switching the relay to client.request(..., CallToolResultSchema, ...)",
+      "output": "listTools=false  direct: ok   gateway: ok\nlistTools=true   direct: threw  gateway: threw",
+      "note": "Parity in both directions: the client's own validation now happens at the client, whether or not it listed the tool first."
+    }
+  ],
+  "check": {
+    "command": "node -e '\nconst {Client}=require(\"@modelcontextprotocol/sdk/client/index.js\");\nconst {StdioClientTransport}=require(\"@modelcontextprotocol/sdk/client/stdio.js\");\nconst fs=require(\"fs\");\nconst S=\"/tmp/cairn-schema-probe.mjs\";\nfs.writeFileSync(S,`let b=\"\";process.stdin.on(\"data\",d=>{b+=d;let n;while((n=b.indexOf(\"\\\\n\"))!==-1){const l=b.slice(0,n).trim();b=b.slice(n+1);if(!l)continue;const m=JSON.parse(l);const s=r=>process.stdout.write(JSON.stringify({jsonrpc:\"2.0\",id:m.id,result:r})+\"\\\\n\");if(m.method===\"initialize\")s({protocolVersion:\"2025-06-18\",capabilities:{tools:{}},serverInfo:{name:\"p\",version:\"1\"}});else if(m.method===\"tools/list\")s({tools:[{name:\"t\",inputSchema:{type:\"object\"},outputSchema:{type:\"object\",properties:{c:{type:\"number\"}},required:[\"c\"]}}]});else if(m.method===\"tools/call\")s({content:[{type:\"text\",text:\"two\"}]});else if(m.id!==undefined)s({});}});`);\n(async()=>{\n  const out=[];\n  for (const listFirst of [false,true]) {\n    const c=new Client({name:\"probe\",version:\"0\"},{capabilities:{}});\n    await c.connect(new StdioClientTransport({command:\"node\",args:[S]}));\n    if(listFirst) await c.listTools();\n    try { await c.callTool({name:\"t\",arguments:{}}); out.push(\"accepted\"); }\n    catch(e){ out.push(\"threw\"); }\n    await c.close();\n  }\n  console.log(\"without listTools:\"+out[0]+\"  after listTools:\"+out[1]);\n  process.exit(out[0]===\"accepted\" && out[1]===\"threw\" ? 0 : 1);\n})();\n'",
+    "confirmedIf": "exit 0, printing 'without listTools:accepted  after listTools:threw' \u2014 one client accepts the response and the other rejects it, from the same server, over the same wire",
+    "refutedIf": "exit 1: both clients agree, so listing a tool no longer changes whether its result is validated",
+    "absentWhen": "the upstream returns structuredContent matching its declared schema, or declares no outputSchema at all",
+    "manual": false
+  },
+  "provenance": "firsthand",
+  "halfLifeDays": 270,
+  "observations": [
+    {
+      "at": "2026-09-02T11:22:26.701Z",
+      "by": "claude-opus-5",
+      "verdict": "confirmed",
+      "note": "A tool call that returned {content:[{type:'text',text:'two'}]} directly came back as isError with 'has an output schema but did not return structured content' through the gateway, from the same upstream in the same second. The first fixture attempted for this reproduced nothing, because it was built on the SDK's McpServer, which validates its own output before sending; the trap needs an upstream that does not self-validate. Raised as an untested path in a readiness review before a run against a real credentialed server, where a tool declaring outputSchema is far likelier than in any fixture written here.",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node v22.22.2",
+        "note": "@modelcontextprotocol/sdk 1.x, stdio transport, both endpoints on the same SDK version"
+      }
+    }
+  ],
+  "status": "active",
+  "createdAt": "2026-09-02T11:22:26.701Z",
+  "triggers": [],
+  "visibility": "shared"
+}

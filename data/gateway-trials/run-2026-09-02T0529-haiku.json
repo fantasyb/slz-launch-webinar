@@ -1,0 +1,1000 @@
+{
+  "runId": "run-2026-09-02T0529-haiku",
+  "smoke": false,
+  "model": "haiku",
+  "trialsPerCell": 5,
+  "truth": {
+    "churned": 137,
+    "open_tier2": 29
+  },
+  "startedAt": "2026-09-02T05:29:19.011Z",
+  "bundleAt": "2026-09-02T05:26:06.458Z",
+  "trials": [
+    {
+      "scenario": "A-silent-cap",
+      "arm": "control",
+      "trial": 1,
+      "sessionId": "4667221a-e97b-4a3e-9647-0c939a9681fd",
+      "answer": 50,
+      "truth": 137,
+      "correct": false,
+      "nearMiss": false,
+      "turns": 3,
+      "toolCalls": {
+        "ToolSearch": 1,
+        "mcp__records__query_records": 1
+      },
+      "mcpCalls": 1,
+      "costUsd": 0.0243882,
+      "durationMs": 16575,
+      "denials": [],
+      "delivered": {
+        "onResult": 0,
+        "onToolSearch": 0
+      },
+      "proxyLedger": {},
+      "usedIncludePaging": false,
+      "usedExplicitMapping": false,
+      "resultText": "```json\n{\"churned\": 50}\n```",
+      "transcript": "data/gateway-trials/run-2026-09-02T0529-haiku/A-silent-cap-control-1.jsonl",
+      "stderrTail": "",
+      "route": false,
+      "rowsRetrieved": 50
+    },
+    {
+      "scenario": "A-silent-cap",
+      "arm": "empty",
+      "trial": 1,
+      "sessionId": "765fe4a2-7216-45a4-b263-5b155268ef88",
+      "answer": 50,
+      "truth": 137,
+      "correct": false,
+      "nearMiss": false,
+      "turns": 3,
+      "toolCalls": {
+        "ToolSearch": 1,
+        "mcp__records__query_records": 1
+      },
+      "mcpCalls": 1,
+      "costUsd": 0.027180700000000002,
+      "durationMs": 19551,
+      "denials": [],
+      "delivered": {
+        "onResult": 0,
+        "onToolSearch": 0
+      },
+      "proxyLedger": {},
+      "usedIncludePaging": false,
+      "usedExplicitMapping": false,
+      "resultText": "```json\n{\"churned\": 50}\n```",
+      "transcript": "data/gateway-trials/run-2026-09-02T0529-haiku/A-silent-cap-empty-1.jsonl",
+      "stderrTail": "",
+      "route": false,
+      "rowsRetrieved": 50
+    },
+    {
+      "scenario": "A-silent-cap",
+      "arm": "gateway",
+      "trial": 1,
+      "sessionId": "df98654e-f13e-47ac-8567-c25ce66e4f47",
+      "answer": 101,
+      "truth": 137,
+      "correct": false,
+      "nearMiss": false,
+      "turns": 79,
+      "toolCalls": {
+        "ToolSearch": 2,
+        "mcp__records__query_records": 75,
+        "mcp__records__list_mappings": 1
+      },
+      "mcpCalls": 76,
+      "costUsd": 0.3696942,
+      "durationMs": 283988,
+      "denials": [],
+      "delivered": {
+        "onResult": 8,
+        "onToolSearch": 0
+      },
+      "proxyLedger": {
+        "mcp-proxy:connect-index": 1,
+        "mcp-proxy:argument": 2,
+        "mcp-proxy:result": 2,
+        "mcp-proxy:error": 3,
+        "mcp-proxy:result-reminder": 14
+      },
+      "usedIncludePaging": false,
+      "usedExplicitMapping": false,
+      "resultText": "Based on my extensive investigation of the data:\n\n1. **First batch confirmed**: Query with `status=\"churned\"` returned exactly 50 records (IDs: 0,1,2,3,4,6,11,13,20,21,28,31,33,35,37,40,43,45,47,48,50,51,52,53,56,59,60,61,64,72,73,77,81,82,84,87,90,91,93,94,95,98,99,100,110,113,114,117,119,123)\n\n2. **Beyond the first batch**: Through direct ID queries, I confirmed additional churned records at IDs",
+      "transcript": "data/gateway-trials/run-2026-09-02T0529-haiku/A-silent-cap-gateway-1.jsonl",
+      "stderrTail": "",
+      "route": false,
+      "rowsRetrieved": 82
+    },
+    {
+      "scenario": "A-silent-cap",
+      "arm": "control",
+      "trial": 2,
+      "sessionId": "321bd449-a616-419d-aaf3-6fbe9f178a51",
+      "answer": 50,
+      "truth": 137,
+      "correct": false,
+      "nearMiss": false,
+      "turns": 3,
+      "toolCalls": {
+        "ToolSearch": 1,
+        "mcp__records__query_records": 1
+      },
+      "mcpCalls": 1,
+      "costUsd": 0.0236681,
+      "durationMs": 14208,
+      "denials": [],
+      "delivered": {
+        "onResult": 0,
+        "onToolSearch": 0
+      },
+      "proxyLedger": {},
+      "usedIncludePaging": false,
+      "usedExplicitMapping": false,
+      "resultText": "```json\n{\"churned\": 50}\n```",
+      "transcript": "data/gateway-trials/run-2026-09-02T0529-haiku/A-silent-cap-control-2.jsonl",
+      "stderrTail": "",
+      "route": false,
+      "rowsRetrieved": 50
+    },
+    {
+      "scenario": "A-silent-cap",
+      "arm": "empty",
+      "trial": 2,
+      "sessionId": "0214db36-739d-4257-b5d7-e90c6d464479",
+      "answer": 50,
+      "truth": 137,
+      "correct": false,
+      "nearMiss": false,
+      "turns": 3,
+      "toolCalls": {
+        "ToolSearch": 1,
+        "mcp__records__query_records": 1
+      },
+      "mcpCalls": 1,
+      "costUsd": 0.0209412,
+      "durationMs": 8183,
+      "denials": [],
+      "delivered": {
+        "onResult": 0,
+        "onToolSearch": 0
+      },
+      "proxyLedger": {},
+      "usedIncludePaging": false,
+      "usedExplicitMapping": false,
+      "resultText": "```json\n{\"churned\": 50}\n```",
+      "transcript": "data/gateway-trials/run-2026-09-02T0529-haiku/A-silent-cap-empty-2.jsonl",
+      "stderrTail": "",
+      "route": false,
+      "rowsRetrieved": 50
+    },
+    {
+      "scenario": "A-silent-cap",
+      "arm": "gateway",
+      "trial": 2,
+      "sessionId": "f8cfcc32-c7a8-4fb8-9e80-d19bcd7b8b24",
+      "answer": 136,
+      "truth": 137,
+      "correct": false,
+      "nearMiss": true,
+      "turns": 6,
+      "toolCalls": {
+        "ToolSearch": 1,
+        "mcp__records__query_records": 4
+      },
+      "mcpCalls": 4,
+      "costUsd": 0.0474394,
+      "durationMs": 18007,
+      "denials": [],
+      "delivered": {
+        "onResult": 1,
+        "onToolSearch": 0
+      },
+      "proxyLedger": {
+        "mcp-proxy:connect-index": 1,
+        "mcp-proxy:argument": 2,
+        "mcp-proxy:result": 2
+      },
+      "usedIncludePaging": true,
+      "usedExplicitMapping": false,
+      "resultText": "```json\n{\"churned\": 136}\n```",
+      "transcript": "data/gateway-trials/run-2026-09-02T0529-haiku/A-silent-cap-gateway-2.jsonl",
+      "stderrTail": "",
+      "route": true,
+      "rowsRetrieved": 137
+    },
+    {
+      "scenario": "A-silent-cap",
+      "arm": "control",
+      "trial": 3,
+      "sessionId": "4a0a3ed6-d8e6-4b8c-8455-02f3780902d1",
+      "answer": 51,
+      "truth": 137,
+      "correct": false,
+      "nearMiss": false,
+      "turns": 3,
+      "toolCalls": {
+        "ToolSearch": 1,
+        "mcp__records__query_records": 1
+      },
+      "mcpCalls": 1,
+      "costUsd": 0.0211943,
+      "durationMs": 10342,
+      "denials": [],
+      "delivered": {
+        "onResult": 0,
+        "onToolSearch": 0
+      },
+      "proxyLedger": {},
+      "usedIncludePaging": false,
+      "usedExplicitMapping": false,
+      "resultText": "```json\n{\"churned\": 51}\n```",
+      "transcript": "data/gateway-trials/run-2026-09-02T0529-haiku/A-silent-cap-control-3.jsonl",
+      "stderrTail": "",
+      "route": false,
+      "rowsRetrieved": 50
+    },
+    {
+      "scenario": "A-silent-cap",
+      "arm": "empty",
+      "trial": 3,
+      "sessionId": "12c9a17f-1c66-42dd-9127-23afc78d061a",
+      "answer": 50,
+      "truth": 137,
+      "correct": false,
+      "nearMiss": false,
+      "turns": 3,
+      "toolCalls": {
+        "ToolSearch": 1,
+        "mcp__records__query_records": 1
+      },
+      "mcpCalls": 1,
+      "costUsd": 0.0255871,
+      "durationMs": 13910,
+      "denials": [],
+      "delivered": {
+        "onResult": 0,
+        "onToolSearch": 0
+      },
+      "proxyLedger": {},
+      "usedIncludePaging": false,
+      "usedExplicitMapping": false,
+      "resultText": "```json\n{\"churned\": 50}\n```",
+      "transcript": "data/gateway-trials/run-2026-09-02T0529-haiku/A-silent-cap-empty-3.jsonl",
+      "stderrTail": "",
+      "route": false,
+      "rowsRetrieved": 50
+    },
+    {
+      "scenario": "A-silent-cap",
+      "arm": "gateway",
+      "trial": 3,
+      "sessionId": "07f8e120-dc91-49b3-a9f9-f5a5f6992d6f",
+      "answer": 136,
+      "truth": 137,
+      "correct": false,
+      "nearMiss": true,
+      "turns": 6,
+      "toolCalls": {
+        "ToolSearch": 1,
+        "mcp__records__query_records": 4
+      },
+      "mcpCalls": 4,
+      "costUsd": 0.047057400000000006,
+      "durationMs": 13778,
+      "denials": [],
+      "delivered": {
+        "onResult": 1,
+        "onToolSearch": 0
+      },
+      "proxyLedger": {
+        "mcp-proxy:connect-index": 1,
+        "mcp-proxy:argument": 2,
+        "mcp-proxy:result": 2
+      },
+      "usedIncludePaging": true,
+      "usedExplicitMapping": false,
+      "resultText": "```json\n{\"churned\": 136}\n```",
+      "transcript": "data/gateway-trials/run-2026-09-02T0529-haiku/A-silent-cap-gateway-3.jsonl",
+      "stderrTail": "",
+      "route": true,
+      "rowsRetrieved": 137
+    },
+    {
+      "scenario": "A-silent-cap",
+      "arm": "control",
+      "trial": 4,
+      "sessionId": "202eee9b-5afd-4616-b604-5ce006993778",
+      "answer": 50,
+      "truth": 137,
+      "correct": false,
+      "nearMiss": false,
+      "turns": 3,
+      "toolCalls": {
+        "ToolSearch": 1,
+        "mcp__records__query_records": 1
+      },
+      "mcpCalls": 1,
+      "costUsd": 0.0292872,
+      "durationMs": 23547,
+      "denials": [],
+      "delivered": {
+        "onResult": 0,
+        "onToolSearch": 0
+      },
+      "proxyLedger": {},
+      "usedIncludePaging": false,
+      "usedExplicitMapping": false,
+      "resultText": "```json\n{\"churned\": 50}\n```",
+      "transcript": "data/gateway-trials/run-2026-09-02T0529-haiku/A-silent-cap-control-4.jsonl",
+      "stderrTail": "",
+      "route": false,
+      "rowsRetrieved": 50
+    },
+    {
+      "scenario": "A-silent-cap",
+      "arm": "empty",
+      "trial": 4,
+      "sessionId": "8fd5ab1e-2fe6-4c2a-ab85-f6f70f9bf2dd",
+      "answer": 50,
+      "truth": 137,
+      "correct": false,
+      "nearMiss": false,
+      "turns": 3,
+      "toolCalls": {
+        "ToolSearch": 1,
+        "mcp__records__query_records": 1
+      },
+      "mcpCalls": 1,
+      "costUsd": 0.0230857,
+      "durationMs": 12782,
+      "denials": [],
+      "delivered": {
+        "onResult": 0,
+        "onToolSearch": 0
+      },
+      "proxyLedger": {},
+      "usedIncludePaging": false,
+      "usedExplicitMapping": false,
+      "resultText": "```json\n{\"churned\": 50}\n```",
+      "transcript": "data/gateway-trials/run-2026-09-02T0529-haiku/A-silent-cap-empty-4.jsonl",
+      "stderrTail": "",
+      "route": false,
+      "rowsRetrieved": 50
+    },
+    {
+      "scenario": "A-silent-cap",
+      "arm": "gateway",
+      "trial": 4,
+      "sessionId": "5e3af8de-6276-434c-8788-25067d1214bd",
+      "answer": 136,
+      "truth": 137,
+      "correct": false,
+      "nearMiss": true,
+      "turns": 6,
+      "toolCalls": {
+        "ToolSearch": 1,
+        "mcp__records__query_records": 4
+      },
+      "mcpCalls": 4,
+      "costUsd": 0.0478073,
+      "durationMs": 17848,
+      "denials": [],
+      "delivered": {
+        "onResult": 1,
+        "onToolSearch": 0
+      },
+      "proxyLedger": {
+        "mcp-proxy:connect-index": 1,
+        "mcp-proxy:argument": 2,
+        "mcp-proxy:result": 2
+      },
+      "usedIncludePaging": true,
+      "usedExplicitMapping": false,
+      "resultText": "```json\n{\"churned\": 136}\n```",
+      "transcript": "data/gateway-trials/run-2026-09-02T0529-haiku/A-silent-cap-gateway-4.jsonl",
+      "stderrTail": "",
+      "route": true,
+      "rowsRetrieved": 137
+    },
+    {
+      "scenario": "A-silent-cap",
+      "arm": "control",
+      "trial": 5,
+      "sessionId": "c4ddc6b1-2063-489e-a62a-e8b425d7eb79",
+      "answer": 50,
+      "truth": 137,
+      "correct": false,
+      "nearMiss": false,
+      "turns": 3,
+      "toolCalls": {
+        "ToolSearch": 1,
+        "mcp__records__query_records": 1
+      },
+      "mcpCalls": 1,
+      "costUsd": 0.0242611,
+      "durationMs": 15822,
+      "denials": [],
+      "delivered": {
+        "onResult": 0,
+        "onToolSearch": 0
+      },
+      "proxyLedger": {},
+      "usedIncludePaging": false,
+      "usedExplicitMapping": false,
+      "resultText": "```json\n{\"churned\": 50}\n```",
+      "transcript": "data/gateway-trials/run-2026-09-02T0529-haiku/A-silent-cap-control-5.jsonl",
+      "stderrTail": "",
+      "route": false,
+      "rowsRetrieved": 50
+    },
+    {
+      "scenario": "A-silent-cap",
+      "arm": "empty",
+      "trial": 5,
+      "sessionId": "ef50b8b2-0ac7-4231-afaa-8b8ece1d3b5c",
+      "answer": 50,
+      "truth": 137,
+      "correct": false,
+      "nearMiss": false,
+      "turns": 3,
+      "toolCalls": {
+        "ToolSearch": 1,
+        "mcp__records__query_records": 1
+      },
+      "mcpCalls": 1,
+      "costUsd": 0.0227255,
+      "durationMs": 12745,
+      "denials": [],
+      "delivered": {
+        "onResult": 0,
+        "onToolSearch": 0
+      },
+      "proxyLedger": {},
+      "usedIncludePaging": false,
+      "usedExplicitMapping": false,
+      "resultText": "```json\n{\"churned\": 50}\n```",
+      "transcript": "data/gateway-trials/run-2026-09-02T0529-haiku/A-silent-cap-empty-5.jsonl",
+      "stderrTail": "",
+      "route": false,
+      "rowsRetrieved": 50
+    },
+    {
+      "scenario": "A-silent-cap",
+      "arm": "gateway",
+      "trial": 5,
+      "sessionId": "c761907e-e9ab-4655-99fa-3f092b2d5555",
+      "answer": 50,
+      "truth": 137,
+      "correct": false,
+      "nearMiss": false,
+      "turns": 4,
+      "toolCalls": {
+        "ToolSearch": 1,
+        "mcp__records__query_records": 2
+      },
+      "mcpCalls": 2,
+      "costUsd": 0.0336562,
+      "durationMs": 20096,
+      "denials": [],
+      "delivered": {
+        "onResult": 1,
+        "onToolSearch": 0
+      },
+      "proxyLedger": {
+        "mcp-proxy:connect-index": 1,
+        "mcp-proxy:argument": 2,
+        "mcp-proxy:result": 2
+      },
+      "usedIncludePaging": false,
+      "usedExplicitMapping": false,
+      "resultText": "```json\n{\"churned\": 50}\n```",
+      "transcript": "data/gateway-trials/run-2026-09-02T0529-haiku/A-silent-cap-gateway-5.jsonl",
+      "stderrTail": "",
+      "route": false,
+      "rowsRetrieved": 50
+    },
+    {
+      "scenario": "B-stale-mapping",
+      "arm": "control",
+      "trial": 1,
+      "sessionId": "0cb2e445-9e4c-479b-9860-8e6b38c11bd3",
+      "answer": 0,
+      "truth": 29,
+      "correct": false,
+      "nearMiss": false,
+      "turns": 3,
+      "toolCalls": {
+        "ToolSearch": 1,
+        "mcp__records__query_records": 1
+      },
+      "mcpCalls": 1,
+      "costUsd": 0.0172085,
+      "durationMs": 8836,
+      "denials": [],
+      "delivered": {
+        "onResult": 0,
+        "onToolSearch": 0
+      },
+      "proxyLedger": {},
+      "usedIncludePaging": false,
+      "usedExplicitMapping": false,
+      "resultText": "{\"open_tier2\": 0}",
+      "transcript": "data/gateway-trials/run-2026-09-02T0529-haiku/B-stale-mapping-control-1.jsonl",
+      "stderrTail": "",
+      "route": false,
+      "rowsRetrieved": 0
+    },
+    {
+      "scenario": "B-stale-mapping",
+      "arm": "empty",
+      "trial": 1,
+      "sessionId": "1bd970d8-017e-4038-9cc8-6585f427b59b",
+      "answer": 0,
+      "truth": 29,
+      "correct": false,
+      "nearMiss": false,
+      "turns": 3,
+      "toolCalls": {
+        "ToolSearch": 1,
+        "mcp__records__query_records": 1
+      },
+      "mcpCalls": 1,
+      "costUsd": 0.017475499999999998,
+      "durationMs": 8445,
+      "denials": [],
+      "delivered": {
+        "onResult": 0,
+        "onToolSearch": 0
+      },
+      "proxyLedger": {},
+      "usedIncludePaging": false,
+      "usedExplicitMapping": false,
+      "resultText": "```json\n{\"open_tier2\": 0}\n```",
+      "transcript": "data/gateway-trials/run-2026-09-02T0529-haiku/B-stale-mapping-empty-1.jsonl",
+      "stderrTail": "",
+      "route": false,
+      "rowsRetrieved": 0
+    },
+    {
+      "scenario": "B-stale-mapping",
+      "arm": "gateway",
+      "trial": 1,
+      "sessionId": "9c8212aa-6f1d-4f87-b37f-c8154c35ae0c",
+      "answer": 28,
+      "truth": 29,
+      "correct": false,
+      "nearMiss": true,
+      "turns": 6,
+      "toolCalls": {
+        "ToolSearch": 2,
+        "mcp__records__query_records": 2,
+        "mcp__records__list_mappings": 1
+      },
+      "mcpCalls": 3,
+      "costUsd": 0.0337093,
+      "durationMs": 17149,
+      "denials": [],
+      "delivered": {
+        "onResult": 1,
+        "onToolSearch": 0
+      },
+      "proxyLedger": {
+        "mcp-proxy:connect-index": 1,
+        "mcp-proxy:argument": 2,
+        "mcp-proxy:result": 2
+      },
+      "usedIncludePaging": false,
+      "usedExplicitMapping": true,
+      "resultText": "```json\n{\"open_tier2\": 28}\n```",
+      "transcript": "data/gateway-trials/run-2026-09-02T0529-haiku/B-stale-mapping-gateway-1.jsonl",
+      "stderrTail": "",
+      "route": true,
+      "rowsRetrieved": 29
+    },
+    {
+      "scenario": "B-stale-mapping",
+      "arm": "control",
+      "trial": 2,
+      "sessionId": "903918ae-e613-4115-b3e3-1bc0d5ced923",
+      "answer": 0,
+      "truth": 29,
+      "correct": false,
+      "nearMiss": false,
+      "turns": 3,
+      "toolCalls": {
+        "ToolSearch": 1,
+        "mcp__records__query_records": 1
+      },
+      "mcpCalls": 1,
+      "costUsd": 0.01692,
+      "durationMs": 8097,
+      "denials": [],
+      "delivered": {
+        "onResult": 0,
+        "onToolSearch": 0
+      },
+      "proxyLedger": {},
+      "usedIncludePaging": false,
+      "usedExplicitMapping": false,
+      "resultText": "```json\n{\"open_tier2\": 0}\n```",
+      "transcript": "data/gateway-trials/run-2026-09-02T0529-haiku/B-stale-mapping-control-2.jsonl",
+      "stderrTail": "",
+      "route": false,
+      "rowsRetrieved": 0
+    },
+    {
+      "scenario": "B-stale-mapping",
+      "arm": "empty",
+      "trial": 2,
+      "sessionId": "ba0c2504-03a5-4dec-bf7a-8750de209e54",
+      "answer": 0,
+      "truth": 29,
+      "correct": false,
+      "nearMiss": false,
+      "turns": 3,
+      "toolCalls": {
+        "ToolSearch": 1,
+        "mcp__records__query_records": 1
+      },
+      "mcpCalls": 1,
+      "costUsd": 0.0178081,
+      "durationMs": 9046,
+      "denials": [],
+      "delivered": {
+        "onResult": 0,
+        "onToolSearch": 0
+      },
+      "proxyLedger": {},
+      "usedIncludePaging": false,
+      "usedExplicitMapping": false,
+      "resultText": "```json\n{\"open_tier2\": 0}\n```",
+      "transcript": "data/gateway-trials/run-2026-09-02T0529-haiku/B-stale-mapping-empty-2.jsonl",
+      "stderrTail": "",
+      "route": false,
+      "rowsRetrieved": 0
+    },
+    {
+      "scenario": "B-stale-mapping",
+      "arm": "gateway",
+      "trial": 2,
+      "sessionId": "1389e6f6-caf7-4090-b97f-37996de0dd95",
+      "answer": 29,
+      "truth": 29,
+      "correct": true,
+      "nearMiss": true,
+      "turns": 6,
+      "toolCalls": {
+        "ToolSearch": 2,
+        "mcp__records__query_records": 2,
+        "mcp__records__list_mappings": 1
+      },
+      "mcpCalls": 3,
+      "costUsd": 0.034218200000000004,
+      "durationMs": 17039,
+      "denials": [],
+      "delivered": {
+        "onResult": 1,
+        "onToolSearch": 0
+      },
+      "proxyLedger": {
+        "mcp-proxy:connect-index": 1,
+        "mcp-proxy:argument": 2,
+        "mcp-proxy:result": 2
+      },
+      "usedIncludePaging": false,
+      "usedExplicitMapping": true,
+      "resultText": "```json\n{\"open_tier2\": 29}\n```",
+      "transcript": "data/gateway-trials/run-2026-09-02T0529-haiku/B-stale-mapping-gateway-2.jsonl",
+      "stderrTail": "",
+      "route": true,
+      "rowsRetrieved": 29
+    },
+    {
+      "scenario": "B-stale-mapping",
+      "arm": "control",
+      "trial": 3,
+      "sessionId": "707d3fd7-ebd5-44cd-b092-af3c786bd3d1",
+      "answer": 0,
+      "truth": 29,
+      "correct": false,
+      "nearMiss": false,
+      "turns": 3,
+      "toolCalls": {
+        "ToolSearch": 1,
+        "mcp__records__query_records": 1
+      },
+      "mcpCalls": 1,
+      "costUsd": 0.0170523,
+      "durationMs": 8146,
+      "denials": [],
+      "delivered": {
+        "onResult": 0,
+        "onToolSearch": 0
+      },
+      "proxyLedger": {},
+      "usedIncludePaging": false,
+      "usedExplicitMapping": false,
+      "resultText": "```json\n{\"open_tier2\": 0}\n```",
+      "transcript": "data/gateway-trials/run-2026-09-02T0529-haiku/B-stale-mapping-control-3.jsonl",
+      "stderrTail": "",
+      "route": false,
+      "rowsRetrieved": 0
+    },
+    {
+      "scenario": "B-stale-mapping",
+      "arm": "empty",
+      "trial": 3,
+      "sessionId": "3ec52e8b-5a7b-4d76-a9dc-93aa958d3f07",
+      "answer": 0,
+      "truth": 29,
+      "correct": false,
+      "nearMiss": false,
+      "turns": 3,
+      "toolCalls": {
+        "ToolSearch": 1,
+        "mcp__records__query_records": 1
+      },
+      "mcpCalls": 1,
+      "costUsd": 0.016832,
+      "durationMs": 8593,
+      "denials": [],
+      "delivered": {
+        "onResult": 0,
+        "onToolSearch": 0
+      },
+      "proxyLedger": {},
+      "usedIncludePaging": false,
+      "usedExplicitMapping": false,
+      "resultText": "```json\n{\"open_tier2\": 0}\n```",
+      "transcript": "data/gateway-trials/run-2026-09-02T0529-haiku/B-stale-mapping-empty-3.jsonl",
+      "stderrTail": "",
+      "route": false,
+      "rowsRetrieved": 0
+    },
+    {
+      "scenario": "B-stale-mapping",
+      "arm": "gateway",
+      "trial": 3,
+      "sessionId": "7ae5fa34-e93f-4666-8aad-76fea8e8f9b2",
+      "answer": 29,
+      "truth": 29,
+      "correct": true,
+      "nearMiss": true,
+      "turns": 6,
+      "toolCalls": {
+        "ToolSearch": 2,
+        "mcp__records__query_records": 2,
+        "mcp__records__list_mappings": 1
+      },
+      "mcpCalls": 3,
+      "costUsd": 0.034270400000000006,
+      "durationMs": 15799,
+      "denials": [],
+      "delivered": {
+        "onResult": 1,
+        "onToolSearch": 0
+      },
+      "proxyLedger": {
+        "mcp-proxy:connect-index": 1,
+        "mcp-proxy:argument": 2,
+        "mcp-proxy:result": 2
+      },
+      "usedIncludePaging": false,
+      "usedExplicitMapping": true,
+      "resultText": "```json\n{\"open_tier2\": 29}\n```",
+      "transcript": "data/gateway-trials/run-2026-09-02T0529-haiku/B-stale-mapping-gateway-3.jsonl",
+      "stderrTail": "",
+      "route": true,
+      "rowsRetrieved": 29
+    },
+    {
+      "scenario": "B-stale-mapping",
+      "arm": "control",
+      "trial": 4,
+      "sessionId": "ce3b74bf-a2ed-4e16-871a-e911c83c2f11",
+      "answer": 0,
+      "truth": 29,
+      "correct": false,
+      "nearMiss": false,
+      "turns": 3,
+      "toolCalls": {
+        "ToolSearch": 1,
+        "mcp__records__query_records": 1
+      },
+      "mcpCalls": 1,
+      "costUsd": 0.0173287,
+      "durationMs": 8952,
+      "denials": [],
+      "delivered": {
+        "onResult": 0,
+        "onToolSearch": 0
+      },
+      "proxyLedger": {},
+      "usedIncludePaging": false,
+      "usedExplicitMapping": false,
+      "resultText": "```json\n{\"open_tier2\": 0}\n```",
+      "transcript": "data/gateway-trials/run-2026-09-02T0529-haiku/B-stale-mapping-control-4.jsonl",
+      "stderrTail": "",
+      "route": false,
+      "rowsRetrieved": 0
+    },
+    {
+      "scenario": "B-stale-mapping",
+      "arm": "empty",
+      "trial": 4,
+      "sessionId": "c2cc9938-fff7-4918-9eab-8b8e9265a77c",
+      "answer": 0,
+      "truth": 29,
+      "correct": false,
+      "nearMiss": false,
+      "turns": 3,
+      "toolCalls": {
+        "ToolSearch": 1,
+        "mcp__records__query_records": 1
+      },
+      "mcpCalls": 1,
+      "costUsd": 0.0178835,
+      "durationMs": 7512,
+      "denials": [],
+      "delivered": {
+        "onResult": 0,
+        "onToolSearch": 0
+      },
+      "proxyLedger": {},
+      "usedIncludePaging": false,
+      "usedExplicitMapping": false,
+      "resultText": "```json\n{\"open_tier2\": 0}\n```",
+      "transcript": "data/gateway-trials/run-2026-09-02T0529-haiku/B-stale-mapping-empty-4.jsonl",
+      "stderrTail": "",
+      "route": false,
+      "rowsRetrieved": 0
+    },
+    {
+      "scenario": "B-stale-mapping",
+      "arm": "gateway",
+      "trial": 4,
+      "sessionId": "9eecd2b0-1770-4e9d-b98e-60d4ee026777",
+      "answer": 29,
+      "truth": 29,
+      "correct": true,
+      "nearMiss": true,
+      "turns": 6,
+      "toolCalls": {
+        "ToolSearch": 1,
+        "mcp__records__query_records": 3,
+        "mcp__records__list_mappings": 1
+      },
+      "mcpCalls": 4,
+      "costUsd": 0.0371098,
+      "durationMs": 19326,
+      "denials": [],
+      "delivered": {
+        "onResult": 1,
+        "onToolSearch": 0
+      },
+      "proxyLedger": {
+        "mcp-proxy:connect-index": 1,
+        "mcp-proxy:argument": 2,
+        "mcp-proxy:result": 2
+      },
+      "usedIncludePaging": false,
+      "usedExplicitMapping": true,
+      "resultText": "{\"open_tier2\": 29}",
+      "transcript": "data/gateway-trials/run-2026-09-02T0529-haiku/B-stale-mapping-gateway-4.jsonl",
+      "stderrTail": "",
+      "route": true,
+      "rowsRetrieved": 29
+    },
+    {
+      "scenario": "B-stale-mapping",
+      "arm": "control",
+      "trial": 5,
+      "sessionId": "1a248afc-be2d-46d0-a5d6-e9d9d69b161e",
+      "answer": 0,
+      "truth": 29,
+      "correct": false,
+      "nearMiss": false,
+      "turns": 3,
+      "toolCalls": {
+        "ToolSearch": 1,
+        "mcp__records__query_records": 1
+      },
+      "mcpCalls": 1,
+      "costUsd": 0.017548599999999998,
+      "durationMs": 9506,
+      "denials": [],
+      "delivered": {
+        "onResult": 0,
+        "onToolSearch": 0
+      },
+      "proxyLedger": {},
+      "usedIncludePaging": false,
+      "usedExplicitMapping": false,
+      "resultText": "```json\n{\"open_tier2\": 0}\n```",
+      "transcript": "data/gateway-trials/run-2026-09-02T0529-haiku/B-stale-mapping-control-5.jsonl",
+      "stderrTail": "",
+      "route": false,
+      "rowsRetrieved": 0
+    },
+    {
+      "scenario": "B-stale-mapping",
+      "arm": "empty",
+      "trial": 5,
+      "sessionId": "666748b2-800a-4880-8a4b-acd51533d8b7",
+      "answer": 0,
+      "truth": 29,
+      "correct": false,
+      "nearMiss": false,
+      "turns": 3,
+      "toolCalls": {
+        "ToolSearch": 1,
+        "mcp__records__query_records": 1
+      },
+      "mcpCalls": 1,
+      "costUsd": 0.0179339,
+      "durationMs": 9239,
+      "denials": [],
+      "delivered": {
+        "onResult": 0,
+        "onToolSearch": 0
+      },
+      "proxyLedger": {},
+      "usedIncludePaging": false,
+      "usedExplicitMapping": false,
+      "resultText": "```json\n{\"open_tier2\": 0}\n```",
+      "transcript": "data/gateway-trials/run-2026-09-02T0529-haiku/B-stale-mapping-empty-5.jsonl",
+      "stderrTail": "",
+      "route": false,
+      "rowsRetrieved": 0
+    },
+    {
+      "scenario": "B-stale-mapping",
+      "arm": "gateway",
+      "trial": 5,
+      "sessionId": "01e70121-51c0-4c36-9037-3210d2344383",
+      "answer": 29,
+      "truth": 29,
+      "correct": true,
+      "nearMiss": true,
+      "turns": 7,
+      "toolCalls": {
+        "ToolSearch": 2,
+        "mcp__records__query_records": 3,
+        "mcp__records__list_mappings": 1
+      },
+      "mcpCalls": 4,
+      "costUsd": 0.0405341,
+      "durationMs": 20395,
+      "denials": [],
+      "delivered": {
+        "onResult": 1,
+        "onToolSearch": 0
+      },
+      "proxyLedger": {
+        "mcp-proxy:connect-index": 1,
+        "mcp-proxy:argument": 2,
+        "mcp-proxy:result": 2
+      },
+      "usedIncludePaging": false,
+      "usedExplicitMapping": true,
+      "resultText": "```json\n{\"open_tier2\": 29}\n```",
+      "transcript": "data/gateway-trials/run-2026-09-02T0529-haiku/B-stale-mapping-gateway-5.jsonl",
+      "stderrTail": "",
+      "route": true,
+      "rowsRetrieved": 29
+    }
+  ],
+  "regraded": [
+    "usedIncludePaging",
+    "usedExplicitMapping",
+    "route",
+    "rowsRetrieved",
+    "nearMiss",
+    "delivered"
+  ]
+}

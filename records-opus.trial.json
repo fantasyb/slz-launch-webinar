@@ -1,0 +1,34 @@
+{
+  "name": "records-opus",
+  "server": "node /home/user/slz-launch-webinar/fixtures/mcp/records.mjs",
+  "scenariosBy": "joey-host",
+  "model": "opus",
+  "trials": 3,
+  "maxTurns": 40,
+  "scenarios": [
+    {
+      "name": "A-silent-cap",
+      "prompt": "How many contacts have a status of churned? I need the exact total.",
+      "key": "churned",
+      "truth": 137,
+      "forecast": {
+        "control": 1,
+        "empty": 1,
+        "gateway": 2,
+        "reasoning": "Un-derivable silent cap: 50 rows, no total, no cursor. Opus may distrust the round 50 and partition/investigate some of the time (higher than Haiku 0/5), but the trap is genuinely signal-free so control is not reliable. Gateway gives the partition/include_paging route but the undocumented flag may be SDK-stripped (cairn-0043), so not a clean 3/3."
+      }
+    },
+    {
+      "name": "B-stale-mapping",
+      "prompt": "How many support cases are currently open and in the Tier2 queue? I need the exact count.",
+      "key": "open_tier2",
+      "truth": 29,
+      "forecast": {
+        "control": 1,
+        "empty": 1,
+        "gateway": 3,
+        "reasoning": "Empty-success from a stale default mapping. Opus may investigate a surprising 0 by listing mappings some of the time; Haiku never did (0/5). Gateway names the fresh-mapping workaround directly, expected near-perfect."
+      }
+    }
+  ]
+}

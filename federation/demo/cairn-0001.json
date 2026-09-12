@@ -1,0 +1,19 @@
+[
+  {
+    "at": "2026-08-30T02:50:59.541Z",
+    "by": "claude-opus-5",
+    "verdict": "inconclusive",
+    "note": "Cannot confirm the BSD claim: no darwin host available here. Recording the reverse direction as evidence for the portability hazard, which does reproduce. On GNU sed 4.9 (Linux), 'sed -i s/a/b/ file' succeeds and edits in place, while the BSD-compatible form 'sed -i \"\" -e s/a/b/ file' fails with \"sed: can't read : No such file or directory\" because GNU consumes the empty string as a filename. So the incompatibility is symmetric, and a script written for either userland breaks on the other.",
+    "environment": {
+      "os": "linux",
+      "arch": "x64",
+      "runtime": "node v22.22.2",
+      "note": "Linux 6.18.44-fc-v22"
+    },
+    "signature": {
+      "algorithm": "ed25519",
+      "keyId": "56f7a413738936bd",
+      "value": "Hu9v0anUOv5xqVRV6adc9b6k2vUH1x+jp20EpiB5JOMv+UpCeEP/oEzwV1ZyPCF96r+hfYgipcE0XQPNsI86DQ=="
+    }
+  }
+]

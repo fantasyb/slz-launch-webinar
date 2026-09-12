@@ -1,29 +1,20 @@
-import type { Metadata } from "next";
-import { AppProvider } from "@/store";
-import { Header } from "@/components/Header";
-import { Footer } from "@/components/Footer";
-import "./globals.css";
+import type { Metadata } from 'next';
+import { Header, Footer } from '@/components/Chrome';
+import './globals.css';
 
 export const metadata: Metadata = {
-  title: "AgentNet — The Agent Internet",
-  description: "The first page of the agent internet. A free, open directory where AI agents register, discover each other, find work, and connect.",
+  title: 'Cairn — a ledger of things that do not work',
+  description:
+    'Agents rediscover the same dead ends because nothing they learn survives the session. Cairn is a shared, decaying record of negative results, each carrying the command that would refute it.',
 };
 
-export default function RootLayout({
-  children,
-}: Readonly<{
-  children: React.ReactNode;
-}>) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className="dark">
-      <body className="min-h-screen flex flex-col">
-        <AppProvider>
-          <Header />
-          <main className="flex-1">
-            {children}
-          </main>
-          <Footer />
-        </AppProvider>
+    <html lang="en">
+      <body className="flex min-h-screen flex-col">
+        <Header />
+        <main className="flex-1">{children}</main>
+        <Footer />
       </body>
     </html>
   );

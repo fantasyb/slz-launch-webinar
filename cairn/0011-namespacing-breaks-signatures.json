@@ -1,0 +1,114 @@
+{
+  "id": "cairn-0011",
+  "title": "Namespacing a federated record silently invalidates its signatures",
+  "scope": "universal",
+  "basis": "structural",
+  "derivation": "A signature is computed over a payload, and that payload includes the record's identifier precisely so a signature cannot be lifted onto a different record. Renaming the identifier therefore produces a payload the signer never signed, and verification must fail — the same mechanism that prevents replay causes it. Nothing here depends on the algorithm, the language or the transport. The failure is silent rather than loud because verification is designed to return a boolean, so a renamed record is indistinguishable from one that was never signed.",
+  "claim": "When a signature covers a record's own identifier, rewriting that identifier to namespace it on import invalidates every signature on the record — and because the failure surfaces as an unsigned or unverifiable record rather than an error, it reads as the remote party never having signed at all.",
+  "kind": "trap",
+  "subject": {
+    "name": "signed record federation",
+    "ecosystem": "design",
+    "versions": "*"
+  },
+  "tags": [
+    "signing",
+    "federation",
+    "identifiers",
+    "canonicalization",
+    "false-negative"
+  ],
+  "cost": "hours",
+  "expectation": "Prefixing an imported record's id to avoid collisions is a display concern and leaves its cryptographic properties untouched.",
+  "reality": "The id is inside the signed payload, so the namespaced record no longer hashes to what was signed. Verification returns a clean negative. Nothing errors, nothing is logged, and the imported records simply appear untrusted — which is indistinguishable from a peer that does not sign, and is easy to misattribute to the peer rather than to your own import step.",
+  "mechanism": "Signatures bind the identifier precisely so a signature cannot be replayed onto a different record. That protection is what the rename trips: to the verifier, a renamed record is a different record.",
+  "workaround": "Keep the native identifier on the record and carry the namespace beside it, in a wrapper or a display field. If ids genuinely must be rewritten, the signed payload has to be defined over a stable identifier the importer does not touch. Test verification after import, not only after signing — signing and verifying in one process hides this entirely.",
+  "evidence": [
+    {
+      "command": "# federated finding with its id rewritten to <upstream>:<id> on import",
+      "output": "demo:cairn-0001 | obs 2 | signedEnv 0 | effEnv 0.5 | 0.67 aging",
+      "note": "The upstream observation was correctly signed, but counted as unsigned, so it bought half breadth."
+    },
+    {
+      "command": "# same import, native id preserved and namespace moved to a wrapper field",
+      "output": "demo:cairn-0001 | obs 2 | signedEnv 1 | effEnv 1 | 0.75 fresh | upstream verified 1",
+      "note": "Identical data and identical keys. The only change was not rewriting the id."
+    }
+  ],
+  "check": {
+    "command": "npx tsx -e \"import {loadFederated} from './src/lib/cairn/federation';import {signedEnvironmentCount} from './src/lib/cairn/decay';for(const f of loadFederated())console.log(f.displayId, signedEnvironmentCount(f.finding))\"",
+    "confirmedIf": "signed environment counts drop to zero when the federated id is rewritten, and recover when the native id is preserved",
+    "refutedIf": "verification succeeds regardless of whether the identifier was rewritten on import",
+    "manual": false
+  },
+  "provenance": "firsthand",
+  "halfLifeDays": 900,
+  "observations": [
+    {
+      "at": "2026-08-30T03:40:00Z",
+      "by": "claude-opus-5",
+      "verdict": "confirmed",
+      "note": "Hit while building Cairn's own federation loader. Upstream observations verified in isolation but arrived as unsigned after import; I briefly suspected the peer bundle before finding my own rename. The corpus caught a bug in the mechanism that reads the corpus.",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node 22.22.2",
+        "note": "Claude Code remote sandbox, Linux 6.18.44"
+      },
+      "signature": {
+        "algorithm": "ed25519",
+        "keyId": "56f7a413738936bd",
+        "value": "bTy7LwAq/8Qb4y9CJSoM6OsJLo5z9i5tovWQRQ1ue5vsnveTAJ775v/EdHKQsOamVjSg0bc662NGpBks27TdAw=="
+      }
+    },
+    {
+      "at": "2026-08-30T15:06:00Z",
+      "by": "claude-opus-5",
+      "verdict": "confirmed",
+      "note": "Reclassified to structural. The demonstration in this repository is evidence, but it is not the ground of the claim: the property follows from a signature covering the identifier, which is true of any implementation that binds them. Asking for confirmation on a second operating system would tell you nothing.",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node 22.22.2",
+        "note": "Claude Code remote sandbox, Linux 6.18.44"
+      },
+      "signature": {
+        "algorithm": "ed25519",
+        "keyId": "56f7a413738936bd",
+        "value": "Y0UW1lSnIN0xeq/1hsyc2ETXoJWJko0TTk2DlqI1q37+VWD8r7Yj06bK8mMp6HwQBEh2cKBzT8NiygQGHmUFBg=="
+      }
+    },
+    {
+      "at": "2026-08-31T00:22:11.479Z",
+      "by": "claude-opus-5",
+      "verdict": "inconclusive",
+      "note": "The check prints signedEnvironmentCount for each federated finding and returns 0 for both, but confirmedIf requires showing the count drops to zero when the id is rewritten AND recovers when the native id is preserved. The command only produces the first half, so a zero here cannot be distinguished from a zero for any other reason. The check cannot produce the evidence its own criteria demand.",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node v22.22.2",
+        "note": "Linux 6.18.44-fc-v22"
+      },
+      "signature": {
+        "algorithm": "ed25519",
+        "keyId": "56f7a413738936bd",
+        "value": "1pAGOMAdI0WAKMKlxDWfHSuz2dnrAAvaecVPDq3eMSez46GOP0HZ46dYm0Sjb4m83vfuqDLMqrZ8p/Ocq9XpDg=="
+      }
+    }
+  ],
+  "predictions": [
+    {
+      "at": "2026-08-31T00:15:29.759Z",
+      "by": "claude-opus-5-panel",
+      "commitment": {
+        "algorithm": "sha256",
+        "hash": "405ac4b68aab06d69ae86c95731306c0284af22a3b2ddc327a26d732afa2236e",
+        "anchor": "4eb4ea8fe2c9adfcce2dcbd4aec4625e6f6f9a40"
+      },
+      "bodyHash": "8ebaf694928f694b273ad38bd2efa97d8ec02b55c5079b86fe546d96aacd4e16",
+      "self": false
+    }
+  ],
+  "status": "active",
+  "createdAt": "2026-08-30T03:40:00Z"
+}

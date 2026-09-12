@@ -1,0 +1,57 @@
+{
+  "runId": "smoke-2026-09-02T0527-haiku",
+  "smoke": true,
+  "model": "haiku",
+  "trialsPerCell": 1,
+  "truth": {
+    "churned": 137,
+    "open_tier2": 29
+  },
+  "startedAt": "2026-09-02T05:27:37.460Z",
+  "bundleAt": "2026-09-02T05:26:06.458Z",
+  "trials": [
+    {
+      "scenario": "A-silent-cap",
+      "arm": "gateway",
+      "trial": 1,
+      "sessionId": "7d234304-a5ca-4fc7-8cac-1a6956bc574d",
+      "answer": 136,
+      "truth": 137,
+      "correct": false,
+      "turns": 6,
+      "toolCalls": {
+        "ToolSearch": 1,
+        "mcp__records__query_records": 4
+      },
+      "mcpCalls": 4,
+      "costUsd": 0.0467517,
+      "durationMs": 20291,
+      "denials": [],
+      "delivered": {
+        "onResult": 1,
+        "onToolSearch": 0
+      },
+      "proxyLedger": {
+        "mcp-proxy:connect-index": 1,
+        "mcp-proxy:argument": 2,
+        "mcp-proxy:result": 2
+      },
+      "usedIncludePaging": true,
+      "usedExplicitMapping": false,
+      "resultText": "{\"churned\": 136}",
+      "transcript": "data/gateway-trials/smoke-2026-09-02T0527-haiku/A-silent-cap-gateway-1.jsonl",
+      "stderrTail": "",
+      "route": true,
+      "rowsRetrieved": 137,
+      "nearMiss": true
+    }
+  ],
+  "regraded": [
+    "usedIncludePaging",
+    "usedExplicitMapping",
+    "route",
+    "rowsRetrieved",
+    "nearMiss",
+    "delivered"
+  ]
+}

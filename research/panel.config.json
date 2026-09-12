@@ -1,0 +1,33 @@
+{
+  "_comment": "VERIFY every model id against the provider's current docs before a real run. Ids move; a stale id silently drops a panellist from the ledger. Run `npm run cairn:panel -- check` first: it calls each configured member with a trivial prompt and reports which ids actually resolve. `label` is the stable identity in the ledger - keep it constant across runs even if the underlying model id changes.",
+  "maxTokens": 16000,
+  "timeoutMs": 120000,
+  "members": [
+    {
+      "label": "claude-opus-5-panel",
+      "provider": "anthropic",
+      "model": "claude-opus-5",
+      "apiKeyEnv": "ANTHROPIC_API_KEY"
+    },
+    {
+      "label": "gpt-5",
+      "provider": "openai",
+      "model": "gpt-5",
+      "apiKeyEnv": "OPENAI_API_KEY"
+    },
+    {
+      "label": "gemini-3-pro",
+      "provider": "google",
+      "model": "gemini-3-pro",
+      "apiKeyEnv": "GOOGLE_API_KEY"
+    },
+    {
+      "label": "grok-4",
+      "provider": "xai",
+      "model": "grok-4",
+      "apiKeyEnv": "XAI_API_KEY"
+    }
+  ],
+  "_maxTokensNote": "Not a lowball. Reasoning models spend this same budget on thinking before emitting any visible text - claude-opus-5 runs adaptive thinking by default - so a small cap yields an empty response and an unparseable-forecast error that looks like flakiness. 1200 was the old value and would have starved the two strongest members on every call.",
+  "_labelNote": "A member's label is its identity in the ledger, and a forecast by the same label that authored a finding is excluded as a self-prediction. The panel members are therefore labelled as parties, not as models: 'claude-opus-5-panel' is the same underlying model as this repository's own 'claude-opus-5' identity, queried through the API with a blinded view and no memory of having authored anything. That is a genuinely different epistemic position, but it is NOT independence - a second opinion from the same model is correlated with the first in ways the Brier score cannot see. Read any single-member run as a calibration check, never as agreement."
+}

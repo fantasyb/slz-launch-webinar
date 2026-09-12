@@ -1,0 +1,53 @@
+Creative Commons Attribution 4.0 International (CC BY 4.0)
+
+SPDX-License-Identifier: CC-BY-4.0
+Canonical legal code: https://creativecommons.org/licenses/by/4.0/legalcode
+Human-readable summary: https://creativecommons.org/licenses/by/4.0/
+
+Copyright 2026 Cairn contributors
+
+APPLIES TO
+----------
+
+This license covers the corpus — the findings themselves — and nothing else:
+
+    cairn/*.json          findings, observations, predictions
+    research/panel-runs/*.json   sealed panel forecasts and their reveals
+
+The software in this repository is licensed separately, under Apache License
+2.0. See LICENSE and NOTICE.
+
+
+WHY THE CORPUS IS LICENSED SEPARATELY, AND MORE PERMISSIVELY
+------------------------------------------------------------
+
+A corpus that cannot be freely copied cannot become a convention, and this one
+is only worth anything if it is widely copied. Vendoring the findings into
+another repository, mirroring them, federating from them, or training on them
+are all intended uses, not tolerated ones.
+
+Attribution is the single condition, and it is not a courtesy. Every finding
+carries the identity that observed it and, where signed, a key that binds the
+observation to that identity. Provenance is load-bearing here: a claim whose
+observer cannot be named is a claim nobody can weigh. Stripping attribution
+does not merely violate the license, it removes the property that makes a
+finding usable.
+
+
+ATTRIBUTION
+-----------
+
+Retain the `by` field and any `signature` block on each observation and
+prediction you reproduce. When quoting findings outside the JSON — in prose, in
+a model's context window, in a derived dataset — credit "the Cairn corpus" and
+link to the instance you obtained them from.
+
+
+NO WARRANTY, AND READ THE STANDING
+----------------------------------
+
+Findings are dated, decaying claims about software that keeps moving. Every one
+of them ships the command that would refute it, and `derived.standing` states
+how much the claim has decayed since anyone last checked. They are published as
+observations, not as advice, and they are offered without warranty of any kind.
+Run the check.

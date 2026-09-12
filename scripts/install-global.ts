@@ -1,0 +1,961 @@
+/**
+ * cairn:install — make Cairn present in EVERY session, not just one wrapped server.
+ *
+ *   npm run cairn:install                 # do it
+ *   npm run cairn:install -- --dry-run    # show the exact edits, write nothing
+ *   npm run cairn:install -- --uninstall  # remove exactly what was added
+ *   npm run cairn:install -- --home ~/pilot --instructions ~/.claude/CLAUDE.md --instructions ~/AGENTS.md
+ *
+ * WHY THIS EXISTS. Wiring Cairn as a wrapper around one MCP server makes it
+ * invisible to every session that does not load that server — a fresh terminal
+ * in another directory knows nothing about it. Recorded as a finding. This
+ * install fixes it at the machine level, and does exactly two things, because
+ * "every session has knowledge" is exactly two things:
+ *
+ *   1. TOOLS PRESENT EVERYWHERE. The standalone server (bin/cairn-mcp.js) is
+ *      registered at USER scope in ~/.claude.json, so cairn_find / cairn_brief
+ *      / cairn_record exist in every session, any directory.
+ *
+ *   2. THE AGENT KNOWS TO USE THEM. A managed block is written into the global
+ *      agent-instruction file(s) — CLAUDE.md, AGENTS.md, whatever the agent
+ *      reads at startup. Presence is not knowledge: MCP tools are pull, and the
+ *      measurement (cairn-0035) is that agents do not pull unprompted. The block
+ *      is the standing instruction that makes a blank session reach for the tool.
+ *
+ * THE BLOCK CARRIES NO FACTS, ON PURPOSE. It is a usage protocol — when to call,
+ * how to call, and the one line that says Cairn is tool-behaviour knowledge, not
+ * memory. A block that made claims could go stale; this one cannot, because it
+ * asserts nothing about any tool. All the decayable knowledge lives in the
+ * corpus, where the standing/check machinery governs it. The always-loaded part
+ * is safe precisely because it is empty of facts.
+ *
+ * WHAT THIS DELIBERATELY DOES NOT DO. It does not enable execution (policy stays
+ * off, and lives outside the corpus). It does not fetch or run anything remote
+ * (cairn-0014). It does not wrap your existing MCP servers — that is PUSH, it is
+ * higher-stakes because it re-points production servers, and it is a separate
+ * deliberate step. So after this install: tools and knowledge are global; PUSH
+ * (unasked annotations) is not, and neither is pure Bash/code work with no
+ * server. The summary says so plainly rather than letting you assume otherwise.
+ *
+ * Every write is backed up first and every write is idempotent: a managed block
+ * is replaced in place, never duplicated, and --uninstall removes exactly the
+ * block and the one server entry, nothing else.
+ */
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import { execFileSync } from 'child_process';
+import { ensureIdentity } from '../src/lib/cairn/identity';
+import { ensureOrigin } from '../src/lib/cairn/corpusOrigin';
+import { loadKeys } from '../src/lib/cairn/keys';
+import { policyPath } from '../src/lib/cairn/policy';
+import { LAUNCHD_LABEL, plistPath, plistContent } from '../src/lib/cairn/launchd';
+
+const argv = process.argv.slice(2);
+const has = (f: string) => argv.includes(f);
+const DRY = has('--dry-run') || has('--print');
+const UNINSTALL = has('--uninstall');
+
+function opt(name: string): string | undefined {
+  const i = argv.indexOf(`--${name}`);
+  return i !== -1 && argv[i + 1] ? argv[i + 1] : undefined;
+}
+/** Repeatable: every `--instructions <path>`. */
+function opts(name: string): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < argv.length; i++) if (argv[i] === `--${name}` && argv[i + 1]) out.push(argv[i + 1]);
+  return out;
+}
+
+/*
+ * Which servers to put behind the gateway. Repeatable and/or comma-separated:
+ * `--only sf-all` wraps just that one (start narrow, widen once it is trusted);
+ * `--exclude legacy-http` leaves that one direct. --only, when given, is the
+ * whole allowlist; --exclude subtracts. Naming a server in --only also asserts
+ * "wrap it even without a token in its config", the override for an auth-free
+ * HTTP server the OAuth heuristic would otherwise leave alone.
+ */
+const splitList = (xs: string[]) => new Set(xs.flatMap((x) => x.split(',').map((s) => s.trim()).filter(Boolean)));
+const WRAP_ONLY = splitList(opts('only'));
+const WRAP_EXCLUDE = splitList(opts('exclude'));
+/*
+ * A separate, explicit assertion — kept distinct from --only so blast-radius
+ * control never doubles as a security override. Naming a headerless HTTP server
+ * here says "I know this one needs no auth; wrap it anyway", the only way past
+ * the OAuth-safety skip. `--only sf-all,notion` used to silently wrap and break
+ * a headerless OAuth `notion`; now it does not.
+ */
+const WRAP_NO_AUTH = splitList(opts('http-no-auth'));
+/*
+ * Trust mode baked into each wrapped server, so a real install is security-active
+ * by default without the operator setting an env var. `monitor` (the default)
+ * pins each server's approved tool surface on first sight and FLAGS later drift
+ * (tool-poisoning / rug-pull) without blocking; `--enforce` additionally
+ * WITHHOLDS a changed tool until re-approved; `--no-trust` turns it off.
+ *
+ * An EXPLICIT flag always wins. With no flag, an already-installed mode is
+ * PRESERVED — read from an existing wrapped server's env — so a re-install (the
+ * daemon runs one after each self-update) never silently downgrades an operator's
+ * `enforce` back to `monitor`. Only a first install with no flag defaults to
+ * monitor.
+ */
+const EXPLICIT_TRUST = has('--enforce') ? 'enforce' : has('--no-trust') ? 'off' : has('--monitor') ? 'monitor' : null;
+function effectiveTrustMode(servers: Record<string, ServerEntry>): string {
+  if (EXPLICIT_TRUST) return EXPLICIT_TRUST;
+  for (const s of Object.values(servers)) {
+    const m = (s as { env?: Record<string, unknown> })?.env?.CAIRN_TRUST_MODE;
+    if (m === 'off' || m === 'monitor' || m === 'enforce') return m;
+  }
+  return 'monitor';
+}
+
+const HOME = process.env.HOME || os.homedir();
+const expand = (p: string) => (p.startsWith('~') ? path.join(HOME, p.slice(1)) : path.resolve(p));
+
+/** A stable per-machine signer label when the caller does not pass --author.
+ * Sanitised to the key-label charset: 2-63 chars of lowercase [a-z0-9._-]. */
+function defaultLabel(): string {
+  let raw = 'cairn-agent';
+  try {
+    raw = `${os.userInfo().username}-${os.hostname()}`;
+  } catch {
+    try {
+      raw = os.hostname();
+    } catch {
+      /* keep the fallback */
+    }
+  }
+  const clean = raw
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, '-')
+    .replace(/^[-._]+|[-._]+$/g, '')
+    .slice(0, 63);
+  return clean.length >= 2 ? clean : 'cairn-agent';
+}
+
+/* The Cairn code checkout: two levels up from scripts/. */
+const REPO = path.resolve(__dirname, '..');
+const SERVER_BIN = path.join(REPO, 'bin', 'cairn-mcp.js');
+const HEALTH_BIN = path.join(REPO, 'bin', 'cairn-health.js');
+const PROXY_BIN = path.join(REPO, 'bin', 'cairn-proxy.js');
+const DAEMON_BIN = path.join(REPO, 'bin', 'cairn-daemon.js');
+
+const MCP_NAME = 'cairn';
+const BEGIN = '<!-- cairn:begin (managed by `npm run cairn:install` — edits between these markers are overwritten) -->';
+const END = '<!-- cairn:end -->';
+
+/* Layer 1: usage protocol, no facts. See the header. */
+function block(): string {
+  return [
+    BEGIN,
+    '## Cairn — recorded tool behaviour (this is not memory)',
+    '',
+    'Cairn is a ledger of how your tools actually behave — what breaks, where, and',
+    'what to do instead. It holds no preferences, no project history, no decisions;',
+    'only falsifiable findings about tools. It is not memory.',
+    '',
+    '- Two doors, by what you have in hand. BEFORE non-trivial work with a tool,',
+    '  call `cairn_brief` with what you are about to do ("wire zod defaults into the',
+    '  form schema") — it is built for intent. The MOMENT a tool call surprises you',
+    '  (an empty success, a wrong result, an error you did not expect), call',
+    '  `cairn_find` with the error text VERBATIM — it is built for pasted output.',
+    '  Silence from either means nothing is recorded — the common case, not a failure.',
+    '- When you solve something that surprised you, bank it so the next agent does',
+    '  not lose the same time: `cairn_record` if you can state a check that exits',
+    '  non-zero when the trap is absent, or `cairn_note` if you are mid-task and only',
+    '  have the failing call and the fix.',
+    '- Read a finding\'s standing before you rely on it: fresh is safe, aging is worth',
+    '  re-checking, stale is a lead and not a fact, dormant means nobody has needed',
+    '  it since it was last confirmed. A finding you were served and then saw hold',
+    '  or fail: say so with `cairn_observe` — that is what keeps standing honest.',
+    END,
+  ].join('\n');
+}
+
+/* --- corpus home --------------------------------------------------------- */
+/*
+ * Order: an explicit --home; else an existing ~/pilot corpus (so a machine that
+ * already has findings is not split into a second corpus); else the stable
+ * product default ~/.cairn/corpus. Refuse a home inside the code checkout,
+ * because the corpus is the user's and must not live in a directory `git pull`
+ * will overwrite.
+ */
+function resolveHome(): string {
+  const explicit = opt('home');
+  let home: string;
+  if (explicit) home = expand(explicit);
+  else if (fs.existsSync(path.join(HOME, 'pilot', 'cairn'))) home = path.join(HOME, 'pilot');
+  else home = path.join(HOME, '.cairn', 'corpus');
+
+  if (path.resolve(home) === REPO || path.resolve(home).startsWith(REPO + path.sep)) {
+    throw new Error(`--home ${home} is inside the Cairn code checkout (${REPO}); a corpus there is destroyed by git pull. Point it elsewhere, e.g. ~/pilot.`);
+  }
+  return home;
+}
+
+/* --- backups ------------------------------------------------------------- */
+function backup(file: string): string | null {
+  if (!fs.existsSync(file)) return null;
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  // Never overwrite an existing backup: uninstall writes ~/.claude.json twice
+  // back-to-back (measured 1-2ms apart), and a same-ms collision would replace
+  // the earlier backup — on install, the pristine pre-install copy. COPYFILE_EXCL
+  // + a counter keeps each backup.
+  let dest = `${file}.cairn-bak-${stamp}`;
+  for (let i = 1; ; i++) {
+    try {
+      fs.copyFileSync(file, dest, fs.constants.COPYFILE_EXCL);
+      /* The pre-install copy of ~/.claude.json holds every server entry verbatim —
+       * a token-auth server's bearer included, the very thing the wrap then moves
+       * into a 0600 stash. The backup is this installer's own file, so it gets the
+       * same mode; the copy must not be the more readable of the two. */
+      fs.chmodSync(dest, 0o600);
+      return dest;
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'EEXIST' || i > 100) throw e;
+      dest = `${file}.cairn-bak-${stamp}-${i}`;
+    }
+  }
+}
+
+/* --- the instruction block, in one or more files ------------------------- */
+/*
+ * One clean managed region, or none. A prior run interrupted mid-write can
+ * leave an orphan BEGIN with no END, or a duplicated pair; guessing where such
+ * a block ends risks deleting user content, so we refuse and let a human make
+ * it clean. Content integrity beats convenience on the user's own files.
+ */
+function assertCleanMarkers(text: string, file: string): void {
+  const begins = (text.match(new RegExp(escapeRe(BEGIN), 'g')) ?? []).length;
+  const ends = (text.match(new RegExp(escapeRe(END), 'g')) ?? []).length;
+  const b = text.indexOf(BEGIN);
+  const e = text.indexOf(END);
+  const clean = (begins === 0 && ends === 0) || (begins === 1 && ends === 1 && e > b);
+  if (!clean) {
+    throw new Error(
+      `${file} has malformed Cairn markers (${begins} begin, ${ends} end) — probably an interrupted earlier run. ` +
+        'Open it and leave exactly one `cairn:begin ... cairn:end` region or none, then re-run. ' +
+        'Refusing to guess where the block ends, because that risks deleting your content.',
+    );
+  }
+}
+function escapeRe(x: string): string {
+  return x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function upsertBlock(file: string): 'added' | 'updated' | 'unchanged' {
+  const body = block();
+  const existing = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
+  assertCleanMarkers(existing, file);
+  const b = existing.indexOf(BEGIN);
+  const e = existing.indexOf(END);
+
+  let next: string;
+  if (b !== -1 && e !== -1 && e > b) {
+    const before = existing.slice(0, b);
+    const after = existing.slice(e + END.length);
+    next = before + body + after;
+  } else {
+    next = existing.trimEnd() + (existing.trim() ? '\n\n' : '') + body + '\n';
+  }
+  if (next === existing) return 'unchanged';
+  if (!DRY) {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    backup(file);
+    fs.writeFileSync(file, next);
+  }
+  return b !== -1 ? 'updated' : 'added';
+}
+
+function removeBlock(file: string): boolean {
+  if (!fs.existsSync(file)) return false;
+  const existing = fs.readFileSync(file, 'utf8');
+  assertCleanMarkers(existing, file);
+  const b = existing.indexOf(BEGIN);
+  const e = existing.indexOf(END);
+  if (b === -1 || e === -1 || e < b) return false;
+  const next = (existing.slice(0, b).trimEnd() + '\n' + existing.slice(e + END.length).replace(/^\n+/, '')).trimEnd() + '\n';
+  if (!DRY) {
+    backup(file);
+    fs.writeFileSync(file, next);
+  }
+  return true;
+}
+
+/* --- the server entry in ~/.claude.json ---------------------------------- */
+interface ClaudeConfig {
+  mcpServers?: Record<string, unknown>;
+  [k: string]: unknown;
+}
+/*
+ * Refuse a file we cannot rewrite losslessly. We edit by JSON.parse ->
+ * stringify, and that silently truncates any integer past 2^53:
+ * 9007199254740993 becomes ...992. That is silent corruption of the user's
+ * most important config files, so we detect it and refuse rather than write
+ * the damaged version. String contents are blanked first so a big number
+ * inside a token (an id, a hash) does not trip it -- only bare JSON numbers
+ * count. False positives cost a refusal with a clear message, which is the
+ * safe direction. Shared by ~/.claude.json (the server) and ~/.claude/settings.json
+ * (the hooks): both are the user's, and both must be edited losslessly or not at all.
+ */
+function readJsonObject(file: string): Record<string, unknown> {
+  if (!fs.existsSync(file)) return {};
+  const raw = fs.readFileSync(file, 'utf8');
+  const bareNumbers = raw.replace(/"(?:\\.|[^"\\])*"/g, '""');
+  // Catch fractional/exponent forms too (9007199254740993.0, 12345678901234567e0),
+  // which also lose precision on a JSON round-trip; the old `(?![\w.])` deliberately
+  // stopped at a `.`/`e` and missed them.
+  if (/(?:^|[^\w.])\d{16,}(?:\.\d+)?(?:[eE][+-]?\d+)?/.test(bareNumbers)) {
+    throw new Error(
+      `${file} contains a number too large to survive a JSON round-trip; refusing to rewrite it so it is not silently corrupted. ` +
+        'Edit it by hand, or move it aside and re-run.',
+    );
+  }
+  try {
+    const v = JSON.parse(raw);
+    if (v === null || typeof v !== 'object' || Array.isArray(v)) {
+      throw new Error('top level is not a JSON object');
+    }
+    return v as Record<string, unknown>;
+  } catch (err) {
+    throw new Error(`${file} is not valid JSON (${(err as Error).message}); refusing to touch it. Fix or move it, then re-run.`);
+  }
+}
+function readConfig(file: string): ClaudeConfig {
+  return readJsonObject(file) as ClaudeConfig;
+}
+function upsertServer(file: string, home: string): 'added' | 'updated' | 'unchanged' {
+  const cfg = readConfig(file);
+  const entry = { command: 'node', args: [SERVER_BIN], env: { CAIRN_HOME: home } };
+  const servers = (cfg.mcpServers ??= {});
+  const before = JSON.stringify(servers[MCP_NAME]);
+  const state = servers[MCP_NAME] === undefined ? 'added' : before === JSON.stringify(entry) ? 'unchanged' : 'updated';
+  if (state === 'unchanged') return state;
+  servers[MCP_NAME] = entry;
+  if (!DRY) {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    backup(file);
+    fs.writeFileSync(file, JSON.stringify(cfg, null, 2) + '\n');
+  }
+  return state;
+}
+function removeServer(file: string): boolean {
+  const cfg = readConfig(file);
+  if (!cfg.mcpServers || !(MCP_NAME in cfg.mcpServers)) return false;
+  delete cfg.mcpServers[MCP_NAME];
+  if (!DRY) {
+    backup(file);
+    fs.writeFileSync(file, JSON.stringify(cfg, null, 2) + '\n');
+  }
+  return true;
+}
+
+/* --- wrapping the user's OTHER servers with the gateway ------------------- */
+/*
+ * The pull server above gives the agent tools it must CHOOSE to call, and the
+ * measured truth (cairn-0035) is that a weak reader never asks and even a
+ * strong one asks inconsistently. The value that arrives WITHOUT being asked
+ * for — a finding on the result at the moment of the trap — is the gateway
+ * proxy, and it only acts on servers routed through it. So an install that
+ * wraps nothing is an install that mostly does nothing on its own.
+ *
+ * This wraps each of the user's stdio MCP servers so its calls pass through
+ * cairn-proxy. It is safe to make default now for one specific reason: with
+ * resonance (a finding fires only when the live result matches its signature),
+ * a wrapped server that hits no trap pays no finding cost — the proxy is in the
+ * path but silent. The remaining cost is the proxy's own routing overhead,
+ * which is why --no-wrap exists and why every wrap is printed, never silent.
+ *
+ * The rewrite is lossless and reversible: the ORIGINAL server definition is
+ * written verbatim to <home>/wrapped/<name>.json (which is BOTH what the proxy
+ * forwards to and the exact source uninstall restores from), and the client
+ * entry becomes `cairn-proxy --config <that file>`. The client's key stays the
+ * server's own name, so its tools keep their `mcp__<name>__*` identity.
+ */
+interface ServerEntry {
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  [k: string]: unknown;
+}
+const isStdio = (e: ServerEntry) => typeof e.command === 'string' && e.command.length > 0;
+const isHttp = (e: ServerEntry) => typeof (e as { url?: unknown }).url === 'string' && ((e as { url: string }).url).length > 0;
+/* An HTTP server whose config carries no auth header is probably an OAuth-login
+ * server. The gateway can carry a bearer token or API key (it forwards the
+ * headers) but cannot yet run an OAuth redirect flow, so wrapping such a server
+ * would break it. Leave those direct unless the operator names one in --only,
+ * which asserts it needs no auth. */
+const httpHasAuth = (e: ServerEntry) => {
+  const h = (e as { headers?: Record<string, unknown> }).headers;
+  return !!h && typeof h === 'object' && Object.keys(h).length > 0;
+};
+/* Ownership by BASENAME, not the exact PROXY_BIN path: a wrapper written by an
+ * earlier/moved/second checkout (a different absolute path) must still be
+ * recognised as ours, or it gets wrapped AGAIN and the stash is overwritten with
+ * the wrapper — destroying the user's original server definition. */
+const isWrappedByUs = (e: ServerEntry) =>
+  e.command === 'node' && Array.isArray(e.args) && e.args.some((a) => typeof a === 'string' && path.basename(a) === 'cairn-proxy.js');
+
+interface WrapSummary { wrapped: string[]; skipped: Array<{ name: string; why: string }>; already: string[]; trustMode: string }
+
+function wrapServers(file: string, home: string): WrapSummary {
+  const cfg = readConfig(file);
+  const servers = (cfg.mcpServers ??= {}) as Record<string, ServerEntry>;
+  const wrappedDir = path.join(home, 'wrapped');
+  const trustMode = effectiveTrustMode(servers); // explicit flag, else preserve existing, else monitor
+  const summary: WrapSummary = { wrapped: [], skipped: [], already: [], trustMode };
+  let changed = false;
+  for (const name of Object.keys(servers)) {
+    if (name === MCP_NAME) continue; // never wrap our own pull server
+    const entry = servers[name];
+    if (isWrappedByUs(entry)) { summary.already.push(name); continue; }
+    // Selection: --only is the allowlist when given; --exclude subtracts.
+    if (WRAP_ONLY.size && !WRAP_ONLY.has(name)) { summary.skipped.push({ name, why: 'not in --only' }); continue; }
+    if (WRAP_EXCLUDE.has(name)) { summary.skipped.push({ name, why: 'named in --exclude' }); continue; }
+    // Transport: stdio and HTTP are both wrappable; anything else is neither.
+    if (!isStdio(entry) && !isHttp(entry)) { summary.skipped.push({ name, why: 'neither a stdio (command) nor an http (url) server — cannot be wrapped' }); continue; }
+    // An HTTP server with no token in its config likely uses OAuth login, which
+    // the gateway can't carry yet; wrapping it would break it. Leave it direct
+    // unless --only names it (the operator asserting it needs no auth).
+    if (isHttp(entry) && !isStdio(entry) && !httpHasAuth(entry) && !WRAP_NO_AUTH.has(name)) {
+      summary.skipped.push({ name, why: 'http server with no auth header — may use OAuth login (not yet supported); left direct. Wrap it with --http-no-auth ' + name + ' if it genuinely needs no auth.' });
+      continue;
+    }
+    if (name.includes('/') || name.includes('\\') || name.includes('..')) {
+      summary.skipped.push({ name, why: 'server name is not a safe filename — refusing to write its stash' });
+      continue;
+    }
+    const wrappedFile = path.join(wrappedDir, `${name}.json`);
+    if (!DRY) {
+      fs.mkdirSync(wrappedDir, { recursive: true });
+      /* NEVER overwrite an existing stash: it holds the user's ORIGINAL server
+       * (the only copy uninstall can restore from). If one exists already and
+       * differs from what we would write, refuse rather than clobber it. */
+      if (fs.existsSync(wrappedFile)) {
+        summary.skipped.push({ name, why: `a stash already exists at ${wrappedFile}; refusing to overwrite it — remove it by hand if it is stale` });
+        continue;
+      }
+      /* The original, verbatim: the proxy forwards to it and uninstall restores from it. May carry credentials, so 0600. */
+      fs.writeFileSync(wrappedFile, JSON.stringify({ mcpServers: { [name]: entry } }, null, 2) + '\n', { mode: 0o600 });
+    }
+    /* --no-cairn-tools: the standalone cairn server already offers the pull tools,
+     * so a wrapped server must not re-advertise them once per server. Push is unaffected. */
+    servers[name] = { command: 'node', args: [PROXY_BIN, '--config', wrappedFile, '--no-cairn-tools'], env: { CAIRN_HOME: home, CAIRN_TRUST_MODE: trustMode } };
+    summary.wrapped.push(name);
+    changed = true;
+  }
+  if (changed && !DRY) {
+    backup(file);
+    fs.writeFileSync(file, JSON.stringify(cfg, null, 2) + '\n');
+  }
+  return summary;
+}
+
+/** Restore every server this installer wrapped, from the original stashed in <home>/wrapped/<name>.json. */
+function unwrapServers(file: string): string[] {
+  const cfg = readConfig(file);
+  const servers = (cfg.mcpServers ?? {}) as Record<string, ServerEntry>;
+  const restored: string[] = [];
+  const toDelete: string[] = [];
+  let changed = false;
+  for (const name of Object.keys(servers)) {
+    const entry = servers[name];
+    if (!isWrappedByUs(entry)) continue;
+    const i = (entry.args ?? []).indexOf('--config');
+    const wrappedFile = i !== -1 ? entry.args![i + 1] : undefined;
+    let original: ServerEntry | undefined;
+    if (wrappedFile && fs.existsSync(wrappedFile)) {
+      try {
+        original = (JSON.parse(fs.readFileSync(wrappedFile, 'utf8')) as { mcpServers?: Record<string, ServerEntry> }).mcpServers?.[name];
+      } catch { /* fall through to leaving it; better than guessing */ }
+    }
+    if (!original) { continue; } // cannot restore without the stash; leave it rather than delete the user's server
+    servers[name] = original;
+    restored.push(name);
+    changed = true;
+    if (wrappedFile) toDelete.push(wrappedFile); // delete AFTER the config write succeeds — see below
+  }
+  if (changed && !DRY) {
+    backup(file);
+    fs.writeFileSync(file, JSON.stringify(cfg, null, 2) + '\n');
+    /* Only now that the restored config is safely on disk: if the write above
+     * had failed, deleting the stashes first would have left the config pointing
+     * at wrapper entries whose originals no longer exist. */
+    for (const wf of toDelete) { try { fs.rmSync(wf); } catch { /* best effort */ } }
+  }
+  return restored;
+}
+
+/* --- session hooks in ~/.claude/settings.json ----------------------------- */
+/*
+ * Cairn installs NO session hooks any more. Earlier versions wired a
+ * SessionEnd/SessionStart pair (bin/cairn-sleep.js, bin/cairn-triage-trigger.js)
+ * that harvested transcripts into drafts/ and promoted or triaged them offline.
+ * Measured on a real pilot it admitted 0 of 24 candidates (every one was
+ * rejected by the check-writer as narration or as recoverable in one turn),
+ * so the whole pipeline was removed: capture is in-session, firsthand, through
+ * cairn_record / cairn_note, and standing is kept honest by cairn_observe on
+ * use. What remains here is the REMOVAL of the hooks an earlier install left
+ * behind — a settings.json still pointing at a deleted bin would print an
+ * ENOENT on every session open.
+ *
+ * Ownership is by command substring: every inner hook whose command names one
+ * of OUR_BINS is ours; every other hook the user has is left untouched.
+ */
+interface HookEntry {
+  type?: string;
+  command?: string;
+  [k: string]: unknown;
+}
+interface HookGroup {
+  hooks?: HookEntry[];
+  [k: string]: unknown;
+}
+/* Bins we manage a hook for. cairn-health.js is the one we install now;
+ * cairn-sleep.js and cairn-triage-trigger.js are deleted and kept here only so
+ * an earlier install's leftover hooks naming them are stripped on upsert.
+ * Ownership is by command substring, so uninstall and re-upsert touch only
+ * groups whose inner command names one of these and leave every other hook the
+ * user has untouched. */
+const OUR_BINS = ['cairn-sleep.js', 'cairn-triage-trigger.js', 'cairn-health.js'];
+const ownedCommand = (h: HookEntry) => typeof h.command === 'string' && OUR_BINS.some((b) => (h.command as string).includes(b));
+const isOurs = (g: HookGroup) => Array.isArray(g.hooks) && g.hooks.some(ownedCommand);
+
+/** Single-quote a path for a shell command; a checkout under "~/Google Drive/…"
+ *  or a --home with a space otherwise ran `node /Users/you/Google` and broke every
+ *  session hook (and `$`/backticks in a path would expand). */
+const shq = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
+
+/** The only hook we install now: a readiness probe at session start. The old
+ *  sleep/surface/triage hooks are gone — capture is in-session — and any leftover
+ *  hook naming a deleted bin is stripped by the same upsert (see OUR_BINS). */
+function desiredHooks(home: string): Array<{ event: string; command: string }> {
+  return [
+    { event: 'SessionStart', command: `${shq(process.execPath)} ${shq(HEALTH_BIN)} --hook --home ${shq(home)} --claude-json ${shq(expand(opt('claude-json') ?? path.join(HOME, '.claude.json')))}` },
+  ];
+}
+
+/**
+ * Strip OUR hooks from one event's array — at the inner-hook level, not the
+ * whole group. Dropping a group because it contained one of ours also deleted
+ * any of the USER's hooks that happened to share the group; now we remove only
+ * our inner hooks and keep the group whenever the user's remain.
+ */
+function withoutOurs(groups: unknown): HookGroup[] {
+  if (!Array.isArray(groups)) return [];
+  const out: HookGroup[] = [];
+  for (const g of groups as HookGroup[]) {
+    if (!Array.isArray(g.hooks)) { out.push(g); continue; }
+    const kept = g.hooks.filter((h) => !ownedCommand(h));
+    if (kept.length === g.hooks.length) { out.push(g); continue; } // none of ours here
+    if (kept.length) out.push({ ...g, hooks: kept }); // keep the user's, drop ours; empty group is dropped
+  }
+  return out;
+}
+
+function upsertHooks(file: string, home: string): 'added' | 'updated' | 'unchanged' {
+  const cfg = readJsonObject(file);
+  const hooks = (cfg.hooks && typeof cfg.hooks === 'object' && !Array.isArray(cfg.hooks) ? cfg.hooks : {}) as Record<string, unknown>;
+  const before = JSON.stringify(cfg.hooks ?? null);
+  const had = Object.values(hooks).some((arr) => Array.isArray(arr) && (arr as HookGroup[]).some(isOurs));
+
+  /* Group our desired hooks by event, strip any of ours already there (including
+   * leftover sleep/triage hooks from an earlier install), and append one fresh
+   * group per desired command — so a changed --home updates the probe in place. */
+  const byEvent = new Map<string, string[]>();
+  for (const { event, command } of desiredHooks(home)) {
+    if (!byEvent.has(event)) byEvent.set(event, []);
+    byEvent.get(event)!.push(command);
+  }
+  /* Strip our leftovers from every event, not only the events we re-add, so a
+   * deleted-bin SessionEnd hook is removed even though we install no SessionEnd. */
+  for (const event of Object.keys(hooks)) {
+    if (!byEvent.has(event) && Array.isArray(hooks[event])) {
+      const kept = withoutOurs(hooks[event]);
+      if (kept.length) hooks[event] = kept; else delete hooks[event];
+    }
+  }
+  for (const [event, commands] of byEvent) {
+    const kept = withoutOurs(hooks[event]);
+    for (const command of commands) kept.push({ hooks: [{ type: 'command', command }] });
+    hooks[event] = kept;
+  }
+  cfg.hooks = hooks;
+
+  if (JSON.stringify(cfg.hooks) === before) return 'unchanged';
+  if (!DRY) {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    backup(file);
+    fs.writeFileSync(file, JSON.stringify(cfg, null, 2) + '\n');
+  }
+  return had ? 'updated' : 'added';
+}
+
+function removeHooks(file: string): boolean {
+  if (!fs.existsSync(file)) return false;
+  const cfg = readJsonObject(file);
+  if (!cfg.hooks || typeof cfg.hooks !== 'object') return false;
+  const hooks = cfg.hooks as Record<string, unknown>;
+  let changed = false;
+  for (const event of Object.keys(hooks)) {
+    if (!Array.isArray(hooks[event])) continue;
+    const kept = withoutOurs(hooks[event]);
+    if (kept.length !== (hooks[event] as unknown[]).length) changed = true;
+    if (kept.length) hooks[event] = kept;
+    else delete hooks[event];
+  }
+  if (Object.keys(hooks).length === 0) delete cfg.hooks;
+  if (changed && !DRY) {
+    backup(file);
+    fs.writeFileSync(file, JSON.stringify(cfg, null, 2) + '\n');
+  }
+  return changed;
+}
+
+/* --- the always-on daemon under launchd (macOS) -------------------------- */
+/*
+ * The daemon keeps the enterprise audit chain verified and the code current
+ * (scripts/daemon.ts) without anyone remembering to; on macOS launchd is what
+ * keeps it alive across logout and reboot without a terminal to babysit. It
+ * runs no checks and promotes nothing — the triage tick it used to spawn was
+ * removed with the sleep pipeline. Best-effort and macOS-only: if launchctl is
+ * absent or refuses, everything else still works, so a failure here is
+ * reported, never fatal. Linux/other: run bin/cairn-daemon.js under your own
+ * service manager (systemd --user, nohup) — noted in the summary.
+ *
+ * The interval defaults to 300s; --daemon-interval overrides it. Logs land in
+ * the corpus's own drafts/, so "is the daemon working" has one place to look.
+ */
+const DAEMON_INTERVAL_DEFAULT = 300;
+
+function daemonInterval(): number {
+  const raw = opt('daemon-interval');
+  const n = raw ? Number(raw) : DAEMON_INTERVAL_DEFAULT;
+  return Number.isFinite(n) && n >= 1 ? Math.floor(n) : DAEMON_INTERVAL_DEFAULT;
+}
+
+/**
+ * The node the plist should launch. Prefer a STABLE symlink over process.execPath:
+ * libuv realpaths execPath on darwin, so a Homebrew node resolves to
+ * /opt/homebrew/Cellar/node/<version>/bin/node and an nvm node to a versioned
+ * path — both vanish on the next `brew upgrade`/nvm prune, and launchd then
+ * KeepAlive-thrashes a job it can no longer exec. The stable Homebrew/pkg
+ * symlinks survive version bumps; fall back to execPath only if neither exists.
+ */
+function nodeBin(): string {
+  for (const p of ['/opt/homebrew/bin/node', '/usr/local/bin/node']) {
+    try { if (fs.existsSync(p)) return p; } catch { /* ignore */ }
+  }
+  return process.execPath || 'node';
+}
+
+/**
+ * launchd runs agents with PATH=/usr/bin:/bin:/usr/sbin:/sbin. The daemon spawns
+ * `node` (the trigger) and the trigger resolves `claude`; the launcher's fallback
+ * shells out to `npx`. Give the job a PATH that includes the real node dir and the
+ * usual Homebrew/local bins so none of those are ENOENT under launchd.
+ */
+function daemonPath(): string {
+  const dirs = [path.dirname(nodeBin()), '/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin', '/usr/sbin', '/sbin'];
+  return [...new Set(dirs)].join(':');
+}
+
+/**
+ * The daemon runs the bundled fast path (dist/cli). If the bundle is missing, the
+ * launcher falls back to `npx tsx`, which under launchd's bare PATH is ENOENT and
+ * KeepAlive-thrashes — so build the bundles before registering. Best-effort:
+ * a build failure is reported, and the daemon still runs (slower) once tsx is on
+ * PATH via daemonPath().
+ */
+function ensureDaemonBundle(): void {
+  const need = [path.join(REPO, 'dist', 'cli', 'daemon.js')];
+  if (need.every((p) => { try { return fs.existsSync(p); } catch { return false; } })) return;
+  try {
+    execFileSync('npm', ['run', 'cairn:build-cli'], { cwd: REPO, stdio: 'ignore' });
+    console.log('  built      dist bundles so the daemon runs the fast path (not tsx under launchd)');
+  } catch {
+    console.log('  warn       could not build dist bundles; run `npm run cairn:build-cli` so the daemon is not slow');
+  }
+}
+
+/** The --home a currently-installed plist points at, if any — so we can warn on a silent replace. */
+function plistHome(plist: string): string | null {
+  try {
+    const m = fs.readFileSync(plist, 'utf8').match(/<string>--home<\/string>\s*<string>([^<]*)<\/string>/);
+    return m ? m[1] : null;
+  } catch {
+    return null;
+  }
+}
+
+function installDaemon(home: string): void {
+  if (process.platform !== 'darwin') {
+    console.log('  skipped    always-on daemon — launchd is macOS-only; run bin/cairn-daemon.js under your own');
+    console.log('             service manager (systemd --user, nohup) for audit verification and self-update');
+    return;
+  }
+  const plist = plistPath(HOME);
+  const logPath = path.join(home, 'drafts', 'daemon.log');
+  const interval = daemonInterval();
+  const content = plistContent({ nodeBin: nodeBin(), daemonBin: DAEMON_BIN, home, intervalSeconds: interval, logPath, env: { PATH: daemonPath() } });
+  if (DRY) {
+    console.log(`  would load  launchd agent ${LAUNCHD_LABEL} (every ${interval}s) -> ${plist}`);
+    return;
+  }
+  /* One label per machine: warn rather than silently repoint a daemon set for another corpus. */
+  const prior = plistHome(plist);
+  if (prior && path.resolve(prior) !== path.resolve(home)) {
+    console.log(`  note       replacing the daemon previously registered for ${prior}`);
+  }
+  ensureDaemonBundle();
+  try {
+    fs.mkdirSync(path.dirname(plist), { recursive: true });
+    fs.mkdirSync(path.join(home, 'drafts'), { recursive: true });
+    /* Reload cleanly: unload an old copy first so a changed --home/interval takes,
+     * then write and load. Failures are swallowed — the write+load is the
+     * operation that matters and its own failure is reported below. */
+    try { execFileSync('launchctl', ['unload', plist], { stdio: 'ignore' }); } catch { /* not loaded yet */ }
+    if (fs.existsSync(plist)) backup(plist); // the header promises every write is backed up first
+    fs.writeFileSync(plist, content);
+    execFileSync('launchctl', ['load', '-w', plist], { stdio: 'ignore' });
+    console.log(`  loaded     always-on daemon ${LAUNCHD_LABEL} — audit verify + self-update, ticks every ${interval}s, survives logout/reboot`);
+    console.log(`             plist ${plist}`);
+    console.log(`             log   ${logPath}`);
+  } catch (e) {
+    console.log(`  daemon     could not register the launchd agent (${(e as Error).message}).`);
+    console.log(`             The session-start trigger still runs. To retry: launchctl load -w ${plist}`);
+  }
+}
+
+function removeDaemon(): void {
+  const plist = plistPath(HOME);
+  if (process.platform !== 'darwin' || !fs.existsSync(plist)) {
+    console.log('  absent     always-on daemon (launchd agent)');
+    return;
+  }
+  if (DRY) {
+    console.log(`  would rm   launchd agent ${LAUNCHD_LABEL} -> ${plist}`);
+    return;
+  }
+  try { execFileSync('launchctl', ['unload', plist], { stdio: 'ignore' }); } catch { /* already unloaded */ }
+  try { fs.rmSync(plist); } catch { /* already gone */ }
+  console.log(`  removed    always-on daemon ${LAUNCHD_LABEL}`);
+}
+
+/* --- main ---------------------------------------------------------------- */
+function main() {
+  const claudeJson = expand(opt('claude-json') ?? path.join(HOME, '.claude.json'));
+  const settingsJson = expand(opt('settings') ?? path.join(HOME, '.claude', 'settings.json'));
+  /* Default target: the Claude Code global instruction file. Extra agent files
+   * (an AGENTS.md, a Codex file) via repeated --instructions. */
+  const instructionFiles = opts('instructions').map(expand);
+  if (!instructionFiles.length) instructionFiles.push(path.join(HOME, '.claude', 'CLAUDE.md'));
+
+  const banner = DRY ? 'DRY RUN — showing edits, writing nothing' : UNINSTALL ? 'UNINSTALL' : 'INSTALL';
+  console.log(`\ncairn:install — ${banner}`);
+  console.log('='.repeat(60));
+
+  if (UNINSTALL) {
+    const unwrapped = unwrapServers(claudeJson);
+    console.log(`  ${unwrapped.length ? 'restored' : 'absent '}  gateway-wrapped servers${unwrapped.length ? `: ${unwrapped.join(', ')}` : ''}`);
+    const s = removeServer(claudeJson);
+    console.log(`  ${s ? 'removed' : 'absent '}  server "${MCP_NAME}" in ${claudeJson}`);
+    const h = removeHooks(settingsJson);
+    console.log(`  ${h ? 'removed' : 'absent '}  leftover session hooks in ${settingsJson}`);
+    removeDaemon();
+    for (const f of instructionFiles) {
+      const r = removeBlock(f);
+      console.log(`  ${r ? 'removed' : 'absent '}  Cairn block in ${f}`);
+    }
+    console.log('\nBackups (if any) sit beside each file as <file>.cairn-bak-<time>.\n');
+    return;
+  }
+
+  const home = resolveHome();
+  if (!fs.existsSync(path.join(home, 'cairn'))) {
+    if (!DRY) fs.mkdirSync(path.join(home, 'cairn'), { recursive: true });
+    console.log(`  ${DRY ? 'would create' : 'created'}  corpus dir ${path.join(home, 'cairn')}`);
+  }
+
+  /* Make the corpus a git repo so admitted findings commit themselves (autoseal).
+   * Local only — nothing is ever pushed. .cairn-secrets (private keys) and drafts
+   * (the quarantine) are gitignored so they can never be committed. */
+  if (!DRY) {
+    let isRepo = false;
+    try {
+      execFileSync('git', ['-C', home, 'rev-parse', '--is-inside-work-tree'], { stdio: 'ignore' });
+      isRepo = true;
+    } catch {
+      /* not a repo yet */
+    }
+    if (!isRepo) {
+      try {
+        execFileSync('git', ['-C', home, 'init', '-q'], { stdio: 'ignore' });
+        console.log(`  git-init   corpus at ${home} (findings commit themselves; never pushed)`);
+      } catch {
+        /* git absent — seal will sign but skip committing; not fatal */
+      }
+    }
+    /*
+     * Ensure the directories that hold SECRETS or scratch are gitignored — every
+     * time, not only on a fresh init, because a corpus that was already a repo
+     * would otherwise never gain the rule. `wrapped/` is the important addition:
+     * it stashes each wrapped server's ORIGINAL config verbatim, and an HTTP
+     * server is wrapped only when it carries an auth header, so a wrapped/ stash
+     * contains a bearer token by construction. Left un-ignored, one `git add -A`
+     * in the corpus (which findings commit into) would publish it.
+     *
+     * `audit/` (the enterprise decision log) and `org-policy.json` (principals
+     * and token hashes) are local governance state, never corpus content — they
+     * are ignored on the same principle: a corpus is committed, this is not.
+     */
+    if (!DRY) {
+      try {
+        const gi = path.join(home, '.gitignore');
+        const want = ['.cairn-secrets/', 'drafts/', 'retrievals/', 'wrapped/', 'trust/', 'audit/', 'org-policy.json'];
+        const existing = fs.existsSync(gi) ? fs.readFileSync(gi, 'utf8') : '';
+        const lines = new Set(existing.split('\n').map((l) => l.trim()));
+        const missing = want.filter((w) => !lines.has(w));
+        if (missing.length) fs.writeFileSync(gi, (existing && !existing.endsWith('\n') ? existing + '\n' : existing) + missing.join('\n') + '\n');
+      } catch {
+        /* best-effort: a corpus without git just cannot leak by commit anyway */
+      }
+    }
+  }
+
+  /* This machine's signing identity, generated here if it has none — so keygen is
+   * never a separate step. The private half is born on this machine and stays in
+   * .cairn-secrets (cairn-0014). Every install is a distinct signer, which is
+   * exactly what makes a second machine's findings countably its own. */
+  process.env.CAIRN_HOME = home; // so identity/keys resolve to this corpus
+  const author = opt('author') || defaultLabel();
+  if (DRY) {
+    let has = false;
+    try {
+      has = [...loadKeys().values()].some((k) => k.label === author);
+    } catch {
+      /* no corpus yet (dry-run does not create it), so certainly no key */
+    }
+    console.log(`  ${has ? 'present  ' : 'would gen'}  signing identity "${author}"`);
+  } else {
+    const id = ensureIdentity(author);
+    console.log(`  ${id.created ? 'created  ' : 'present  '}  signing identity "${author}" -> key ${id.keyId}`);
+    if (id.created) console.log(`             fingerprint ${id.fingerprint}`);
+    /* A unique origin so this corpus's ids can never collide with another's. */
+    const o = ensureOrigin(home);
+    console.log(`  ${o.created ? 'created  ' : 'present  '}  corpus origin "${o.origin}"`);
+  }
+
+  /* Execution stays OFF unless the installer explicitly asks. A check is shell
+   * from the corpus, so this is the one switch that must be a deliberate choice —
+   * but it is a flag, not a file you hand-edit, so 'install, that's it' still holds
+   * for turning triage on. The policy lives outside the corpus (policy.ts), keyed
+   * by this corpus path, and other corpora in the file are left untouched. */
+  if (has('--enable-execution')) {
+    const pf = policyPath();
+    if (DRY) {
+      console.log(`  would set   execution enabled for ${home} in ${pf}`);
+    } else {
+      let store: Record<string, unknown> = {};
+      let existed = false;
+      if (fs.existsSync(pf)) {
+        existed = true;
+        try {
+          const parsed = JSON.parse(fs.readFileSync(pf, 'utf8'));
+          if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('top level is not an object');
+          store = parsed as Record<string, unknown>;
+        } catch (e) {
+          // Do NOT silently overwrite: that would drop every OTHER corpus's
+          // policy (and their notes). Refuse and let a human fix the file.
+          throw new Error(`${pf} is not valid policy JSON (${(e as Error).message}); refusing to overwrite it. Fix or move it, then re-run --enable-execution.`);
+        }
+      }
+      store[path.resolve(home)] = { enabled: true, note: `enabled at install ${new Date().toISOString()}` };
+      fs.mkdirSync(path.dirname(pf), { recursive: true });
+      if (existed) backup(pf);
+      fs.writeFileSync(pf, JSON.stringify(store, null, 2) + '\n');
+      console.log(`  enabled    execution for this corpus in ${pf}`);
+    }
+  }
+
+  const s = upsertServer(claudeJson, home);
+  console.log(`  ${s.padEnd(9)}  server "${MCP_NAME}" -> node ${SERVER_BIN}`);
+  console.log(`             CAIRN_HOME=${home}`);
+  /* Install the SessionStart readiness probe. The same upsert strips any leftover
+   * sleep/triage hooks an earlier version wired (they name deleted bins), so a
+   * settings.json does not error on session open. Capture itself is in-session. */
+  const h = upsertHooks(settingsJson, home);
+  console.log(`  ${h.padEnd(9)}  SessionStart readiness probe (leftover sleep/triage hooks stripped) in ${settingsJson}`);
+
+  /* Always-on: the daemon verifies the audit chain and keeps the code current
+   * on a timer, forever. macOS registers it under launchd here; --no-daemon opts out. */
+  if (!has('--no-daemon')) {
+    installDaemon(home);
+  } else {
+    console.log('  --no-daemon left the always-on daemon unregistered — audit verify and self-update run only by hand');
+  }
+
+  /* Default-on: route the user's other stdio servers through the gateway so PUSH
+   * (unasked findings on tool results) actually happens. --no-wrap opts out.
+   * Silent per-call unless a finding resonates, and fully reversible on uninstall. */
+  if (!has('--no-wrap')) {
+    const w = wrapServers(claudeJson, home);
+    if (w.wrapped.length) {
+      console.log(`  ${DRY ? 'would wrap' : 'wrapped  '}  ${w.wrapped.length} server(s) through the gateway: ${w.wrapped.join(', ')}`);
+      console.log(`  trust      ${w.trustMode}${w.trustMode === 'monitor' ? ' — each server\'s tools are pinned on first use; a later change is flagged (use --enforce to withhold it)' : w.trustMode === 'enforce' ? ' — a tool that changes after approval is withheld until re-approved (cairn:trust)' : ' — surface pinning off'}`);
+    }
+    for (const a of w.already) console.log(`  already    "${a}" already routed through the gateway`);
+    for (const sk of w.skipped) console.log(`  skipped    "${sk.name}" — ${sk.why}`);
+    if (!w.wrapped.length && !w.already.length && !w.skipped.length) {
+      console.log('  no wrap    no other MCP servers found to wrap — PUSH will begin the moment you add one');
+    }
+  } else {
+    console.log('  --no-wrap  left your other servers untouched — PUSH stays off until you wrap one (see GATEWAY.md)');
+  }
+
+  for (const f of instructionFiles) {
+    const r = upsertBlock(f);
+    console.log(`  ${r.padEnd(9)}  Cairn block in ${f}`);
+  }
+
+  if (DRY) {
+    console.log('\n--- the block that would be written ---');
+    console.log(block());
+    console.log('\nNothing was written.\n');
+    return;
+  }
+
+  console.log('\n' + '='.repeat(60));
+  console.log('Cairn is now global:');
+  console.log('  · this machine has its own signing identity — findings it records are');
+  console.log('    signed under its own key, so its contributions are countably its own');
+  console.log('  · cairn_find / cairn_brief / cairn_record are available in every session');
+  console.log('  · PUSH is on: your other MCP servers are routed through the gateway, so a');
+  console.log('    finding surfaces on a tool result at the moment of the trap — unasked.');
+  console.log('    Resonance keeps it silent and near-free on every call that is not a trap.');
+  console.log('  · every session\'s instructions tell it when to consult them');
+  console.log('  · a finding an agent records is served at once, born `aging`: firsthand,');
+  console.log('    one agent, this machine. Nothing harvests transcripts or promotes drafts');
+  console.log('    behind your back; a stored check never runs unattended (execution policy).');
+  console.log('  · standing is kept honest on USE: the agent that is served a finding and');
+  console.log('    sees it hold or fail says so with cairn_observe, and with CAIRN_KEY on the');
+  console.log('    gateway that observation is signed attest-only — it can contest a finding');
+  console.log('    but can never make its check executable.');
+  console.log('  · on macOS an always-on daemon under launchd (survives logout/reboot) keeps');
+  console.log('    the audit chain verified and the code current; it runs no checks.');
+  console.log('\nStill scoped, on purpose:');
+  console.log('  · Stdio and HTTP (token-auth) MCP servers are wrapped; a headerless HTTP server');
+  console.log('    (likely OAuth) is left direct until --http-no-auth names it. Re-run install');
+  console.log('    after adding a server; --only/--exclude scope it, --no-wrap keeps all direct.');
+  console.log('  · Pure Bash/CLI work with no MCP server is not covered here; that is the');
+  console.log('    opt-in PostToolUse hook.');
+  console.log('\nUndo any time: npm run cairn:install -- --uninstall  (restores every wrapped server)');
+  console.log('Restart your Claude session for the new server to load.\n');
+}
+
+try {
+  main();
+} catch (e) {
+  console.error(`\ncairn:install: ${(e as Error).message}\n`);
+  process.exit(1);
+}

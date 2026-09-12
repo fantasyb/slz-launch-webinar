@@ -1,0 +1,59 @@
+{
+  "id": "cairn-0052",
+  "title": "search_code empty success with incomplete_results true is not absence",
+  "claim": "search_code through @modelcontextprotocol/server-github can return total_count 0, items [], and incomplete_results true for strings that exist in a private repo. Reading only total_count/items concludes the code is missing.",
+  "kind": "trap",
+  "subject": {
+    "name": "@modelcontextprotocol/server-github",
+    "ecosystem": "mcp",
+    "versions": "deprecated-npm-dogfood"
+  },
+  "scope": "environment-specific",
+  "basis": "empirical",
+  "appliesTo": "Crew GitHub door; observed 2026-09-12 on private fantasyb/jeevz. May be sharper for private/unindexed repos than public ones.",
+  "reflexBecause": "Retry alone does not fix an unindexed or incomplete code-search index; the discriminating move is to stop trusting empty+incomplete and verify via get_file_contents, which is not a generic paginate/retry reflex.",
+  "tags": ["github", "mcp", "search_code", "incomplete_results"],
+  "cost": "minutes",
+  "expectation": "A successful search with zero items means the query matched nothing in the searchable index.",
+  "reality": "Queries like \"package.json repo:fantasyb/jeevz\" through the GitHub door returned {\"total_count\":0,\"incomplete_results\":true,\"items\":[]} with isError false. get_file_contents on package.json succeeds and contains those strings. Empty+incomplete is not proof of absence.",
+  "mechanism": "GitHub code search is eventually consistent / may not index a private repo the way contents API does. incomplete_results:true is the API's signal that the result set is not authoritative; the MCP tool forwards the JSON without elevating that flag into an error or warning.",
+  "workaround": "Never treat total_count=0 as absence when incomplete_results is true. Confirm with get_file_contents (or clone). Retry only after noting incompleteness — do not silently re-query as if the first answer were final.",
+  "triggers": ["search_code"],
+  "evidence": [
+    {
+      "command": "Through GitHub door, CAIRN_AGENT=Dig: search_code q='package.json repo:fantasyb/jeevz' (also vite/private/export variants)",
+      "output": "{\"total_count\":0,\"incomplete_results\":true,\"items\":[]} isError=false for each",
+      "note": "dig-earn-verify session; same shape from gh api search/code for this private repo."
+    },
+    {
+      "command": "Through GitHub door: get_file_contents owner=fantasyb repo=jeevz path=package.json",
+      "output": "isError=false; content includes name jeevz and private true — file exists and is readable",
+      "note": "Proves the searched tokens exist in-repo while search_code stayed empty+incomplete."
+    }
+  ],
+  "check": {
+    "command": "Pick a string known to appear in a private-repo file via get_file_contents. Call search_code with that string and repo:owner/name. If the tool returns total_count 0 with incomplete_results true while the file still contains the string, the trap holds.",
+    "confirmedIf": "search_code succeeds with items=[] AND incomplete_results=true AND get_file_contents still shows the string in-repo",
+    "refutedIf": "search_code returns the matching file/path when incomplete_results is false, or returns a hard error instead of an empty incomplete success",
+    "manual": true
+  },
+  "provenance": "firsthand",
+  "halfLifeDays": 90,
+  "observations": [{
+    "at": "2026-09-12T12:00:20.163Z",
+    "by": "Dig",
+    "verdict": "confirmed",
+    "note": "Recorded at the moment it was solved; no note was supplied.",
+    "environment": {
+      "os": "linux",
+      "arch": "x64",
+      "runtime": "node v20.19.2",
+      "note": "Linux 6.12.94+; the machine that recorded it — the submitter reported no environment"
+    }
+  }],
+  "predictions": [],
+  "agentRecorded": true,
+  "visibility": "private",
+  "status": "active",
+  "createdAt": "2026-09-12T12:00:20.163Z"
+}

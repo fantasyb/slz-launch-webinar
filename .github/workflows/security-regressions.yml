@@ -1,0 +1,103 @@
+name: security-regressions
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  security:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['22', '24']
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm audit --audit-level=high
+      - run: npm run cairn:build-cli
+      - run: node --import tsx --test test/gateway-adversarial.test.ts test/trust.test.ts test/defang.test.ts test/container.test.ts test/container-reaper.test.ts test/container-quarantine.test.ts test/supervisor-admission.test.ts test/supervisor-transport.test.ts
+      - run: npm run typecheck
+
+  container-isolation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Build disposable containment probe
+        run: docker build --tag cairn-containment-probe fixtures/container
+      - name: Verify actual container boundaries
+        env:
+          CAIRN_CONTAINER_INTEGRATION: '1'
+          CAIRN_CONTAINER_QUARANTINE_DIR: ${{ runner.temp }}/cairn-container-quarantine
+        run: |
+          CAIRN_CONTAINER_TEST_IMAGE="$(docker image inspect --format '{{.Id}}' cairn-containment-probe)" \
+            node --import tsx --test test/container-integration.test.ts
+      - name: Install the independent supervisor on this disposable runner
+        run: |
+          # setup-node uses the tool cache; the shipped service deliberately
+          # requires a fixed, root-owned executable outside the gateway tree.
+          sudo install -o root -g root -m 0755 "$(command -v node)" /usr/bin/node
+          sudo install -D -o root -g root -m 0644 scripts/container-reaper.mjs /opt/cairn/scripts/container-reaper.mjs
+          sudo install -o root -g root -m 0644 deploy/systemd/cairn-container-reaper.service deploy/systemd/cairn-container-reaper.timer /etc/systemd/system/
+          sudo systemctl daemon-reload
+          sudo systemctl enable --now cairn-container-reaper.timer
+      - name: Verify timer-driven orphan removal
+        env:
+          CAIRN_CONTAINER_SYSTEMD_INTEGRATION: '1'
+          CAIRN_CONTAINER_QUARANTINE_DIR: ${{ runner.temp }}/cairn-container-quarantine
+        run: |
+          CAIRN_CONTAINER_TEST_IMAGE="$(docker image inspect --format '{{.Id}}' cairn-containment-probe)" \
+            node --import tsx --test test/container-systemd.test.ts
+      - name: Install the narrow supervisor and a separate gateway identity
+        run: |
+          npm run cairn:build-cli
+          node --input-type=module -e 'import {build} from "esbuild"; await build({entryPoints:["fixtures/container/supervisor-client.ts"],outfile:"dist/test/supervisor-client.js",bundle:true,platform:"node",format:"cjs",target:"node22"})'
+          sudo useradd --system --user-group --no-create-home --shell /usr/sbin/nologin cairn-gateway
+          sudo install -d -o cairn-gateway -g cairn-gateway -m 0700 /var/lib/cairn-gateway
+          sudo install -d -o root -g root -m 0755 /opt/cairn/dist/cli /opt/cairn/dist/test
+          sudo install -o root -g root -m 0644 dist/cli/container-supervisor.js dist/cli/mcp-proxy.js /opt/cairn/dist/cli/
+          sudo install -o root -g root -m 0644 dist/test/supervisor-client.js /opt/cairn/dist/test/
+          sudo install -o root -g root -m 0644 deploy/systemd/cairn-supervisor.service /etc/systemd/system/
+          sudo systemctl daemon-reload
+      - name: Verify actual privilege separation and supervisor restart
+        run: |
+          sudo env CAIRN_SUPERVISOR_INTEGRATION=1 \
+            CAIRN_CONTAINER_TEST_IMAGE="$(docker image inspect --format '{{.Id}}' cairn-containment-probe)" \
+            /usr/bin/node --import tsx --test test/supervisor-integration.test.ts
+      - name: Diagnose failed supervisor installation
+        if: failure()
+        run: |
+          sudo journalctl -u cairn-supervisor.service -u cairn-container-reaper.service --no-pager -n 80
+          docker ps -a --filter label=cairn.isolated=true --format '{{.ID}} {{.Status}} {{.Labels}}'
+      - name: Stop the disposable supervisors
+        if: always()
+        run: |
+          sudo systemctl stop cairn-supervisor.service || true
+          sudo systemctl disable --now cairn-container-reaper.timer || true
+      - name: Remove only this job's isolated fixture containers
+        if: always()
+        run: |
+          docker ps -aq --filter label=cairn.isolated=true | xargs -r docker rm --force
+
+# Independent evidence for gateway boundaries, even when retrieval quality is
+# red. This does not replace the full suite, guard, or trusted-base PR review.
+# No provider secrets or write token are given to PR-controlled code.

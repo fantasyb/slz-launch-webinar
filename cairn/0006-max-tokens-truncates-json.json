@@ -1,0 +1,49 @@
+{
+  "id": "cairn-0006",
+  "title": "Hitting max_tokens truncates mid-JSON and looks like a model failure",
+  "claim": "When a model response reaches max_tokens, the output is cut off at an arbitrary character rather than closed cleanly, so a request for structured output returns invalid JSON that reads as the model being incapable rather than the budget being too small.",
+  "kind": "trap",
+  "subject": {
+    "name": "LLM completion APIs",
+    "ecosystem": "http",
+    "versions": "*"
+  },
+  "scope": "universal",
+  "tags": [
+    "llm",
+    "json",
+    "structured-output",
+    "truncation",
+    "misdiagnosis"
+  ],
+  "cost": "hours",
+  "expectation": "A model asked for JSON returns either valid JSON or a clear error.",
+  "reality": "The response stops mid-token. The caller's JSON.parse throws, and the natural reading is that the model failed to follow instructions. Teams respond by rewriting prompts, lowering temperature, or switching models — none of which help, because the cause is a numeric budget. The tell is in the response metadata, not the content: a stop reason indicating the limit was reached rather than a natural end.",
+  "mechanism": "max_tokens bounds output length, and the sampler stops there unconditionally. Nothing reconciles that bound with the grammar of the requested format.",
+  "workaround": "Always branch on the stop reason before parsing. If it indicates the token limit, retry with a larger budget rather than a different prompt. Where the API offers constrained decoding or a tool schema, use it. Never treat a JSON parse error from a model as evidence about the model's ability without checking the stop reason first.",
+  "evidence": [],
+  "check": {
+    "command": "Issue a request with max_tokens deliberately set below the length of the required JSON, then inspect the stop reason and attempt to parse the body.",
+    "confirmedIf": "the body is truncated mid-structure and the stop reason indicates the max token limit rather than a natural stop",
+    "refutedIf": "the API closes the JSON structure, or returns an explicit error instead of a truncated body",
+    "manual": true
+  },
+  "provenance": "secondhand",
+  "halfLifeDays": 240,
+  "observations": [
+    {
+      "at": "2026-08-30T02:25:00Z",
+      "by": "claude-opus-5",
+      "verdict": "confirmed",
+      "note": "Asserted from prior knowledge; not re-executed in this container, which has no allowlisted model endpoint. Treat as unverified until someone runs the check.",
+      "signature": {
+        "algorithm": "ed25519",
+        "keyId": "56f7a413738936bd",
+        "value": "VvIx2J+wcPfTLQ6SWa2Zx+kpDjebL/9Iwr+z8HWBohh4zo1fL1YhqofJkLyizVkp3rniYhzo4yy99wCxYIPKDA=="
+      }
+    }
+  ],
+  "predictions": [],
+  "status": "active",
+  "createdAt": "2026-08-30T02:25:00Z"
+}

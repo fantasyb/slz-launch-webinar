@@ -1,0 +1,61 @@
+{
+  "id": "cairn-0040",
+  "title": "A retrieval score is dominated by whether the query is about the document at all",
+  "claim": "Precision over an evaluation set is largely a measurement of how many of its queries are genuinely about their labelled document, so a headline score conflates ranker quality with label quality and cannot separate them.",
+  "kind": "trap",
+  "subject": {
+    "name": "retrieval evaluation",
+    "ecosystem": "design",
+    "versions": "*"
+  },
+  "scope": "environment-specific",
+  "appliesTo": "Any retrieval suite whose queries are harvested from text attached to the documents — observation notes, commit messages, review comments, tickets — rather than written as questions about them.",
+  "tags": [
+    "retrieval",
+    "eval",
+    "measurement",
+    "labels",
+    "harvested-queries"
+  ],
+  "cost": "hours",
+  "expectation": "A query attached to a document is a query about that document, so failing to rank it first is a fact about the retriever.",
+  "reality": "Some attached text is about the bookkeeping rather than the subject: that a check ran under a sealed forecast, that a record was reclassified, that it was drafted elsewhere and handed over. The document holds almost none of that vocabulary, so no ranking can win it. Banded by how much of its own query the target explains, P@1 rose monotonically from 0.00 below 10% to 1.00 above 70%, and stood at 48 of 49 above 50%. The headline of 0.808 was not measuring the ranker; it was measuring the mixture.",
+  "mechanism": "Text harvested from beside a document inherits whatever its author was writing about at the time, and an author writing a note has two subjects available: the thing, and the process of recording the thing. Nothing in the harvest distinguishes them, because both arrive in the same field. The resulting suite is two populations under one average, and averages of two populations move when the mixture moves — which makes every comparison against the headline partly a comparison of how many process notes were written that month.",
+  "workaround": "Band the suite by how much of each query the labelled document accounts for, and report the bands. The share is computable before knowing whether the case passed, so it is not a judgement made to suit the result. Gate on the winnable subset separately, so a real regression cannot hide behind unwinnable cases and a trade against the suite can be argued honestly. Do not delete the unwinnable ones: their number is itself a measurement of how the corpus is being written, and it will change.",
+  "evidence": [
+    {
+      "command": "npm run cairn:eval — banded by the gold's share of its own query",
+      "output": "gold share    cases   P@1\n0-10%            2    0.00\n10-30%           7    0.29\n30-50%          15    0.60\n50-70%          29    0.97\n70-100%         20    1.00\n\nheadline 59/73 (0.808)   share >= 30%: 57/64 (0.891)",
+      "note": "Found while trying to win back five cases lost to a deliberate trade. Two guesses at ranker changes failed first — damping ordinary query words, and giving generated text its own tier — and both were reverted. The cases were not lost to the ranker."
+    }
+  ],
+  "check": {
+    "command": "For each case, compute the fraction of the query's matched information that the labelled document accounts for, then report precision within bands of that fraction.",
+    "confirmedIf": "precision rises monotonically with the fraction, and the low bands are near zero",
+    "refutedIf": "precision is flat across the bands, meaning the failures are distributed independently of whether the query is about the document",
+    "manual": true
+  },
+  "provenance": "firsthand",
+  "halfLifeDays": 365,
+  "observations": [
+    {
+      "at": "2026-09-01T15:29:51.966Z",
+      "by": "claude-opus-5",
+      "verdict": "confirmed",
+      "note": "Reached by working backwards from a grade rather than forwards from an idea, after two forward guesses failed. The instruction that produced it was to treat the held-out set as held out for a reason instead of trading it away, and the reason turned out not to be the one either of us assumed: part of that suite is not a retrieval question. One corpus, seventy-three cases, so the shape of the relationship is better evidenced than its exact slope.",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node v22.22.2",
+        "note": "39-finding corpus, 73 held-out cases derived from observation notes and prediction reasoning."
+      }
+    }
+  ],
+  "status": "active",
+  "createdAt": "2026-09-01T15:29:51.966Z",
+  "triggers": [
+    "queries harvested from text attached to the documents",
+    "two populations under one average",
+    "observation notes as eval queries"
+  ]
+}

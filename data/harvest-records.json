@@ -1,0 +1,63 @@
+{
+  "generatedAt": "2026-09-01T22:30:41.387Z",
+  "records": [
+    {
+      "task": "invoice-rounding",
+      "trial": 1,
+      "title": "Math.round(x*100)/100 rounds exact half-cents down, so per-line money rounding drifts from a decimal processor",
+      "accepted": true,
+      "reason": "discriminates",
+      "gate": "discriminates"
+    },
+    {
+      "task": "invoice-rounding",
+      "trial": 2,
+      "title": "Math.round(x*100)/100 and toFixed(2) both break half-up rounding for money, and disagree with each other",
+      "accepted": true,
+      "reason": "discriminates",
+      "gate": "discriminates"
+    },
+    {
+      "task": "csv-import",
+      "trial": 1,
+      "title": "String.prototype.trim() strips the UTF-8 BOM, hiding it from JS CSV parsers only",
+      "accepted": false,
+      "reason": "not-live",
+      "gate": "not-live"
+    },
+    {
+      "task": "csv-import",
+      "trial": 2,
+      "title": "String.trim() silently strips a UTF-8 BOM, masking broken CSV header parsing",
+      "accepted": false,
+      "reason": "not-live",
+      "gate": "not-live"
+    },
+    {
+      "task": "csv-import",
+      "trial": 2,
+      "title": "String.trim() silently strips a UTF-8 BOM, masking broken CSV header parsing",
+      "accepted": true,
+      "reason": "discriminates",
+      "gate": "discriminates"
+    },
+    {
+      "task": "csv-import",
+      "trial": 3,
+      "title": "String.prototype.trim() strips a UTF-8 BOM, masking BOM bugs in JS-only CSV parsers",
+      "accepted": true,
+      "reason": "discriminates",
+      "gate": "discriminates"
+    }
+  ],
+  "offered": [
+    "bash",
+    "cairn_search",
+    "cairn_record"
+  ],
+  "called": {
+    "bash": 119,
+    "cairn_search": 16,
+    "cairn_record": 6
+  }
+}

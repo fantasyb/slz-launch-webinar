@@ -1,0 +1,89 @@
+{
+  "id": "cairn-0034",
+  "title": "A trap a competent agent recovers from unaided pays nothing in a ledger",
+  "claim": "Recording a trap changes an agent's answer only when the trap is both absent from the model's training and not recoverable from evidence available on the machine within the agent's budget; traps failing either condition are retrieved correctly, cited correctly, and change nothing.",
+  "kind": "limitation",
+  "subject": {
+    "name": "cairn",
+    "ecosystem": "design",
+    "versions": "*"
+  },
+  "scope": "environment-specific",
+  "appliesTo": "A retrieval corpus of engineering traps consulted by a capable coding agent that can run commands on the affected machine.",
+  "tags": [
+    "retrieval",
+    "corpus",
+    "admission",
+    "eval",
+    "agent",
+    "negative-result"
+  ],
+  "cost": "hours",
+  "expectation": "A corpus that retrieves the right trap, ranked first, in response to an agent's own unprompted query, improves what the agent does. Accuracy of retrieval is the thing to optimise.",
+  "reality": "Retrieval was not the binding constraint. Across three traps and twenty-two trials the agent asked for the ledger unprompted, got the correct finding ranked first, and cited it by id in the code it wrote -- and the arm without the ledger was equally correct every time. Retrieval accuracy was near perfect and the outcome delta was zero, because in all three cases a capable agent could reach the same answer without help.",
+  "mechanism": "There are two independent routes around a recorded trap and a finding only pays when both are shut. The first is training: a trap documented in a widely-read manual is already in the weights. The second is local recovery: a trap whose evidence sits on the machine can be derived by an agent willing to spend turns on it -- a parse error printed on stderr, or a TLS certificate whose issuer names the intercepting gateway. The second route is the one that is easy to forget, because it makes an environment-specific trap -- exactly the kind a ledger exists for -- still recoverable, just expensively.",
+  "workaround": "Judge a candidate finding on both routes before admitting it, not on how surprising it felt: is it absent from public documentation, AND could an agent on the affected machine derive it from available evidence within a plausible budget? If the answer to the second is yes, the finding may still be worth keeping, but its payoff is a cost saving and must be measured as one -- turns, wall clock, tokens -- because measuring it as correctness will show nothing. Note that a two-arm correctness comparison is the wrong instrument for that, and needs far more trials than a correctness comparison would.",
+  "evidence": [
+    {
+      "command": "npx tsx scripts/agent-trial.ts reachability",
+      "output": "reachability — control 3/3   with cairn 4/4\nREFUSED (not counted) — control 2, cairn 1",
+      "note": "cairn-0001, an allowlist proxy whose CONNECT 403 arrives as a transport error. Environment-specific and absent from any training set, so the first route was shut -- and both arms still answered correctly, because the control arm derived it locally: it ran positive controls against allowlisted hosts and read the TLS certificate, whose issuer names the egress gateway."
+    },
+    {
+      "command": "npx tsx scripts/agent-trial.ts clock",
+      "output": "live clock — control 3/3   with cairn 3/3",
+      "note": "cairn-0005. Silent by construction -- the build passes and the page renders -- but force-dynamic is in the Next.js documentation, so the first route was open. The cairn arm asked unprompted, got cairn-0005 first, and cited it in a comment; the control arm wrote the same route config from memory."
+    },
+    {
+      "command": "npx tsx scripts/agent-trial.ts braces",
+      "output": "both arms CORRECT (5), twice",
+      "note": "cairn-0003. Loud: a regex parse error and exit 2. The model reached for grep -F; told the project mandates ripgrep, it reached for rg -F. Locally recoverable in one turn."
+    },
+    {
+      "command": "npx tsx scripts/agent-trial.ts staleness",
+      "output": "staleness — control 0/5   with cairn 5/5",
+      "note": "The positive control. cairn-0019, on a task to rank ledger findings by re-verification urgency. Both routes shut: the trap is not in any manual, and nothing on the machine exposes it -- the script runs, the ranking is plausible, and no test an agent writes will fail. Ten of ten, unanimous in both directions. Every treatment trial got cairn-0019 ranked first on its opening query, and several then wrote follow-up queries phrased in the finding's own terms. Two control trials did clamp a field -- lastVerifiedAt, against clock skew and typos -- and one of those named halfLifeDays as 'the author's estimate' in the same answer and trusted it anyway."
+    }
+  ],
+  "check": {
+    "command": "Run a two-arm trial on a recorded trap: identical task and model, one arm with corpus retrieval and one without, several trials per arm, scoring the deliverable rather than whether the tool was called.",
+    "confirmedIf": "the arm without retrieval reaches the correct outcome as often as the arm with it, on a trap that is publicly documented or derivable from evidence on the machine",
+    "refutedIf": "the arm without retrieval is measurably wrong more often on such a trap",
+    "manual": true
+  },
+  "provenance": "firsthand",
+  "halfLifeDays": 90,
+  "observations": [
+    {
+      "at": "2026-09-01T12:23:55.861Z",
+      "by": "claude-opus-5",
+      "verdict": "confirmed",
+      "note": "Twenty-two trials over three traps chosen to remove one suspected confound at a time -- first loudness, then public documentation. Every arm with retrieval queried the ledger unprompted and got the intended finding ranked first; no arm without it was ever wrong. The one axis showing any daylight was steps to the answer, and it is not significant here: control took 13, 14 and 15 tool calls, the ledger arm 9, 12, 12 and 14, with overlapping ranges at n=3 and n=4. Recorded as suggestive and nothing more. Scope is environment-specific because this is one model against one small corpus; a weaker model, or a trap satisfying both conditions, could behave differently and has not been tested.",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node v22.22.2",
+        "note": "claude-opus-5 via the Messages API, bash tool plus optional cairn_search over a 33-finding corpus."
+      }
+    },
+    {
+      "at": "2026-09-01T12:55:00.000Z",
+      "by": "claude-opus-5",
+      "verdict": "confirmed",
+      "note": "Appended rather than revised: the first observation closed by saying a trap satisfying both conditions had not been tested, and that is no longer true. It has, and the claim survived it. A fourth scenario was built from the criterion itself -- cairn-0019, where the value feeding the rule is declared by the party the rule constrains -- and it separated completely where the first three did not: control 0/5, treatment 5/5, with the adversarial record ranked 6 of 7 by every control trial and 1 or 2 of 7 by every treatment trial. That matches the reference implementations exactly, which were checked before the run rather than after. The interesting half is the control arm's near miss: two of five clamped an input, but they clamped the timestamp against clock skew and typos, and one of those named halfLifeDays as the author's own estimate in the same breath as trusting it. Local recovery failed not because the evidence was hidden but because nothing on the machine prompts the question of what the author gains. So the criterion holds in both directions on one model and one corpus, which is stronger than the null results alone but still one model and one corpus.",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node v22.22.2",
+        "note": "claude-opus-5 via the Messages API, bash tool plus optional cairn_search over a 34-finding corpus; graded mechanically, grader self-tested against three reference implementations first."
+      }
+    }
+  ],
+  "status": "active",
+  "createdAt": "2026-09-01T12:23:55.861Z",
+  "triggers": [
+    "admitting a candidate finding",
+    "two-arm trial corpus retrieval",
+    "scoring the deliverable rather than whether the tool was called"
+  ]
+}

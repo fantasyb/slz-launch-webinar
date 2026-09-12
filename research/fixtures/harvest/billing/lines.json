@@ -1,0 +1,7 @@
+{ "taxPct": 8.875,
+  "lines": [
+    { "sku": "A-1", "qty": 3, "unitPrice": 19.99, "discountPct": 10 },
+    { "sku": "B-7", "qty": 1, "unitPrice": 0.07, "discountPct": 0 },
+    { "sku": "C-2", "qty": 7, "unitPrice": 4.35, "discountPct": 33.3 },
+    { "sku": "D-9", "qty": 12, "unitPrice": 1.15, "discountPct": 0 }
+  ] }

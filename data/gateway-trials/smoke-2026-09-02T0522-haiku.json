@@ -1,0 +1,194 @@
+{
+  "runId": "smoke-2026-09-02T0522-haiku",
+  "smoke": true,
+  "model": "haiku",
+  "trialsPerCell": 1,
+  "truth": {
+    "churned": 137,
+    "open_tier2": 29
+  },
+  "startedAt": "2026-09-02T05:22:51.750Z",
+  "bundleAt": "2026-09-02T05:21:32.894Z",
+  "trials": [
+    {
+      "scenario": "A-silent-cap",
+      "arm": "control",
+      "trial": 1,
+      "sessionId": "f890068d-c711-4a66-8029-6492da5b0a39",
+      "answer": 50,
+      "truth": 137,
+      "correct": false,
+      "turns": 3,
+      "toolCalls": {
+        "ToolSearch": 1,
+        "mcp__records__query_records": 1
+      },
+      "mcpCalls": 1,
+      "costUsd": 0.0669161,
+      "durationMs": 17617,
+      "denials": [],
+      "delivered": {
+        "onResult": 0,
+        "onToolSearch": 0
+      },
+      "proxyLedger": {},
+      "usedIncludePaging": false,
+      "usedExplicitMapping": false,
+      "resultText": "```json\n{\"churned\": 50}\n```",
+      "stderrTail": ""
+    },
+    {
+      "scenario": "A-silent-cap",
+      "arm": "empty",
+      "trial": 1,
+      "sessionId": "f7f8e0ad-722c-4ee2-8411-c920fb86fa96",
+      "answer": 50,
+      "truth": 137,
+      "correct": false,
+      "turns": 3,
+      "toolCalls": {
+        "ToolSearch": 1,
+        "mcp__records__query_records": 1
+      },
+      "mcpCalls": 1,
+      "costUsd": 0.0313988,
+      "durationMs": 21142,
+      "denials": [],
+      "delivered": {
+        "onResult": 0,
+        "onToolSearch": 0
+      },
+      "proxyLedger": {},
+      "usedIncludePaging": false,
+      "usedExplicitMapping": false,
+      "resultText": "```json\n{\"churned\": 50}\n```",
+      "stderrTail": ""
+    },
+    {
+      "scenario": "A-silent-cap",
+      "arm": "gateway",
+      "trial": 1,
+      "sessionId": "45afb970-202c-449e-ac77-1a2ee0c4231a",
+      "answer": 50,
+      "truth": 137,
+      "correct": false,
+      "turns": 9,
+      "toolCalls": {
+        "ToolSearch": 2,
+        "mcp__records__query_records": 5,
+        "mcp__records__list_mappings": 1
+      },
+      "mcpCalls": 6,
+      "costUsd": 0.08108409999999999,
+      "durationMs": 54995,
+      "denials": [],
+      "delivered": {
+        "onResult": 1,
+        "onToolSearch": 0
+      },
+      "proxyLedger": {
+        "mcp-proxy:connect-index": 1,
+        "mcp-proxy:argument": 2,
+        "mcp-proxy:result": 2
+      },
+      "usedIncludePaging": false,
+      "usedExplicitMapping": false,
+      "resultText": "Based on my queries to the Contact records database, I have retrieved all accessible records with status \"churned\". The query consistently returned exactly 50 records across multiple attempts.\n\n```json\n{\"churned\": 50}\n```",
+      "stderrTail": ""
+    },
+    {
+      "scenario": "B-stale-mapping",
+      "arm": "control",
+      "trial": 1,
+      "sessionId": "d4b0c556-e40e-45eb-b684-08fa8e613860",
+      "answer": 0,
+      "truth": 29,
+      "correct": false,
+      "turns": 3,
+      "toolCalls": {
+        "ToolSearch": 1,
+        "mcp__records__query_records": 1
+      },
+      "mcpCalls": 1,
+      "costUsd": 0.017636699999999998,
+      "durationMs": 7872,
+      "denials": [],
+      "delivered": {
+        "onResult": 0,
+        "onToolSearch": 0
+      },
+      "proxyLedger": {},
+      "usedIncludePaging": false,
+      "usedExplicitMapping": false,
+      "resultText": "```json\n{\"open_tier2\": 0}\n```",
+      "stderrTail": ""
+    },
+    {
+      "scenario": "B-stale-mapping",
+      "arm": "empty",
+      "trial": 1,
+      "sessionId": "edb270a8-3c7e-43a3-bf39-9e88a784b089",
+      "answer": 0,
+      "truth": 29,
+      "correct": false,
+      "turns": 3,
+      "toolCalls": {
+        "ToolSearch": 1,
+        "mcp__records__query_records": 1
+      },
+      "mcpCalls": 1,
+      "costUsd": 0.018185800000000002,
+      "durationMs": 8554,
+      "denials": [],
+      "delivered": {
+        "onResult": 0,
+        "onToolSearch": 0
+      },
+      "proxyLedger": {},
+      "usedIncludePaging": false,
+      "usedExplicitMapping": false,
+      "resultText": "```json\n{\"open_tier2\": 0}\n```",
+      "stderrTail": ""
+    },
+    {
+      "scenario": "B-stale-mapping",
+      "arm": "gateway",
+      "trial": 1,
+      "sessionId": "6d70dabf-6ce8-4cd4-855d-3a06fbbdb5a2",
+      "answer": 29,
+      "truth": 29,
+      "correct": true,
+      "turns": 6,
+      "toolCalls": {
+        "ToolSearch": 2,
+        "mcp__records__query_records": 2,
+        "mcp__records__list_mappings": 1
+      },
+      "mcpCalls": 3,
+      "costUsd": 0.0353831,
+      "durationMs": 19643,
+      "denials": [],
+      "delivered": {
+        "onResult": 1,
+        "onToolSearch": 0
+      },
+      "proxyLedger": {
+        "mcp-proxy:connect-index": 1,
+        "mcp-proxy:argument": 2,
+        "mcp-proxy:result": 2
+      },
+      "usedIncludePaging": false,
+      "usedExplicitMapping": true,
+      "resultText": "```json\n{\"open_tier2\": 29}\n```",
+      "stderrTail": ""
+    }
+  ],
+  "regraded": [
+    "usedIncludePaging",
+    "usedExplicitMapping",
+    "route",
+    "rowsRetrieved",
+    "nearMiss",
+    "delivered"
+  ]
+}

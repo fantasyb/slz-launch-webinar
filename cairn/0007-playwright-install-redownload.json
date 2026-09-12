@@ -1,0 +1,131 @@
+{
+  "id": "cairn-0007",
+  "title": "playwright install re-downloads browsers a preconfigured sandbox already has",
+  "claim": "Running `playwright install` in an environment that ships browsers at a custom PLAYWRIGHT_BROWSERS_PATH re-downloads several hundred megabytes into a different directory, and can exhaust a fixed per-session disk allowance instead of failing fast.",
+  "kind": "dead-end",
+  "subject": {
+    "name": "playwright",
+    "ecosystem": "npm",
+    "versions": "1.4x"
+  },
+  "scope": "environment-specific",
+  "appliesTo": "Sandboxes that preinstall browsers at a custom PLAYWRIGHT_BROWSERS_PATH.",
+  "tags": [
+    "playwright",
+    "browsers",
+    "sandbox",
+    "disk",
+    "setup"
+  ],
+  "cost": "minutes",
+  "expectation": "Running the documented install step is harmless when browsers are already present — at worst a no-op.",
+  "reality": "The install writes to its own resolved path and does not reconcile with a preinstalled bundle. On a container with a bounded writable allowance the download can fill the disk, and the resulting 'no space left on device' points at storage rather than at the unnecessary install that caused it.",
+  "mechanism": "The browser resolution path and the install target are configured independently. A pinned @playwright/test version in the project can also disagree with the preinstalled build, prompting a fetch.",
+  "workaround": "Check for PLAYWRIGHT_BROWSERS_PATH before installing anything. If the project pins a different Playwright version, point at the existing binary with `executablePath` rather than downloading a matching one. PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 stops npm postinstall from re-fetching.",
+  "triggers": [
+    "playwright install"
+  ],
+  "evidence": [
+    {
+      "command": "echo \"PLAYWRIGHT_BROWSERS_PATH=$PLAYWRIGHT_BROWSERS_PATH\"; ls \"$PLAYWRIGHT_BROWSERS_PATH\" | head",
+      "output": "PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers\nchromium\nchromium-1194\nchromium_headless_shell-1194\nffmpeg-1011",
+      "note": "The variable is exported and four browser bundles are already present. Any `playwright install` here is redundant download."
+    }
+  ],
+  "check": {
+    "command": "echo \"PLAYWRIGHT_BROWSERS_PATH=$PLAYWRIGHT_BROWSERS_PATH\"; ls \"$PLAYWRIGHT_BROWSERS_PATH\" 2>/dev/null | head",
+    "confirmedIf": "the variable is set and browsers already exist at that path, making an install redundant",
+    "refutedIf": "the variable is unset, or the install correctly detects and reuses the existing bundle",
+    "manual": false
+  },
+  "provenance": "firsthand",
+  "halfLifeDays": 120,
+  "observations": [
+    {
+      "at": "2026-08-30T02:30:00Z",
+      "by": "claude-opus-5",
+      "verdict": "confirmed",
+      "note": "Asserted from environment documentation rather than execution; I did not run the install, precisely because doing so is the failure mode.",
+      "signature": {
+        "algorithm": "ed25519",
+        "keyId": "56f7a413738936bd",
+        "value": "JFdGEZb1Ma9Jwe9GCIsQfVmUhTrljQ7EveQS35pZ35zybmBTV62gTVjZW2EnsP57CsFwG75qfNtympWGGlwHCw=="
+      }
+    },
+    {
+      "at": "2026-08-30T02:45:00Z",
+      "by": "claude-opus-5",
+      "verdict": "confirmed",
+      "note": "Run under a sealed forecast: the commitment was published to git before the check executed, so the 0.75 prior could not have been written to fit this result. Upgraded from secondhand to firsthand on the strength of the execution.",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node 22.22.2",
+        "note": "Claude Code remote sandbox, Linux 6.18.44"
+      },
+      "signature": {
+        "algorithm": "ed25519",
+        "keyId": "56f7a413738936bd",
+        "value": "WNN45V+hshz0of7PzSCDvd5YHm9siExL7H+OcxhYtQ3FVJ6UnjrPp3CHK7MxrNyhn1wlEvKnW/wIF3XQK2q1CQ=="
+      }
+    },
+    {
+      "at": "2026-08-31T00:22:10.202Z",
+      "by": "claude-opus-5",
+      "verdict": "confirmed",
+      "note": "PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers with chromium-1194, chromium_headless_shell-1194 and ffmpeg-1011 already present",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node v22.22.2",
+        "note": "Linux 6.18.44-fc-v22"
+      },
+      "signature": {
+        "algorithm": "ed25519",
+        "keyId": "56f7a413738936bd",
+        "value": "iYnFXWQScEwHvQo97i6llYU5ORq/nziJ62AbL6gSS2JyqkYGDeJNEWg25Da7floWwFxQWjm8tWv5w2Fe7/nYCw=="
+      }
+    }
+  ],
+  "predictions": [
+    {
+      "at": "2026-08-30T02:40:12.773Z",
+      "by": "claude-opus-5",
+      "commitment": {
+        "algorithm": "sha256",
+        "hash": "1840abcee51eeaa5a50fc6764550bdaf8b6e11691c8ef1d93ca26aff62025b8a",
+        "anchor": "c72cf5a078c3c3546e2272bed2f28797b8fcad2f"
+      },
+      "self": false,
+      "revealedAt": "2026-08-30T02:40:35.868Z",
+      "nonce": "N9a4bzPESQo7pLsLO83LTtbkscXgGLIS",
+      "priorConfirmed": 0.75,
+      "reasoning": "The environment documentation for this sandbox asserts PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers, which is strong evidence the variable is set. But the check requires two things and I am confident in only one: documented environment variables are not always actually exported into the shell a tool spawns, and I have never verified this one. The listing must also be non-empty. I am discounting from near-certainty to account for the export question and for the possibility that the path exists but is empty or differently laid out.",
+      "outcome": "confirmed",
+      "resolvedAt": "2026-08-30T02:40:35.868Z"
+    },
+    {
+      "at": "2026-08-31T00:15:00.166Z",
+      "by": "claude-opus-5-panel",
+      "commitment": {
+        "algorithm": "sha256",
+        "hash": "3fd5177b02e3e815965ff8bf979e3eef6866eb8f2973b84d6fe4b98884282364",
+        "anchor": "4eb4ea8fe2c9adfcce2dcbd4aec4625e6f6f9a40"
+      },
+      "bodyHash": "6c1a5fecfa2a566378031e9260086b5ef08b137cb7d82d1508c7cfe4f46a5c7b",
+      "self": false,
+      "revealedAt": "2026-08-31T00:22:23.974Z",
+      "nonce": "p0MEN6yjX483H-I-GrcmBIEKsHpY6ybh",
+      "priorConfirmed": 0.42,
+      "reasoning": "Confirmation requires the sandbox to actually export PLAYWRIGHT_BROWSERS_PATH and have browser bundles present there. Some images (notably mcr.microsoft.com/playwright, which sets PLAYWRIGHT_BROWSERS_PATH=/ms-playwright) do this, but many sandboxes simply preinstall to the default ~/.cache/ms-playwright with no env var set, which would refute the claim outright. Without evidence about this particular environment it is close to a coin flip, slightly tilted toward 'unset' since the default location is more common than a custom one.",
+      "outcome": "confirmed",
+      "resolvedAt": "2026-08-31T00:22:23.974Z"
+    }
+  ],
+  "status": "active",
+  "createdAt": "2026-08-30T02:30:00Z",
+  "precondition": [
+    "env:PLAYWRIGHT_BROWSERS_PATH",
+    "path:/opt/pw-browsers"
+  ]
+}

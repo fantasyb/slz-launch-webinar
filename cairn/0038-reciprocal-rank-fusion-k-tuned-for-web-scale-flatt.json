@@ -1,0 +1,67 @@
+{
+  "id": "cairn-0038",
+  "title": "An RRF constant tuned for web scale makes position meaningless on a small corpus",
+  "claim": "Reciprocal rank fusion with the published k=60 cannot express rank order over a corpus of tens of documents, because the difference between consecutive ranks falls below the difference between rankers, so a candidate leading most rankers can lose to one leading a single ranker.",
+  "kind": "trap",
+  "subject": {
+    "name": "reciprocal rank fusion",
+    "ecosystem": "design",
+    "versions": "*"
+  },
+  "scope": "environment-specific",
+  "appliesTo": "Any system fusing several rankers with RRF over a candidate list of tens rather than thousands, which is the normal case for a project-local index.",
+  "tags": [
+    "retrieval",
+    "rank-fusion",
+    "rrf",
+    "constants",
+    "silent-failure",
+    "small-corpus"
+  ],
+  "cost": "hours",
+  "expectation": "k=60 is the constant from the original paper and carries its validation with it, so using it is the conservative choice and leaving it alone avoids tuning a threshold against too little data.",
+  "reality": "It silently disables the ranking. At k=60 the contribution of rank 1 is 1/61 and of rank 2 is 1/62, a gap of 1.6%, while the gap between a weight-1.0 ranker and a weight-0.3 ranker is 70%. Position therefore carries almost no information and the fusion becomes an average of which rankers voted at all. A candidate leading three of four rankers, and scoring 2.1x its nearest rival on the primary one, lost by 0.16% and was returned second.",
+  "mechanism": "RRF's k is a smoothing term that damps the influence of top ranks, calibrated for fusing runs of about a thousand documents where rank 1 should not dominate rank 2. Its effect is relative to list length: the ratio between consecutive contributions is (k+i+2)/(k+i+1), which approaches 1 as k grows past the list. On a list of forty, k=60 puts every position in the noise. The constant is transplantable between systems only if their list lengths are comparable, and that condition is not stated anywhere near the constant.",
+  "workaround": "Scale k to the length of the lists actually being fused rather than copying the published value: the original is roughly k ~ N/17 for N ~ 1000, which gives 2 to 3 for a list of tens. Then sweep it, because a derivation and a measurement agreeing is worth more than either. Sweep across two corpus sizes, not one -- a cliff that sits in the same place for both is a property of the ranking structure, and a cliff that moves is a property of the corpus and will move again. Test the property rather than the outcome: an ordering assertion on one query passes on a razor-thin margin and flips later for unrelated reasons, so assert that a candidate leading most rankers ranks first.",
+  "evidence": [
+    {
+      "command": "trace each ranker's position for the query `curl: (56) CONNECT tunnel failed, response 403`",
+      "output": "ranker    weight  pos(A)  pos(B)   contribution A / B\ntyped        1       #1      #2     0.01639 / 0.01613\nbm25       0.3       #1      #2     0.00492 / 0.00484\nexplains     1       #3      #1     0.01587 / 0.01639\nspectrum   0.4       #1      #2     0.00656 / 0.00645\nTOTAL                                0.04374 / 0.04381  -> B wins",
+      "note": "A led three rankers of four and lost. Nothing in the returned results showed it: ordering is fused and the reported score is only one ranker's, so the output could not explain itself. Adding a trace of each ranker's own ordering was what made it visible."
+    },
+    {
+      "command": "sweep k over two corpora of 69 and 71 held-out cases",
+      "output": "k        1      2      3      4      5     ...    60\nP@1    .841   .841   .841   .841   .841         .841\nP@5    .928   .928   .928   .928   .913         .913\nproxy   ok     ok     ok    FAIL   FAIL         FAIL",
+      "note": "P@1, delivery and the real-stderr suite are flat across the entire range, so the aggregate retrieval metrics would never have surfaced this. The cliff sits between 3 and 4 on both corpora."
+    }
+  ],
+  "check": {
+    "command": "For your fused rankers, compute the ratio between the contribution of rank 1 and rank 2, and compare it to the ratio between your largest and smallest ranker weights.",
+    "confirmedIf": "consecutive ranks differ by less than the rankers' weights do, meaning which ranker voted matters more than where it placed",
+    "refutedIf": "a single position of separation outweighs the spread between ranker weights",
+    "manual": true
+  },
+  "provenance": "firsthand",
+  "halfLifeDays": 365,
+  "observations": [
+    {
+      "at": "2026-09-01T14:27:03.505Z",
+      "by": "claude-opus-5",
+      "verdict": "confirmed",
+      "note": "The constant had a comment beside it saying it was left alone deliberately, citing three earlier thresholds in the same file that were tuned against eight cases and turned out to mean nothing. That caution was right in general and wrong here, and the difference is the amount of evidence available: sixty-nine held-out cases, a seven-case real-stderr suite, and a failing test. The defect was found by the real-stderr suite; every aggregate retrieval metric is flat across the whole range of k and would never have shown it. Worth noting for anyone repeating this: it took TWO unrelated findings being added together to flip the case, so bisecting one commit at a time would not have located it either.",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node v22.22.2",
+        "note": "Four fused rankers with weights 1.0, 0.3, 1.0, 0.4 over a 37-finding corpus; FUSE_WINDOW 50."
+      }
+    }
+  ],
+  "status": "active",
+  "createdAt": "2026-09-01T14:27:03.505Z",
+  "triggers": [
+    "reciprocal rank fusion",
+    "fusing several rankers",
+    "k=60"
+  ]
+}
