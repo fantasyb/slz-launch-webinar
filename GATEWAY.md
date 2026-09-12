@@ -23,21 +23,84 @@ CAIRN_HOME=/srv/cairn node ~/cairn/bin/cairn-proxy.js --config servers.json --ht
 `CAIRN_HOME` is the corpus: a directory with `cairn/` in it. Findings that
 name a tool in `triggers` are the ones the gateway delivers.
 
-## INSTALL — putting your own MCP behind it
+## INSTALL — one command, no json to edit
 
 The gateway is a passenger: nothing arrives in a session until a server is
-routed through it. Two doors, and the second is five lines.
+routed through it. The default path is one command, run in this checkout:
 
-**Everything at once.** `npm run cairn:install` wraps every stdio and
-token-auth HTTP server in `~/.claude.json` as `cairn-proxy --config
-<home>/wrapped/<name>.json`, adds the standalone `cairn` pull server, and
-writes the usage block into `~/.claude/CLAUDE.md`. `--only`/`--exclude` scope
-it, `--dry-run` shows the edits, `--uninstall` restores every original from
-its stash.
+```bash
+npm run cairn:install
+```
 
-**One config, by hand.** Take the `{"mcpServers": {...}}` file your client
-already launches — a project `.mcp.json`, a `--mcp-config` file, the block
-in `~/.claude.json` — leave it exactly as it is, and point the client at
+It reads the servers your client already has in `~/.claude.json` and, for
+every stdio server and every token-auth HTTP server, does three things you
+would otherwise do by hand (`scripts/install-global.ts`, `wrapServers`):
+
+1. moves the original entry — `env`, `headers`, token included — verbatim
+   into `<home>/wrapped/<name>.json`, mode `0600`, gitignored in the corpus;
+2. replaces the client's entry with the gateway:
+   `cairn-proxy --config <that stash> --no-cairn-tools`, `CAIRN_HOME` set;
+3. adds the standalone `cairn` pull server and the usage block in
+   `~/.claude/CLAUDE.md`.
+
+The end state is the load-bearing door (next section) with nothing authored
+by hand: the client config names the gateway and nothing else, and every
+secret lives in one `0600` stash — plus the installer's `0600` pre-install
+backup of your original file, until you delete it (below). `--dry-run` prints the edits and
+writes nothing; `--only`/`--exclude` scope which servers; `--uninstall`
+restores every original from its stash. Re-run it after adding a server.
+An HTTP server with no `headers` is left direct on purpose — see "Which
+servers this fits" below.
+
+**The concrete example — a GitHub PAT.** Put GitHub's MCP in
+`~/.claude.json` the way you would without Cairn, a fine-grained PAT in the
+header (a PAT is a static bearer token, so it fits the door today; check
+GitHub's current docs for the endpoint):
+
+```json
+{ "mcpServers": { "github": {
+    "url": "https://api.githubcopilot.com/mcp/",
+    "headers": { "Authorization": "…" } } } }   // the value is `Bearer`, a space, then the PAT
+```
+
+Then `npm run cairn:install`. Afterwards `~/.claude.json` reads
+
+```json
+{ "mcpServers": {
+    "github": { "command": "node",
+                "args": ["/ABS/PATH/TO/cairn/bin/cairn-proxy.js", "--config", "<home>/wrapped/github.json", "--no-cairn-tools"],
+                "env": { "CAIRN_HOME": "<home>", "CAIRN_TRUST_MODE": "monitor" } },
+    "cairn":  { "command": "node", "args": ["/ABS/PATH/TO/cairn/bin/cairn-mcp.js"], "env": { "CAIRN_HOME": "<home>" } } } }
+```
+
+and the PAT is in `<home>/wrapped/github.json`, plus the installer's
+pre-install copy of your own file, `~/.claude.json.cairn-bak-<time>`, also
+`0600` — delete that once the install is verified, since it is your
+original config with the token still in it. Nowhere else. The same entry
+in the local shape (`command` + `env` with `GITHUB_PERSONAL_ACCESS_TOKEN`)
+takes the same path. Gmail is documented below as not-yet: its common shape
+is OAuth consent plus a token file, which the deciding rule in "Token-auth
+HTTP door" excludes, and the installer leaves it direct rather than break it.
+
+**Prove it** — three commands, no model, no real credential:
+
+```bash
+npm run cairn:gateway-prove               # a finding rides on a result through the gateway (delivery)
+npm run cairn:gateway-door-http           # a token only the gateway holds: works through it, refused around it (the door)
+npx tsx --test test/install-door.test.ts  # cairn:install produces exactly that end state from a ~/.claude.json entry
+```
+
+All three run on every `npm test`. `test/install-door.test.ts` is the one
+that closes the loop for the default path: it runs the real installer
+against a throwaway `HOME` whose `~/.claude.json` holds a token-auth entry,
+then asserts from the files that the client names only the gateway, the
+token is in exactly one `0600` file, `open` works when launched exactly as
+the rewritten entry says, and the url dialed raw is refused.
+
+**Manual / advanced — one config, by hand.** Only for a client whose config
+the installer does not edit (a project `.mcp.json`, a `--mcp-config` file,
+another client entirely), or for the hosted mode. Leave your
+`{"mcpServers": {...}}` file exactly as it is, and point the client at
 this instead:
 
 ```json
@@ -136,11 +199,12 @@ Calling the server directly is now a call without its credential, and it
 fails. That is what makes the door load-bearing: the tool the agent must
 use works through the gateway and not around it, so every call to it is
 forwarded, ledgered and annotated. An HTTP server takes the same shape with
-its token in the entry's `headers`. `npm run cairn:install` already does
-this by hand for every server in `~/.claude.json`: the original entry,
-`env` included, is moved verbatim into a `0600` stash at
-`<home>/wrapped/<name>.json` and the client's entry becomes the gateway
-(`scripts/install-global.ts`).
+its token in the entry's `headers`. You do not write these two files:
+`npm run cairn:install` (INSTALL, above) writes them for every server in
+`~/.claude.json` — the original entry, `env` or `headers` included, moved
+verbatim into the `0600` stash at `<home>/wrapped/<name>.json`, the
+client's entry replaced by the gateway. They are shown here so the proofs
+below are legible, and for the manual path.
 
 **Prove it:**
 
@@ -248,33 +312,27 @@ this repository cannot see it, and no Google credential belongs in it:
   issues a static key.
 
 **GitHub, the fallback that fits today.** A GitHub personal access token
-is a static bearer token, so GitHub's MCP takes the door in either shape.
-Remote (`url` + `headers`; check GitHub's current docs for the endpoint):
-
-```json
-{ "mcpServers": { "github": {
-    "url": "https://api.githubcopilot.com/mcp/",
-    "headers": { "Authorization": "…" } } } }   // the value is `Bearer` then a fine-grained PAT scoped to the crew's repos
-```
-
-or local (`command` + `env`, the stdio door): the server's own launch line
-with `"env": { "GITHUB_PERSONAL_ACCESS_TOKEN": "…" }` (the value is the
-same fine-grained PAT). Either way
-the client's entry becomes the gateway. The `gh` CLI is not an MCP server
-and never passes through the gateway; if the crew's GitHub work goes
-through `gh`, the door does not cover it, and the ledger will show that as
-zero calls rather than pretending otherwise.
+is a static bearer token, so GitHub's MCP takes the door in either shape —
+the remote entry is the worked example under INSTALL; the local shape is
+the server's own launch line with `"env": { "GITHUB_PERSONAL_ACCESS_TOKEN": "…" }`
+(the value is the same fine-grained PAT). Either way `cairn:install` turns
+the entry into the door. The `gh` CLI is not an MCP server and never
+passes through the gateway; if the crew's GitHub work goes through `gh`,
+the door does not cover it, and the ledger will show that as zero calls
+rather than pretending otherwise.
 
 **Crew attach steps** (this repository has no `crew/`; the crew mirrors
 these into `/workspace/cairn/crew/README.md` on their box):
 
-1. Pick the entry (Gmail if it passes the rule above, else GitHub). Move
-   it — verbatim, token included — into `<home>/wrapped/<name>.json`,
-   `chmod 600`. `npm run cairn:install --only <name>` does exactly this
-   and the next two steps; by hand is the same three edits.
-2. Replace the entry in each crew member's client config (Dig, Edge, Make)
-   with the gateway block above, `CAIRN_AGENT` set to that member's name so
-   `cairn:report` tells them apart.
+1. Put the entry in `~/.claude.json` as you would without Cairn (Gmail if
+   it passes the rule above, else GitHub), then `npm run cairn:install`
+   (`-- --only <name>` to wrap just that one). That is the stash, the
+   `0600`, and the client rewrite, done. By hand is the same three edits
+   and is the manual path under INSTALL — not the default.
+2. One install per crew member's box (Dig, Edge, Make), each against its
+   own `~/.claude.json`. `cairn:report` shows the member by the client's
+   own name; set `CAIRN_AGENT` on the wrapped entry only if that name is
+   not distinct enough.
 3. Restart the client. Run `CAIRN_HOME=<home> npm run cairn:report` after
    the first real hour: the tool's row must show calls; a `0` there means a
    member still holds a direct entry.

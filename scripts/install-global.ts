@@ -205,6 +205,11 @@ function backup(file: string): string | null {
   for (let i = 1; ; i++) {
     try {
       fs.copyFileSync(file, dest, fs.constants.COPYFILE_EXCL);
+      /* The pre-install copy of ~/.claude.json holds every server entry verbatim —
+       * a token-auth server's bearer included, the very thing the wrap then moves
+       * into a 0600 stash. The backup is this installer's own file, so it gets the
+       * same mode; the copy must not be the more readable of the two. */
+      fs.chmodSync(dest, 0o600);
       return dest;
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== 'EEXIST' || i > 100) throw e;

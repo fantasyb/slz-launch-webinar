@@ -1,5 +1,38 @@
 # Cairn — session handoff & punch-list (2026-09-07)
 
+## Dogfood is not product (2026-09-12)
+
+Two things are easy to conflate from here on. Keep them apart.
+
+DOGFOOD is the crew's box: real tools, real tokens, real work hours, and the
+only place findings are earned. Its measure is `cairn:report` on their home
+after a real hour — calls on the load-bearing tool's row, holes in "failed
+with nothing recorded", findings written from traps that actually bit. It
+is also where the OAuth gap is felt (Gmail's common shape does not fit the
+door; GitHub's PAT does). Nothing in this repository can stand in for it,
+and a fixture proof passing here says nothing about it.
+
+PRODUCT is the sellable default, and it is one command:
+`npm run cairn:install`. End state, asserted from the files by
+`test/install-door.test.ts` against a throwaway HOME: the client config
+names the gateway and nothing else; every stdio/token-auth server's
+original entry — secret included — is in one `0600` stash under
+`<home>/wrapped/`, gitignored, and in the installer's `0600` pre-install
+backup of the user's own config (the test found the backups were the
+second holder; `backup()` now chmods them, and the doc says to delete them
+once verified); launching exactly what the rewritten entry says reaches
+the tool, and the server dialed raw is refused. Nobody authors
+a client-*.json or a door.json; those shapes are now the manual/advanced
+footnote in GATEWAY.md. `cairn:gateway-door` / `-http` prove the door
+property; `install-door` proves the installer produces it.
+
+What product does not claim: containment. It is a speed bump with a
+ledger — the secret is on the same box, in one file and in the proxy's
+process environment — and OAuth-redirect servers are left direct, by
+design, until the gateway can carry that flow. "Works on our box" (dogfood)
+and "ships as the default" (product) are separate statements with separate
+evidence; do not let one be cited for the other.
+
 ## Gateway status: a proven pipe, not yet in the crew's path (2026-09-11)
 
 The crew learn-pass closed: one real work hour, Dig/Edge/Make logs agree, and

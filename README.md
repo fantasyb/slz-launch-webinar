@@ -515,7 +515,10 @@ instruction has no moment it applies to, and never fires.
 Put `bin/cairn-proxy.js` between an MCP client and the servers it uses and
 findings that name a tool ride on that tool's description, its arguments and
 its results — before the decision, not after the failure — and the agent can
-record back through the same connection. Measured in Claude Code against a
+record back through the same connection. `npm run cairn:install` is the one
+way in: it rewrites the servers already in `~/.claude.json` to run through the
+gateway, moving each entry's secret into a `0600` file only the gateway reads,
+so there is no json to edit. Measured in Claude Code against a
 records API with two success-shaped traps: without it 10 of 10 trials
 reported the first page or zero; with it the agent changed route in 8 of 10.
 Numbers, transcripts, and what is not proven: [`GATEWAY.md`](./GATEWAY.md).
