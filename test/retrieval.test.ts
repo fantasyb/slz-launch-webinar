@@ -752,3 +752,39 @@ test('a zod .default() question finds cairn-0004 first, even though the brief st
     assert.equal(hits[0]?.finding.id, 'cairn-0004', `"${q}": top find result`);
   }
 });
+
+/*
+ * ONE SURFACE MENTION, ONE TOKEN.
+ *
+ * `UTF-8` used to tokenize as `utf` (the errno-shaped rule, because a hyphen
+ * is a word boundary) AND `utf-8` (the word rule) — two rare tokens from one
+ * mention, each counted as its own distinctive term. The first two earned
+ * findings from the crew's GitHub door (cairn-0053's claim says "UTF-8 text"
+ * and "corrupts a file") made that visible: an agent-typed field query about
+ * a CSV byte-order mark came back CLAIMING the base64-label finding on the
+ * strength of those two tokens plus "corrupts", and the field quiet-on-unknown
+ * floor regressed 0.913 -> 0.870. The errno rule now means what its comment
+ * says — standing alone — and dot-joined forms are deliberately unchanged.
+ * Pinned three ways: the tokens, the query, and the delivery path the fix
+ * must not touch.
+ */
+test('a hyphen-joined CAPS identifier is one token, and the CSV-BOM field query stays quiet', () => {
+  const texts = (s: string) => tokenize(s).map((t) => t.text);
+  assert.deepEqual(texts('UTF-8').filter((t) => t.startsWith('utf')), ['utf-8'], 'UTF-8 is one token, not utf + utf-8');
+  assert.deepEqual(texts('ISO-8859-1').filter((t) => t.startsWith('iso')), ['iso-8859-1']);
+  /* Unchanged on purpose: an errno stands alone; an underscore is inside the symbol; a dot-joined form keeps both. */
+  assert.ok(tokenize('ENOSPC: no space left on device').some((t) => t.text === 'enospc' && t.kind === 'errno'), 'errno still typed');
+  assert.ok(texts('HTTPS_PROXY set').includes('https_proxy'));
+  assert.deepEqual(texts('JSON.parse failed').filter((t) => t.startsWith('json')), ['json', 'json.parse'], 'dot-joined forms are not in scope');
+
+  /* The field negative that regressed, verbatim from data/field-queries.json (gold null), and its sibling. */
+  for (const q of ['UTF-8 BOM in CSV header corrupts first column key name', 'UTF-8 BOM in CSV header leading ﻿ column name']) {
+    const top = retrieve(q, corpus)[0];
+    assert.ok(!top || top.strength === 'weak', `"${q}": ${top?.finding.id} came back ${top?.strength}, matched ${top?.matched.map((m) => m.term).join(' ')}`);
+  }
+  /* The fix is on the text path only: trigger delivery for the two earned findings is untouched. */
+  assert.equal(preflight('search_code', corpus)[0]?.finding.id, 'cairn-0052');
+  assert.equal(preflight('get_file_contents', corpus)[0]?.finding.id, 'cairn-0053');
+  /* And the true query for cairn-0053 still ranks it first — quiet on the wrong question, not on the right one. */
+  assert.equal(retrieve('get_file_contents encoding base64 but content is already plain JSON', corpus)[0]?.finding.id, 'cairn-0053');
+});

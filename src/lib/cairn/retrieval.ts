@@ -186,7 +186,37 @@ export function tokenize(text: string, expandAliases = true): Token[] {
     push(m[1], 'flag');
   }
   // errno-shaped symbols: all caps, E-prefixed or not, standing alone.
-  for (const m of text.matchAll(/\b([A-Z]{2,}[A-Z0-9_]{1,20})\b/g)) {
+  //
+  // STANDING ALONE is load-bearing, and `\b` alone did not enforce it: a
+  // hyphen is a word boundary, so `UTF-8` matched here as `UTF` and then
+  // again below as `utf-8` — one surface mention, two tokens, each rare in
+  // the corpus, each counted as its own distinctive term. That is how an
+  // unanswerable field query about a CSV byte-order mark ("UTF-8 BOM in CSV
+  // header corrupts first column key name") came back CLAIMING a finding
+  // about a GitHub tool's base64 label whose claim says "UTF-8 text" and
+  // "corrupts a file": the two `utf` tokens supplied two of the three
+  // distinctive matches, the rest was `corrupts`, and the bar was cleared.
+  // The same double emission applies to every hyphen-joined `CAPS-…`
+  // identifier: SHA-256, ISO-8859-1, UTF-16LE, TEST-NET-3.
+  //
+  //   surface        before                 after
+  //   UTF-8          utf, utf-8             utf-8
+  //   ISO-8859-1     iso, iso-8859-1        iso-8859-1
+  //   DNS-over-HTTPS dns, dns-over-https    dns-over-https   (the findings say DNS elsewhere too)
+  //   ENOSPC         enospc (errno)         enospc (errno)   unchanged
+  //   HTTPS_PROXY    https_proxy            https_proxy      unchanged (_ is inside the symbol)
+  //   JSON.parse     json, json.parse       json, json.parse unchanged — deliberately
+  //
+  // Hyphen only. A symbol immediately followed by `-` and another identifier
+  // character is the head of a longer identifier, not a symbol on its own; the
+  // generic rule below keeps that identifier whole. Dot-joined forms
+  // (`JSON.parse`, `BANK.md`) are left as they were: they are far more common
+  // in this corpus, nothing measured is wrong with them, and widening the rule
+  // to them would trade a known recall path ("JSON") for no measured gain. An
+  // errno never wears a hyphenated suffix, so nothing errno-shaped is lost.
+  // Measured: field quiet-on-unknown 0.870 -> 0.913 with the two GitHub-door
+  // findings in the corpus, every other floor unchanged (`npm run cairn:guard`).
+  for (const m of text.matchAll(/\b([A-Z]{2,}[A-Z0-9_]{1,20})\b(?!-[A-Za-z0-9])/g)) {
     const sym = m[1];
     push(sym, ERRNO_ALIASES[sym] ? 'errno' : 'word');
     for (const alias of expandAliases ? ERRNO_ALIASES[sym] ?? [] : []) {

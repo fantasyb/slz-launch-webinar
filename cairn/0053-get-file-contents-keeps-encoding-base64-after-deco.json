@@ -1,0 +1,59 @@
+{
+  "id": "cairn-0053",
+  "title": "get_file_contents says encoding base64 after content is already decoded",
+  "claim": "Through @modelcontextprotocol/server-github, get_file_contents returns encoding:\"base64\" while content is already UTF-8 text. Trusting the field and decoding again corrupts a file you already hold.",
+  "kind": "trap",
+  "subject": {
+    "name": "@modelcontextprotocol/server-github",
+    "ecosystem": "mcp",
+    "versions": "deprecated-npm-dogfood"
+  },
+  "scope": "environment-specific",
+  "basis": "empirical",
+  "appliesTo": "Crew GitHub door wrapping @modelcontextprotocol/server-github (stdio). Observed 2026-09-12 on private fantasyb/jeevz text files.",
+  "reflexBecause": "A plain \"decode when labeled base64\" reflex is exactly what corrupts the payload; the trap is the field lying after the server already decoded, which is not recoverable by retry or pagination.",
+  "tags": ["github", "mcp", "encoding", "base64"],
+  "cost": "minutes",
+  "expectation": "encoding:\"base64\" means content is base64 and must be decoded — same contract as the GitHub Contents API.",
+  "reality": "On fantasyb/jeevz package.json through the Cairn GitHub door: encoding was \"base64\" but content already started with printable JSON. Parsing content as UTF-8 works; base64-decoding it yields garbage. Raw gh api Contents still returns true base64 — the MCP layer decoded and left the lying label.",
+  "mechanism": "The MCP server decodes text payloads for the model but forwards the upstream metadata object including encoding:\"base64\", so the label describes the API wire form, not the bytes in content.",
+  "workaround": "Do not base64-decode solely because encoding says base64. Use content as text first (parse JSON / printable ASCII). Decode only when content looks like base64 and fails as text.",
+  "triggers": ["get_file_contents"],
+  "evidence": [
+    {
+      "command": "Through crew/client-mcp.json (cairn-proxy --config crew/github-door.json), CAIRN_AGENT=Dig: get_file_contents owner=fantasyb repo=jeevz path=package.json",
+      "output": "encoding_field=base64; content already printable JSON; content_is_valid_json=true; base64_decode_of_content_is_valid_json=false",
+      "note": "Door session dig-earn / dig-b64; ledger get_file_contents [args: owner, path, repo]."
+    },
+    {
+      "command": "gh api repos/fantasyb/jeevz/contents/package.json --jq '{encoding, content_prefix: .content[0:40]}'",
+      "output": "encoding=base64; content_prefix is true base64 on the raw Contents API",
+      "note": "Shows the MCP layer, not GitHub, is what returns decoded content under a base64 label."
+    }
+  ],
+  "check": {
+    "command": "Call get_file_contents on a known small JSON file through the GitHub door; if encoding is base64 and content already parses as JSON without decoding, the trap still holds. If content is true base64 (decoding yields the JSON), the trap is gone.",
+    "confirmedIf": "encoding is base64 AND content parses as the file without base64 decode AND base64-decoding content does not yield the file",
+    "refutedIf": "content is actual base64 matching the Contents API (decode yields the file) or encoding is utf-8/omitted to match the bytes returned",
+    "manual": true
+  },
+  "provenance": "firsthand",
+  "halfLifeDays": 90,
+  "observations": [{
+    "at": "2026-09-12T12:00:26.767Z",
+    "by": "Dig",
+    "verdict": "confirmed",
+    "note": "Recorded at the moment it was solved; no note was supplied.",
+    "environment": {
+      "os": "linux",
+      "arch": "x64",
+      "runtime": "node v20.19.2",
+      "note": "Linux 6.12.94+; the machine that recorded it — the submitter reported no environment"
+    }
+  }],
+  "predictions": [],
+  "agentRecorded": true,
+  "visibility": "private",
+  "status": "active",
+  "createdAt": "2026-09-12T12:00:26.767Z"
+}
