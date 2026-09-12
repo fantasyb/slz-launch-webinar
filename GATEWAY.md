@@ -180,6 +180,111 @@ the agent runs as that user, this is a speed bump with a ledger, and that is
 still the difference between a passenger and a door — every call to the
 tool is now on record — but it should be described as that and not as more.
 
+### Token-auth HTTP door
+
+The same door for a remote server. A token-auth HTTP upstream is a
+first-class spec: `url` plus `headers` (`scripts/mcp-proxy.ts:107-111`,
+parsed at `:173-177`), and `upstreamTransport` dials it with the entry's
+headers as `requestInit.headers` (`:1000-1028`). So a PAT or API key lives
+in the proxy's config and nowhere the agent reads:
+
+```json
+// the proxy's config (chmod 600): the server's url and its bearer token
+{ "mcpServers": { "door": {
+    "url": "https://mcp.example.com/mcp",
+    "headers": { "Authorization": "…" } } } }   // the value is `Bearer` then a space then your token
+
+// the agent's client config — the gateway only; no url, no token
+{ "mcpServers": { "door": {
+    "command": "node",
+    "args": ["/ABS/PATH/TO/cairn/bin/cairn-proxy.js", "--config", "/ABS/PATH/TO/door.json"],
+    "env": { "CAIRN_HOME": "/ABS/PATH/TO/cairn", "CAIRN_AGENT": "dig" } } } }
+```
+
+```bash
+npm run cairn:gateway-door-http     # ~10s, no model, loopback only
+```
+
+`fixtures/mcp/keyed-http-echo.mjs` refuses every request, at the HTTP
+layer with a 401, unless `Authorization: Bearer <token>` matches the SHA-256
+it was started with (never the token). The script writes the two files
+above with a random, non-credential-shaped token, launches what the
+client's config says, and asserts: `open` succeeds through the gateway; the
+same URL dialed without the gateway is refused at initialize (no header);
+dialed with a guessed token it is refused (the value is checked); and the
+token is absent from every file the session left under its home (ledger,
+drafts, trust pins, client config), the tool list, instructions, result and
+Cairn blocks, the proxy's and the server's stderr, both refusals and the
+report — present only in the proxy's config. `test/gateway-door-http.test.ts`
+runs it on every `npm test` and audits the kept home itself.
+
+**Which servers this fits — the deciding rule.** The door is the placement
+of a STATIC credential. It fits a server whose config entry carries one:
+an HTTP entry with `headers` (a PAT, an API key), or a stdio entry whose
+`env` carries the secret. It does not fit a server that authenticates by
+OAuth redirect or consent — an HTTP entry with a `url` and no `headers`,
+or a stdio server that opens a browser and keeps a token file of its own.
+The gateway cannot run an OAuth redirect flow yet, and `cairn:install`
+deliberately leaves such servers direct rather than break them
+(`scripts/install-global.ts:378-386`, `:415-418`). Forcing one behind the
+gateway does not make a door; it makes a broken server.
+
+**Gmail, applied.** The crew's Gmail MCP is the first candidate, because
+the work is email-first. Apply the rule to its entry on the crew's box —
+this repository cannot see it, and no Google credential belongs in it:
+
+- entry has `url` + `headers` with a static key (a hosted MCP that holds
+  the Google OAuth on its side and issues you a key) → the HTTP door above
+  fits; put the entry in the proxy's `--config`, chmod 600, replace the
+  client's entry with the gateway.
+- stdio entry whose `env` carries the credential (client id/secret and a
+  refresh token as variables) → the stdio door fits, same steps with `env`.
+- entry with no token — it pops a Google consent screen on first use, or
+  keeps `credentials.json`/a token file under the home directory (the
+  common shape of Gmail MCP servers, and of the Gmail connector in Claude
+  itself) → it does not fit. Leave it direct. That is the OAuth gap, and
+  the honest answer is that Gmail is not the first door until the gateway
+  can carry an OAuth flow or the server is fronted by something that
+  issues a static key.
+
+**GitHub, the fallback that fits today.** A GitHub personal access token
+is a static bearer token, so GitHub's MCP takes the door in either shape.
+Remote (`url` + `headers`; check GitHub's current docs for the endpoint):
+
+```json
+{ "mcpServers": { "github": {
+    "url": "https://api.githubcopilot.com/mcp/",
+    "headers": { "Authorization": "…" } } } }   // the value is `Bearer` then a fine-grained PAT scoped to the crew's repos
+```
+
+or local (`command` + `env`, the stdio door): the server's own launch line
+with `"env": { "GITHUB_PERSONAL_ACCESS_TOKEN": "…" }` (the value is the
+same fine-grained PAT). Either way
+the client's entry becomes the gateway. The `gh` CLI is not an MCP server
+and never passes through the gateway; if the crew's GitHub work goes
+through `gh`, the door does not cover it, and the ledger will show that as
+zero calls rather than pretending otherwise.
+
+**Crew attach steps** (this repository has no `crew/`; the crew mirrors
+these into `/workspace/cairn/crew/README.md` on their box):
+
+1. Pick the entry (Gmail if it passes the rule above, else GitHub). Move
+   it — verbatim, token included — into `<home>/wrapped/<name>.json`,
+   `chmod 600`. `npm run cairn:install --only <name>` does exactly this
+   and the next two steps; by hand is the same three edits.
+2. Replace the entry in each crew member's client config (Dig, Edge, Make)
+   with the gateway block above, `CAIRN_AGENT` set to that member's name so
+   `cairn:report` tells them apart.
+3. Restart the client. Run `CAIRN_HOME=<home> npm run cairn:report` after
+   the first real hour: the tool's row must show calls; a `0` there means a
+   member still holds a direct entry.
+4. Rotate the token afterwards if it was ever in a client config that a
+   session could read — moving a file does not un-read it.
+
+Nothing about this changes the threat model above: it is a speed bump with
+a ledger. The token is on the same box, in one `0600` file and in the
+proxy's process environment, and that is where the bar stands.
+
 ## What the agent sees
 
 Four surfaces, all of which are in context when a decision is made:
