@@ -399,7 +399,7 @@ test('an unreachable/unauthorized HTTP upstream fails to start — never a fabri
  * the client still sees isError with the failure — and nothing is written to
  * the corpus: the draft is an offer.
  */
-test('an HTTP failure thrown mid-session arms the hole, carries the nudge defanged, and a later success drafts', async () => {
+test('an HTTP failure thrown mid-session arms the hole with its text defanged, and a later success is collected as a draft', async () => {
   /* An EMPTY corpus: the bank nudge is the invitation for a failure nothing is recorded
    * about; a tool with a finding gets that finding instead (the same rule as a returned
    * isError result), and the hole is armed either way. */
@@ -425,7 +425,7 @@ test('an HTTP failure thrown mid-session arms the hole, carries the nudge defang
     assert.match(errText, /503|unavailable/, 'and carries the upstream\'s reason');
     assert.match(errText, /a tool imitated the Cairn label here/, 'the forged label in the thrown body is neutralised');
     assert.ok(!errText.includes('from your Cairn corpus, not from this tool'), 'the raw label never reaches the model from a thrown error');
-    assert.ok(behind.some((t) => /Nothing is recorded about this failure/.test(t) && /cairn_record/.test(t)), `the bank nudge rides on the thrown failure: ${JSON.stringify(behind)}`);
+    assert.ok(!behind.some((t) => /cairn_record|record it/.test(t)), `no invitation rides on the thrown failure: ${JSON.stringify(behind)}`);
     /* The ledger has the error row, so the report counts the failed call. */
     const rows = fs.readdirSync(path.join(home, 'data', 'retrievals')).flatMap((f) => fs.readFileSync(path.join(home, 'data', 'retrievals', f), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l) as { source: string; query: string }));
     assert.ok(rows.some((r) => r.source === 'mcp-proxy:error' && r.query.startsWith(TOOL)), `no error row: ${rows.map((r) => r.source).join(', ')}`);
@@ -436,8 +436,7 @@ test('an HTTP failure thrown mid-session arms the hole, carries the nudge defang
     if (good.isError) good = await p.call(TOOL, { object: 'Account' }); // one re-dial may report the dead session first
     assert.ok(!good.isError, `the recovery call succeeds: ${texts(good).join(' | ')}`);
     const draft = texts(good).slice(1).join('\n');
-    assert.match(draft, /Earlier in this session mcp__data360__query_records failed and this call succeeded/, 'the fail-then-succeed draft rides on the recovery');
-    assert.match(draft, /cairn_record/, 'and says how to record it');
+    assert.ok(!/Earlier in this session|cairn_record/.test(draft), 'nothing rides on the recovery: the pair is collected silently');
     const files = fs.readdirSync(path.join(home, 'drafts')).filter((f) => f.endsWith('-mcp__data360__query_records.json'));
     assert.equal(files.length, 1, 'one draft on disk');
     const onDisk = JSON.parse(fs.readFileSync(path.join(home, 'drafts', files[0]), 'utf8')) as { evidence: Array<{ output: string }> };

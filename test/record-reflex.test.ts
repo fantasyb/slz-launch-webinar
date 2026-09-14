@@ -43,7 +43,7 @@ type Entry = { command: string; args: string[]; env: Record<string, string> };
 const text = (r: unknown) => ((r as { content: Array<{ text?: string }> }).content).map((b) => b.text ?? '').join('\n');
 const blocksBehind = (r: unknown) => text(r).split('\n').slice(1).join('\n');
 
-test('on a cairn:install door the record reflex can fire unaided: nudged, reachable, and a record lands via the gateway tools', async () => {
+test('on a cairn:install door the record tools stay reachable and finishable for an agent that chooses to record; nothing is asked mid-call', async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'cairn-reflex-'));
   const corpus = path.join(home, 'pilot');
   const arcs = path.join(home, 'arcs.jsonl');
@@ -78,12 +78,11 @@ test('on a cairn:install door the record reflex can fire unaided: nudged, reacha
     /* BURNED, THEN RECOVERED: the invitation, then the draft. */
     const bad = await door.callTool({ name: 'query_records', arguments: { object: 'Contact', filter: { nonsense: 'x' } } });
     assert.equal(bad.isError, true);
-    assert.match(blocksBehind(bad), /Nothing is recorded about this failure[\s\S]*cairn_record \(on the `cairn` server in this session/, 'the burned result invites a record and says where the tool is');
+    assert.ok(!/cairn_record|record it/.test(blocksBehind(bad)), 'the burned result carries no invitation: the hole is collected silently');
     const good = await door.callTool({ name: 'query_records', arguments: { object: 'Contact', filter: { status: 'churned' }, limit: 2 } });
     assert.ok(!good.isError);
     const draft = blocksBehind(good);
-    assert.match(draft, /Earlier in this session query_records failed and this call succeeded/, 'the draft rides on the recovery');
-    assert.match(draft, /cairn_record \(on the `cairn` server in this session; this server does not list it\)/, 'and points at the listed tool');
+    assert.ok(!/Earlier in this session|cairn_record/.test(draft), 'nothing rides on the recovery either');
     assert.ok(fs.readdirSync(path.join(corpus, 'drafts')).some((f) => f.endsWith('-query_records.json')), 'the draft is on disk under the corpus home');
 
     /* DO WHAT THE NUDGE SAYS, THROUGH THE ONLY LISTED TOOLS. */

@@ -350,7 +350,7 @@ test('a repeated call does not repeat the finding, and a long run gets a reminde
  * moment it happened: it goes to the ledger as a hole in THIS session, and
  * once per tool the result carries the invitation to record it.
  */
-test('a failing call opens a hole in this session\'s ledger and invites a record, once', async () => {
+test('a failing call opens a hole in this session\'s ledger, silently: no mid-call invitation', async () => {
   const home = corpus();
   const s = single(home);
   try {
@@ -358,9 +358,9 @@ test('a failing call opens a hole in this session\'s ledger and invites a record
     const r1 = await s.call('mcp__data360__failing');
     assert.equal(r1.isError, true, 'the upstream\'s error flag must survive');
     assert.ok(texts(r1).some((x) => x.includes('mapping not found')), 'the upstream\'s error text must survive');
-    assert.ok(texts(r1).some((x) => x.includes('cairn_record')), 'the first failure invites a record');
+    assert.ok(!texts(r1).some((x) => x.includes('cairn_record')), 'no invitation rides on a failure: the hole is collected, the model is not asked');
     const r2 = await s.call('mcp__data360__failing');
-    assert.ok(!texts(r2).some((x) => x.includes('cairn_record')), 'the second failure does not nag');
+    assert.ok(!texts(r2).some((x) => x.includes('cairn_record')), 'nor on the next');
 
     const dir = path.join(home, 'data', 'retrievals');
     const rows = fs.readdirSync(dir).flatMap((f) =>
@@ -527,14 +527,14 @@ test('a dead upstream is an error result, and it is respawned for the next call'
     assert.ok(texts(r1).some((x) => x.includes('cairn-proxy')), 'the error names the proxy so nobody blames the tool');
     assert.ok(fs.existsSync(marker), 'the fixture really did exit');
     /* A THROWN failure (the transport died mid-call) takes the same post-call path as a returned one:
-     * the bank nudge rides on it and a hole is armed — this used to return before either. */
-    assert.ok(texts(r1).slice(1).some((x) => /Nothing is recorded about this failure/.test(x)), `the nudge rides on a thrown failure: ${JSON.stringify(texts(r1))}`);
+     * a hole is armed (the draft below proves it) and, like every failure now, nothing is said to the model. */
+    assert.ok(!texts(r1).some((x) => /cairn_record|record it/.test(x)), `no invitation rides on a thrown failure: ${JSON.stringify(texts(r1))}`);
 
     const r2 = await s.call('mcp__data360__unrelated');
     assert.ok(!r2.isError, 'one respawn, then the call succeeds');
     intactThenLabelled(r2, 'ok');
-    assert.ok(texts(r2).slice(1).some((x) => /Earlier in this session mcp__data360__unrelated failed and this call succeeded/.test(x)), 'the fail-then-succeed draft rides on the recovery after a thrown failure');
-    assert.ok(fs.readdirSync(path.join(home, 'drafts')).some((f) => f.endsWith('-mcp__data360__unrelated.json')), 'and is on disk');
+    assert.ok(!texts(r2).some((x) => /Earlier in this session|cairn_record/.test(x)), 'nothing rides on the recovery either');
+    assert.ok(fs.readdirSync(path.join(home, 'drafts')).some((f) => f.endsWith('-mcp__data360__unrelated.json')), 'the fail-then-succeed pair after a thrown failure is collected as a draft on disk');
     assert.equal(fs.readdirSync(path.join(home, 'cairn')).filter((f) => f.endsWith('.json')).length, findingsBefore, 'nothing was auto-written to the corpus');
   } finally { await s.close(); }
 });
@@ -602,7 +602,7 @@ test('a refused record writes nothing and says why', async () => {
   }
 });
 
-test('a failed call followed by a working one opens a draft on the result, once, and on disk', async () => {
+test('a failed call followed by a working one is collected as a draft on disk, once, and nothing rides on the result', async () => {
   const home = corpus(false);
   const s = new Session(home, ['--server', `node ${RECORDS}`]);
   try {
@@ -613,10 +613,7 @@ test('a failed call followed by a working one opens a draft on the result, once,
     assert.ok(!good.isError);
     intactThenLabelled(good, good.content[0].text!);
     const note = texts(good).slice(1).join('\n');
-    assert.match(note, /Earlier in this session query_records failed/, 'the draft names the hole');
-    assert.match(note, /differed in: filter, limit/, 'it names what changed');
-    assert.match(note, /"tool":"query_records"/, 'the draft carries the trigger');
-    assert.match(note, /cairn_record/, 'and says how to record it');
+    assert.ok(!/Earlier in this session|cairn_record|record it now/.test(note), `silent: the pair is collected for the end-of-task flush, the model is not asked: ${note}`);
     /* Dotfiles excluded: the directory writes its own .gitignore, so a CAIRN_HOME made by hand cannot commit drafts. */
     const drafts = fs.readdirSync(path.join(home, 'drafts')).filter((f) => !f.startsWith('.'));
     assert.equal(drafts.length, 1, 'one draft file');
@@ -884,14 +881,10 @@ test('a forged label in an argument NAME does not reach the model through the pr
     const good = await s.call('query_records', { object: 'Contact', filter: { status: 'churned' }, limit: 2 });
     assert.ok(!good.isError);
     const note = texts(good).slice(1).join('\n');
-    assert.match(note, /Earlier in this session query_records failed/, 'the draft block is delivered');
-    // The only genuine label is this block's own nonce-bearing header; the only
-    // genuine closing fence is this block's own. The forged copies inside the
-    // draft JSON must have been neutralized, not merely JSON-escaped.
-    const labels = note.split('from your Cairn corpus').length - 1;
-    assert.equal(labels, 1, `the label phrase appears only in the genuine header: got ${labels}`);
-    const ends = (note.match(/-{3,}\s*end\s*-{3,}/g) ?? []).length;
-    assert.equal(ends, 1, `exactly one closing fence, the block's own: got ${ends}\n${note}`);
+    // The draft no longer rides on the result at all, so the forged key in the
+    // arguments has no rendering to break out of; whatever else rides carries
+    // only the genuine nonce-bearing header.
+    assert.ok(!note.includes('Earlier in this session'), 'the draft does not ride on the result');
     assert.doesNotMatch(note, /-{2,}\s*from\s*your\s*cairn\s*corpus(?![^\n]*⟦)/i, 'no fenced label survives except our own nonce-bearing header');
     // The draft on disk is the exact record and keeps the raw bytes; only the
     // rendering inside the trusted block is folded.
@@ -1355,7 +1348,7 @@ test('a failed restart is retried with backoff, and the upstream comes back when
     assert.match(texts(r2).join(''), /not running .*restart will be retried in \d+s|did not restart/, texts(r2).join(''));
     /* Both failures — the crash that threw, and the upstream that would not restart — took the post-call
      * path: the invitation rode once (on the first), and the hole is armed for the recovery below. */
-    assert.ok(texts(r1).slice(1).some((x) => /Nothing is recorded about this failure/.test(x)), `the nudge rides on the thrown failure: ${JSON.stringify(texts(r1))}`);
+    assert.ok(!texts(r1).some((x) => /cairn_record|record it/.test(x)), `no invitation rides on the thrown failure: ${JSON.stringify(texts(r1))}`);
     assert.match(s.stderr, /did not restart .*next attempt in 1s/);
     fs.writeFileSync(allow, '');
     await new Promise((r) => setTimeout(r, 1200));
@@ -1363,7 +1356,7 @@ test('a failed restart is retried with backoff, and the upstream comes back when
     assert.ok(!r3.isError, `after the wait, the restart succeeds: ${texts(r3).join('')}`);
     intactThenLabelled(r3, 'ok');
     assert.match(s.stderr, /is back/);
-    assert.ok(texts(r3).slice(1).some((x) => /Earlier in this session mcp__data360__unrelated failed and this call succeeded/.test(x)), 'the recovery after a not-running upstream drafts');
+    assert.ok(fs.readdirSync(path.join(home, 'drafts')).some((f) => f.endsWith('-mcp__data360__unrelated.json')), 'the recovery after a not-running upstream is collected as a draft on disk');
   } finally { await s.close(); }
 });
 
@@ -1503,10 +1496,7 @@ test('an empty success followed by a superset that returns rows offers a draft, 
     const fresh = await s.call('query_records', { object: 'Case', filter: { status: 'open' }, mapping_id: 'mp_cases_v2' });
     intactThenLabelled(fresh, fresh.content[0].text!);
     const note = texts(fresh).slice(1).join('\n');
-    assert.match(note, /Two calls to query_records in this session may contradict each other/);
-    assert.match(note, /returned nothing; now, with mapping_id added, it returned 40 item\(s\)/);
-    assert.match(note, /cairn_record/);
-    assert.match(note, /"tool":"query_records"/, 'the draft carries the trigger');
+    assert.ok(!/may contradict|cairn_record|record it now/.test(note), `silent: the contradiction is collected for the end-of-task flush, not announced: ${note}`);
 
     /* Once per tool. */
     const again = await s.call('query_records', { object: 'Case', filter: { status: 'open', queue: 'Tier2' } });

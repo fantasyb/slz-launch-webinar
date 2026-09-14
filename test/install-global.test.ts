@@ -294,3 +294,30 @@ test('malformed markers (an interrupted prior run) are refused, not duplicated',
   assert.ok(threw, 'refused a lone begin marker');
   assert.equal((fs.readFileSync(f.claudeMd, 'utf8').match(/cairn:begin/g) ?? []).length, 1, 'no second block appended');
 });
+
+/*
+ * End-of-task auto-write ships OFF. A cold install must leave no unattended
+ * corpus writer behind: the wrapped doors carry no CAIRN_AUTOWRITE unless the
+ * operator asked for it, and once asked for it survives a re-install (the
+ * daemon re-runs install after a self-update) until --no-autowrite.
+ */
+test('autowrite is off by default, on with --autowrite, preserved on re-install, off again with --no-autowrite', () => {
+  const f = fixture();
+  run(f.home, ['--home', f.corpus]);
+  let cfg = JSON.parse(fs.readFileSync(f.claudeJson, 'utf8'));
+  assert.equal(cfg.mcpServers['sf-all'].env.CAIRN_AUTOWRITE, undefined, 'default: the door has no CAIRN_AUTOWRITE');
+  assert.equal(cfg.mcpServers.cairn.env.CAIRN_AUTOWRITE, undefined, 'nor the pull server');
+
+  const g = fixture();
+  const out = run(g.home, ['--home', g.corpus, '--autowrite']);
+  cfg = JSON.parse(fs.readFileSync(g.claudeJson, 'utf8'));
+  assert.equal(cfg.mcpServers['sf-all'].env.CAIRN_AUTOWRITE, '1', '--autowrite sets it on the door');
+  assert.match(out, /autowrite +ON/);
+  run(g.home, ['--home', g.corpus]);
+  cfg = JSON.parse(fs.readFileSync(g.claudeJson, 'utf8'));
+  assert.equal(cfg.mcpServers['sf-all'].env.CAIRN_AUTOWRITE, '1', 'a re-install without the flag preserves it');
+  run(g.home, ['--home', g.corpus, '--uninstall']);
+  run(g.home, ['--home', g.corpus, '--no-autowrite']);
+  cfg = JSON.parse(fs.readFileSync(g.claudeJson, 'utf8'));
+  assert.equal(cfg.mcpServers['sf-all'].env.CAIRN_AUTOWRITE, undefined, '--no-autowrite turns it off');
+});

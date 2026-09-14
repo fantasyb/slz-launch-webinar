@@ -87,6 +87,25 @@ const WRAP_EXCLUDE = splitList(opts('exclude'));
  */
 const WRAP_NO_AUTH = splitList(opts('http-no-auth'));
 /*
+ * End-of-task auto-write, OFF unless asked. With --autowrite each wrapped door
+ * gets CAIRN_AUTOWRITE=1 and, when a task ends, writes findings by itself from
+ * the evidence it collected — behind autowrite.ts's gate (contradictions and
+ * known lie shapes pass; outages, fishing and anything that may be the
+ * caller's own input error are refused). Without the flag the door collects
+ * the same evidence into drafts/ and writes nothing to cairn/: a cold install
+ * has no unattended corpus writer. Like the trust mode, an explicit flag wins
+ * and an installed value is preserved across re-installs; --no-autowrite turns
+ * it off again.
+ */
+const EXPLICIT_AUTOWRITE = has('--autowrite') ? true : has('--no-autowrite') ? false : null;
+function effectiveAutowrite(servers: Record<string, ServerEntry>): boolean {
+  if (EXPLICIT_AUTOWRITE !== null) return EXPLICIT_AUTOWRITE;
+  for (const s of Object.values(servers)) {
+    if ((s as { env?: Record<string, unknown> })?.env?.CAIRN_AUTOWRITE === '1') return true;
+  }
+  return false;
+}
+/*
  * Trust mode baked into each wrapped server, so a real install is security-active
  * by default without the operator setting an env var. `monitor` (the default)
  * pins each server's approved tool surface on first sight and FLAGS later drift
@@ -396,14 +415,15 @@ const httpHasAuth = (e: ServerEntry) => {
 const isWrappedByUs = (e: ServerEntry) =>
   e.command === 'node' && Array.isArray(e.args) && e.args.some((a) => typeof a === 'string' && path.basename(a) === 'cairn-proxy.js');
 
-interface WrapSummary { wrapped: string[]; skipped: Array<{ name: string; why: string }>; already: string[]; trustMode: string }
+interface WrapSummary { wrapped: string[]; skipped: Array<{ name: string; why: string }>; already: string[]; trustMode: string; autowrite: boolean }
 
 function wrapServers(file: string, home: string): WrapSummary {
   const cfg = readConfig(file);
   const servers = (cfg.mcpServers ??= {}) as Record<string, ServerEntry>;
   const wrappedDir = path.join(home, 'wrapped');
   const trustMode = effectiveTrustMode(servers); // explicit flag, else preserve existing, else monitor
-  const summary: WrapSummary = { wrapped: [], skipped: [], already: [], trustMode };
+  const autowrite = effectiveAutowrite(servers); // explicit flag, else preserve existing, else OFF
+  const summary: WrapSummary = { wrapped: [], skipped: [], already: [], trustMode, autowrite };
   let changed = false;
   for (const name of Object.keys(servers)) {
     if (name === MCP_NAME) continue; // never wrap our own pull server
@@ -440,7 +460,7 @@ function wrapServers(file: string, home: string): WrapSummary {
     }
     /* --no-cairn-tools: the standalone cairn server already offers the pull tools,
      * so a wrapped server must not re-advertise them once per server. Push is unaffected. */
-    servers[name] = { command: 'node', args: [PROXY_BIN, '--config', wrappedFile, '--no-cairn-tools'], env: { CAIRN_HOME: home, CAIRN_TRUST_MODE: trustMode } };
+    servers[name] = { command: 'node', args: [PROXY_BIN, '--config', wrappedFile, '--no-cairn-tools'], env: { CAIRN_HOME: home, CAIRN_TRUST_MODE: trustMode, ...(autowrite ? { CAIRN_AUTOWRITE: '1' } : {}) } };
     summary.wrapped.push(name);
     changed = true;
   }
@@ -903,6 +923,7 @@ function main() {
     if (w.wrapped.length) {
       console.log(`  ${DRY ? 'would wrap' : 'wrapped  '}  ${w.wrapped.length} server(s) through the gateway: ${w.wrapped.join(', ')}`);
       console.log(`  trust      ${w.trustMode}${w.trustMode === 'monitor' ? ' — each server\'s tools are pinned on first use; a later change is flagged (use --enforce to withhold it)' : w.trustMode === 'enforce' ? ' — a tool that changes after approval is withheld until re-approved (cairn:trust)' : ' — surface pinning off'}`);
+      console.log(`  autowrite  ${w.autowrite ? 'ON — when a task ends the gateway writes gate-passing findings itself (unsigned, private, aging); --no-autowrite turns it off' : 'off — evidence is collected into drafts/, nothing is written to cairn/ unattended (--autowrite to turn it on for this corpus)'}`);
     }
     for (const a of w.already) console.log(`  already    "${a}" already routed through the gateway`);
     for (const sk of w.skipped) console.log(`  skipped    "${sk.name}" — ${sk.why}`);

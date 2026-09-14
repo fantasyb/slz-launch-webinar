@@ -1,5 +1,61 @@
 # Cairn — session handoff & punch-list (2026-09-07)
 
+## End-of-task auto-write, behind CAIRN_AUTOWRITE=1, default OFF (2026-09-14)
+
+Owner-authorised: the gateway may author findings itself, on ONE path only —
+the end-of-task flush — and only when `CAIRN_AUTOWRITE=1` is set on the door.
+Unset (the install default; `cairn:install` writes it only with
+`--autowrite`, preserves it across re-installs like the trust mode, and
+`--no-autowrite` clears it) the gateway collects exactly what it did before
+into drafts/ and writes nothing to cairn/. A cold install has no unattended
+corpus writer. `test/install-global.test.ts` pins the default.
+
+The mid-call "please record" copy is gone: no bank nudge on a failure, no
+"record it now" draft on a recovery, no contradiction block. The proxy
+collects silently (`session.arcs`: fail→succeed pairs, contradictions,
+lie-shaped successes) and still writes the drafts/ files for a person. The
+Stop hook is a trigger only (it touches `<home>/data/flush-request`); the
+gateway flushes on stdin close, SIGTERM, hosted session close, the idle
+reaper, and that marker. Idempotent per arc in memory, per key in the ledger
+(`mcp-proxy:autowrite` rows carry the arc key), and per shape in the corpus.
+
+THE GATE (`src/lib/cairn/autowrite.ts`), the whole safety of the feature:
+- PASS: a contradiction (contradiction.ts: empty-then-nonempty,
+  more-with-superset — a default that silently scoped or capped), or a
+  successful result matching a known lie shape: empty success with
+  `incomplete_results: true` (0052's shape) or `encoding: "base64"` on
+  content that is already text (0053's shape).
+- REJECT, always: TRANSIENT/OUTAGE fail→succeed (5xx, timeouts, resets,
+  429/rate limit, and the whole thrown-transport class including the
+  gateway's own "call to … failed" / "is not running" wording) — an outage
+  that clears is not a trap; FISHING (a not-found where only
+  path/owner/repo/id-like arguments changed); any other fail→succeed with
+  changed arguments (as likely the caller's own input error); duplicates of
+  what the corpus already has for that tool and shape. A plain fail→succeed
+  arc NEVER auto-writes.
+- What is written: machine-filled from the pair (title, claim, expectation,
+  reality, workaround, prose check marked manual, evidence), every upstream
+  byte defanged; through `recordSubmission` with origin agent, `by:
+  cairn-gateway` — agentRecorded, private, unsigned, aging,
+  environment-specific, never operator-promoted, never executed. Notes are
+  untouched.
+
+Proven in `test/autowrite.test.ts`: flag ON → two lie-shape findings land at
+task end with zero cairn_record calls, the crash→recover arc is refused as
+transient and the not-found→other-path arc as fishing, the next session's
+door serves the new findings, a second identical task writes nothing more;
+the Stop marker flushes mid-session; flag OFF → nothing in cairn/, drafts
+still collected. MRR and every guard floor are unchanged: the proof writes
+only to throwaway homes and adds nothing to the real corpus.
+
+Residual, plainly: the transient exclusion is a pattern list, but it is not
+what keeps the poison path shut — only contradictions and lie shapes can
+pass at all, so a fail→succeed whose text matches no outage pattern is
+refused anyway. The cost of that is the mirror image: a genuinely new trap
+shape is not auto-written until a shape is added here. Everything
+auto-written is private and aging; a person still decides what is promoted
+or shared, and whether a written finding is right.
+
 ## Thrown upstream failures now arm the hole and carry the nudge (2026-09-14)
 
 Root cause of the crew-blind hour's zero drafts: in the gateway's tools/call

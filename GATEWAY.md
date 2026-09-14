@@ -343,29 +343,62 @@ Nothing about this changes the threat model above: it is a speed bump with
 a ledger. The token is on the same box, in one `0600` file and in the
 proxy's process environment, and that is where the bar stands.
 
-## Recording in-session — the reflex, and how to confirm it unaided
+## Recording — silent during the task, decided when it ends
 
 Delivery is proven (the crew's GitHub door served cairn-0052/0053 on the
-result). The other half — an agent recording a trap the moment it bites,
-without being told to go and hunt — is partly the model's own choice, and
-nothing here forces it: no record is ever written automatically, no call is
-ever blocked to extract one. What the gateway owns is that the affordance is
-present, reachable, and finishable, and that is what is pinned.
+result). Recording no longer asks the model anything mid-call: there is no
+bank nudge on a failure, no "record it now" draft on a recovery, no
+contradiction block. The gateway collects — fail-then-succeed pairs,
+contradictions, and successes whose content matches a known lie — writes the
+drafts under `drafts/` for a person, and decides at the END of the task.
+
+**Default: nothing is written.** With `CAIRN_AUTOWRITE` unset (what
+`cairn:install` writes) the flush only says on stderr how many arcs it
+collected and did not write. A cold install has no unattended corpus writer.
+
+**`CAIRN_AUTOWRITE=1` on the door** (`npm run cairn:install -- --autowrite`;
+`--no-autowrite` clears it; the setting survives re-installs): when the task
+ends — stdin closes, the process is signalled, a hosted session closes or is
+reaped idle, or the Stop hook touches `<home>/data/flush-request` — every arc
+goes through the gate in `src/lib/cairn/autowrite.ts` and a passing one is
+written through `recordSubmission` exactly as `cairn_record` would write it,
+authored `cairn-gateway`: `agentRecorded`, private, unsigned, born `aging`,
+environment-specific, never operator-promoted, its check prose and never
+executed. Every field is machine-filled from the evidence and defanged.
+
+The gate passes only a **contradiction** (the same tool answered, then a
+strict superset of the arguments answered with more while the first result
+said nothing about being partial) or a **known lie shape** on a successful
+result (empty success with `incomplete_results: true`; `encoding: "base64"`
+on content that is already text). It refuses — always, however the hole was
+armed — transient/outage recoveries (5xx, timeouts, resets, rate limits, the
+thrown-transport class), fishing (a not-found that a different
+path/owner/repo resolved), any other fail-then-succeed with changed
+arguments, and duplicates of what the corpus holds for that tool and shape.
+A plain fail-then-succeed never auto-writes. Idempotent per arc (memory),
+per key (the ledger's `mcp-proxy:autowrite` rows), per shape (the corpus).
+
+`test/autowrite.test.ts` runs it against the fixture: flag on, a task with
+two lie-shaped successes, a fish and a crash-then-recover ends → two
+findings, zero `cairn_record` calls, the fish and the transient refused on
+record, the next session served the new findings, a second task writes
+nothing more; the Stop marker flushes mid-session; flag off → nothing.
+`cairn:report` shows the outcome per tool: `autowrite` rows for what was
+written, `autowrite-rejected` rows with the reason for what was not.
+
+### The record tools stay reachable
 
 On the install default every door runs `--no-cairn-tools`, so the door lists
 no `cairn_*` tool of its own; the record tools are on the standalone `cairn`
-server in the same session. The door now says so at connect and in every
-nudge ("record it with cairn_record (on the `cairn` server in this
-session…)"), and the standalone's `cairn_record`/`cairn_note` take every
-argument the nudges name: `note` (finishes the note), `discard`,
-`dismiss`+`as`, `arc`. Before this, `note:` was silently dropped (the note
-stayed open and was offered back next session), `{"discard"}` failed
-validation at the moment the nudge asked for it, and a banked arc was never
-counted. `test/record-reflex.test.ts` runs the whole path on a real
-`cairn:install` in a throwaway HOME: burned result carries the invitation,
-the fail-then-succeed draft rides and lands in `drafts/`, `cairn_note` then
-`cairn_record` with `note:` lands a finding in the throwaway corpus —
-`agentRecorded`, private, unsigned, `aging` — and the note is finished.
+server in the same session, the door says so at connect, and the
+standalone's `cairn_record`/`cairn_note` take every argument the gateway's
+own tools take: `note` (finishes the note), `discard`, `dismiss`+`as`,
+`arc`. Nothing asks for them any more; they remain for an agent that
+chooses to record. `test/record-reflex.test.ts` runs the whole path on a
+real `cairn:install` in a throwaway HOME: a burned result carries no
+invitation, the fail-then-succeed pair lands in `drafts/`, and `cairn_note`
+then `cairn_record` with `note:` still lands a finding — `agentRecorded`,
+private, unsigned, `aging` — with the note finished.
 
 **Crew-blind protocol** (Dig or Make, on their box, no prompting from Idea;
 this repository cannot run it for them):

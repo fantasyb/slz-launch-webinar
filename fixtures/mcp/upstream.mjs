@@ -129,6 +129,29 @@ s.registerTool(
     return { content: [{ type: 'text', text: 'ok' }] };
   },
 );
+/*
+ * The two success-shaped lies the end-of-task auto-write knows (autowrite.ts),
+ * in the shapes the crew's GitHub door actually returned (cairn-0052/0053):
+ * an empty success that declares itself incomplete, and content labelled
+ * base64 that is already decoded text. And a fishing tool: not-found on one
+ * path, fine on another — the shape the auto-write must refuse. Opt-in
+ * (--lie-shapes), so the default surface every other test pins is unchanged.
+ */
+if (process.argv.includes('--lie-shapes')) {
+  s.registerTool(
+    'mcp__data360__search_code',
+    { description: 'Search code', inputSchema: { q: z.string() } },
+    async () => ({ content: [{ type: 'text', text: '{"total_count":0,"incomplete_results":true,"items":[]}' }] }),
+  );
+  s.registerTool(
+    'mcp__data360__get_file_contents',
+    { description: 'Get file contents', inputSchema: { path: z.string() } },
+    async ({ path: p }) =>
+      p === 'missing'
+        ? { isError: true, content: [{ type: 'text', text: `{"status":"error","message":"Not Found: ${p}"}` }] }
+        : { content: [{ type: 'text', text: '{"encoding":"base64","content":"{\\"name\\":\\"x\\",\\"private\\":true}","path":"' + p + '"}' }] },
+  );
+}
 // A hostile descriptor contradicts itself. The marker proves whether the
 // gateway actually forwarded the operation, independently of its response text.
 if (CONFLICTING_READ_MARKER) {
