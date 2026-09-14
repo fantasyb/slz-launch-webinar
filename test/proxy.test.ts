@@ -521,14 +521,21 @@ test('a dead upstream is an error result, and it is respawned for the next call'
   const s = new Session(home, ['--server', `node ${FIXTURE} --crash-marker ${marker}`]);
   try {
     await s.init();
+    const findingsBefore = fs.readdirSync(path.join(home, 'cairn')).filter((f) => f.endsWith('.json')).length;
     const r1 = await s.call('mcp__data360__unrelated');
     assert.equal(r1.isError, true);
     assert.ok(texts(r1).some((x) => x.includes('cairn-proxy')), 'the error names the proxy so nobody blames the tool');
     assert.ok(fs.existsSync(marker), 'the fixture really did exit');
+    /* A THROWN failure (the transport died mid-call) takes the same post-call path as a returned one:
+     * the bank nudge rides on it and a hole is armed — this used to return before either. */
+    assert.ok(texts(r1).slice(1).some((x) => /Nothing is recorded about this failure/.test(x)), `the nudge rides on a thrown failure: ${JSON.stringify(texts(r1))}`);
 
     const r2 = await s.call('mcp__data360__unrelated');
     assert.ok(!r2.isError, 'one respawn, then the call succeeds');
     intactThenLabelled(r2, 'ok');
+    assert.ok(texts(r2).slice(1).some((x) => /Earlier in this session mcp__data360__unrelated failed and this call succeeded/.test(x)), 'the fail-then-succeed draft rides on the recovery after a thrown failure');
+    assert.ok(fs.readdirSync(path.join(home, 'drafts')).some((f) => f.endsWith('-mcp__data360__unrelated.json')), 'and is on disk');
+    assert.equal(fs.readdirSync(path.join(home, 'cairn')).filter((f) => f.endsWith('.json')).length, findingsBefore, 'nothing was auto-written to the corpus');
   } finally { await s.close(); }
 });
 
@@ -1346,6 +1353,9 @@ test('a failed restart is retried with backoff, and the upstream comes back when
     const r2 = await s.call('mcp__data360__unrelated');
     assert.equal(r2.isError, true, 'the restart was refused');
     assert.match(texts(r2).join(''), /not running .*restart will be retried in \d+s|did not restart/, texts(r2).join(''));
+    /* Both failures — the crash that threw, and the upstream that would not restart — took the post-call
+     * path: the invitation rode once (on the first), and the hole is armed for the recovery below. */
+    assert.ok(texts(r1).slice(1).some((x) => /Nothing is recorded about this failure/.test(x)), `the nudge rides on the thrown failure: ${JSON.stringify(texts(r1))}`);
     assert.match(s.stderr, /did not restart .*next attempt in 1s/);
     fs.writeFileSync(allow, '');
     await new Promise((r) => setTimeout(r, 1200));
@@ -1353,6 +1363,7 @@ test('a failed restart is retried with backoff, and the upstream comes back when
     assert.ok(!r3.isError, `after the wait, the restart succeeds: ${texts(r3).join('')}`);
     intactThenLabelled(r3, 'ok');
     assert.match(s.stderr, /is back/);
+    assert.ok(texts(r3).slice(1).some((x) => /Earlier in this session mcp__data360__unrelated failed and this call succeeded/.test(x)), 'the recovery after a not-running upstream drafts');
   } finally { await s.close(); }
 });
 

@@ -1,5 +1,26 @@
 # Cairn — session handoff & punch-list (2026-09-07)
 
+## Thrown upstream failures now arm the hole and carry the nudge (2026-09-14)
+
+Root cause of the crew-blind hour's zero drafts: in the gateway's tools/call
+handler a THROWN upstream failure (a server dying mid-call, an HTTP error
+mid-session, a JSON-RPC error from a server not on this SDK — GitHub's
+"Not Found" shape) returned from the `catch` before the post-call path ran,
+so no ledger row, no hole, no bank nudge, and a later success on the same
+tool had nothing to draft from. Only a failure that came back as an
+`isError` RESULT got the invitation. Fix (`scripts/mcp-proxy.ts`): the catch
+builds the same `cairn-proxy: call to "<tool>" failed: …` error result it
+always returned and FALLS THROUGH to the shared post-call path — observe,
+hole, nudge, first-contact index, defang — instead of returning early; a
+`thrown` flag only prevents a duplicate audit row. Still `isError: true`,
+still the failure text; nothing swallowed or converted. The thrown message
+is upstream-controlled bytes and is defanged in the catch and again with the
+content (idempotent), so a forged label in an error body reaches the model,
+the hole and the draft's evidence only neutralised. Pinned in
+`test/proxy.test.ts` (crash mid-call) and `test/proxy-http.test.ts` (an HTTP
+503 whose body carries a forged label). No record is auto-written: the
+draft is an offer; the corpus grows only by the agent's explicit call.
+
 ## The record reflex: reachable and finishable; the choice is still the agent's (2026-09-14)
 
 Measured on the install default (a `--no-cairn-tools` door + the standalone

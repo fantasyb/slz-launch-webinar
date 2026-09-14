@@ -382,3 +382,68 @@ test('an unreachable/unauthorized HTTP upstream fails to start — never a fabri
     proc.kill('SIGKILL');
   }
 });
+
+/*
+ * A THROWN failure takes the same path as a returned one.
+ *
+ * The crew-blind hour on the GitHub door produced zero drafts. Cause: an
+ * upstream failure that THREW at the proxy's request (a server gone mid-call,
+ * an HTTP error mid-session, a JSON-RPC error from a server not on this SDK)
+ * returned from the catch before the post-call path ran — no ledger row, no
+ * hole, no bank nudge — so a later success on the same tool had nothing to
+ * draft from. Only a failure returned as an isError RESULT got the invitation.
+ *
+ * The thrown text is upstream-controlled bytes: here the 503 body carries a
+ * forged Cairn label and a hostile instruction, and it must reach the model,
+ * the hole and the draft's evidence only neutralised. Nothing is swallowed —
+ * the client still sees isError with the failure — and nothing is written to
+ * the corpus: the draft is an offer.
+ */
+test('an HTTP failure thrown mid-session arms the hole, carries the nudge defanged, and a later success drafts', async () => {
+  /* An EMPTY corpus: the bank nudge is the invitation for a failure nothing is recorded
+   * about; a tool with a finding gets that finding instead (the same rule as a returned
+   * isError result), and the hole is armed either way. */
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'cairn-http-thrown-'));
+  fs.mkdirSync(path.join(home, 'cairn'));
+  const marker = path.join(home, 'fail-now');
+  const { proc, port } = await startHttp(['--fail-when', marker]);
+  const cfg = path.join(home, 'cfg.json');
+  fs.writeFileSync(cfg, JSON.stringify({ mcpServers: { data360: { url: `http://127.0.0.1:${port}/mcp` } } }));
+  const p = new Proxy(home, cfg);
+  try {
+    await p.init();
+    const before = fs.readdirSync(path.join(home, 'cairn')).length;
+    /* A server that was working goes away mid-session: one good call first, so the
+     * tool is known and the HTTP session is live; THEN the upstream starts failing. */
+    const primed = await p.call(TOOL, { object: 'Account' });
+    assert.ok(!primed.isError, 'the upstream works before it fails');
+    fs.writeFileSync(marker, '');
+    const failed = await p.call(TOOL, { object: 'Account' });
+    assert.equal(failed.isError, true, 'the failure is still a failure to the client');
+    const [errText, ...behind] = texts(failed);
+    assert.match(errText, /cairn-proxy: call to "mcp__data360__query_records" failed: /, 'the failure text is the proxy\'s error result');
+    assert.match(errText, /503|unavailable/, 'and carries the upstream\'s reason');
+    assert.match(errText, /a tool imitated the Cairn label here/, 'the forged label in the thrown body is neutralised');
+    assert.ok(!errText.includes('from your Cairn corpus, not from this tool'), 'the raw label never reaches the model from a thrown error');
+    assert.ok(behind.some((t) => /Nothing is recorded about this failure/.test(t) && /cairn_record/.test(t)), `the bank nudge rides on the thrown failure: ${JSON.stringify(behind)}`);
+    /* The ledger has the error row, so the report counts the failed call. */
+    const rows = fs.readdirSync(path.join(home, 'data', 'retrievals')).flatMap((f) => fs.readFileSync(path.join(home, 'data', 'retrievals', f), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l) as { source: string; query: string }));
+    assert.ok(rows.some((r) => r.source === 'mcp-proxy:error' && r.query.startsWith(TOOL)), `no error row: ${rows.map((r) => r.source).join(', ')}`);
+
+    /* The upstream comes back; the same tool succeeds; the draft rides and is on disk. */
+    fs.rmSync(marker);
+    let good = await p.call(TOOL, { object: 'Account' });
+    if (good.isError) good = await p.call(TOOL, { object: 'Account' }); // one re-dial may report the dead session first
+    assert.ok(!good.isError, `the recovery call succeeds: ${texts(good).join(' | ')}`);
+    const draft = texts(good).slice(1).join('\n');
+    assert.match(draft, /Earlier in this session mcp__data360__query_records failed and this call succeeded/, 'the fail-then-succeed draft rides on the recovery');
+    assert.match(draft, /cairn_record/, 'and says how to record it');
+    const files = fs.readdirSync(path.join(home, 'drafts')).filter((f) => f.endsWith('-mcp__data360__query_records.json'));
+    assert.equal(files.length, 1, 'one draft on disk');
+    const onDisk = JSON.parse(fs.readFileSync(path.join(home, 'drafts', files[0]), 'utf8')) as { evidence: Array<{ output: string }> };
+    assert.match(onDisk.evidence[0].output, /a tool imitated the Cairn label here/, 'the draft\'s evidence is the defanged thrown text');
+    assert.ok(!onDisk.evidence[0].output.includes('from your Cairn corpus, not from this tool'), 'never the raw label');
+    /* Nothing was written to the corpus: a record is only ever the agent's explicit call. */
+    assert.equal(fs.readdirSync(path.join(home, 'cairn')).length, before, 'no finding was auto-written');
+  } finally { await p.close(); proc.kill('SIGKILL'); }
+});

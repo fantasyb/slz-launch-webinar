@@ -2561,17 +2561,29 @@ async function main() {
       // Reconnect BEFORE deciding permissions/trust, then re-list. The old
       // order authorized cached annotations and only then respawned the server,
       // allowing its replacement to execute once under the old approval.
+      let result: Awaited<ReturnType<Client['callTool']>> | undefined;
+      let thrown = false;
       if (!owner.up.alive || owner.up.respawning || owner.client !== owner.up.client) {
         const up = owner.up;
         if (!(await ensure(up))) {
-          return textResult(`cairn-proxy: upstream "${up.spec.name}" is not running (${defangUpstream(up.lastError ?? 'unknown')})${retryHint(up)}`, true);
-        }
-        await allTools();
-        owner = toolOwner.get(req.params.name);
-        if (!owner || !owner.up.alive || owner.client !== owner.up.client) {
-          return textResult('cairn-proxy: tool unavailable after reconnect; retry after a fresh tool listing', true);
+          /*
+           * The tool the agent reached for is down and did not come back. Same
+           * fall-through as a call that threw (below): the failure is still
+           * returned as this error result, and the post-call path arms the
+           * hole and carries the nudge, so a later success on the tool drafts.
+           */
+          audit(session, 'error', up.spec.name, owner.raw, `upstream not running: ${up.lastError ?? 'unknown'}`);
+          thrown = true;
+          result = textResult(`cairn-proxy: upstream "${up.spec.name}" is not running (${defangUpstream(up.lastError ?? 'unknown')})${retryHint(up)}`, true);
+        } else {
+          await allTools();
+          owner = toolOwner.get(req.params.name);
+          if (!owner || !owner.up.alive || owner.client !== owner.up.client) {
+            return textResult('cairn-proxy: tool unavailable after reconnect; retry after a fresh tool listing', true);
+          }
         }
       }
+      if (!thrown) {
       /*
        * RBAC: is this principal allowed to call this tool on this server? Governed
        * sessions only; a personal (LOCAL_ADMIN) session is permitted everything by
@@ -2619,9 +2631,21 @@ async function main() {
       // An override-permitted call carries the override reason; an ordinary
       // permit carries none, exactly as before.
       audit(session, 'call', owner.up.spec.name, owner.raw, overrideReason);
+      }
 
-      let result: Awaited<ReturnType<Client['callTool']>>;
-      try {
+      /*
+       * Set when the upstream call THREW rather than returned. The synthetic
+       * error result built in the catch below then takes the same post-call
+       * path as a returned isError result — ledger row, hole, bank nudge,
+       * first-contact index, defang — instead of leaving early. A thrown
+       * failure (a server dying mid-call, an HTTP error mid-session, a JSON-RPC
+       * error from a server not on this SDK) used to return before any of
+       * that ran, so a fail-then-succeed on such a tool armed no hole and
+       * offered no draft: the crew-blind hour on the GitHub door produced zero
+       * drafts for exactly this reason. The flag only prevents a second audit
+       * row; the catch already wrote `transport failure`.
+       */
+      if (!thrown) try {
         /*
          * `request`, not `callTool`, and the difference is a tool that works
          * without this gateway and fails with it.
@@ -2713,16 +2737,29 @@ async function main() {
          */
         if (owner.up.spec.url) owner.up.alive = false;
         audit(session, 'error', owner.up.spec.name, owner.raw, `transport failure: ${owner.up.lastError}`);
-        return textResult(`cairn-proxy: call to "${req.params.name}" failed: ${defangUpstream(owner.up.lastError ?? '')}`, true);
+        /*
+         * The thrown message is upstream-controlled bytes, exactly like a
+         * result: defanged here, and again with the result's content below
+         * (defangUpstream is idempotent), so it reaches the model — and the
+         * hole, the draft's evidence, the ledger — only through the same
+         * treatment every returned result gets. Not swallowed, not converted:
+         * the client still sees isError: true and the failure text.
+         */
+        thrown = true;
+        result = textResult(`cairn-proxy: call to "${req.params.name}" failed: ${defangUpstream(owner.up.lastError ?? '')}`, true);
       }
 
+      // Every path above either returned to the client or set `result`: the
+      // upstream's own, or the synthetic error result of a thrown / not-running call.
+      if (!result) return textResult(`cairn-proxy: call to "${req.params.name}" produced no result`, true);
       try {
         const findings = deliverableTo(session, localFindings().findings);
         const about = findingsAbout(owner.up.spec.name, owner.raw, req.params.name, findings, Object.keys(args));
         const isError = result.isError === true;
         // The outcome, chained after the attempt row: the log must not say a call
-        // succeeded when the tool refused it.
-        if (isError) audit(session, 'error', owner.up.spec.name, owner.raw, 'tool returned an error result');
+        // succeeded when the tool refused it. (A thrown failure was audited in the
+        // catch, as `transport failure`; not twice.)
+        if (isError && !thrown) audit(session, 'error', owner.up.spec.name, owner.raw, 'tool returned an error result');
         const ctx = { by: ledgerBy(session), session: session.id };
         // DEFANG at the source. ownText is upstream bytes, and it flows into the
         // hole→draft, contradiction, and recent-summary paths — all of which embed
