@@ -87,6 +87,27 @@ export function recordArc(r: Omit<ArcRecord, 'at'>): ArcRecord {
   return rec;
 }
 
+/**
+ * Answer an arc the Bash hook offered: banked (through cairn_note or
+ * cairn_record) or dismissed as a slip or as expected. The answer goes beside
+ * the offer in arcs.jsonl, which is the detector's calibration. Only an offer
+ * that stands can be answered; returns it, or null when there is none — the
+ * caller says so in words rather than inventing an offer.
+ *
+ * Shared by the gateway and the standalone server, because after
+ * `cairn:install` the standalone is the only place the record tools are
+ * LISTED (each wrapped door runs `--no-cairn-tools`), so an `arc` the door's
+ * nudge told the agent to pass arrives here. The caller decides who may
+ * answer (the gateway refuses governed tenants) and turns earlier arcs into
+ * outcomes afterwards (misled.ts).
+ */
+export function answerArc(arc: string, choice: Exclude<Choice, 'offered'>, by?: string): ArcRecord | null {
+  const offered = readArcs().find((r) => r.arc === arc && r.choice === 'offered');
+  if (!offered) return null;
+  recordArc({ arc, key: offered.key, failing: offered.failing, choice, by });
+  return offered;
+}
+
 const days = (iso: string, now: Date) => (now.getTime() - Date.parse(iso)) / 86_400_000;
 
 /** Whether an arc should stay quiet, and why. */

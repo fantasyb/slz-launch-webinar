@@ -43,7 +43,10 @@ import { loadSearchable, type SearchableFinding } from '../src/lib/cairn/federat
 import { brief } from '../src/lib/cairn/brief';
 import { observe } from '../src/lib/cairn/observe';
 import { recordSubmission } from '../src/lib/cairn/recordFinding';
-import { recordNote } from '../src/lib/cairn/notes';
+import { recordNote, finishNotes, discardNote } from '../src/lib/cairn/notes';
+import { answerArc } from '../src/lib/cairn/arcs';
+import { recordMisled } from '../src/lib/cairn/misled';
+import { loadCorpus } from '../src/lib/cairn/load';
 import { attest } from '../src/lib/cairn/attest';
 import { reloadCorpus } from '../src/lib/cairn/load';
 
@@ -112,7 +115,7 @@ server.registerTool(
       'that succeeds either way records nothing. If reproducing it needs a connector or a human, ' +
       'describe the check in prose and it will be marked manual. Set `tool` when the trap is an ' +
       "MCP tool's behaviour — that is what makes the finding come back the next time anyone " +
-      'reaches for that tool.',
+      'reaches for that tool. If it grew out of a cairn_note, pass that note\'s id as `note` and the note is finished.',
     inputSchema: {
       title: z.string().min(1).max(120).describe('One line, what does not work. At most 120 characters.'),
       claim: z.string().min(40).max(2000).describe('One falsifiable sentence, 40 to 2000 characters'),
@@ -144,17 +147,38 @@ server.registerTool(
         .max(500)
         .optional()
         .describe('Only when a generic-reflex refusal fired (retry / paginate / re-run): why that reflex alone does not recover this trap.'),
+      note: z.string().optional().describe('The id of the cairn_note this finishes, if it grew out of one'),
+      arc: z.string().regex(/^arc-[0-9a-f]{8}$/).optional().describe('When this records a fail-then-recover arc the Bash hook offered: its id, so the choice is counted'),
     },
   },
-  async (args) => {
+  async ({ note: noteId, arc: arcId, ...args }) => {
     /*
      * The one write path, shared with the CLI and the gateway. `origin:
      * 'agent'`: whatever the machine's execution policy says, a check that
      * arrived through a tool call is never run -- see recordFinding.ts.
+     *
+     * `note` and `arc` are the gateway's finish paths, mirrored here because
+     * after `cairn:install` THIS server is the only one that lists
+     * cairn_record: every wrapped door runs `--no-cairn-tools`, and its nudges
+     * ("finish it with cairn_record, passing note: <id>"; the Bash hook's arc)
+     * land on this tool. The zod object used to STRIP both keys silently, so a
+     * finished note stayed open and was offered back next session, and a banked
+     * arc was never counted. Measured on a cairn:install'd door before this:
+     * note status after cairn_record with note: — "open".
      */
     const outcome = await recordSubmission(args, { origin: 'agent' });
     if (outcome.ok) reloadCorpus(); // so cairn_find in this same session sees the finding just recorded
-    return { isError: !outcome.ok, content: [{ type: 'text' as const, text: outcome.message }] };
+    let closed = '';
+    if (outcome.ok) {
+      try {
+        const done = finishNotes(outcome.finding!, noteId);
+        if (done.length) closed = `\nFinished note${done.length > 1 ? 's' : ''} ${done.map((n) => n.id).join(', ')}.`;
+      } catch { /* a note that cannot be closed is not a failed record */ }
+      if (arcId && answerArc(arcId, 'bank', args.by)) {
+        try { recordMisled(loadCorpus()); } catch { /* never fatal */ }
+      }
+    }
+    return { isError: !outcome.ok, content: [{ type: 'text' as const, text: outcome.message + closed }] };
   },
 );
 
@@ -165,18 +189,45 @@ server.registerTool(
     description:
       'When there is no time for a finding: note what just did not work, in one call, with what you already have — ' +
       'the tool, the exact command and its output, the fix if any. Kept as a draft outside the corpus: not searchable, ' +
-      'not delivered, not published, until you finish it with cairn_record. Dropped after 14 days.',
+      'not delivered, not published, until you finish it with cairn_record (pass its id as `note`). It is offered back ' +
+      'once, the next session that touches the tool, and dropped after 14 days. Pass {"discard": "<note id>"} to drop one now.',
+    /*
+     * The same surface the gateway offers, argument for argument: `discard`,
+     * `dismiss`+`as` and `arc` are what the door's nudges and the Bash hook tell
+     * the agent to send, and after `cairn:install` they arrive HERE, because
+     * the door does not list cairn_note. With title/tool/evidence required at
+     * the schema, `{"discard": "<id>"}` was refused before the handler ran
+     * ("Required at title / tool / evidence / by") — a validation error at the
+     * exact moment the nudge asked for the call. The fields are optional here;
+     * recordNote() still requires them for a note and says which is missing.
+     */
     inputSchema: {
-      title: z.string().min(1).max(120).describe('One line, what did not work. At most 120 characters.'),
-      tool: z.string().min(2).max(120).describe('The MCP tool this is about, named exactly'),
-      evidence: z.array(z.object({ command: z.string(), output: z.string() })).min(1).max(20),
-      workaround: z.string().max(4000).optional(),
-      by: z.string().describe('Your model or agent identifier'),
+      title: z.string().max(120).optional().describe('One line, what did not work. At most 120 characters.'),
+      tool: z.string().max(120).optional().describe('The MCP tool this is about, named exactly. What brings it back.'),
+      evidence: z.array(z.object({ command: z.string().max(4000), output: z.string().max(20000), note: z.string().max(2000).optional() })).max(20).optional(),
+      workaround: z.string().max(4000).optional().describe('What worked instead, if anything did'),
+      by: z.string().max(200).optional().describe('Your model or agent identifier'),
+      arc: z.string().regex(/^arc-[0-9a-f]{8}$/).optional().describe('When banking a fail-then-recover arc the Bash hook offered: its id, so the choice is counted'),
+      discard: z.string().optional().describe('Instead of noting: the id of a note to drop'),
+      dismiss: z.string().regex(/^arc-[0-9a-f]{8}$/).optional().describe('Instead of noting: the id of an offered arc to dismiss, with `as`'),
+      as: z.enum(['my-mistake', 'not-surprising']).optional().describe('Why the arc is not a trap: a slip you made, or a failure you already understood'),
     },
   },
-  async (args) => {
+  async ({ arc: arcId, discard, dismiss, as: why, ...args }) => {
+    const reply = (t: string, isError = false) => ({ isError, content: [{ type: 'text' as const, text: t }] });
+    if (dismiss) {
+      if (!why) return reply('dismiss needs `as`: "my-mistake" (a slip you made) or "not-surprising" (a failure you already understood).', true);
+      const offered = answerArc(dismiss, why, args.by);
+      if (offered && why !== 'my-mistake') { try { recordMisled(loadCorpus()); } catch { /* never fatal */ } }
+      return reply(offered ? `Dismissed ${dismiss} as ${why}; not offered again for ${why === 'my-mistake' ? 'a week' : 'ninety days'}.` : `No offered arc with id ${dismiss}.`, !offered);
+    }
+    if (discard) {
+      const dropped = discardNote(discard);
+      return reply(dropped ? `Discarded ${dropped.id}.` : `No open note with id ${discard}.`, !dropped);
+    }
     const outcome = recordNote(args, { origin: 'agent' } as never);
-    return { isError: !outcome.ok, content: [{ type: 'text' as const, text: outcome.message }] };
+    if (outcome.ok && arcId && answerArc(arcId, 'bank', args.by)) { try { recordMisled(loadCorpus()); } catch { /* never fatal */ } }
+    return reply(outcome.message, !outcome.ok);
   },
 );
 

@@ -1,5 +1,30 @@
 # Cairn — session handoff & punch-list (2026-09-07)
 
+## The record reflex: reachable and finishable; the choice is still the agent's (2026-09-14)
+
+Measured on the install default (a `--no-cairn-tools` door + the standalone
+`cairn` server): the record tools were reachable in the session and a record
+could land through them, so reachability was not the whole bug. What was
+broken was the finish path every nudge names: the standalone's `cairn_record`
+silently dropped `note:` (note left open, offered back next session) and
+`arc:` (never counted), and its `cairn_note` refused `{"discard"}` /
+`{"dismiss","as"}` with "Required at title" — a validation error at the
+exact moment the nudge asked for the call. The door also never said where
+the tools live.
+
+Changed: `scripts/mcp-server.ts` (parity with the gateway's own tools on
+`note`, `arc`, `discard`, `dismiss`/`as`), `src/lib/cairn/arcs.ts`
+(`answerArc`, shared), `scripts/mcp-proxy.ts` (with `--no-cairn-tools` the
+connect instructions and every record nudge name the `cairn` server).
+Pinned end to end by `test/record-reflex.test.ts` on a real `cairn:install`
+in a throwaway HOME. Crew-blind protocol in GATEWAY.md, "Recording
+in-session".
+
+What still will not fire by itself: the agent's choice. The gateway makes
+the affordance present, salient and finishable; it does not and must not
+write a record, block a call, or sign anything. Offered-and-unanswered is
+the number the crew-blind run produces, and it is the honest one.
+
 ## Dogfood is not product (2026-09-12)
 
 Two things are easy to conflate from here on. Keep them apart.

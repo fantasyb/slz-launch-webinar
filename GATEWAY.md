@@ -343,6 +343,51 @@ Nothing about this changes the threat model above: it is a speed bump with
 a ledger. The token is on the same box, in one `0600` file and in the
 proxy's process environment, and that is where the bar stands.
 
+## Recording in-session — the reflex, and how to confirm it unaided
+
+Delivery is proven (the crew's GitHub door served cairn-0052/0053 on the
+result). The other half — an agent recording a trap the moment it bites,
+without being told to go and hunt — is partly the model's own choice, and
+nothing here forces it: no record is ever written automatically, no call is
+ever blocked to extract one. What the gateway owns is that the affordance is
+present, reachable, and finishable, and that is what is pinned.
+
+On the install default every door runs `--no-cairn-tools`, so the door lists
+no `cairn_*` tool of its own; the record tools are on the standalone `cairn`
+server in the same session. The door now says so at connect and in every
+nudge ("record it with cairn_record (on the `cairn` server in this
+session…)"), and the standalone's `cairn_record`/`cairn_note` take every
+argument the nudges name: `note` (finishes the note), `discard`,
+`dismiss`+`as`, `arc`. Before this, `note:` was silently dropped (the note
+stayed open and was offered back next session), `{"discard"}` failed
+validation at the moment the nudge asked for it, and a banked arc was never
+counted. `test/record-reflex.test.ts` runs the whole path on a real
+`cairn:install` in a throwaway HOME: burned result carries the invitation,
+the fail-then-succeed draft rides and lands in `drafts/`, `cairn_note` then
+`cairn_record` with `note:` lands a finding in the throwaway corpus —
+`agentRecorded`, private, unsigned, `aging` — and the note is finished.
+
+**Crew-blind protocol** (Dig or Make, on their box, no prompting from Idea;
+this repository cannot run it for them):
+
+1. Before the hour: `CAIRN_HOME=<home> npm run cairn:report` — note the
+   `drafts` column and the NOTES section; `ls <home>/drafts/` and count.
+2. Work a real task through the door for an hour. Do not mention Cairn in
+   the task prompt. Idea does not say "record it".
+3. After the hour, from the files alone:
+   - `<home>/drafts/`: any new `proxy-*-<tool>.json` (a fail-then-succeed
+     draft the gateway offered) or `note-*.json` (the agent called
+     `cairn_note`)?
+   - `<home>/cairn/`: any new finding? `npm run cairn:lint` on it;
+     `agentRecorded: true`, unsigned, `aging` — never sign it to "promote".
+   - `cairn:report`: `drafts` > 0 on the tool's row means the gateway
+     offered; a `mcp:record`/`mcp:note` row in `data/retrievals/` means the
+     agent answered. Offered-and-unanswered is the honest behavioural
+     residual; write the count down, do not fix it by prompting.
+4. Report three numbers: results that carried an invitation or draft;
+   notes/findings the agent wrote unaided; and which nudge (burned result,
+   recovery draft, contradiction, offered note) preceded each.
+
 ## What the agent sees
 
 Four surfaces, all of which are in context when a decision is made:
