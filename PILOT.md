@@ -1,5 +1,10 @@
 # Cairn friend pilot
 
+**New users with different apps/setups: start with [Guided setup](GUIDED-SETUP.md).**
+It discovers multiple clients and projects, connects supported entries, and
+checks actual coverage. The instructions below maintain the earlier Claude-only
+installer; do not run both installers on the same connection.
+
 This pilot connects Cairn to the MCP tools you already use in **Claude Code on
 macOS or Linux**, with Node.js 22 or 24 and Git installed. Start with one or two
 tools you use for real work. Built-in shell, browser and other calls that do not

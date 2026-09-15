@@ -167,6 +167,7 @@ test('each launcher launches its own target, and that target exists', () => {
     'cairn-record.js': 'record',
     'cairn-status.js': 'status',
     'cairn-pilot.js': 'pilot',
+    'cairn-setup.js': 'setup',
     'cairn-mcp.js': 'mcp-server',
     'cairn-proxy.js': 'mcp-proxy',
     'cairn-daemon.js': 'daemon',

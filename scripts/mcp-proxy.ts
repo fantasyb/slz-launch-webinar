@@ -1,3 +1,4 @@
+import { LocalOAuthProvider, oauthFetch } from '../src/lib/cairn/oauth';
 /**
  * Cairn as a gateway: findings ride back on the results they are about, and
  * ride ahead on the descriptions of the tools they are about.
@@ -100,6 +101,8 @@ import { standing } from '../src/lib/cairn/decay';
 /* ------------------------------------------------------------------------ */
 
 interface UpstreamSpec {
+  /** Only set by a single local guided route; never inherited by hosted tenants. */
+  oauthFile?: string;
   supervisorWorkload?: string;
   isolation?: ContainerPolicy;
   name: string;
@@ -108,8 +111,7 @@ interface UpstreamSpec {
   args?: string[];
   env?: Record<string, string>;
   /** An HTTP upstream: the URL to dial. Auth rides in `headers` (a bearer token
-   * or API key); OAuth-redirect servers need an authProvider and are not yet
-   * wrapped — see spawn(). Mutually exclusive with `command`. */
+   * or API key); guided local OAuth uses a URL-bound provider. Mutually exclusive with `command`. */
   url?: string;
   headers?: Record<string, string>;
   /** Which HTTP transport: Streamable HTTP (default) or the legacy SSE. */
@@ -139,7 +141,8 @@ let HTTP_PORT: number | null = null;
  * forwards its upstream and still PUSHES findings onto results; it just does not
  * re-advertise the pull tools that already exist once. Push is unaffected.
  */
-const SUPPRESS_OWN_TOOLS = process.argv.includes('--no-cairn-tools');
+const proxyArgEnd = process.argv.indexOf('--');
+const SUPPRESS_OWN_TOOLS = process.argv.slice(2, proxyArgEnd < 0 ? undefined : proxyArgEnd).includes('--no-cairn-tools');
 /*
  * Where the record tools ARE, said wherever this gateway tells the agent to
  * call one. With --no-cairn-tools (every door `cairn:install` writes) this
@@ -153,6 +156,31 @@ const SUPPRESS_OWN_TOOLS = process.argv.includes('--no-cairn-tools');
 const WHERE_TOOLS = SUPPRESS_OWN_TOOLS ? ' (on the `cairn` server in this session; this server does not list it)' : '';
 
 function parseArgs(argv: string[]): UpstreamSpec[] {
+  // Guided adapters keep every upstream argument as a separate client string,
+  // so ${input:...}/${env:...} is resolved by the original client, not by Cairn.
+  // Everything after -- belongs only to the upstream, never to gateway options.
+  const end = argv.indexOf('--');
+  const route = end < 0 ? argv : argv.slice(0, end);
+  if (route.includes('--stdio-command') || route.includes('--http-upstream')) {
+    const take = (key: string) => { const i = route.indexOf(key); if (i < 0 || !route[i + 1]) throw new Error('Incomplete guided gateway configuration'); return route[i + 1]; };
+    if (route.includes('--stdio-command') === route.includes('--http-upstream') || route.some((a) => ['--server', '--config', '--http'].includes(a))) throw new Error('Conflicting guided gateway transports');
+    const name = take('--upstream-name');
+    const env: Record<string, string> = {};
+    const headers: Record<string, string> = {};
+    for (let i = 0; i < route.length; i++) {
+      if (route[i] === '--pass-env') {
+        const key = route[++i];
+        if (!key || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) || key.startsWith('CAIRN_')) throw new Error('Invalid forwarded environment name');
+        if (process.env[key] !== undefined) env[key] = process.env[key]!;
+      } else if (route[i] === '--header-env') {
+        const key = route[++i], source = route[++i];
+        if (!key || !/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(key) || !/^CAIRN_UPSTREAM_HEADER_\d+$/.test(source ?? '') || process.env[source] === undefined || /[\r\n]/.test(process.env[source]!)) throw new Error('Invalid guided HTTP header');
+        headers[key] = process.env[source]!;
+      }
+    }
+    if (route.includes('--stdio-command')) return [{ name, command: take('--stdio-command'), args: end < 0 ? [] : argv.slice(end + 1), env }];
+    return [{ name, url: take('--http-upstream'), headers, oauthFile: process.env.CAIRN_OAUTH_FILE, transport: route.includes('--upstream-sse') ? 'sse' : 'http' }];
+  }
   const specs: UpstreamSpec[] = [];
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--http') {
@@ -552,6 +580,8 @@ const REMIND_EVERY = 10;
  */
 interface SessionState {
   id: string;
+  inFlight: number;
+  lastCallCompleted: number;
   /** The client's own name from initialize, for attribution. */
   agent?: string;
   /**
@@ -612,7 +642,7 @@ interface SessionState {
 
 function newSession(id: string): SessionState {
   return {
-    id, introduced: new Set(), callsByTool: new Map(), shown: new Set(), arcs: [], lied: new Set(), holes: new Map(), drafted: new Set(), surfaceSeen: new Map(), recent: new Map(), contradicted: new Set(), notesOffered: new Set(), describedSurfaces: new Set(), lastSeen: Date.now(), principal: LOCAL_ADMIN,
+    id, inFlight: 0, lastCallCompleted: 0, introduced: new Set(), callsByTool: new Map(), shown: new Set(), arcs: [], lied: new Set(), holes: new Map(), drafted: new Set(), surfaceSeen: new Map(), recent: new Map(), contradicted: new Set(), notesOffered: new Set(), describedSurfaces: new Set(), lastSeen: Date.now(), principal: LOCAL_ADMIN,
     blockNonce: randomUUID().replace(/-/g, '').slice(0, 12),
   };
 }
@@ -1102,9 +1132,8 @@ const FORWARD = { timeout: 10 * 60 * 1000, resetTimeoutOnProgress: true } as con
  * URL server and a command server are identical to everything downstream — the
  * finding injection, the ledger, the resonance all work on MCP messages, not on
  * how the bytes arrive. Header/token auth rides in requestInit.headers; an
- * OAuth-redirect server (no token in the config) needs an authProvider we do
- * not supply yet, so it fails to connect here and the gateway reports it dead
- * rather than pretending — see the install, which warns before wrapping one.
+ * OAuth server uses the guided connection's local provider for saved credentials
+ * and refresh. Browser consent belongs to setup, never to a running gateway.
  */
 async function upstreamTransport(spec: UpstreamSpec) {
   if (executionMode() === 'supervisor') return new SupervisorClientTransport(spec.supervisorWorkload!);
@@ -1133,7 +1162,7 @@ async function upstreamTransport(spec: UpstreamSpec) {
         /* no undici dispatcher available: fall back to a direct connection */
       }
     }
-    const opts = Object.keys(requestInit).length ? { requestInit: requestInit as RequestInit } : undefined;
+    const opts = { requestInit: requestInit as RequestInit, ...(spec.oauthFile && HTTP_PORT === null ? { authProvider: new LocalOAuthProvider(spec.oauthFile, spec.url), fetch: oauthFetch } : {}) };
     if (spec.transport === 'sse') {
       const { SSEClientTransport } = await import('@modelcontextprotocol/sdk/client/sse.js');
       return new SSEClientTransport(url, opts);
@@ -2668,6 +2697,7 @@ async function main() {
       const callStarted = performance.now();
       const callMetadata = (status: 'tool-success' | 'tool-error' | 'transport-error' | 'cancelled') => ({
         id: callId, server: owner!.up.spec.name, tool: owner!.raw,
+        ...(HTTP_PORT === null && process.env.CAIRN_CONNECTION_ID ? { connectionId: process.env.CAIRN_CONNECTION_ID, connectionRevision: process.env.CAIRN_CONNECTION_REVISION } : {}),
         elapsedMs: Math.max(0, Math.round(performance.now() - callStarted)), status,
       });
       let result: Awaited<ReturnType<Client['callTool']>> | undefined;
@@ -2754,6 +2784,7 @@ async function main() {
        * drafts for exactly this reason. The flag only prevents a second audit
        * row; the catch already wrote `transport failure`.
        */
+      if (!thrown) session.inFlight++;
       if (!thrown) try {
         /*
          * `request`, not `callTool`, and the difference is a tool that works
@@ -2856,6 +2887,9 @@ async function main() {
          */
         thrown = true;
         result = textResult(`cairn-proxy: call to "${req.params.name}" failed: ${defangUpstream(owner.up.lastError ?? '')}`, true);
+      } finally {
+        session.inFlight--;
+        session.lastCallCompleted = Date.now();
       }
 
       // Every path above either returned to the client or set `result`: the
@@ -3405,10 +3439,18 @@ async function main() {
     transport.onclose = () => { void shutdown(); };
     process.stdin.on('end', () => { void shutdown(); });
     await server.connect(transport);
+    // Clients without a Stop hook can opt into an explicit inactivity boundary.
+    // It is not a claim that a task ended. Never flush during an upstream call.
+    const configuredIdle = Number(process.env.CAIRN_CAPTURE_IDLE_MS ?? 0);
+    const captureIdle = Number.isFinite(configuredIdle) && configuredIdle >= 1000 && configuredIdle <= 3600_000 ? configuredIdle : 0;
     // Stop arrives after the last tool call. Poll even while the client is idle;
     // an unref'd timer cannot keep an abandoned stdio process alive.
     setInterval(() => {
       if (!shuttingDown && flushRequested()) void flushArcs(session, 'stop hook');
+      if (!shuttingDown && captureIdle && !session.inFlight && session.lastCallCompleted && Date.now() - session.lastCallCompleted >= captureIdle) {
+        session.lastCallCompleted = 0;
+        void flushArcs(session, 'idle capture boundary');
+      }
     }, 500).unref();
     return;
   }

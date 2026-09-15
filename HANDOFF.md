@@ -1,5 +1,33 @@
 # Cairn — session handoff & punch-list (2026-09-07)
 
+## Guided multi-client setup (2026-09-15)
+
+`GUIDED-SETUP.md` and `npm run cairn:setup` are the new onboarding path. Discovery reads
+standard Claude Code/Desktop, Cursor, Windsurf, VS Code and Codex configurations,
+Claude-known and explicitly chosen project roots, plus custom config paths.
+It never starts an upstream. JSONC edits preserve unrelated text; TOML edits
+validate semantic equivalence outside the selected server tables.
+
+Setup journals originals privately before edits, uses exclusive locking and
+atomic per-file replacement, detects concurrent changes, and restores only
+entries still matching the installed wrapper. Unknown fields, OAuth, env files,
+remote execution, linked files and ambiguous layouts remain visible gaps.
+It keeps command/argument interpolation in the original client and explicitly
+forwards declared environment names, without copying ambient credentials.
+
+Gateway calls carry optional connection ID/revision metadata. Coverage requires
+a real upstream response for that installed version, separates same-name servers,
+and invalidates changed/removed configuration. `--share` exports only aggregate
+counts/states; no names, paths, payloads, credentials or finding text. Guided
+wrappers use a 60-second idle capture boundary for clients without Stop hooks;
+active upstream calls postpone it. This is inactivity, not proof of task end.
+
+The old installer remains supported and its wrappers are recognized as legacy.
+Do not double-wrap them. Guided setup uses the existing gateway's own Cairn tools
+instead of adding global instructions, a standalone server, hooks or a daemon.
+Tests exercise generated configurations through the MCP SDK; native clients,
+macOS/Windows, managed profiles and cloud agents still need acceptance work.
+
 ## Friend pilot readiness (2026-09-15)
 
 `PILOT.md` is the friend-facing path: separate local installs/corpora, Claude Code
@@ -613,3 +641,20 @@ tamper-evident audit log is already the crown jewel of that story.
 - Legal entity, funding, team, pricing, sales motion, support/on-call, global ops.
 - Rule of thumb: **compliance = auditable controls (code) + attestation
   (business).** We build the first; the company runs the second.
+
+## Guided OAuth connector
+
+Guided headerless HTTP/SSE routes now use `src/lib/cairn/oauth.ts`: SDK resource
+discovery, dynamic registration and PKCE, a loopback state-checked callback,
+private URL-bound credentials, refresh and sign-in recovery. `scripts/setup.ts`
+checks initialize/tools-list before `connect()` may edit these client entries.
+Read-only discovery remains read-only; setup checks never count as pilot usage.
+Runtime local guided routes alone receive the provider; hosted tenants and
+generic `--config` routes do not inherit local OAuth credentials. Normal setup
+offers repair, with `--login ID` and `--no-browser` available for diagnostics.
+
+Tests cover real OAuth consent, wrong/replayed state, cancellation, timeout,
+refresh rotation, gateway restart and actual tool calls; unit tests cover private
+storage, URL binding, parallel refresh and pre-install connection checks.
+Provider-specific registration/approval and native desktop acceptance remain
+explicit limits in GUIDED-SETUP.md.

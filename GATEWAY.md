@@ -1,8 +1,9 @@
 # The gateway
 
-For the supported friend pilot, follow [PILOT.md](PILOT.md). `npm run cairn:pilot`
-reports which user-scoped connections are wrapped and which have carried real
-calls; `--share` produces an optional anonymous summary without uploading it.
+For automatic discovery across supported clients and projects, follow
+[Guided setup](GUIDED-SETUP.md). `npm run cairn:setup -- --check` distinguishes
+configured connections from verified traffic. `--share` exports anonymous counts.
+[PILOT.md](PILOT.md) maintains the earlier Claude-only install path.
 
 Put it between your MCP client and the servers it uses. Every call is
 forwarded and every result returned; the gateway only adds text, labelled,

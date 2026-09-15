@@ -41,6 +41,8 @@ export type Outcome = 'served' | 'surfaced' | 'helped' | 'missed' | 'misled';
  * task outcome. No arguments, payloads, credentials or customer records. */
 export interface GatewayCall {
   id: string;
+  connectionId?: string;
+  connectionRevision?: string;
   server: string;
   tool: string;
   elapsedMs: number;
