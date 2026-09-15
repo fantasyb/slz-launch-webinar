@@ -217,7 +217,12 @@ async function signInAttempt(options: { file: string; serverUrl: string; sse?: b
         const result = await client.listTools({}, { timeout: 20_000 });
         recordConnectionCheck(options.file, serverUrl, result.tools.length);
         return { tools: result.tools.length };
-      } catch { await client?.close().catch(() => {}); }
+      } catch {
+        await client?.close().catch(() => {});
+        // An outage or listing failure is not evidence of a revoked login.
+        // Only the provider's explicit auth recovery state permits new consent.
+        if (!readOAuth(options.file, serverUrl).needsLogin) throw new Error('Connection temporarily unavailable; saved login retained.');
+      }
     }
     // Register a new callback per interactive attempt; never reuse another
     // client's credentials or native token cache. Tokens remain URL-bound.

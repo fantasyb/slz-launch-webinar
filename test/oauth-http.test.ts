@@ -21,7 +21,7 @@ async function fixture(t: Cleanup) {
   const clients = new Map<string, { redirect_uris: string[] }>(), codes = new Map<string, URLSearchParams>();
   const sessions = new Map<string, StreamableHTTPServerTransport>();
   const access = new Set<string>(), refresh = new Set<string>();
-  const stats = { registrations: 0, grants: 0, refreshes: 0, toolCalls: 0, public: false, deny: false };
+  const stats = { registrations: 0, grants: 0, refreshes: 0, toolCalls: 0, public: false, deny: false, unavailable: false };
   let base = '';
   const server = http.createServer(async (req, res) => {
     try {
@@ -60,6 +60,7 @@ async function fixture(t: Cleanup) {
         return json(200, { access_token: a, refresh_token: r, token_type: 'Bearer', expires_in: 3600 });
       }
       if (u.pathname !== '/mcp') return json(404, {});
+      if (stats.unavailable) return json(503, { error: 'temporarily_unavailable' });
       if (!stats.public && !access.has(String(req.headers.authorization ?? '').replace(/^Bearer /, ''))) {
         res.setHeader('WWW-Authenticate', 'Bearer ' + `resource_metadata="${base}/.well-known/oauth-protected-resource/mcp"`);
         return json(401, { error: 'unauthorized' });
@@ -120,6 +121,11 @@ test('browser consent verifies before install, credentials survive restart and r
   assert.notEqual(readOAuth(file, f.url).tokens?.refresh_token, first.refresh_token);
   await signIn({ file, serverUrl: f.url, open: async () => { throw new Error('healthy login must not open browser'); } });
   assert.equal(f.stats.registrations, 1);
+  const beforeOutage = fs.readFileSync(file, 'utf8');
+  f.stats.unavailable = true;
+  await assert.rejects(signIn({ file, serverUrl: f.url, open: async () => { throw new Error('outage must not trigger consent'); } }), /did not finish/);
+  assert.equal(fs.readFileSync(file, 'utf8'), beforeOutage);
+  f.stats.unavailable = false;
   // Revocation is visible and repaired within setup, without editing the installed config.
   f.access.clear(); f.refresh.clear();
   await signIn({ file, serverUrl: f.url, open: async (u) => { await f.browser(u); } });
