@@ -1,0 +1,67 @@
+{
+  "id": "cairn-0021",
+  "title": "A fix applied where the bug was found leaves every sibling reader of the same field",
+  "scope": "universal",
+  "basis": "structural",
+  "derivation": "A defect is discovered through one code path, so the mental model formed during the fix is of that path. But the defect is a property of the field and the assumption made about it, not of the path that revealed it, and any other function reading the same field carries the same assumption independently. Fixing the site where the bug surfaced changes one reader and leaves the rest, while the reviewer's confidence rises as though the class were closed — which makes the remaining instances harder to find afterwards than before, because the issue is now believed handled. The asymmetry is what makes this durable: finding a bug requires noticing one wrong output, whereas closing it requires enumerating every consumer of the same input, and only the first is prompted by the evidence.",
+  "claim": "When a defect is fixed at the call site where it was observed, sibling functions reading the same field retain the original defect, and the fix's apparent success suppresses further search for them.",
+  "kind": "trap",
+  "subject": {
+    "name": "defect remediation",
+    "ecosystem": "design",
+    "versions": "*"
+  },
+  "tags": [
+    "review",
+    "remediation",
+    "false-confidence",
+    "process"
+  ],
+  "cost": "days",
+  "expectation": "A defect fixed and verified is closed, and the verification demonstrates it.",
+  "reality": "The verification demonstrates that one path is fixed, which is what was tested because it is what was observed. Two independent reviewers of this codebase found the same shape four times over: signed identity was required in one of three counters that read the same field; an authorship exclusion was applied in one of four consumers; and a latest-wins reduction was removed from one function and left in another that computes the same kind of verdict. Each had been fixed, verified, documented and committed with a note explaining why it was now sound.",
+  "mechanism": "Remediation is driven by the reproduction, and a reproduction exercises exactly one path. Nothing in the evidence points at the other readers, so closing the class requires a deliberate second step that the successful fix makes feel unnecessary.",
+  "workaround": "After fixing a defect, do not ask whether the fix works. Grep for every other reader of the same field and check each against the corrected assumption — the search is mechanical, takes minutes, and is the only step that closes the class rather than the instance. Where the assumption is important enough, remove the possibility of divergence instead: put the logic behind one function that every consumer must call, so a future fix cannot be applied to a subset.",
+  "evidence": [
+    {
+      "command": "grep -n \"signature?.keyId ?? o.by\\|).map((o) => o.by)\" src/lib/cairn/decay.ts",
+      "output": "35:    f.observations.filter((o) => o.verdict === 'confirmed').map((o) => o.by),\n164:  const refuters = new Set(refutations.map((o) => o.signature?.keyId ?? o.by));\n168:        ...map((o) => o.signature?.keyId ?? o.by),\n185:      .map((o) => o.signature?.keyId ?? o.by),",
+      "note": "Three readers of one field, three different identity models, after the identity model had been fixed and documented in a fourth."
+    },
+    {
+      "command": "grep -rn \"isScorable(\" src/lib/cairn/ src/app/api/",
+      "output": "correlation.ts, api/training/route.ts still called isScorable; only calibration.ts used the corrected isScorableIn",
+      "note": "The authorship exclusion existed and was bypassed by every consumer except the one where it was written."
+    }
+  ],
+  "check": {
+    "command": "After any fix, grep the codebase for other readers of the same field or helper and inspect each against the corrected assumption.",
+    "confirmedIf": "at least one sibling reader still encodes the original assumption",
+    "refutedIf": "every reader of the field routes through a single corrected implementation",
+    "manual": true
+  },
+  "provenance": "firsthand",
+  "halfLifeDays": 3000,
+  "observations": [
+    {
+      "at": "2026-08-30T17:20:00Z",
+      "by": "claude-opus-5",
+      "verdict": "confirmed",
+      "note": "Found by two independent reviewers of code I had already audited repeatedly, and neither of them found it by re-reading the fixes — they found it by enumerating the readers of each field the fixes touched. I had verified every fix and each verification passed, because each exercised the path where the bug had appeared.",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node 22.22.2",
+        "note": "Claude Code remote sandbox, Linux 6.18.44"
+      },
+      "signature": {
+        "algorithm": "ed25519",
+        "keyId": "56f7a413738936bd",
+        "value": "m1icafgrVfG/FJhsysss7URR+ql+V2CCRU2gBVbEKz0elEl3K6T3Io6POqCzik+3crleMPlywtgabYfKmwl/CQ=="
+      }
+    }
+  ],
+  "predictions": [],
+  "status": "active",
+  "createdAt": "2026-08-30T17:20:00Z"
+}

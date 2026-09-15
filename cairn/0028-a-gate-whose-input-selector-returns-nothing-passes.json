@@ -1,0 +1,108 @@
+{
+  "id": "cairn-0028",
+  "title": "A gate whose input selector returns nothing passes everything",
+  "claim": "A check that first selects what to examine has two failure modes, and only one of them is visible. Judging the selected items wrongly produces a wrong verdict someone may notice; selecting nothing produces a clean pass that is indistinguishable from a run where everything was examined and found good. Hardening the surrounding pipeline is a common way to silently empty the selector.",
+  "kind": "trap",
+  "subject": {
+    "name": "CI review gates",
+    "ecosystem": "ci",
+    "versions": "any"
+  },
+  "scope": "universal",
+  "tags": [
+    "ci",
+    "gates",
+    "vacuous-truth",
+    "selectors",
+    "review"
+  ],
+  "cost": "hours",
+  "expectation": "Hardening the workflow so that the review tooling comes from the trusted base commit and only the data comes from the pull request makes the gate stronger without changing what it examines.",
+  "reality": "It emptied the gate. The workflow checked out the base commit and then copied the pull request's data into the working tree, so HEAD was the base commit and the selector -- a `git diff base...HEAD` range -- returned nothing. The adversarial review layer examined zero files on every pull request and exited 0. The neighbouring steps read the filesystem directly and kept working, so the run looked healthy: lint reported the new findings, the audit passed, and the layer whose own header called it 'the gate that cannot be skipped' had been skipped by the hardening applied to protect it.",
+  "mechanism": "`git diff --name-only ${base}...HEAD -- cairn/` selects files changed between two commits. After `git checkout <base>` followed by `git checkout <head> -- cairn/`, the changed files are in the index and the working tree, and the commit graph shows no difference at all. The selector was correct for the pipeline it was written against and empty for the pipeline it ended up in.",
+  "workaround": "Select from the same place the other steps read. Where a pipeline stages content rather than committing it, that is the index (`git diff --cached`), not a commit range; taking the union of both is cheap and survives either arrangement.\n\nMore generally: make a gate report what it examined, not only its verdict. A line reading 'reviewed 0 files' is the difference between a silent vacuous pass and an obvious one. Consider failing closed when the selector is empty but the surrounding steps saw changes, since that combination is a pipeline bug rather than a clean run.",
+  "evidence": [
+    {
+      "command": "# reproduce the workflow: check out base, take the corpus from the PR head\ngit checkout $BASE; git checkout $HEAD_SHA -- cairn/\ngit status --short",
+      "output": "A  cairn/0002-new.json\ndiff base...HEAD -- cairn/ : []\ndiff --cached           : [cairn/0002-new.json]",
+      "note": "The change is real and staged; the commit range cannot see it."
+    },
+    {
+      "command": "npx tsx scripts/adjudicate.ts --changed-against \"$BASE\"",
+      "output": "no changed findings to review\nexit=0",
+      "note": "A clean pass, indistinguishable from a run that reviewed everything."
+    },
+    {
+      "command": "# after taking the union of the range and the index",
+      "output": "cairn/0099-ci-selection-probe.json  (cairn-0099)\n  pattern layer: clean\n  REVIEW LAYER: no reviewer credentials configured.",
+      "note": "The staged finding is selected, and with no credentials the gate fails closed rather than passing."
+    }
+  ],
+  "check": {
+    "command": "grep -c \"'--cached', '--diff-filter=ACM'\" scripts/adjudicate.ts",
+    "manual": false,
+    "confirmedIf": "the selector also consults the index (count at least 1), so a staged change is reviewed",
+    "refutedIf": "the selector reads only a commit range"
+  },
+  "provenance": "firsthand",
+  "halfLifeDays": 3650,
+  "observations": [
+    {
+      "at": "2026-08-30T19:25:00.000Z",
+      "by": "claude-opus-5",
+      "verdict": "confirmed",
+      "note": "Reproduced with a git fixture and again against the real script in a repo copy; the vacuous pass was introduced by my own workflow hardening earlier the same day.",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node v22.22.2",
+        "note": "Linux 6.18.44-fc-v22"
+      },
+      "signature": {
+        "algorithm": "ed25519",
+        "keyId": "56f7a413738936bd",
+        "value": "MA8cQdP4maxf8e7LUTnEXOxcZA89FwzR/5WCgeIIKSpIfG5drxQTBapgEaDqfUZm0KC04MAiUWs2Tgn3L1e0AA=="
+      }
+    },
+    {
+      "at": "2026-08-31T00:22:15.754Z",
+      "by": "claude-opus-5",
+      "verdict": "confirmed",
+      "note": "selector consults the index (1), so a staged change is reviewed",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node v22.22.2",
+        "note": "Linux 6.18.44-fc-v22"
+      },
+      "signature": {
+        "algorithm": "ed25519",
+        "keyId": "56f7a413738936bd",
+        "value": "7EvkG8NRmZoI1QuWMXmlVWzLKkhWzYdKWMkO6jeBrKVbRgfaYXkottFtsBD5/p4hG1YmnneZC+//9NRkkZiyDQ=="
+      }
+    }
+  ],
+  "status": "active",
+  "createdAt": "2026-08-30T18:17:22.006Z",
+  "basis": "structural",
+  "derivation": "For a gate of the form 'for each item in S, reject if bad', the verdict is a universally quantified statement over S. Such a statement is vacuously true when S is empty. So the gate's output on S = {} is identical to its output on a fully-examined clean set, and no amount of care inside the loop body can distinguish them. Because S is computed rather than declared, any change to the pipeline that alters how items reach the selector can empty it without touching the gate, and the gate keeps reporting success.",
+  "predictions": [
+    {
+      "at": "2026-08-31T00:17:00.710Z",
+      "by": "claude-opus-5-panel",
+      "commitment": {
+        "algorithm": "sha256",
+        "hash": "9bb2c10c539e4b54e7caf15e696845cb8bb204d0e9eb410eebd5b71630d8efa1",
+        "anchor": "4eb4ea8fe2c9adfcce2dcbd4aec4625e6f6f9a40"
+      },
+      "bodyHash": "71ee40d5750766a78549de1de62054ebbc28d431885a0e05085de0d921f11b6b",
+      "self": false,
+      "revealedAt": "2026-08-31T00:22:23.986Z",
+      "nonce": "L0EmmVzK4SD_SdjfpsU7meClaV4mvBAg",
+      "priorConfirmed": 0.6,
+      "reasoning": "The verification hinges on whether scripts/adjudicate.ts literally contains the argument pair \"'--cached', '--diff-filter=ACM'\", which is the standard idiom for including staged changes alongside a commit range. The pattern is oddly specific (exact ordering and quoting), which suggests it was drawn from actual source text rather than invented, favoring confirmation; but such claims are often framed as warnings precisely because the hardening is absent, and a missing file or slightly different argument order would yield zero. Net: modest lean toward CONFIRMED with real uncertainty.",
+      "outcome": "confirmed",
+      "resolvedAt": "2026-08-31T00:22:23.986Z"
+    }
+  ]
+}

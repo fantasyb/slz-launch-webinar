@@ -1,0 +1,68 @@
+{
+  "id": "cairn-0047",
+  "title": "A .githooks directory is inert until core.hooksPath is set, so every clone silently has no gate",
+  "claim": "A committed .githooks/ directory runs nothing. Git only consults it when core.hooksPath is set, which is per-clone local config that no commit can carry, so a hook that gates its author's commits is absent for every other clone and for every fresh clone the author makes.",
+  "kind": "trap",
+  "subject": {
+    "name": "git core.hooksPath",
+    "ecosystem": "tooling",
+    "versions": ">=2.9"
+  },
+  "scope": "universal",
+  "tags": [
+    "git",
+    "hooks",
+    "safety-gate",
+    "onboarding",
+    "silent-failure"
+  ],
+  "cost": "hours",
+  "expectation": "A hook directory committed to the repository, with an executable pre-commit in it, gates commits for anyone who clones the repository. That is what putting it under version control was for.",
+  "reality": "Git reads hooks from .git/hooks unless core.hooksPath is set, and core.hooksPath lives in .git/config, which is not part of any commit. So the gate runs only on machines where somebody typed the config command. Every other clone commits with no gate at all, and nothing about the working tree looks any different: the hook file is present, executable, correct, and never invoked. There is no warning, no skipped-hook message, and no exit code to notice.",
+  "mechanism": "Hooks are a property of the repository directory, not of its content, by design -- a hook is arbitrary code, and honouring one from a clone would make `git clone` a remote execution primitive. The safety property and the trap are the same mechanism.",
+  "workaround": "Set it from something that runs on install rather than from a README instruction. In npm, `\"prepare\": \"git config core.hooksPath .githooks 2>/dev/null || true\"` runs after `npm install` in a git checkout and is a no-op elsewhere. Then verify rather than assume: `git config core.hooksPath` must print the directory. Do not trust the hook's own tests as evidence -- see the note in the observation.",
+  "evidence": [
+    {
+      "command": "grep -rn hooksPath --include='*.sh' --include='*.md' --include='*.ts' .",
+      "output": "package.json:28:    \"cairn:hooks\": \"git config core.hooksPath .githooks && echo \\\"pre-commit hook enabled\\\"\"",
+      "note": "The only reference in the repository. No install step ran it, no document mentioned it, and there was no `prepare` or `postinstall`. Every clone but the original had no pre-commit gate: no tests, no typecheck, no corpus lint, no secret scan."
+    },
+    {
+      "command": "the hermetic check below, in a throwaway repository",
+      "output": "unset:0 set:1",
+      "note": "With an always-failing hook committed in .githooks and core.hooksPath unset, the commit succeeds. The same hook, same tree, with the config set, refuses it."
+    },
+    {
+      "command": "git config --unset core.hooksPath && npm install && git config core.hooksPath",
+      "output": ".githooks",
+      "note": "After adding the prepare script. This is the check that the workaround works, run on the machine that had the problem."
+    }
+  ],
+  "check": {
+    "command": "D=$(mktemp -d) && cd \"$D\" && git init -q . && git config user.email p@example.com && git config user.name p && mkdir .githooks && printf '#!/bin/sh\\nexit 1\\n' > .githooks/pre-commit && chmod +x .githooks/pre-commit && echo x > a.txt && git add -A && git commit -qm one >/dev/null 2>&1; A=$?; git config core.hooksPath .githooks; echo y > b.txt && git add -A && git commit -qm two >/dev/null 2>&1; B=$?; cd / && rm -rf \"$D\"; echo \"unset:$A set:$B\"; [ \"$A\" = \"0\" ] && [ \"$B\" != \"0\" ]",
+    "confirmedIf": "exit 0, printing unset:0 set:1 \u2014 the identical committed hook is ignored without the config and honoured with it",
+    "refutedIf": "exit 1: the hook fired without core.hooksPath being set, or did not fire once it was",
+    "absentWhen": "core.hooksPath is set in the clone, by an install step, a template, or by hand",
+    "manual": false
+  },
+  "provenance": "firsthand",
+  "halfLifeDays": 730,
+  "observations": [
+    {
+      "at": "2026-09-02T10:43:07.877Z",
+      "by": "claude-opus-5",
+      "verdict": "confirmed",
+      "note": "The .githooks/pre-commit file was present, executable and correct, git config core.hooksPath printed nothing, and a commit staging a file with an always-failing hook in that directory succeeded anyway. Setting core.hooksPath to .githooks refused the identical commit. Nothing in the clone distinguishes the two states. Found while clearing out orphaned scripts before pointing this repository's gateway at a real credentialed server; two failures compounded and each hid the other -- scripts/precommit.ts, the only thing that scans staged content for credentials, was referenced by nothing, and the hook that should have called it was installed in no clone but one. The detector had thirteen passing unit tests, and every one still passes with the gate wired to nothing: a gate's tests test the detector, never the wiring, so green is not evidence that anything runs.",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "git 2.x, npm 10.x",
+        "note": "reproduced hermetically in a throwaway repository, so not specific to this project"
+      }
+    }
+  ],
+  "status": "active",
+  "createdAt": "2026-09-02T10:43:07.877Z",
+  "triggers": [],
+  "visibility": "shared"
+}

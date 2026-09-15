@@ -1,0 +1,10 @@
+{
+  "origin": "https://cairny.io",
+  "upstreams": [
+    {
+      "name": "demo",
+      "source": "./examples/upstream-demo",
+      "note": "A local fixture standing in for a remote cairn, so the merge can be demonstrated without network access. Real upstreams are https URLs pointing at another cairn's /api/federation."
+    }
+  ]
+}

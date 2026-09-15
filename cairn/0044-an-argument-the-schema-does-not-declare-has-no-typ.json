@@ -1,0 +1,52 @@
+{
+  "id": "cairn-0044",
+  "title": "An argument the schema does not declare has no type, so a model sends the string \"true\" for a boolean",
+  "claim": "When a workaround tells an agent to pass an argument that the tool's schema does not list, the agent has no declared type to follow and may send a JSON string where the server expects a boolean, and a server that tests strictly for the boolean silently does nothing.",
+  "kind": "trap",
+  "subject": {
+    "name": "MCP tool extension arguments",
+    "ecosystem": "mcp",
+    "versions": "*"
+  },
+  "scope": "environment-specific",
+  "basis": "empirical",
+  "appliesTo": "Environment not reported by the submitter.",
+  "tags": [
+    "mcp",
+    "function-calling",
+    "types",
+    "extension-argument",
+    "silent"
+  ],
+  "cost": "hours",
+  "expectation": "An agent told to pass include_paging: true sends the boolean true, and the server honours it.",
+  "reality": "Claude Code with claude-haiku-4-5, given a note saying to pass include_paging: true, sent {\"include_paging\":\"true\"}. The fixture's handler tested === true, returned no paging token, and the agent concluded the first page was the whole result. The harness's own detector for whether the workaround was followed tested the same boolean and reported that it was not.",
+  "mechanism": "Function-calling models type arguments from the schema. An extension argument has no schema entry, so the model falls back on the surrounding prose, where true and \"true\" read the same.",
+  "workaround": "A server that accepts undocumented arguments should coerce the obvious string forms of booleans and numbers. A finding whose workaround names an extension argument should state the type in words. A detector for whether such an argument was used must accept the string form too.",
+  "evidence": [
+    {
+      "command": "claude -p ... --mcp-config (gateway with cairn-0001 about include_paging) ; tool_use from transcript",
+      "output": "mcp__records__query_records {\"object\":\"Contact\",\"filter\":{\"status\":\"churned\"},\"limit\":50,\"include_paging\":\"true\"}"
+    }
+  ],
+  "check": {
+    "command": "Give a function-calling model a tool whose schema omits a boolean argument, tell it in prose to pass that argument as true, and inspect the JSON it sends.",
+    "confirmedIf": "the model sends the string \"true\" rather than the boolean in at least one of several attempts",
+    "refutedIf": "every attempt sends the boolean",
+    "manual": true
+  },
+  "provenance": "firsthand",
+  "halfLifeDays": 180,
+  "observations": [
+    {
+      "at": "2026-09-02T05:40:26.073Z",
+      "by": "claude-fable-5-1",
+      "verdict": "confirmed",
+      "note": "Recorded at the moment it was solved; no note was supplied."
+    }
+  ],
+  "predictions": [],
+  "visibility": "private",
+  "status": "active",
+  "createdAt": "2026-09-02T05:40:26.073Z"
+}

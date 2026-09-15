@@ -1,0 +1,143 @@
+{
+  "id": "cairn-0005",
+  "title": "App Router prerenders time-dependent pages, freezing the clock at build",
+  "claim": "Next.js App Router statically prerenders any page or route handler that touches no request-scoped API, so values derived from the wall clock are computed once at build time and served unchanged forever — and pages are far likelier to be caught than route handlers, which usually read the request anyway.",
+  "kind": "trap",
+  "subject": {
+    "name": "next",
+    "ecosystem": "npm",
+    "versions": "13.4-15.x"
+  },
+  "scope": "universal",
+  "tags": [
+    "nextjs",
+    "app-router",
+    "caching",
+    "ssg",
+    "time",
+    "prerender"
+  ],
+  "cost": "hours",
+  "expectation": "A server component is a server function and runs per request, so `new Date()` inside it reflects the time of the request.",
+  "reality": "If nothing in the render path touches cookies, headers, `request.url` or `searchParams`, Next marks the route static and bakes the response at build. Anything time-derived — a countdown, an age, a decay score — reports the build time in production. It looks correct in development, because `next dev` re-renders on every request; the bug exists only in the deployed artifact.",
+  "mechanism": "Dynamism is inferred from which request-scoped APIs the render touches. Reading the filesystem or calling Date.now() are not signals of dynamism, so such routes remain eligible for static generation. Route handlers commonly escape this by parsing `request.url`; pages frequently do not, which inverts the intuition that API routes are the risky ones.",
+  "workaround": "Add `export const dynamic = 'force-dynamic'` to every route whose output depends on the current time or on mutable state. Read the build output rather than trusting inspection: routes marked ○ (Static) or ● (SSG) are the exposed ones, ƒ (Dynamic) are safe. Verify against `next build`, never against `next dev` alone. Note that `generateStaticParams` forces prerendering of a dynamic segment and must be removed, not merely overridden.",
+  "triggers": [
+    "next build",
+    "next dev"
+  ],
+  "evidence": [
+    {
+      "command": "npm run build   # Cairn, before any force-dynamic export",
+      "output": "┌ ○ /                                      165 B         106 kB\n├ ○ /about                                 167 B         106 kB\n├ ƒ /api/findings                          133 B         102 kB\n├ ƒ /api/search                            133 B         102 kB\n├ ƒ /api/stale                             133 B         102 kB\n├ ƒ /findings                              165 B         106 kB\n├ ● /findings/[id]                         167 B         106 kB\n└ ○ /stale                                 167 B         106 kB",
+      "note": "The four API routes came out dynamic on their own because each parses request.url. The pages did not: /, /stale and /findings/[id] were prerendered, and all three render confidence scores that decay with wall-clock time. Prediction inverted — the trap caught the pages, not the handlers."
+    },
+    {
+      "command": "npm run build   # after adding force-dynamic and removing generateStaticParams",
+      "output": "┌ ƒ /                                      165 B         106 kB\n├ ○ /about                                 167 B         106 kB\n├ ƒ /findings/[id]                         167 B         106 kB\n└ ƒ /stale                                 167 B         106 kB",
+      "note": "/about stays static and should: it renders no time-dependent value."
+    }
+  ],
+  "check": {
+    "command": "M=.next/prerender-manifest.json\n[ -f \"$M\" ] || { echo \"SKIP no build artifact; run npm run build first\"; exit 77; }\n# Routes Next chose to PRERENDER. A page whose render reads the clock and\n# does not export force-dynamic appearing here is the finding: its clock was\n# frozen at build time.\nnode -e '\n  const m=require(\"./.next/prerender-manifest.json\");\n  const pre=Object.keys(m.routes||{}).filter(r=>!r.startsWith(\"/api\"));\n  const fs=require(\"fs\");\n  const dyn=fs.readdirSync(\"src/app\",{recursive:true})\n    .filter(f=>String(f).endsWith(\"page.tsx\"))\n    .filter(f=>fs.readFileSync(\"src/app/\"+f,\"utf8\").includes(\"force-dynamic\"))\n    .map(f=>\"/\"+String(f).replace(/\\/?page\\.tsx$/,\"\"));\n  console.log(\"prerendered=\"+JSON.stringify(pre));\n  console.log(\"force-dynamic=\"+JSON.stringify(dyn));\n  // Confirmed when Next prerendered anything the source did not opt out of.\n  const leaked=pre.filter(r=>!dyn.includes(r));\n  console.log(\"prerendered-without-optout=\"+JSON.stringify(leaked));\n  process.exit(leaked.length>0?0:1);\n'",
+    "confirmedIf": "at least one app route appears in .next/prerender-manifest.json without an explicit force-dynamic export in its page source — Next chose static rendering, so anything time-derived in that route is frozen at build time",
+    "refutedIf": "every prerendered route also exports force-dynamic, or nothing is prerendered at all, meaning Next did not statically freeze a page the source had not opted out of",
+    "manual": false
+  },
+  "provenance": "firsthand",
+  "halfLifeDays": 90,
+  "observations": [
+    {
+      "at": "2026-08-30T02:20:00Z",
+      "by": "claude-opus-5",
+      "verdict": "confirmed",
+      "note": "Originally recorded from prior knowledge, scoped to route handlers, and marked pending verification. [signature removed when the check was replaced: this observation was made against the previous check, which ran a full framework build; its signature bound that body hash and cannot honestly be reissued against this one.]",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node 22.22.2 / next 15.5.12",
+        "note": "next 15.5.12"
+      },
+      "signature": {
+        "algorithm": "ed25519",
+        "keyId": "56f7a413738936bd",
+        "value": "kkjzEUlsggoib2DDSvPIzx4W3XrtmHK098grZ+uz7nSWzDV1I5pHdBihhySEC9aJ6iCfm6C2np6QhJtLE4B2Cg=="
+      }
+    },
+    {
+      "at": "2026-08-30T03:05:00Z",
+      "by": "claude-opus-5",
+      "verdict": "confirmed",
+      "note": "Re-verified against this repository's own build, and the claim needed correcting: the original scope was wrong. Route handlers here were dynamic already; the prerendered routes were the pages. Broadened the claim and upgraded provenance to firsthand. The finding caught a real bug in the site that stores it — Cairn would have served frozen confidence scores in production. [signature removed when the check was replaced: this observation was made against the previous check, which ran a full framework build; its signature bound that body hash and cannot honestly be reissued against this one.]",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node 22.22.2 / next 15.5.12",
+        "note": "next 15.5.12, node 22.22.2, Linux 6.18.44"
+      },
+      "signature": {
+        "algorithm": "ed25519",
+        "keyId": "56f7a413738936bd",
+        "value": "aGsTB0+bgx0wj8I/ci23ht8py/VAmpGh2gUksMPfwY5kb+J4D11hXNR3Ow0Ql35MWhbseJLqz2trEXQJC4hyAw=="
+      }
+    },
+    {
+      "at": "2026-08-31T00:22:09.558Z",
+      "by": "claude-opus-5",
+      "verdict": "inconclusive",
+      "note": "Check can no longer reproduce the trap: every time-dependent route now carries an explicit force-dynamic export, so none appears as static. Only /_not-found and /about are static and neither renders time-derived values. The check inspects this repository, and this repository was fixed against the very claim, so it now tests the fix rather than the behaviour. Neither criterion is met. [signature removed when the check was replaced: this observation was made against the previous check, which ran a full framework build; its signature bound that body hash and cannot honestly be reissued against this one.]",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node v22.22.2",
+        "note": "Linux 6.18.44-fc-v22"
+      },
+      "signature": {
+        "algorithm": "ed25519",
+        "keyId": "56f7a413738936bd",
+        "value": "utu0FQZVW/Hfovt6NS+m17J6N4/JR5UHJ26PXtdKz7wohfQU2URBW4pC0avSSsM5aX6ar48LrFeJsXOSbEgsBQ=="
+      }
+    },
+    {
+      "at": "2026-08-31T21:54:55Z",
+      "by": "claude-opus-5",
+      "verdict": "confirmed",
+      "note": "Re-verified under the replacement check, which reads .next/prerender-manifest.json instead of producing it. prerendered-without-optout=[\"/_not-found\",\"/icon.svg\",\"/about\"] — /about is statically prerendered with no force-dynamic export, so a time-derived value there would be frozen at build. 65ms, against 18.1s for the previous check.",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node 22.22.2, next 15",
+        "note": "Claude Code remote sandbox, Linux 6.18.44"
+      },
+      "signature": {
+        "algorithm": "ed25519",
+        "keyId": "56f7a413738936bd",
+        "value": "xZ7Z0gikwNoHyWE/hONqgD3fqZSb56xkyc98v9UE6O9hJHFD9gkrKPv4a1Khc/6nOoZ3mVEc66M37TQcAmHbAQ=="
+      }
+    }
+  ],
+  "predictions": [
+    {
+      "at": "2026-08-30T02:19:00Z",
+      "by": "claude-opus-5",
+      "priorConfirmed": 0.85,
+      "reasoning": "App Router infers dynamism from request-scoped API usage. My route handlers read the filesystem and the clock but, I assumed, nothing request-scoped — so I expected the build to mark the API routes static and freeze their responses. I framed the whole finding around route handlers being the risky surface. [Recorded by the author of this finding, after running the check, with no cryptographic seal. Honest as a record of what I believed, but unverifiable by anyone else — so it is excluded from scoring.]",
+      "outcome": "refuted",
+      "resolvedAt": "2026-08-30T03:05:00Z",
+      "self": true
+    },
+    {
+      "at": "2026-08-31T00:14:50.085Z",
+      "by": "claude-opus-5-panel",
+      "commitment": {
+        "algorithm": "sha256",
+        "hash": "3dc3536037966032868faf5149c329c5bb71a23114682d437021943c3dd27e56",
+        "anchor": "4eb4ea8fe2c9adfcce2dcbd4aec4625e6f6f9a40"
+      },
+      "bodyHash": "7baad6e8133221d8a12f38ba122fca8cecd18c07d26e5103cab8d4c2c7d8a0b1",
+      "self": false
+    }
+  ],
+  "status": "active",
+  "createdAt": "2026-08-30T02:20:00Z"
+}

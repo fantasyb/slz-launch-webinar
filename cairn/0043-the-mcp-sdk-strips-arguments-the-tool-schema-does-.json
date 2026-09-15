@@ -1,0 +1,52 @@
+{
+  "id": "cairn-0043",
+  "title": "The MCP SDK strips arguments the tool schema does not declare before the handler runs",
+  "claim": "A tool registered with @modelcontextprotocol/sdk's McpServer.registerTool using a raw zod shape receives only the declared keys: any extra argument a client sends is removed by validation before the handler sees it, with no error to either side.",
+  "kind": "trap",
+  "subject": {
+    "name": "@modelcontextprotocol/sdk",
+    "ecosystem": "npm",
+    "versions": "*"
+  },
+  "scope": "environment-specific",
+  "basis": "empirical",
+  "appliesTo": "Environment not reported by the submitter.",
+  "tags": [
+    "mcp",
+    "sdk",
+    "zod",
+    "validation",
+    "silent"
+  ],
+  "cost": "hours",
+  "expectation": "An argument the client sent reaches the handler, or the call is rejected for carrying an unknown key.",
+  "reality": "The shape is wrapped in z.object(), whose default is to strip unknown keys, so the handler receives the declared arguments only. The call succeeds. A server whose real behaviour depends on an argument its schema does not list can never see that argument.",
+  "mechanism": "registerTool accepts a ZodRawShape and calls z.object(shape) on it; zod objects strip unknown keys unless .passthrough() or .strict() is used, and the SDK does not opt out.",
+  "workaround": "Pass a full zod object schema with .passthrough() as inputSchema instead of a raw shape; the emitted JSON Schema then carries additionalProperties: true and the extra key reaches the handler.",
+  "evidence": [
+    {
+      "command": "query_records {\"object\":\"Contact\",\"filter\":{\"status\":\"churned\"},\"limit\":1000,\"include_paging\":true}  (records fixture, raw shape)",
+      "output": "{\"status\":\"success\",\"records\":[...50 rows...]}  -- no next_page_token; the handler's args had no include_paging key"
+    }
+  ],
+  "check": {
+    "command": "node -e \"const {McpServer}=require('@modelcontextprotocol/sdk/server/mcp.js');const {Client}=require('@modelcontextprotocol/sdk/client/index.js');const {InMemoryTransport}=require('@modelcontextprotocol/sdk/inMemory.js');const {z}=require('zod');(async()=>{const s=new McpServer({name:'t',version:'0'});let seen={};s.registerTool('t',{inputSchema:{a:z.string()}},async(args)=>{seen=args;return{content:[{type:'text',text:'ok'}]}});const [c1,c2]=InMemoryTransport.createLinkedPair();await s.connect(c1);const c=new Client({name:'c',version:'0'});await c.connect(c2);await c.callTool({name:'t',arguments:{a:'x',extra:true}});process.exit('extra' in seen?1:0)})()\"",
+    "confirmedIf": "exit 0: the handler received only the declared key and the extra one was stripped",
+    "refutedIf": "exit 1: the extra key reached the handler, or the call was rejected",
+    "manual": false
+  },
+  "provenance": "firsthand",
+  "halfLifeDays": 180,
+  "observations": [
+    {
+      "at": "2026-09-02T05:39:44.752Z",
+      "by": "claude-fable-5-1",
+      "verdict": "confirmed",
+      "note": "Recorded at the moment it was solved; no note was supplied."
+    }
+  ],
+  "predictions": [],
+  "visibility": "private",
+  "status": "active",
+  "createdAt": "2026-09-02T05:39:44.752Z"
+}

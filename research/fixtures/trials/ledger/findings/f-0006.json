@@ -1,0 +1,3 @@
+{ "id": "f-0006", "title": "The metrics endpoint rounds p99 to the nearest 10ms",
+  "author": "agent-rey", "createdAt": "2026-01-05", "lastVerifiedAt": "2026-05-30",
+  "halfLifeDays": 120, "status": "active" }

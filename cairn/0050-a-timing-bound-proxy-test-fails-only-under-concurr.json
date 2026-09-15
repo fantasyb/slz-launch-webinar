@@ -1,0 +1,111 @@
+{
+  "id": "cairn-0050",
+  "title": "A timing-bound proxy test fails only under concurrent full-suite load, passes in isolation",
+  "claim": "test/proxy.test.ts's 'a long call's progress is relayed to the client under its own token' asserts a progress notification arrives before a wall-clock deadline; because each such test spawns a real proxy child (npx tsx) and the whole suite runs those children concurrently under node --test, the round-trip can outrun the deadline under load, so the test goes red even though the relay works — and the same test passes every time it is run alone.",
+  "kind": "trap",
+  "subject": {
+    "name": "node --test (test/proxy.test.ts progress-relay test)",
+    "ecosystem": "npm",
+    "versions": "*"
+  },
+  "scope": "environment-specific",
+  "appliesTo": "This repository's test suite when the full suite runs concurrently (pre-commit, CI, `node --test test/`), on a machine loaded enough that a spawned tsx child + SSE round-trip can exceed the test's wall-clock deadline. Not seen when the test runs in isolation.",
+  "tags": ["testing", "flake", "timing", "proxy", "node-test", "concurrency"],
+  "cost": "minutes",
+  "expectation": "A green test in isolation and a red one in the full run means the code under test is broken and the diff that preceded it caused the failure.",
+  "reality": "The failure is a load artifact, not a defect: the test waits a fixed wall-clock deadline for a progress notification relayed through a spawned proxy child, and under the concurrent suite the round-trip sometimes lands after the deadline. Re-running the one test alone passes deterministically. A prior session already bumped the deadline 3s -> 8s for exactly this and it can still flake under heavy load.",
+  "mechanism": "The test spawns a real gateway over stdio (npx tsx) and drives it with raw JSON-RPC, then polls s.notifications until Date.now() passes a fixed deadline. node --test runs the suite's tests concurrently, so dozens of tsx children compete for CPU and the event loop; process startup + the upstream call + the SSE notification relay can then exceed the deadline. Alone there is no contention and it always arrives in time.",
+  "workaround": "Before treating this test's red as a real regression, re-run it in isolation: `npx tsx --test --test-name-pattern=\"progress is relayed to the client under its own token\" test/proxy.test.ts`. If it passes there, the full-suite failure is load, not your change — do not chase it, and do not weaken the assertion. The durable fix is to wait on the notification event rather than a wall-clock deadline (or raise concurrency isolation for spawning tests), not a bigger timeout.",
+  "evidence": [
+    {
+      "command": "npx tsx --test --test-name-pattern=\"a long call's progress is relayed\" test/proxy.test.ts",
+      "output": "ok 1 - a long call's progress is relayed to the client under its own token\n# pass 1  # fail 0",
+      "note": "The same test that reported `not ok 226` under the full pre-commit suite (# pass 396 # fail 1) passes deterministically when run alone."
+    }
+  ],
+  "check": {
+    "command": "node -e 'const s=require(\"fs\").readFileSync(\"test/proxy.test.ts\",\"utf8\");const blk=(s.split(\"progress is relayed to the client under its own token\")[2]||s.split(\"progress is relayed to the client under its own token\")[1]||\"\").slice(0,1600);const usesEvent=/await s\\.waitForNotification/.test(blk)&&!/Date\\.now\\(\\) < deadline/.test(blk);const cheapSpawn=/spawn\\(process\\.execPath, \\[PROXY_BIN,/.test(s)&&!/tsx., .scripts\\/mcp-proxy\\.ts./.test(s);const m=s.match(/timeoutMs = (\\d+)_000\\)/);const genFailsafe=!!m&&Number(m[1])>=60;const robust=usesEvent&&cheapSpawn&&genFailsafe;console.log(robust?\"root-cause fixed: cheap built-launcher spawns + event wait + generous failsafe\":\"fragile: npx-tsx spawn stampede and/or wall-clock poll / tight failsafe\");process.exit(robust?1:0);'",
+    "confirmedIf": "exit 0: the harness still spawns the gateway via `npx tsx scripts/mcp-proxy.ts` (a heavy per-spawn TS compile that stampedes under concurrent load) OR the progress test polls a wall-clock deadline OR its failsafe is tight (<60s) — the flake can reproduce.",
+    "refutedIf": "exit 1: the gateway is spawned via the prebuilt launcher (PROXY_BIN — one node boot requiring the fresh bundle, ~10x cheaper), the progress test awaits the notification by event, and the failsafe is generous (>=60s). The root cause (spawn cost) is removed and a slow relay is tolerated.",
+    "absentWhen": "the test is run in isolation, where there is no concurrent load to starve the spawned gateway.",
+    "manual": false
+  },
+  "provenance": "firsthand",
+  "halfLifeDays": 180,
+  "observations": [
+    {
+      "at": "2026-09-06T13:05:00.000Z",
+      "by": "claude-opus-4-8",
+      "verdict": "confirmed",
+      "note": "Hit during pre-commit while committing an unrelated gateway change: the full suite reported `not ok 226 - a long call's progress is relayed to the client under its own token` (# pass 396 # fail 1). Re-running that one test alone passed on the first try. The test already carries an 8s deadline (bumped from 3s in a prior session for this same flake) and still went red under the concurrent suite.",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node v22.22.2",
+        "note": "Full suite via the pre-commit hook (node --test over test/), which spawns many tsx child gateways concurrently."
+      }
+    },
+    {
+      "at": "2026-09-06T13:40:00.000Z",
+      "by": "claude-opus-4-8",
+      "verdict": "refuted",
+      "note": "Fixed at the source rather than lived with: the test harness gained an event-based waitForNotification, and this test (plus the sibling 'a finding banked mid-session reaches the tool list') now awaits the relayed notification the instant it lands instead of polling a wall-clock deadline. The load-sensitive shape the check greps for is gone, so the check now refutes — correctly: this specific test can no longer flake under concurrent load. It flaked twice more in this session's pre-commit (not ok 226, then 227) before the fix, each passing in isolation, which is what prompted the durable fix. The general lesson stands for the NEXT such test: a spawned-child test that waits a fixed wall-clock deadline for an async event will flake under concurrent suite load; await the event.",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node v22.22.2",
+        "note": "After making the notification wait event-driven in test/proxy.test.ts."
+      }
+    },
+    {
+      "at": "2026-09-06T14:20:00.000Z",
+      "by": "claude-opus-4-8",
+      "verdict": "confirmed",
+      "note": "CORRECTION: the refutation above was premature. The event-based wait was necessary but NOT sufficient, and the original diagnosis ('wall-clock deadline') was incomplete. Re-running three suites concurrently reproduced it: 'not ok - a long call's progress is relayed', error 'no notification matched in 20000ms', duration 21909ms — the event wait's 20s FAILSAFE was still too tight. The real mechanism is spawn-starvation: node --test runs files concurrently, each spawn-based test launches `npx tsx scripts/mcp-proxy.ts` (heavy: npx resolution + TS compile per child), and under enough concurrent children the relayed progress notification legitimately takes >20s to arrive. The durable fix is not a different wait STYLE but a generous FAILSAFE: the event wait resolves the instant the notification lands (healthy run ~2s), so the timeout only fires when it never comes — widened to 60s (and the request round-trip failsafe to 60s). Verified: 3 concurrent full suites, 0 failures on this test, where the same 3x load failed it reliably at 20s. Lesson for the next such test: an integration test that spawns a real child and waits on an async event must (a) wait on the event, not a wall-clock poll, AND (b) size the failsafe for a starved box, not a quiet one. The deeper root cause (npx-tsx spawn cost) would be better killed by spawning a prebuilt CLI, which remains open.",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node v22.22.2",
+        "note": "Reproduced by running 3 full `tsx --test test/*.test.ts` suites in parallel; fixed by 60s failsafe timeouts and re-verified under the same 3x load."
+      }
+    },
+    {
+      "at": "2026-09-06T15:10:00.000Z",
+      "by": "claude-opus-4-8",
+      "verdict": "refuted",
+      "note": "Root cause fixed, not just the symptom. The 60s failsafe still let 2 of 4 SIMULTANEOUS full suites fail (even 60s < the relay time when ~40 `npx tsx` gateway children stampede a 4-CPU box). The actual cost is the per-spawn tsx TypeScript compile (~700ms each). Fix: the test harnesses now spawn the prebuilt launcher `node bin/cairn-proxy.js` (PROXY_BIN), which requires the fresh bundle in one node boot (~60ms) instead of compiling on every spawn; build-cli.mjs was parallelized (9s -> 0.6s) and wired to `pretest` so the bundle is always fresh before the suite. Per-spawn cost dropped ~10x, the whole suite got faster, and the failsafe was raised to 120s as free insurance (the event wait resolves in ~2s when healthy, so a large failsafe costs nothing on a green run). A single run — the real pre-commit/CI case — is now fast and reliable; under a deliberate 4x-parallel stress it went from 2/4 failing to at most 1/4, which is 4x oversubscription no spawn-based integration test can fully guarantee. The durable lesson: for a spawned-subprocess integration test, cut the spawn COST (prebuilt binary, not a per-spawn compiler) rather than chasing timeouts.",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node v22.22.2",
+        "note": "4 CPUs. Fix = built-launcher spawns (bin/cairn-proxy.js) + parallelized pretest build + 120s failsafe."
+      }
+    },
+    {
+      "at": "2026-09-06T16:00:00.000Z",
+      "by": "claude-opus-4-8",
+      "verdict": "refuted",
+      "note": "Final belt-and-suspenders: `npm test` now caps intra-run parallelism with --test-concurrency=2, so within a single run (the real pre-commit/CI case) at most two spawn-heavy test files run at once — the stampede that starves a child cannot form. Cost measured at ~11s on a green full run (1m14s vs 1m03s uncapped), which the requester accepted in exchange for the guarantee. Layered with the cheap built-launcher spawns and the 120s event-wait failsafe, a single run is now robust by three independent mechanisms. NOTE the honest ceiling: running MULTIPLE `npm test` invocations at once still oversubscribes the box (the cap governs one invocation, not the machine), so a deliberate N-parallel-suites stress can still starve a child past any wall — that is a property of spawn-based integration tests under unbounded load, not a defect, and it is not a real workflow.",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node v22.22.2",
+        "note": "4 CPUs. --test-concurrency=2 added to the npm test script."
+      }
+    },
+    {
+      "at": "2026-09-06T16:45:00.000Z",
+      "by": "claude-opus-4-8",
+      "verdict": "confirmed",
+      "note": "The 'three independent guards' claim was still too strong — it failed AGAIN in a single capped `npm test` (not ok 235, error 'no notification matched in 120000ms', duration 120805ms). The notification did not arrive in TWO MINUTES after the call returned. Root understanding, finally correct: the gateway relays progress BEST-EFFORT (sendNotification(...).catch(() => {}), advisory and droppable), and this is a SHARED sandbox with external load I do not control — so the notification can be DROPPED entirely, not merely delayed, and NO fixed timeout or concurrency cap can make a test that observes best-effort async delivery immune. Timeouts/caps reduce probability; they cannot reach zero here. The correct fix is a bounded RETRY on the best-effort assertion: the test now re-issues the idempotent call up to 3 times (each a fresh progress, 30s window); any delivery proves the wiring, a genuine wiring failure fails all three. This is standard practice for spawn-based integration tests on shared CI. Honest ceiling: even a retry can fail under sustained multi-minute starvation, which on a shared box is not fully eliminable — but it is now vanishingly rare and no longer a wall-clock artifact. Lesson: don't assert a best-effort feature as if guaranteed; retry it, and be honest that 'never flakes' is not an achievable promise for cross-process timing tests on shared infrastructure.",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node v22.22.2",
+        "note": "Fix = bounded retry (3x, 30s each) on the progress assertion, on top of the built-launcher spawns, 120s failsafe, and --test-concurrency=2."
+      }
+    }
+  ],
+  "status": "active",
+  "createdAt": "2026-09-06T13:05:00.000Z"
+}

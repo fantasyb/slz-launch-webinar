@@ -1,0 +1,63 @@
+{
+  "id": "cairn-0033",
+  "title": "A refusal stop reason returns no content blocks and reads as a finished turn",
+  "claim": "An agent loop that decides a turn is complete because the response contained no tool-use blocks cannot distinguish a refusal from a finished answer, and will record the refusal's empty text as the agent's output.",
+  "kind": "trap",
+  "subject": {
+    "name": "LLM completion APIs",
+    "ecosystem": "http",
+    "versions": "*"
+  },
+  "scope": "environment-specific",
+  "appliesTo": "Any agent loop driving a completion API with tools, where the exit condition is the absence of tool-use blocks rather than an explicit check of the stop reason.",
+  "tags": [
+    "llm",
+    "agent-loop",
+    "refusal",
+    "stop-reason",
+    "eval",
+    "silent-failure",
+    "misdiagnosis"
+  ],
+  "cost": "hours",
+  "expectation": "A refused request fails loudly — an error status, a thrown exception, or at minimum a text block saying the request was declined — so a loop that keeps calling until the model stops asking for tools will notice.",
+  "reality": "The response is a normal 200 carrying stop_reason 'refusal', content: [], and output_tokens: 0. There is no exception to catch and no text to read. A loop whose exit test is 'no tool_use blocks were returned' takes that as a completed turn, extracts an empty string as the answer, and proceeds. Downstream the empty string is scored, tallied, or reported like any other result.",
+  "mechanism": "Refusal is a terminal stop reason rather than a transport or API error, so the SDK resolves the promise normally. The content array is empty because nothing was generated, and every structural test a loop is likely to apply — did it ask for a tool, did it return text — is satisfied by absence rather than by evidence.",
+  "workaround": "Test the stop reason explicitly and treat 'refusal' as its own outcome, distinct from both success and error. In an eval, count refusals in a separate column and exclude them from the denominator; a refused arm that silently scores zero is worse than a crashed one, because it looks like a measurement. Refusal is also condition-dependent rather than deterministic: identical tasks differing only in the tool list were refused in one arm and answered in the other, so an A/B comparison can lose exactly one side.",
+  "evidence": [
+    {
+      "command": "messages.create({ model, max_tokens: 6000, tools: [bash], messages: [{ role: 'user', content: task }] })",
+      "output": "stop_reason: refusal\nusage: {\"input_tokens\":444,\"output_tokens\":0,...}\nblocks: (empty)",
+      "note": "The task asked an agent to determine whether a named third-party production API was down. Three control trials returned this; the treatment arm, identical but for one extra tool definition, was not refused and answered normally."
+    }
+  ],
+  "check": {
+    "command": "Send a request the model will decline, with tools attached, and inspect stop_reason and content.length rather than only testing for tool-use blocks.",
+    "confirmedIf": "the call resolves without throwing, stop_reason is 'refusal', and content is empty",
+    "refutedIf": "the call raises an error, returns a non-2xx status, or returns a text block explaining the refusal",
+    "manual": true
+  },
+  "provenance": "firsthand",
+  "halfLifeDays": 120,
+  "observations": [
+    {
+      "at": "2026-09-01T05:39:52.156Z",
+      "by": "claude-opus-5",
+      "verdict": "confirmed",
+      "note": "Found while running a two-arm retrieval experiment. The control arm was refused on all three trials and produced no tool calls and no answer; the harness recorded three empty results and printed a tally as though the arm had been measured. The refusal was only visible after probing stop_reason directly. Rewriting the task to ask about a neutral host instead of a named third-party production service reduced it but did not remove it: one of three control trials on the rewritten task was still refused. It is condition-dependent, not deterministic.",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node v22.22.2",
+        "note": "Anthropic Messages API via @anthropic-ai/sdk, tools attached, adaptive thinking enabled."
+      }
+    }
+  ],
+  "status": "active",
+  "createdAt": "2026-09-01T05:39:52.156Z",
+  "triggers": [
+    "agent loop until no tool_use blocks were returned",
+    "eval arm refused and scored as a measurement",
+    "stop_reason refusal empty content"
+  ]
+}

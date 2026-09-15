@@ -1,0 +1,333 @@
+{
+  "_comment": [
+    "Queries an agent actually typed, with the task in front of it and no sight",
+    "of this corpus. Harvested verbatim from the trial transcripts in",
+    "research/scripts/agent-trial.ts — none were written for evaluation.",
+    "",
+    "WHY THIS EXISTS. Every other eval query in this project is an observation",
+    "note, written by the same person who wrote the finding it is scored",
+    "against. That is honestly held out of the INDEX and not at all held out of",
+    "the AUTHOR, so it cannot measure the thing retrieval exists to solve:",
+    "two people describing one trap in different words. These can.",
+    "",
+    "LABELS ARE JUDGEMENT AND ARE RECORDED AS SUCH. `gold` is the finding the",
+    "querier would have been glad to receive. `null` means nothing in the corpus",
+    "answers it — those are the valuable half, because a retriever is judged as",
+    "much on staying quiet as on hitting.",
+    "",
+    "`repeats` records how many trials produced that query verbatim. Five agents",
+    "independently opening with the same sentence is evidence about the natural",
+    "phrasing of a task, so it is kept rather than averaged away.",
+    "",
+    "One query named a finding by id, which means that agent had already been",
+    "shown it. It is kept, marked contaminated, and excluded from scoring.",
+    "",
+    "Two negatives are marked `arguable` with the reasoning attached. The scorer",
+    "reports the sensitivity band both ways rather than picking the flattering one.",
+    "",
+    "`selfReferential` lists records about this project's own retrieval and",
+    "measurement. They compete in this evaluation and cannot be written out of it:",
+    "cairn-0039 stopped quoting these queries verbatim and still intercepts three,",
+    "because it is ABOUT eval queries and its vocabulary is theirs.",
+    "",
+    "The list is explicit rather than derived. A predicate on subject.name missed",
+    "cairn-0039 entirely — its subject is 'retrieval evaluation', not 'cairn' —",
+    "and reported no effect at all, which is worse than not decomposing.",
+    "Excluding them is never applied; it is printed alongside so the miss can be",
+    "split between the retriever and the ledger discussing itself.",
+    "",
+    "HARVEST 2026-09-01 added eleven distinct queries (thirteen with repeats) from",
+    "four traps that had never been a scenario: cairn-0004, 0009, 0022, 0028.",
+    "Produced by npm run cairn:harvest over research/fixtures/harvest, labelled afterwards.",
+    "",
+    "All eleven are answerable, and that is itself a finding about how agents ask.",
+    "Each trial issued about ONE query, at the start, about the task in front of",
+    "it. The unanswerable queries in the original set were mid-task asides — a",
+    "timezone parse, a NaN comparator — and these agents raised none. Query volume",
+    "and query kind are properties of the task, not of the agent.",
+    "",
+    "HARVEST 2026-09-01b added fifteen UNANSWERABLE queries, which is the half that",
+    "had never been tested on new ground. Four debugging tasks in domains probed",
+    "first and confirmed uncovered — money rounding, retry and backoff, a",
+    "daylight-saving boundary, CSV encoding — each with several sub-problems and a",
+    "planted bug, because an agent that has to form a theory asks asides and asides",
+    "are where unanswerable queries come from. It worked: these tasks produced two",
+    "and three queries per trial where the first harvest produced one, including",
+    "genuine mid-task asides about Retry-After parsing and byte order marks.",
+    "",
+    "None was built around anything in the corpus. Scored before being added here."
+  ],
+  "harvestedAt": "2026-09-01",
+  "queries": [
+    {
+      "q": "ranking findings by staleness / re-verification urgency using halfLifeDays",
+      "gold": "cairn-0019",
+      "repeats": 5,
+      "task": "staleness"
+    },
+    {
+      "q": "exponential decay half-life score sorting, clamping author-declared parameter",
+      "gold": "cairn-0019",
+      "task": "staleness"
+    },
+    {
+      "q": "finding author supplies the field that decides whether their own work gets audited",
+      "gold": "cairn-0019",
+      "task": "staleness"
+    },
+    {
+      "q": "author-supplied field used to decide whether the author's own work gets audited",
+      "gold": "cairn-0019",
+      "task": "staleness"
+    },
+    {
+      "q": "self-reported field determines whether an item is audited; author sets it",
+      "gold": "cairn-0019",
+      "task": "staleness"
+    },
+    {
+      "q": "self-declared halfLifeDays authored by the finding's author controls whether it is re-checked",
+      "gold": "cairn-0019",
+      "task": "staleness"
+    },
+    {
+      "q": "nightly job fetching external URL started failing, cannot reach remote host",
+      "gold": "cairn-0001",
+      "repeats": 2,
+      "task": "reachability"
+    },
+    {
+      "q": "nightly job fetching external URL started failing, determine if remote host is up or down",
+      "gold": "cairn-0001",
+      "task": "reachability"
+    },
+    {
+      "q": "nightly job fetching external URL started failing, cannot reach https://example.com",
+      "gold": "cairn-0001",
+      "task": "reachability"
+    },
+    {
+      "q": "nightly job fetching external URL started failing, curl to https://example.com",
+      "gold": "cairn-0001",
+      "task": "reachability"
+    },
+    {
+      "q": "HTTPS CONNECT tunnel 403 Forbidden from local allowlist proxy for non-allowlisted domain",
+      "gold": "cairn-0001",
+      "task": "reachability"
+    },
+    {
+      "q": "date-only string parsing timezone offset day count off by one",
+      "gold": null,
+      "task": "staleness"
+    },
+    {
+      "q": "parsing YYYY-MM-DD date string day difference off by one UTC local midnight",
+      "gold": null,
+      "task": "staleness"
+    },
+    {
+      "q": "parsing YYYY-MM-DD date strings in node, local timezone vs UTC off-by-one",
+      "gold": null,
+      "task": "staleness"
+    },
+    {
+      "q": "silently skipping malformed records so an item disappears from a queue",
+      "gold": null,
+      "task": "staleness"
+    },
+    {
+      "q": "timestamp supplied in file used to compute elapsed time, future date, clock skew",
+      "gold": null,
+      "task": "staleness",
+      "arguable": true,
+      "why": "Arguable. cairn-0019 is about a value supplied by the party a rule constrains, and a timestamp read from a file is one — but the querier is asking about clock skew and defensive parsing, not about who benefits from lying. Labelled unanswerable; the retriever returned cairn-0005, which is wrong under either reading."
+    },
+    {
+      "q": "exponential decay scoring half-life confidence 0.5^(t/h) ranking pitfalls",
+      "gold": null,
+      "task": "staleness",
+      "arguable": true,
+      "why": "Arguable, and the weaker of my two null labels. The querier asks about pitfalls in half-life scoring and cairn-0019 is precisely a pitfall in half-life scoring. Kept null because the question is about the arithmetic rather than about the field's provenance, but a reader who called this answerable would not be wrong."
+    },
+    {
+      "q": "sort comparator NaN or undefined score silently reorders or drops items",
+      "gold": null,
+      "task": "staleness"
+    },
+    {
+      "q": "exponential decay staleness score sorting, divide by zero, NaN in comparator",
+      "gold": null,
+      "task": "staleness"
+    },
+    {
+      "q": "cairn-0019 rule reads value from the party it constrains, bound externally, derive from something they do not author",
+      "gold": "cairn-0019",
+      "contaminated": true,
+      "task": "staleness"
+    },
+    {
+      "q": "optional fields with defaults in exported config interface TypeScript",
+      "gold": "cairn-0004",
+      "task": "zod-defaults",
+      "harvest": "2026-09-01"
+    },
+    {
+      "q": "adding optional fields with defaults to exported TypeScript config interface",
+      "gold": "cairn-0004",
+      "task": "zod-defaults",
+      "harvest": "2026-09-01"
+    },
+    {
+      "q": "adding default values to exported Config interface / type consumed by callers",
+      "gold": "cairn-0004",
+      "task": "zod-defaults",
+      "harvest": "2026-09-01"
+    },
+    {
+      "q": "persist sidebar collapsed state across page loads localStorage",
+      "gold": "cairn-0009",
+      "task": "sidebar-persist",
+      "harvest": "2026-09-01",
+      "repeats": 3
+    },
+    {
+      "q": "computing correlation between pairs of time series in Node.js",
+      "gold": "cairn-0022",
+      "task": "metric-correlation",
+      "harvest": "2026-09-01"
+    },
+    {
+      "q": "correlation between pairs of time series, flagging strongly related pairs",
+      "gold": "cairn-0022",
+      "task": "metric-correlation",
+      "harvest": "2026-09-01"
+    },
+    {
+      "q": "correlation between pairs of time series metrics, flagging strongly correlated pairs",
+      "gold": "cairn-0022",
+      "task": "metric-correlation",
+      "harvest": "2026-09-01"
+    },
+    {
+      "q": "review gate reporting success on every pull request, not actually reviewing",
+      "gold": "cairn-0028",
+      "task": "review-gate",
+      "harvest": "2026-09-01"
+    },
+    {
+      "q": "review gate always reports success on pull requests",
+      "gold": "cairn-0028",
+      "task": "review-gate",
+      "harvest": "2026-09-01"
+    },
+    {
+      "q": "CI gate empty file selection should fail loudly instead of passing; untracked files copied into worktree not in git diff",
+      "gold": "cairn-0028",
+      "task": "review-gate",
+      "harvest": "2026-09-01"
+    },
+    {
+      "q": "review gate always reports success on every pull request",
+      "gold": "cairn-0028",
+      "task": "review-gate",
+      "harvest": "2026-09-01"
+    },
+    {
+      "q": "invoice total rounding discrepancy with payment processor, per-line rounding to cents",
+      "gold": null,
+      "task": "invoice-rounding",
+      "harvest": "2026-09-01b"
+    },
+    {
+      "q": "invoice total rounding mismatch with payment processor, off by a cent",
+      "gold": null,
+      "task": "invoice-rounding",
+      "harvest": "2026-09-01b"
+    },
+    {
+      "q": "invoice total rounding mismatch with payment processor, cents rounding per line",
+      "gold": null,
+      "task": "invoice-rounding",
+      "harvest": "2026-09-01b"
+    },
+    {
+      "q": "rate limiting 429 retry backoff workers thundering herd",
+      "gold": null,
+      "task": "retry-waves",
+      "harvest": "2026-09-01b"
+    },
+    {
+      "q": "exponential backoff jitter synchronised retries waves of traffic",
+      "gold": null,
+      "task": "retry-waves",
+      "harvest": "2026-09-01b"
+    },
+    {
+      "q": "rate limiting 429 retry workers thundering herd",
+      "gold": null,
+      "task": "retry-waves",
+      "harvest": "2026-09-01b"
+    },
+    {
+      "q": "Retry-After header parsing seconds or HTTP date",
+      "gold": null,
+      "task": "retry-waves",
+      "harvest": "2026-09-01b"
+    },
+    {
+      "q": "rate limiting 429 retry many workers thundering herd",
+      "gold": null,
+      "task": "retry-waves",
+      "harvest": "2026-09-01b"
+    },
+    {
+      "q": "exponential backoff without jitter synchronized retries clients self-synchronise waves",
+      "gold": null,
+      "task": "retry-waves",
+      "harvest": "2026-09-01b"
+    },
+    {
+      "q": "weekly report Monday numbers disagree twice a year",
+      "gold": null,
+      "task": "dst-weeks",
+      "harvest": "2026-09-01b"
+    },
+    {
+      "q": "weekly report Monday numbers disagree twice a year, off by an hour",
+      "gold": null,
+      "task": "dst-weeks",
+      "harvest": "2026-09-01b"
+    },
+    {
+      "q": "CSV import first column strange name duplicate rows",
+      "gold": null,
+      "task": "csv-import",
+      "harvest": "2026-09-01b"
+    },
+    {
+      "q": "CSV import first column strange name",
+      "gold": null,
+      "task": "csv-import",
+      "harvest": "2026-09-01b"
+    },
+    {
+      "q": "UTF-8 BOM in CSV header corrupts first column key name",
+      "gold": null,
+      "task": "csv-import",
+      "harvest": "2026-09-01b"
+    },
+    {
+      "q": "UTF-8 BOM in CSV header leading ﻿ column name",
+      "gold": null,
+      "task": "csv-import",
+      "harvest": "2026-09-01b"
+    }
+  ],
+  "selfReferential": [
+    "cairn-0034",
+    "cairn-0035",
+    "cairn-0037",
+    "cairn-0039"
+  ]
+}

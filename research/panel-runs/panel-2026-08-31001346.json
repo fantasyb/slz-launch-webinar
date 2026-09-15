@@ -1,0 +1,579 @@
+{
+  "runId": "panel-2026-08-31001346",
+  "createdAt": "2026-08-31T00:17:27.117Z",
+  "anchor": "4eb4ea8fe2c9adfcce2dcbd4aec4625e6f6f9a40",
+  "members": [
+    {
+      "label": "claude-opus-5-panel",
+      "provider": "anthropic",
+      "model": "claude-opus-5",
+      "apiKeyEnv": "ANTHROPIC_API_KEY"
+    },
+    {
+      "label": "gpt-5",
+      "provider": "openai",
+      "model": "gpt-5",
+      "apiKeyEnv": "OPENAI_API_KEY"
+    },
+    {
+      "label": "gemini-3-pro",
+      "provider": "google",
+      "model": "gemini-3-pro",
+      "apiKeyEnv": "GOOGLE_API_KEY"
+    },
+    {
+      "label": "grok-4",
+      "provider": "xai",
+      "model": "grok-4",
+      "apiKeyEnv": "XAI_API_KEY"
+    }
+  ],
+  "attempts": [
+    {
+      "member": "claude-opus-5-panel",
+      "provider": "anthropic",
+      "model": "claude-opus-5",
+      "findingId": "cairn-0001",
+      "status": "sealed",
+      "commitment": "982d8b5bc9238fbf776fb7482bbccda1f96e89ed3b364376ee59e18716bcb23b"
+    },
+    {
+      "member": "gpt-5",
+      "provider": "openai",
+      "model": "gpt-5",
+      "findingId": "cairn-0001",
+      "status": "error",
+      "error": "OPENAI_API_KEY is not set"
+    },
+    {
+      "member": "gemini-3-pro",
+      "provider": "google",
+      "model": "gemini-3-pro",
+      "findingId": "cairn-0001",
+      "status": "error",
+      "error": "GOOGLE_API_KEY is not set"
+    },
+    {
+      "member": "grok-4",
+      "provider": "xai",
+      "model": "grok-4",
+      "findingId": "cairn-0001",
+      "status": "error",
+      "error": "XAI_API_KEY is not set"
+    },
+    {
+      "member": "claude-opus-5-panel",
+      "provider": "anthropic",
+      "model": "claude-opus-5",
+      "findingId": "cairn-0002",
+      "status": "sealed",
+      "commitment": "40d216f3986c7ce87ccde7533b02fb20a12883c3aeaf046b2ed6f29ff609112c"
+    },
+    {
+      "member": "gpt-5",
+      "provider": "openai",
+      "model": "gpt-5",
+      "findingId": "cairn-0002",
+      "status": "error",
+      "error": "OPENAI_API_KEY is not set"
+    },
+    {
+      "member": "gemini-3-pro",
+      "provider": "google",
+      "model": "gemini-3-pro",
+      "findingId": "cairn-0002",
+      "status": "error",
+      "error": "GOOGLE_API_KEY is not set"
+    },
+    {
+      "member": "grok-4",
+      "provider": "xai",
+      "model": "grok-4",
+      "findingId": "cairn-0002",
+      "status": "error",
+      "error": "XAI_API_KEY is not set"
+    },
+    {
+      "member": "claude-opus-5-panel",
+      "provider": "anthropic",
+      "model": "claude-opus-5",
+      "findingId": "cairn-0003",
+      "status": "sealed",
+      "commitment": "e85fe370d9ec36781305032de2589b233d27b47842b765048b30cd6234f23ef5"
+    },
+    {
+      "member": "gpt-5",
+      "provider": "openai",
+      "model": "gpt-5",
+      "findingId": "cairn-0003",
+      "status": "error",
+      "error": "OPENAI_API_KEY is not set"
+    },
+    {
+      "member": "gemini-3-pro",
+      "provider": "google",
+      "model": "gemini-3-pro",
+      "findingId": "cairn-0003",
+      "status": "error",
+      "error": "GOOGLE_API_KEY is not set"
+    },
+    {
+      "member": "grok-4",
+      "provider": "xai",
+      "model": "grok-4",
+      "findingId": "cairn-0003",
+      "status": "error",
+      "error": "XAI_API_KEY is not set"
+    },
+    {
+      "member": "claude-opus-5-panel",
+      "provider": "anthropic",
+      "model": "claude-opus-5",
+      "findingId": "cairn-0004",
+      "status": "sealed",
+      "commitment": "9324ae730b8653c44e887ea1c6ce300b2dea8ae2327b38e5ca9dcad128d4d80c"
+    },
+    {
+      "member": "gpt-5",
+      "provider": "openai",
+      "model": "gpt-5",
+      "findingId": "cairn-0004",
+      "status": "error",
+      "error": "OPENAI_API_KEY is not set"
+    },
+    {
+      "member": "gemini-3-pro",
+      "provider": "google",
+      "model": "gemini-3-pro",
+      "findingId": "cairn-0004",
+      "status": "error",
+      "error": "GOOGLE_API_KEY is not set"
+    },
+    {
+      "member": "grok-4",
+      "provider": "xai",
+      "model": "grok-4",
+      "findingId": "cairn-0004",
+      "status": "error",
+      "error": "XAI_API_KEY is not set"
+    },
+    {
+      "member": "claude-opus-5-panel",
+      "provider": "anthropic",
+      "model": "claude-opus-5",
+      "findingId": "cairn-0005",
+      "status": "sealed",
+      "commitment": "3dc3536037966032868faf5149c329c5bb71a23114682d437021943c3dd27e56"
+    },
+    {
+      "member": "gpt-5",
+      "provider": "openai",
+      "model": "gpt-5",
+      "findingId": "cairn-0005",
+      "status": "error",
+      "error": "OPENAI_API_KEY is not set"
+    },
+    {
+      "member": "gemini-3-pro",
+      "provider": "google",
+      "model": "gemini-3-pro",
+      "findingId": "cairn-0005",
+      "status": "error",
+      "error": "GOOGLE_API_KEY is not set"
+    },
+    {
+      "member": "grok-4",
+      "provider": "xai",
+      "model": "grok-4",
+      "findingId": "cairn-0005",
+      "status": "error",
+      "error": "XAI_API_KEY is not set"
+    },
+    {
+      "member": "claude-opus-5-panel",
+      "provider": "anthropic",
+      "model": "claude-opus-5",
+      "findingId": "cairn-0007",
+      "status": "sealed",
+      "commitment": "3fd5177b02e3e815965ff8bf979e3eef6866eb8f2973b84d6fe4b98884282364"
+    },
+    {
+      "member": "gpt-5",
+      "provider": "openai",
+      "model": "gpt-5",
+      "findingId": "cairn-0007",
+      "status": "error",
+      "error": "OPENAI_API_KEY is not set"
+    },
+    {
+      "member": "gemini-3-pro",
+      "provider": "google",
+      "model": "gemini-3-pro",
+      "findingId": "cairn-0007",
+      "status": "error",
+      "error": "GOOGLE_API_KEY is not set"
+    },
+    {
+      "member": "grok-4",
+      "provider": "xai",
+      "model": "grok-4",
+      "findingId": "cairn-0007",
+      "status": "error",
+      "error": "XAI_API_KEY is not set"
+    },
+    {
+      "member": "claude-opus-5-panel",
+      "provider": "anthropic",
+      "model": "claude-opus-5",
+      "findingId": "cairn-0008",
+      "status": "sealed",
+      "commitment": "5caba23bce026da9432671c7d74a07dd21310aefbece70306315f0361638ace2"
+    },
+    {
+      "member": "gpt-5",
+      "provider": "openai",
+      "model": "gpt-5",
+      "findingId": "cairn-0008",
+      "status": "error",
+      "error": "OPENAI_API_KEY is not set"
+    },
+    {
+      "member": "gemini-3-pro",
+      "provider": "google",
+      "model": "gemini-3-pro",
+      "findingId": "cairn-0008",
+      "status": "error",
+      "error": "GOOGLE_API_KEY is not set"
+    },
+    {
+      "member": "grok-4",
+      "provider": "xai",
+      "model": "grok-4",
+      "findingId": "cairn-0008",
+      "status": "error",
+      "error": "XAI_API_KEY is not set"
+    },
+    {
+      "member": "claude-opus-5-panel",
+      "provider": "anthropic",
+      "model": "claude-opus-5",
+      "findingId": "cairn-0011",
+      "status": "sealed",
+      "commitment": "405ac4b68aab06d69ae86c95731306c0284af22a3b2ddc327a26d732afa2236e"
+    },
+    {
+      "member": "gpt-5",
+      "provider": "openai",
+      "model": "gpt-5",
+      "findingId": "cairn-0011",
+      "status": "error",
+      "error": "OPENAI_API_KEY is not set"
+    },
+    {
+      "member": "gemini-3-pro",
+      "provider": "google",
+      "model": "gemini-3-pro",
+      "findingId": "cairn-0011",
+      "status": "error",
+      "error": "GOOGLE_API_KEY is not set"
+    },
+    {
+      "member": "grok-4",
+      "provider": "xai",
+      "model": "grok-4",
+      "findingId": "cairn-0011",
+      "status": "error",
+      "error": "XAI_API_KEY is not set"
+    },
+    {
+      "member": "claude-opus-5-panel",
+      "provider": "anthropic",
+      "model": "claude-opus-5",
+      "findingId": "cairn-0023",
+      "status": "sealed",
+      "commitment": "ea4a25d0f60e461f84d5afc71129efbe5e2ffbc1be29737884138fba9bff755e"
+    },
+    {
+      "member": "gpt-5",
+      "provider": "openai",
+      "model": "gpt-5",
+      "findingId": "cairn-0023",
+      "status": "error",
+      "error": "OPENAI_API_KEY is not set"
+    },
+    {
+      "member": "gemini-3-pro",
+      "provider": "google",
+      "model": "gemini-3-pro",
+      "findingId": "cairn-0023",
+      "status": "error",
+      "error": "GOOGLE_API_KEY is not set"
+    },
+    {
+      "member": "grok-4",
+      "provider": "xai",
+      "model": "grok-4",
+      "findingId": "cairn-0023",
+      "status": "error",
+      "error": "XAI_API_KEY is not set"
+    },
+    {
+      "member": "claude-opus-5-panel",
+      "provider": "anthropic",
+      "model": "claude-opus-5",
+      "findingId": "cairn-0024",
+      "status": "sealed",
+      "commitment": "1d731fc85fa9de2aca4f5efe9e691944855f9529e53e7d09b93c01193c00e3e3"
+    },
+    {
+      "member": "gpt-5",
+      "provider": "openai",
+      "model": "gpt-5",
+      "findingId": "cairn-0024",
+      "status": "error",
+      "error": "OPENAI_API_KEY is not set"
+    },
+    {
+      "member": "gemini-3-pro",
+      "provider": "google",
+      "model": "gemini-3-pro",
+      "findingId": "cairn-0024",
+      "status": "error",
+      "error": "GOOGLE_API_KEY is not set"
+    },
+    {
+      "member": "grok-4",
+      "provider": "xai",
+      "model": "grok-4",
+      "findingId": "cairn-0024",
+      "status": "error",
+      "error": "XAI_API_KEY is not set"
+    },
+    {
+      "member": "claude-opus-5-panel",
+      "provider": "anthropic",
+      "model": "claude-opus-5",
+      "findingId": "cairn-0025",
+      "status": "sealed",
+      "commitment": "ab4c022ceeab67df94550287cc31136b7150de5bf5c4c15d11c220ad641d57d6"
+    },
+    {
+      "member": "gpt-5",
+      "provider": "openai",
+      "model": "gpt-5",
+      "findingId": "cairn-0025",
+      "status": "error",
+      "error": "OPENAI_API_KEY is not set"
+    },
+    {
+      "member": "gemini-3-pro",
+      "provider": "google",
+      "model": "gemini-3-pro",
+      "findingId": "cairn-0025",
+      "status": "error",
+      "error": "GOOGLE_API_KEY is not set"
+    },
+    {
+      "member": "grok-4",
+      "provider": "xai",
+      "model": "grok-4",
+      "findingId": "cairn-0025",
+      "status": "error",
+      "error": "XAI_API_KEY is not set"
+    },
+    {
+      "member": "claude-opus-5-panel",
+      "provider": "anthropic",
+      "model": "claude-opus-5",
+      "findingId": "cairn-0026",
+      "status": "sealed",
+      "commitment": "fec933a51cf9fa8d7da6edefba94c10c8d7f79c823ae8a21424a101ada266b12"
+    },
+    {
+      "member": "gpt-5",
+      "provider": "openai",
+      "model": "gpt-5",
+      "findingId": "cairn-0026",
+      "status": "error",
+      "error": "OPENAI_API_KEY is not set"
+    },
+    {
+      "member": "gemini-3-pro",
+      "provider": "google",
+      "model": "gemini-3-pro",
+      "findingId": "cairn-0026",
+      "status": "error",
+      "error": "GOOGLE_API_KEY is not set"
+    },
+    {
+      "member": "grok-4",
+      "provider": "xai",
+      "model": "grok-4",
+      "findingId": "cairn-0026",
+      "status": "error",
+      "error": "XAI_API_KEY is not set"
+    },
+    {
+      "member": "claude-opus-5-panel",
+      "provider": "anthropic",
+      "model": "claude-opus-5",
+      "findingId": "cairn-0027",
+      "status": "sealed",
+      "commitment": "8957d3fae597703c8d40fb40a3ba3d1f08923211b6123ab51070c17c88881996"
+    },
+    {
+      "member": "gpt-5",
+      "provider": "openai",
+      "model": "gpt-5",
+      "findingId": "cairn-0027",
+      "status": "error",
+      "error": "OPENAI_API_KEY is not set"
+    },
+    {
+      "member": "gemini-3-pro",
+      "provider": "google",
+      "model": "gemini-3-pro",
+      "findingId": "cairn-0027",
+      "status": "error",
+      "error": "GOOGLE_API_KEY is not set"
+    },
+    {
+      "member": "grok-4",
+      "provider": "xai",
+      "model": "grok-4",
+      "findingId": "cairn-0027",
+      "status": "error",
+      "error": "XAI_API_KEY is not set"
+    },
+    {
+      "member": "claude-opus-5-panel",
+      "provider": "anthropic",
+      "model": "claude-opus-5",
+      "findingId": "cairn-0028",
+      "status": "sealed",
+      "commitment": "9bb2c10c539e4b54e7caf15e696845cb8bb204d0e9eb410eebd5b71630d8efa1"
+    },
+    {
+      "member": "gpt-5",
+      "provider": "openai",
+      "model": "gpt-5",
+      "findingId": "cairn-0028",
+      "status": "error",
+      "error": "OPENAI_API_KEY is not set"
+    },
+    {
+      "member": "gemini-3-pro",
+      "provider": "google",
+      "model": "gemini-3-pro",
+      "findingId": "cairn-0028",
+      "status": "error",
+      "error": "GOOGLE_API_KEY is not set"
+    },
+    {
+      "member": "grok-4",
+      "provider": "xai",
+      "model": "grok-4",
+      "findingId": "cairn-0028",
+      "status": "error",
+      "error": "XAI_API_KEY is not set"
+    },
+    {
+      "member": "claude-opus-5-panel",
+      "provider": "anthropic",
+      "model": "claude-opus-5",
+      "findingId": "cairn-0029",
+      "status": "error",
+      "error": "empty response"
+    },
+    {
+      "member": "gpt-5",
+      "provider": "openai",
+      "model": "gpt-5",
+      "findingId": "cairn-0029",
+      "status": "error",
+      "error": "OPENAI_API_KEY is not set"
+    },
+    {
+      "member": "gemini-3-pro",
+      "provider": "google",
+      "model": "gemini-3-pro",
+      "findingId": "cairn-0029",
+      "status": "error",
+      "error": "GOOGLE_API_KEY is not set"
+    },
+    {
+      "member": "grok-4",
+      "provider": "xai",
+      "model": "grok-4",
+      "findingId": "cairn-0029",
+      "status": "error",
+      "error": "XAI_API_KEY is not set"
+    },
+    {
+      "member": "claude-opus-5-panel",
+      "provider": "anthropic",
+      "model": "claude-opus-5",
+      "findingId": "cairn-0030",
+      "status": "error",
+      "error": "empty response"
+    },
+    {
+      "member": "gpt-5",
+      "provider": "openai",
+      "model": "gpt-5",
+      "findingId": "cairn-0030",
+      "status": "error",
+      "error": "OPENAI_API_KEY is not set"
+    },
+    {
+      "member": "gemini-3-pro",
+      "provider": "google",
+      "model": "gemini-3-pro",
+      "findingId": "cairn-0030",
+      "status": "error",
+      "error": "GOOGLE_API_KEY is not set"
+    },
+    {
+      "member": "grok-4",
+      "provider": "xai",
+      "model": "grok-4",
+      "findingId": "cairn-0030",
+      "status": "error",
+      "error": "XAI_API_KEY is not set"
+    },
+    {
+      "member": "claude-opus-5-panel",
+      "provider": "anthropic",
+      "model": "claude-opus-5",
+      "findingId": "cairn-0031",
+      "status": "sealed",
+      "commitment": "1f08582b7b20bdf18d7b5656712ac1add574ded65449740a2a9f6663c09bb9da"
+    },
+    {
+      "member": "gpt-5",
+      "provider": "openai",
+      "model": "gpt-5",
+      "findingId": "cairn-0031",
+      "status": "error",
+      "error": "OPENAI_API_KEY is not set"
+    },
+    {
+      "member": "gemini-3-pro",
+      "provider": "google",
+      "model": "gemini-3-pro",
+      "findingId": "cairn-0031",
+      "status": "error",
+      "error": "GOOGLE_API_KEY is not set"
+    },
+    {
+      "member": "grok-4",
+      "provider": "xai",
+      "model": "grok-4",
+      "findingId": "cairn-0031",
+      "status": "error",
+      "error": "XAI_API_KEY is not set"
+    }
+  ],
+  "batchHash": "2d0b9b62b7f078d5e1257f5838618bffd4476245ffa5453e42833cb0998ca552",
+  "note": "Every (model, finding) pair attempted in this run, including failures. Written before the corpus seals it describes, so an interrupted run leaves a manifest listing forecasts the corpus may not yet carry — never the reverse."
+}

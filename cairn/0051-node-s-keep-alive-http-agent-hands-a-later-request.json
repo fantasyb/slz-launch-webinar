@@ -1,0 +1,56 @@
+{
+  "id": "cairn-0051",
+  "title": "Node's keep-alive http agent reuses a socket the server already closed; the request gets an empty 400 or a reset",
+  "claim": "In a test that drives an HTTP server with node:http through the default global agent (keep-alive by default since Node 19), a request created shortly after an earlier response on the same host has ended can be sent on that earlier response's pooled socket even when the new request carries `Connection: close`; if the server has meanwhile finished with that socket (closed it after a streamed response, or after refusing a request before reading its body), the new request fails with `socket hang up`/ECONNRESET, or is answered by Node's default clientError handler with a bare, body-less `400 Bad Request` — a failure with no relation to the code under test.",
+  "kind": "trap",
+  "subject": {
+    "name": "node:http client (http.globalAgent keep-alive) against a server that closes sockets after streamed or body-unread responses",
+    "ecosystem": "npm",
+    "versions": ">=19"
+  },
+  "scope": "environment-specific",
+  "appliesTo": "Integration tests in this repository that spawn the hosted gateway (`--http`) and hit it with raw node:http from one client process: many requests to one host, some of them SSE streams the gateway ends per request, some refused (401/403/429/503) before their body is read. Any similar harness on Node >= 19 where the client relies on the default agent.",
+  "tags": ["testing", "flake", "node-http", "keep-alive", "http-agent", "proxy", "sse"],
+  "cost": "hours",
+  "expectation": "Setting the `Connection: close` request header makes each test request use its own fresh socket, so a 400 or a reset seen by the test means the gateway misbehaved on that request.",
+  "reality": "The header only tells the agent not to pool the socket AFTER this request; it does not stop the agent from REUSING a socket already in its free pool for this request. A socket freed by an earlier response whose stream the server has ended (the per-request SSE the MCP Streamable HTTP transport closes after the reply) sits in the pool until the client processes the server's FIN; a request created in that window goes out on it, `req.reusedSocket === true`, and comes back as `socket hang up` (ECONNRESET) or as the empty `400 Bad Request` Node's server writes for `HPE_CLOSED_CONNECTION` (data after `Connection: close`). The spurious 'empty 400 on the next init/read' that the enterprise HTTP tests retried around for cairn-0050-style reasons is this, not a gateway defect: with a fresh socket per request it does not occur.",
+  "mechanism": "http.globalAgent has keepAlive:true by default from Node 19. A response ending returns its socket to the agent's free list on the next tick; the server closing that idle socket is only learned when the client's event loop sees the FIN. A ClientRequest created in between is assigned the free socket regardless of its own `Connection: close` header (that header governs what happens after the response, via shouldKeepAlive). The gateway's Streamable HTTP transport ends each POST's SSE stream after the reply and the server closes the connection for `Connection: close` requests and after body-unread refusals, so the pool is full of sockets about to die. Node's default 'clientError' handler answers a parse error on a closing socket with `HTTP/1.1 400 Bad Request` and no body — the empty 400. Note the minimal case does NOT reproduce it: with `Connection: close` on EVERY request the agent never pools, so a repro needs one pooled (header-less) request first — here, the kept-open initialize whose stream the server ended.",
+  "workaround": "Pass `agent: false` on every test request (a fresh non-keep-alive Agent per request, hence a fresh socket), or use one `new http.Agent({ keepAlive: false })` for the harness. Do not retry on the empty 400 without understanding it, and do not treat it as a gateway bug. If a pooled agent is genuinely wanted, honour Node's own guidance: retry a request whose `req.reusedSocket` is true and whose error is ECONNRESET, once, on a fresh socket.",
+  "evidence": [
+    {
+      "command": "npx tsx <scratch>/budget5.mts   # 8 kept-open inits, a burst of tool calls, then one more POST through http.globalAgent",
+      "output": "3-after-flood already-connected socket localPort 52828 reused true\n3-after-flood ERR ECONNRESET socket hang up reused true\n5-again connected localPort 44334\n5-again 503 {\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32001,\"message\":\"gateway busy: too many request bodies in flight; retry later\"}}\n[gateway stderr] TRACE clientError Parse Error: Data after `Connection: close` HPE_CLOSED_CONNECTION (x33)",
+      "note": "The failing request went out on a socket the earlier initialize had used (localPort 52828, reusedSocket true) and got no response; the identical request a moment later, on a fresh socket, was served. The gateway's handler was never invoked for the failed one (a per-request trace showed no entry), which is what ruled the gateway out."
+    },
+    {
+      "command": "node <scratch>/repro-pool.mjs   # every request carries Connection: close",
+      "output": "first (default agent): 429 {\"refused\":true} reused=false\nsecond (default agent): 429 {\"refused\":true} reused=false\nthird (agent:false): 429 {\"refused\":true} reused=false",
+      "note": "The negative case: with Connection: close on every request nothing is ever pooled, so the trap needs at least one pooled request first. Recorded so the next reader does not spend time on this minimal shape."
+    }
+  ],
+  "check": {
+    "command": "node -e 'const fs=require(\"fs\");const p=\"test/helpers/hosted.ts\";if(!fs.existsSync(p)){console.log(\"helper absent: not applicable here\");process.exit(1)}const s=fs.readFileSync(p,\"utf8\");const reqs=(s.match(/http\\.request\\(/g)||[]).length;const fresh=(s.match(/agent:\\s*false/g)||[]).length;const ok=reqs>0&&fresh>=reqs;console.log(ok?`closed: every http.request in the hosted helper uses agent:false (${fresh}/${reqs})`:`open: ${reqs-fresh} of ${reqs} http.request calls in the hosted helper can reuse a pooled keep-alive socket`);process.exit(ok?1:0)'",
+    "confirmedIf": "exit 0: the hosted test helper issues at least one http.request without `agent: false`, so a request can be handed a pooled socket the gateway has already closed and the spurious empty 400 / socket hang up can reproduce under the concurrency harness.",
+    "refutedIf": "exit 1: every http.request in test/helpers/hosted.ts passes `agent: false` (a fresh socket per request), so no test request can go out on a pooled socket; or the helper does not exist here and the check does not apply.",
+    "absentWhen": "every request in the harness carries Connection: close AND no request is ever kept open past its response (nothing is pooled), or the server never closes an idle keep-alive socket while the client still holds it in its pool.",
+    "manual": false
+  },
+  "provenance": "firsthand",
+  "halfLifeDays": 180,
+  "observations": [
+    {
+      "at": "2026-09-07T12:15:28.003Z",
+      "by": "claude-fable-5-1",
+      "verdict": "confirmed",
+      "note": "Hit while building the multi-tenant concurrency harness for the hosted gateway (test/hosted-concurrency.test.ts): a 2 MB POST fired right after a burst of tool calls failed with ECONNRESET in 5 ms and no audit row, while the identical POST issued a moment later was refused correctly (503, audited). Chased it as a gateway bug for a while — instrumented the handler (never invoked for the failed request), then the server's connection/clientError events — before printing req.reusedSocket on the client, which was true, with the local port of an earlier initialize's socket. Passing agent:false in the shared helper removed the failure; the harness then passed 7/7 and the pre-existing enterprise HTTP tests 16/16 without their 0050-style retries firing. The empty-400 retries in the older tests were working around this same mechanism.",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node v22.22.2",
+        "note": "Client and gateway both node v22; gateway is the built launcher bin/cairn-proxy.js in --http mode on 127.0.0.1; client is raw node:http in the test process with the default global agent (keepAlive on)."
+      }
+    }
+  ],
+  "status": "active",
+  "createdAt": "2026-09-07T12:15:28.003Z"
+}

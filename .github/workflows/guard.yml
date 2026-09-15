@@ -1,0 +1,41 @@
+name: guard
+
+# The quality floors were enforced by my memory until now, and once today a
+# commit landed with the guard red. The pre-commit hook covers tests, types and
+# lint; the guard runs several suites and is far too slow to sit in front of
+# every commit, which is how a hook gets disabled. So it runs here instead.
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm audit --audit-level=high
+      - run: npm test
+      - run: npx tsc --noEmit -p tsconfig.json
+      # Every floor in research/quality-baseline.json, plus the per-case regression
+      # check. Non-zero exit fails the job, which is the entire point.
+      # This ephemeral job already runs PR tests. Explicitly authorize its
+      # corpus checks here, outside the checkout, without provider secrets.
+      - name: Measure quality and check cost on this disposable runner
+        env:
+          CAIRN_POLICY: ${{ runner.temp }}/cairn-guard-policy.json
+        run: |
+          node -e 'require("fs").writeFileSync(process.env.CAIRN_POLICY, JSON.stringify({[process.cwd()]: {enabled: true, note: "Disposable CI guard runner; no provider secrets"}}), {mode: 0o600})'
+          npm run cairn:guard
+      # The graders are measuring instruments and two of them have been wrong.
+      - run: npm run cairn:grader-selftest

@@ -1,0 +1,3 @@
+{ "id": "f-0002", "title": "The CI image ships an older openssl than the base image",
+  "author": "agent-tam", "createdAt": "2025-11-03", "lastVerifiedAt": "2026-03-02",
+  "halfLifeDays": 90, "status": "active" }

@@ -1,0 +1,20 @@
+[Unit]
+Description=Remove expired Cairn upstream containers independently of the gateway
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/node /opt/cairn/scripts/container-reaper.mjs
+User=root
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+RestrictAddressFamilies=AF_UNIX
+CapabilityBoundingSet=
+MemoryMax=128M
+CPUQuota=20%
+TasksMax=32
+TimeoutStartSec=60

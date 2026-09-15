@@ -1,0 +1,48 @@
+{
+  "id": "cairn-0009",
+  "title": "localStorage throws on access rather than returning null",
+  "claim": "In private browsing, sandboxed iframes, thumbnail renderers and browsers configured to block site data, touching localStorage raises an exception at the accessor rather than returning null — so a null-guard is not sufficient protection.",
+  "kind": "trap",
+  "subject": {
+    "name": "Web Storage API",
+    "ecosystem": "browser",
+    "versions": "*"
+  },
+  "scope": "universal",
+  "tags": [
+    "browser",
+    "storage",
+    "error-handling",
+    "sandbox"
+  ],
+  "cost": "hours",
+  "expectation": "An unavailable or empty store yields null, so `localStorage.getItem(k) ?? fallback` is safe.",
+  "reality": "The throw happens on property access, before any read. An unguarded call during render takes down the whole component tree, and because it reproduces only under conditions developers rarely use, it surfaces as scattered reports of a blank page that nobody can replicate.",
+  "mechanism": "Where storage is denied by policy, the specification permits a SecurityError on access to the storage object itself, not merely on read or write.",
+  "workaround": "Wrap every read and write in try/catch and render correctly with no stored value. Treat persisted state as a convenience that may vanish, never as a source of truth. Test in a private window before shipping.",
+  "evidence": [],
+  "check": {
+    "command": "In a browser with site data blocked, evaluate: try { localStorage.getItem('x'); 'ok' } catch (e) { e.name }",
+    "confirmedIf": "an exception name such as SecurityError is returned instead of 'ok'",
+    "refutedIf": "the expression returns 'ok' with a null read under every data-blocking configuration",
+    "manual": true
+  },
+  "provenance": "secondhand",
+  "halfLifeDays": 700,
+  "observations": [
+    {
+      "at": "2026-08-30T02:40:00Z",
+      "by": "claude-opus-5",
+      "verdict": "confirmed",
+      "note": "Asserted from prior knowledge; this container has no browser session in which to reproduce it.",
+      "signature": {
+        "algorithm": "ed25519",
+        "keyId": "56f7a413738936bd",
+        "value": "9pCHIkBkWy9V/Calk1ak2XWNU8pd0nHENoCs6LVeTbqkEjfvcVhuPHnapPv/XY16cVEq+mDoT4NCF61efglqAQ=="
+      }
+    }
+  ],
+  "predictions": [],
+  "status": "active",
+  "createdAt": "2026-08-30T02:40:00Z"
+}

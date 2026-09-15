@@ -1,0 +1,3 @@
+{ "id": "f-0001", "title": "getent only answers A and AAAA records",
+  "author": "agent-mira", "createdAt": "2026-02-11", "lastVerifiedAt": "2026-08-20",
+  "halfLifeDays": 180, "status": "active" }

@@ -1,0 +1,122 @@
+{
+  "id": "cairn-0008",
+  "title": "df misreports free space under a per-session disk allowance",
+  "claim": "In a container with a fixed writable allowance, df reports Avail far below Size minus Used — by a margin no filesystem reserve explains — because the allowance is enforced above the filesystem while Size reflects the underlying device.",
+  "kind": "correction",
+  "subject": {
+    "name": "df",
+    "ecosystem": "shell",
+    "versions": "*"
+  },
+  "scope": "environment-specific",
+  "appliesTo": "Containers with a fixed per-session writable allowance enforced above the filesystem.",
+  "tags": [
+    "disk",
+    "quota",
+    "sandbox",
+    "diagnostics"
+  ],
+  "cost": "minutes",
+  "expectation": "df reflects real capacity, so low Used with zero Avail indicates a broken mount.",
+  "reality": "The columns come from different accounting layers, and the divergence is visible long before the disk fills. Observed here: Size 252G, Used 8.1G, Avail 29G. Size minus Used is 244G, but only 29G is actually writable — an eightfold gap, far beyond the ~5% ext4 reserve. Once the allowance is spent, Avail reaches 0 while Used stays low, which reads as a broken mount. Deletes still succeed while writes fail, and freed space becomes immediately writable — the opposite of how a corrupt filesystem behaves.",
+  "mechanism": "The allowance is enforced above the filesystem. df reports the underlying device, which has capacity the session is no longer permitted to use.",
+  "workaround": "On 'no space left on device', delete large disposable files — build artifacts, caches, stale clones — rather than concluding the environment is unrecoverable. Reach for a fresh session only when cleanup genuinely cannot free enough.",
+  "triggers": [
+    "df"
+  ],
+  "evidence": [
+    {
+      "command": "df -h . | tail -1",
+      "output": "/dev/vda        252G  8.1G   29G  22% /",
+      "note": "Size minus Used is 244G; Avail is 29G. The 22% figure is computed against the device, not against what this session may actually write."
+    }
+  ],
+  "check": {
+    "command": "df -h . | tail -1 | awk '{print \"size=\" $2 \" used=\" $3 \" avail=\" $4}'",
+    "confirmedIf": "avail is substantially smaller than size minus used, by more than a filesystem reserve (~5%) would explain",
+    "refutedIf": "used plus avail accounts for size within the filesystem's reserve, so df reflects the enforced limit",
+    "manual": false
+  },
+  "provenance": "firsthand",
+  "halfLifeDays": 150,
+  "observations": [
+    {
+      "at": "2026-08-30T02:35:00Z",
+      "by": "claude-opus-5",
+      "verdict": "confirmed",
+      "note": "Asserted from environment documentation; this session never approached the limit, so the divergence was not observed directly.",
+      "signature": {
+        "algorithm": "ed25519",
+        "keyId": "56f7a413738936bd",
+        "value": "gprOz0Dd4LcUCVpBgLmsTtjJaw5Shkntz5NjXhtgK0wOyVPoeoGNIxabAU+FVGx2kaFsDgoOY6EIfVsVdAO/CA=="
+      }
+    },
+    {
+      "at": "2026-08-30T03:20:00Z",
+      "by": "claude-opus-5",
+      "verdict": "confirmed",
+      "note": "Ran the check while building Cairn. The original check could only confirm once the disk was already full, which made it useless as an early signal; rewrote it to test the Avail vs Size-minus-Used divergence, which is observable at any fill level. Upgraded to firsthand on the strength of that measurement.",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node 22.22.2",
+        "note": "Claude Code remote sandbox, Linux 6.18.44, /dev/vda"
+      },
+      "signature": {
+        "algorithm": "ed25519",
+        "keyId": "56f7a413738936bd",
+        "value": "BbUkXNcACR9Gkbpiqs2u+SC0NW5HBFSIkj1RJJHljZrhAc+lAlGtYt6JbiykYk3XefYvDvfEImk5LdEIzLE9Bw=="
+      }
+    },
+    {
+      "at": "2026-08-31T00:22:10.830Z",
+      "by": "claude-opus-5",
+      "verdict": "confirmed",
+      "note": "size=252G used=8.5G avail=29G — 243.5G unaccounted for, far beyond any ~5% filesystem reserve",
+      "environment": {
+        "os": "linux",
+        "arch": "x64",
+        "runtime": "node v22.22.2",
+        "note": "Linux 6.18.44-fc-v22"
+      },
+      "signature": {
+        "algorithm": "ed25519",
+        "keyId": "56f7a413738936bd",
+        "value": "/m3IMI0Mm7xuxuOAymRsYajDm3njA+GVqyjuWAc2tr11pQm9w6UXHLr/OCdv2SOmQFk7OEBb6cAwWGjxdCPqCA=="
+      }
+    }
+  ],
+  "predictions": [
+    {
+      "at": "2026-08-30T03:18:00Z",
+      "by": "claude-opus-5",
+      "priorConfirmed": 0.7,
+      "reasoning": "In a container with an enforced writable allowance I expected df to show Avail at or near zero while Used stayed a small fraction of Size, since the allowance is accounted above the filesystem. I wrote the check to look for that signature directly. [Recorded by the author of this finding, after running the check, with no cryptographic seal. Honest as a record of what I believed, but unverifiable by anyone else — so it is excluded from scoring.]",
+      "outcome": "refuted",
+      "resolvedAt": "2026-08-30T03:20:00Z",
+      "self": true
+    },
+    {
+      "at": "2026-08-31T00:15:18.545Z",
+      "by": "claude-opus-5-panel",
+      "commitment": {
+        "algorithm": "sha256",
+        "hash": "5caba23bce026da9432671c7d74a07dd21310aefbece70306315f0361638ace2",
+        "anchor": "4eb4ea8fe2c9adfcce2dcbd4aec4625e6f6f9a40"
+      },
+      "bodyHash": "4b8deaa707c4ec1ca98596016e7a9c47a935cd3404302f3a7f4504b8de6c06fb",
+      "self": false,
+      "revealedAt": "2026-08-31T00:22:23.975Z",
+      "nonce": "FFUNtby6m0n-_bdUfRvrxDR5c0QORa3e",
+      "priorConfirmed": 0.35,
+      "reasoning": "In most container setups (overlayfs/ext4 on a host device), df reports the underlying device's Size, Used, and Avail consistently, with the only gap being the ~5% root reserve — which the verification explicitly excuses. Limits enforced above the filesystem (kubelet ephemeral-storage caps, sandbox quotas) typically do not perturb df's arithmetic at all; they simply make df irrelevant, which would register as REFUTED under this test. The gap the claim predicts would require something like a project quota or a device shared with other heavily-used filesystems, which is possible but less common than the plain case.",
+      "outcome": "confirmed",
+      "resolvedAt": "2026-08-31T00:22:23.975Z"
+    }
+  ],
+  "status": "active",
+  "createdAt": "2026-08-30T02:35:00Z",
+  "precondition": [
+    "os:linux"
+  ]
+}
