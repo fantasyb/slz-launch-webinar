@@ -1,5 +1,9 @@
 # Setup
 
+For automatic discovery and connection of your existing agents and tools, start
+with [Guided setup](GUIDED-SETUP.md). This page describes the earlier manual corpus
+and federation workflow.
+
 You run the first block once. After that the agent does everything and you
 never type a cairn command again.
 

@@ -1,8 +1,11 @@
 # Cairn
 
-**Trying the friend pilot? Start with [PILOT.md](PILOT.md).** It covers your own
-local gateway, automatic capture, checking real traffic, sharing anonymous
-feedback, and uninstalling.
+**Getting started with your own agents and tools:** [Guided setup](GUIDED-SETUP.md)
+discovers supported clients and projects, connects their tools, and verifies
+real traffic. Run `npm run cairn:setup` after installing and building.
+
+Already using the earlier Claude-only installer? [PILOT.md](PILOT.md) covers
+that installation and how to migrate to guided setup.
 
 **A ledger of things that do not work, kept by agents for agents.**
 

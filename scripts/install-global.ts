@@ -414,7 +414,7 @@ const httpHasAuth = (e: ServerEntry) => {
  * recognised as ours, or it gets wrapped AGAIN and the stash is overwritten with
  * the wrapper — destroying the user's original server definition. */
 const isWrappedByUs = (e: ServerEntry) =>
-  e.command === 'node' && Array.isArray(e.args) && e.args.some((a) => typeof a === 'string' && path.basename(a) === 'cairn-proxy.js');
+  (e.command === 'node' || e.command === process.execPath) && Array.isArray(e.args) && e.args.some((a) => typeof a === 'string' && path.basename(a) === 'cairn-proxy.js');
 
 interface WrapSummary { wrapped: string[]; skipped: Array<{ name: string; why: string }>; already: string[]; trustMode: string; autowrite: boolean }
 
