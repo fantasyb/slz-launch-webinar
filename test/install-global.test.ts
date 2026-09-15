@@ -18,7 +18,7 @@ const REPO = process.cwd();
 const SCRIPT = path.join(REPO, 'scripts', 'install-global.ts');
 
 function run(home: string, args: string[]): string {
-  return execFileSync('npx', ['tsx', SCRIPT, ...args], {
+  return execFileSync(process.execPath, ['--import', 'tsx', SCRIPT, ...args], {
     env: { ...process.env, HOME: home },
     encoding: 'utf8',
   });
@@ -122,12 +122,12 @@ test('does not wrap url/http servers (they cannot be stdio-wrapped)', () => {
 
 /*
  * The sleep/triage session hooks are GONE (the pipeline admitted 0 of 24 on the
- * pilot and was deleted). Install now wires ONE session hook — a SessionStart
- * readiness probe — adds no SessionEnd hook, leaves the user's own hooks alone,
+ * pilot and was deleted). Install wires readiness and a silent Stop signal,
+ * adds no SessionEnd hook, leaves the user's own hooks alone,
  * and strips the hooks an EARLIER install wired (a settings.json still naming
  * bin/cairn-sleep.js would ENOENT on every session).
  */
-test('install wires only the readiness probe and preserves the existing hooks', () => {
+test('install wires readiness and Stop capture and preserves the existing hooks', () => {
   const f = fixture();
   const out = run(f.home, ['--home', f.corpus]);
   const s = JSON.parse(fs.readFileSync(f.settings, 'utf8'));
@@ -135,6 +135,8 @@ test('install wires only the readiness probe and preserves the existing hooks', 
   const start = s.hooks.SessionStart.map((g: { hooks: { command: string }[] }) => g.hooks[0].command);
   assert.ok(start.some((c: string) => c.includes('cairn-health.js') && c.includes('--hook')), 'SessionStart checks readiness automatically');
   assert.ok(start.some((c: string) => c === 'echo mine'), 'the pre-existing hook survives');
+  const stop = s.hooks.Stop.flatMap((g: { hooks: { command: string }[] }) => g.hooks.map((h) => h.command));
+  assert.equal(stop.filter((c: string) => c.includes('cairn-flush.js')).length, 1, 'one Stop signal is installed');
   assert.ok(!JSON.stringify(s).includes('cairn-sleep.js') && !JSON.stringify(s).includes('cairn-triage-trigger.js'), 'nothing names a deleted bin');
   assert.match(out, /readiness probe/, 'and the install says so');
   assert.equal(s.theme, 'dark', 'unrelated settings survive');
@@ -173,6 +175,7 @@ test('uninstall leaves the user\'s hooks untouched', () => {
   assert.equal(s.hooks.SessionStart.length, 1, 'only the pre-existing hook remains');
   assert.equal(s.hooks.SessionStart[0].hooks[0].command, 'echo mine', 'and it is untouched');
   assert.equal(s.theme, 'dark', 'unrelated settings survive uninstall');
+  assert.ok(!JSON.stringify(s).includes('cairn-flush.js'), 'Stop signal is also removed');
 });
 
 test('install generates the machine a signing identity, once', () => {

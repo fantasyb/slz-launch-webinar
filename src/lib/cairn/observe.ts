@@ -31,7 +31,7 @@ export function who(): { by: string; session: string } {
  * session and reads them from the environment; a hosted gateway serves many
  * from one process, and the environment cannot tell them apart.
  */
-export function observe(query: string, hits: Hit[], source: string, ctx: { by?: string; session?: string } = {}): void {
+export function observe(query: string, hits: Hit[], source: string, ctx: { by?: string; session?: string; call?: RetrievalRecord['call']; matchedBy?: RetrievalRecord['matchedBy'] } = {}): void {
   if (!query.trim()) return;
   /*
    * Measurement runs do not count as usage.
@@ -73,5 +73,6 @@ export function observe(query: string, hits: Hit[], source: string, ctx: { by?: 
   }));
   const outcomes: RetrievalRecord['outcomes'] = {};
   for (const r of returned) outcomes[r.id] = r.rank === 1 ? 'surfaced' : 'served';
-  record({ at: new Date().toISOString(), by, session, query: safeQuery, returned, source, outcomes });
+  record({ at: new Date().toISOString(), by, session, query: safeQuery, returned, source, outcomes,
+    ...(ctx.call ? { call: ctx.call } : {}), ...(ctx.matchedBy ? { matchedBy: ctx.matchedBy } : {}) });
 }

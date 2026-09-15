@@ -1,5 +1,9 @@
 # The gateway
 
+For the supported friend pilot, follow [PILOT.md](PILOT.md). `npm run cairn:pilot`
+reports which user-scoped connections are wrapped and which have carried real
+calls; `--share` produces an optional anonymous summary without uploading it.
+
 Put it between your MCP client and the servers it uses. Every call is
 forwarded and every result returned; the gateway only adds text, labelled,
 from a corpus of findings you keep — and it lets the agent add to that
@@ -359,7 +363,7 @@ collected and did not write. A cold install has no unattended corpus writer.
 **`CAIRN_AUTOWRITE=1` on the door** (`npm run cairn:install -- --autowrite`;
 `--no-autowrite` clears it; the setting survives re-installs): when the task
 ends — stdin closes, the process is signalled, a hosted session closes or is
-reaped idle, or the Stop hook touches `<home>/data/flush-request` — every arc
+reaped idle, or the installed Stop hook updates `<home>/data/flush-signal` — every arc
 goes through the gate in `src/lib/cairn/autowrite.ts` and a passing one is
 written through `recordSubmission` exactly as `cairn_record` would write it,
 authored `cairn-gateway`: `agentRecorded`, private, unsigned, born `aging`,

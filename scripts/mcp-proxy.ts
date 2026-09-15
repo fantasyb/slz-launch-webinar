@@ -695,13 +695,13 @@ function stripSessionToken(value: unknown, nonce: string): unknown {
  * Tagged `mcp-proxy:*` and never `cli:find`, so served annotations can never
  * be mistaken for somebody asking a question.
  */
-function served(session: SessionState, findingId: string, tool: string, surface: string): void {
+function served(session: SessionState, findingId: string, tool: string, surface: string, matchedBy?: 'tool' | 'result-signature'): void {
   try {
     observe(
       `${tool} [${surface}]`,
       [{ finding: { id: findingId }, rank: 1, strength: 'strong' }] as never,
       `mcp-proxy:${surface}`,
-      { by: ledgerBy(session), session: session.id },
+      { by: ledgerBy(session), session: session.id, matchedBy },
     );
   } catch (e) {
     /*
@@ -735,10 +735,10 @@ function annotate(session: SessionState, exposed: string, about: About[], isErro
     if (!shown.has(key)) {
       shown.add(key);
       out += fullNote(f, blockLabel(session));
-      served(session, f.id, exposed, 'result');
+      served(session, f.id, exposed, 'result', f.signature ? 'result-signature' : 'tool');
     } else if (calls % REMIND_EVERY === 0) {
       out += reminderNote(f, blockLabel(session));
-      served(session, f.id, exposed, 'result-reminder');
+      served(session, f.id, exposed, 'result-reminder', f.signature ? 'result-signature' : 'tool');
     }
   }
   /*
@@ -1010,11 +1010,27 @@ async function flushArcs(session: SessionState, why: string): Promise<void> {
 
 /**
  * The Stop hook's trigger: a marker file under the home. The hook cannot
- * speak MCP to a stdio gateway, so it touches this and the next request (or
- * the reaper tick) flushes. Consumed once.
+ * speak MCP to a stdio gateway, so each process observes a persistent generation
+ * on the next request or idle poll. A new process ignores an old generation.
  */
-function flushRequested(): boolean {
+let flushGeneration = '';
+function readFlushGeneration(): string {
   try {
+    const file = homePath('data', 'flush-signal');
+    if (fs.statSync(file).size > 100) return '';
+    return fs.readFileSync(file, 'utf8');
+  } catch { return ''; }
+}
+function flushRequested(): boolean {
+  // Persistent broadcast: every gateway observes the generation independently.
+  // Unlinking one shared marker let the first gateway steal the other signals.
+  const generation = readFlushGeneration();
+  if (generation && generation !== flushGeneration) {
+    flushGeneration = generation;
+    return true;
+  }
+  try {
+    // Compatibility for older, repository-local Stop hooks.
     const marker = homePath(path.join('data', 'flush-request'));
     if (!fs.existsSync(marker)) return false;
     fs.unlinkSync(marker);
@@ -2648,6 +2664,12 @@ async function main() {
       // Reconnect BEFORE deciding permissions/trust, then re-list. The old
       // order authorized cached annotations and only then respawned the server,
       // allowing its replacement to execute once under the old approval.
+      const callId = randomUUID();
+      const callStarted = performance.now();
+      const callMetadata = (status: 'tool-success' | 'tool-error' | 'transport-error' | 'cancelled') => ({
+        id: callId, server: owner!.up.spec.name, tool: owner!.raw,
+        elapsedMs: Math.max(0, Math.round(performance.now() - callStarted)), status,
+      });
       let result: Awaited<ReturnType<Client['callTool']>> | undefined;
       let thrown = false;
       if (!owner.up.alive || owner.up.respawning || owner.client !== owner.up.client) {
@@ -2805,7 +2827,7 @@ async function main() {
         );
       } catch (e) {
         if (extra.signal.aborted) {
-          try { observe(callRecord(req.params.name, args), [], 'mcp-proxy:cancelled', { by: ledgerBy(session), session: session.id }); } catch { /* never fatal */ }
+          try { observe(callRecord(req.params.name, args), [], 'mcp-proxy:cancelled', { by: ledgerBy(session), session: session.id, call: callMetadata('cancelled') }); } catch { /* never fatal */ }
           audit(session, 'error', owner.up.spec.name, owner.raw, 'cancelled by client');
           return textResult(`cairn-proxy: call to "${req.params.name}" was cancelled by the client`, true);
         }
@@ -2865,7 +2887,9 @@ async function main() {
          * are written, because a query's arguments are the least sanitised
          * text an agent produces.
          */
-        observe(callRecord(req.params.name, args), [], isError ? 'mcp-proxy:error' : 'mcp-proxy:call', ctx);
+        observe(callRecord(req.params.name, args), [], isError ? 'mcp-proxy:error' : 'mcp-proxy:call', {
+          ...ctx, call: callMetadata(thrown ? 'transport-error' : isError ? 'tool-error' : 'tool-success'),
+        });
         // The hole → auto-draft loop captures a governed tenant's own call args and
         // upstream output into drafts/ on the operator's disk. That is a personal,
         // single-tenant convenience; on a governed multi-tenant gateway it is a
@@ -3373,6 +3397,7 @@ async function main() {
   if (HTTP_PORT === null) {
     /* ---- stdio: one process, one session ------------------------------ */
     const session = newSession(process.env.CAIRN_SESSION!);
+    flushGeneration = readFlushGeneration();
     session.agent = process.env.CAIRN_AGENT;
     flushers.push(() => flushArcs(session, 'session end'));
     const server = buildServer(session, await instructionsFor(session));
@@ -3380,6 +3405,11 @@ async function main() {
     transport.onclose = () => { void shutdown(); };
     process.stdin.on('end', () => { void shutdown(); });
     await server.connect(transport);
+    // Stop arrives after the last tool call. Poll even while the client is idle;
+    // an unref'd timer cannot keep an abandoned stdio process alive.
+    setInterval(() => {
+      if (!shuttingDown && flushRequested()) void flushArcs(session, 'stop hook');
+    }, 500).unref();
     return;
   }
 

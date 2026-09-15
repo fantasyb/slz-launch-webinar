@@ -166,6 +166,7 @@ test('each launcher launches its own target, and that target exists', () => {
     'cairn-sync.js': 'sync',
     'cairn-record.js': 'record',
     'cairn-status.js': 'status',
+    'cairn-pilot.js': 'pilot',
     'cairn-mcp.js': 'mcp-server',
     'cairn-proxy.js': 'mcp-proxy',
     'cairn-daemon.js': 'daemon',
@@ -184,7 +185,7 @@ test('each launcher launches its own target, and that target exists', () => {
   // be diagnosed without invoking the bundle-or-transpiler fallback itself.
   const health = fs.readFileSync(path.join(process.cwd(), 'bin', 'cairn-health.js'), 'utf8');
   assert.match(health, /require\.main === module/);
-  assert.deepEqual(launchers.sort(), [...Object.keys(expected), 'cairn-health.js'].sort(), 'a new launcher was added without a target here');
+  assert.deepEqual(launchers.sort(), [...Object.keys(expected), 'cairn-health.js', 'cairn-flush.js'].sort(), 'a new launcher was added without a target here');
 });
 
 /**

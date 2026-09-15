@@ -1,5 +1,31 @@
 # Cairn — session handoff & punch-list (2026-09-07)
 
+## Friend pilot readiness (2026-09-15)
+
+`PILOT.md` is the friend-facing path: separate local installs/corpora, Claude Code
+user-scoped MCP servers on macOS/Linux, explicit `--autowrite`, no update daemon
+for fresh pilot installs. `cairn:pilot` distinguishes configuration from observed
+traffic. `--share` prints only anonymous aggregate metadata and uploads nothing.
+
+Fixed the missing installed Stop hook and the single-consumer flush marker:
+`bin/cairn-flush.js` writes an atomic persistent generation. Each stdio gateway
+observes it independently on a 500ms unref'd timer, so an idle client and multiple
+wrapped servers finish capture. Legacy `flush-request` remains supported; the
+repository-local hook uses the new broadcast too. Capture gates, private defaults,
+and the opt-in flag are unchanged.
+
+Gateway ledger rows now optionally carry a unique call ID, server/tool name,
+observed duration and transport/tool status, without arguments or result content.
+Result annotations distinguish a signature match from a broad tool match. The
+pilot summary counts those separately, retains unassigned legacy activity, and
+does not claim final correctness or token savings. No central hub or automatic
+sharing is introduced by this pilot.
+
+`test/pilot.test.ts` runs the real installer twice, launches both installed stdio
+gateways against fixtures, executes the installed Stop command, proves both idle
+gateways write, and checks real activity plus the anonymous report. All corpus
+writes in that proof are under a disposable home.
+
 ## End-of-task auto-write, behind CAIRN_AUTOWRITE=1, default OFF (2026-09-14)
 
 Owner-authorised: the gateway may author findings itself, on ONE path only —
