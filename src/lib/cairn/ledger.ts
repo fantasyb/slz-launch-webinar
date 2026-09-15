@@ -37,6 +37,16 @@ import { homePath } from './home';
 
 export type Outcome = 'served' | 'surfaced' | 'helped' | 'missed' | 'misled';
 
+/** Gateway-observed transport facts. A successful tool result is not a verified
+ * task outcome. No arguments, payloads, credentials or customer records. */
+export interface GatewayCall {
+  id: string;
+  server: string;
+  tool: string;
+  elapsedMs: number;
+  status: 'tool-success' | 'tool-error' | 'transport-error' | 'cancelled';
+}
+
 export interface RetrievalRecord {
   /** RFC3339. */
   at: string;
@@ -81,6 +91,9 @@ export interface RetrievalRecord {
    * it should know which half is which.
    */
   reconstructed?: boolean;
+  call?: GatewayCall;
+  /** Why a result annotation was emitted; absent on historical rows. */
+  matchedBy?: 'tool' | 'result-signature';
 }
 
 /*

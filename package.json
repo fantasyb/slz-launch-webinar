@@ -68,6 +68,7 @@
     "cairn:proxy": "tsx scripts/mcp-proxy.ts",
     "cairn:gateway-trial": "tsx scripts/gateway-trial.ts",
     "cairn:report": "tsx scripts/report.ts",
+    "cairn:pilot": "node bin/cairn-pilot.js",
     "cairn:conform": "tsx scripts/conform.ts",
     "cairn:spec": "tsx scripts/spec.ts",
     "cairn:gateway-smoke": "tsx scripts/gateway-smoke.ts",

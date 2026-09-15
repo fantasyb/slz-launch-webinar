@@ -14,7 +14,7 @@ test('readiness probes the real server without claiming containment or running c
     command: process.execPath, args: [path.join(process.cwd(), 'bin/cairn-mcp.js')], env: { CAIRN_HOME: home },
   } } }));
   const result = await health({ root: process.cwd(), home, config });
-  assert.deepEqual(result, { ready: true, containment: 'not-verified-by-this-check', issues: [] });
+  assert.deepEqual(result, { ready: true, gatewayReady: false, containment: 'not-verified-by-this-check', issues: [], gateways: [] });
   assert.equal(execFileSync(process.execPath, ['bin/cairn-health.js', '--hook', '--home', home, '--claude-json', config], { encoding: 'utf8' }), '', 'healthy automatic check is silent');
   fs.writeFileSync(config, JSON.stringify({ mcpServers: { cairn: {
     command: '/untrusted/other-program', args: [path.join(process.cwd(), 'bin/cairn-mcp.js')], env: { CAIRN_HOME: home },

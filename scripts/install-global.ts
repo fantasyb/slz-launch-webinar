@@ -156,6 +156,7 @@ function defaultLabel(): string {
 const REPO = path.resolve(__dirname, '..');
 const SERVER_BIN = path.join(REPO, 'bin', 'cairn-mcp.js');
 const HEALTH_BIN = path.join(REPO, 'bin', 'cairn-health.js');
+const FLUSH_BIN = path.join(REPO, 'bin', 'cairn-flush.js');
 const PROXY_BIN = path.join(REPO, 'bin', 'cairn-proxy.js');
 const DAEMON_BIN = path.join(REPO, 'bin', 'cairn-daemon.js');
 
@@ -537,7 +538,7 @@ interface HookGroup {
  * Ownership is by command substring, so uninstall and re-upsert touch only
  * groups whose inner command names one of these and leave every other hook the
  * user has untouched. */
-const OUR_BINS = ['cairn-sleep.js', 'cairn-triage-trigger.js', 'cairn-health.js'];
+const OUR_BINS = ['cairn-sleep.js', 'cairn-triage-trigger.js', 'cairn-health.js', 'cairn-flush.js'];
 const ownedCommand = (h: HookEntry) => typeof h.command === 'string' && OUR_BINS.some((b) => (h.command as string).includes(b));
 const isOurs = (g: HookGroup) => Array.isArray(g.hooks) && g.hooks.some(ownedCommand);
 
@@ -546,12 +547,12 @@ const isOurs = (g: HookGroup) => Array.isArray(g.hooks) && g.hooks.some(ownedCom
  *  session hook (and `$`/backticks in a path would expand). */
 const shq = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
 
-/** The only hook we install now: a readiness probe at session start. The old
- *  sleep/surface/triage hooks are gone — capture is in-session — and any leftover
- *  hook naming a deleted bin is stripped by the same upsert (see OUR_BINS). */
+/** Readiness at session start; a silent completion signal at Stop. The signal
+ * does not enable automatic writing: each gateway still checks its own flag. */
 function desiredHooks(home: string): Array<{ event: string; command: string }> {
   return [
     { event: 'SessionStart', command: `${shq(process.execPath)} ${shq(HEALTH_BIN)} --hook --home ${shq(home)} --claude-json ${shq(expand(opt('claude-json') ?? path.join(HOME, '.claude.json')))}` },
+    { event: 'Stop', command: `${shq(process.execPath)} ${shq(FLUSH_BIN)} --home ${shq(home)}` },
   ];
 }
 
@@ -903,9 +904,9 @@ function main() {
   console.log(`             CAIRN_HOME=${home}`);
   /* Install the SessionStart readiness probe. The same upsert strips any leftover
    * sleep/triage hooks an earlier version wired (they name deleted bins), so a
-   * settings.json does not error on session open. Capture itself is in-session. */
+   * settings.json does not error on session open. Stop signals capture flushes. */
   const h = upsertHooks(settingsJson, home);
-  console.log(`  ${h.padEnd(9)}  SessionStart readiness probe (leftover sleep/triage hooks stripped) in ${settingsJson}`);
+  console.log(`  ${h.padEnd(9)}  SessionStart readiness probe and silent Stop capture signal (leftover sleep/triage hooks stripped) in ${settingsJson}`);
 
   /* Always-on: the daemon verifies the audit chain and keeps the code current
    * on a timer, forever. macOS registers it under launchd here; --no-daemon opts out. */
@@ -971,6 +972,7 @@ function main() {
   console.log('  · Pure Bash/CLI work with no MCP server is not covered here; that is the');
   console.log('    opt-in PostToolUse hook.');
   console.log('\nUndo any time: npm run cairn:install -- --uninstall  (restores every wrapped server)');
+  console.log('Check real gateway activity: npm run cairn:pilot');
   console.log('Restart your Claude session for the new server to load.\n');
 }
 

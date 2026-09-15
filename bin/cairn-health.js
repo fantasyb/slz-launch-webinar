@@ -5,6 +5,45 @@ const path = require('node:path');
 const os = require('node:os');
 const { spawn } = require('node:child_process');
 
+function readConfig(config) {
+  if (fs.statSync(config).size > 4 * 1024 * 1024) throw new Error('oversized');
+  const parsed = JSON.parse(fs.readFileSync(config, 'utf8'));
+  if (!parsed?.mcpServers || typeof parsed.mcpServers !== 'object' || Array.isArray(parsed.mcpServers)) throw new Error('missing servers');
+  return parsed.mcpServers;
+}
+
+function configuredHome(config) {
+  try {
+    const home = readConfig(config).cairn?.env?.CAIRN_HOME;
+    return typeof home === 'string' && path.isAbsolute(home) ? home : undefined;
+  } catch { return undefined; }
+}
+
+/** Inspect registration only. Never launch an upstream or print its credentials. */
+function gatewaySetup({ root, home, config }) {
+  let entries;
+  try { entries = readConfig(config); } catch { return []; }
+  return Object.entries(entries).filter(([name]) => name !== 'cairn').map(([name, entry]) => {
+    const args = Array.isArray(entry?.args) ? entry.args : [];
+    const wrapped = args.some((a) => typeof a === 'string' && path.basename(a) === 'cairn-proxy.js');
+    if (!wrapped) return { name, state: 'direct', reason: typeof entry?.url === 'string' ? 'http-not-wrapped' : 'not-wrapped', autowrite: false };
+    const base = { name, state: 'broken', reason: 'gateway-registration', autowrite: entry?.env?.CAIRN_AUTOWRITE === '1' };
+    if (!['node', process.execPath].includes(entry?.command) || args[0] !== path.join(root, 'bin', 'cairn-proxy.js') || entry?.env?.CAIRN_HOME !== home) return base;
+    const i = args.indexOf('--config');
+    const stash = args[i + 1];
+    if (i < 0 || typeof stash !== 'string' || !home || path.resolve(stash) !== path.join(path.resolve(home), 'wrapped', `${name}.json`)) return base;
+    try {
+      const st = fs.statSync(stash);
+      if (!st.isFile() || st.size > 4 * 1024 * 1024) return { ...base, reason: 'stash-unreadable' };
+      const original = readConfig(stash)[name];
+      if (!original || (typeof original.command !== 'string' && typeof original.url !== 'string')) return { ...base, reason: 'stash-unreadable' };
+      if (process.platform !== 'win32' && (st.mode & 0o077)) return { ...base, reason: 'stash-permissions' };
+      if (!fs.existsSync(path.join(root, 'dist', 'cli', 'mcp-proxy.js'))) return { ...base, reason: 'gateway-build-missing' };
+      return { ...base, state: 'wrapped', reason: 'configured' };
+    } catch { return { ...base, reason: 'stash-unreadable' }; }
+  });
+}
+
 function probe(server, home, timeoutMs = 3000) {
   return new Promise((resolve) => {
     let child, done = false, bytes = 0, pending = '';
@@ -55,9 +94,7 @@ function probe(server, home, timeoutMs = 3000) {
 async function health({ root, home, config }) {
   const issues = [];
   try {
-    const stat = fs.statSync(config);
-    if (stat.size > 4 * 1024 * 1024) throw new Error('oversized');
-    const server = JSON.parse(fs.readFileSync(config, 'utf8')).mcpServers?.cairn;
+    const server = readConfig(config).cairn;
     if (!server || !['node', process.execPath].includes(server.command)
       || !Array.isArray(server.args) || server.args.length !== 1
       || server.args[0] !== path.join(root, 'bin', 'cairn-mcp.js')
@@ -68,7 +105,10 @@ async function health({ root, home, config }) {
   const server = path.join(root, 'dist', 'cli', 'mcp-server.js');
   if (!fs.existsSync(server)) issues.push('The Cairn build is missing; rebuild the approved checkout.');
   if (!issues.length && !await probe(server, home)) issues.push('Cairn did not answer its bounded startup probe; check its installation.');
-  return { ready: issues.length === 0, containment: 'not-verified-by-this-check', issues };
+  const gateways = gatewaySetup({ root, home, config });
+  const ready = issues.length === 0;
+  return { ready, gatewayReady: ready && gateways.some((g) => g.state === 'wrapped') && !gateways.some((g) => g.state === 'broken'),
+    containment: 'not-verified-by-this-check', issues, gateways };
 }
 
 async function main() {
@@ -76,13 +116,15 @@ async function main() {
   const value = (flag, fallback) => { const i = args.indexOf(flag); return i < 0 ? fallback : args[i + 1]; };
   let result;
   try {
-    result = await health({ root: path.resolve(__dirname, '..'), home: value('--home', process.env.CAIRN_HOME),
-      config: value('--claude-json', path.join(os.homedir(), '.claude.json')) });
+    const config = value('--claude-json', path.join(os.homedir(), '.claude.json'));
+    result = await health({ root: path.resolve(__dirname, '..'), home: value('--home', process.env.CAIRN_HOME || configuredHome(config)), config });
   } catch { result = { ready: false, containment: 'not-verified-by-this-check', issues: ['Cairn setup could not be verified.'] }; }
   if (args.includes('--json')) console.log(JSON.stringify(result));
   else if (!result.ready) console.log('Cairn needs attention: ' + result.issues.join(' '));
+  else if (result.gateways?.some((g) => g.state === 'broken')) console.log('Cairn gateway setup needs attention. Run npm run cairn:pilot in the Cairn checkout.');
+  else if (!args.includes('--hook')) console.log(result.gatewayReady ? 'Cairn is configured. Run npm run cairn:pilot to check real traffic.' : 'Cairn tools are available, but no gateway is configured. Run npm run cairn:pilot.');
   // An unavailable memory service must not prevent opening Claude Code.
   if (!args.includes('--hook') && !result.ready) process.exitCode = 1;
 }
-module.exports = { probe, health };
+module.exports = { probe, health, gatewaySetup, configuredHome };
 if (require.main === module) main();

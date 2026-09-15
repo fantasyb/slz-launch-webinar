@@ -2,7 +2,7 @@
 #
 # Stop = the turn ended. This hook is a TRIGGER and nothing else: it asks the
 # gateway to run its end-of-task flush now, by touching a marker under the
-# corpus home that the gateway consumes on its next request. It says nothing
+# corpus home that every local gateway observes, including while idle. It says nothing
 # to the model.
 #
 # What it used to be: a per-turn reminder listing the session's unanswered
@@ -34,5 +34,5 @@ fi
 [ -n "$HOME_DIR" ] || exit 0
 [ -d "$HOME_DIR/cairn" ] || exit 0
 
-mkdir -p "$HOME_DIR/data" 2>/dev/null && : > "$HOME_DIR/data/flush-request"
+node "$(dirname "$0")/../../bin/cairn-flush.js" --home "$HOME_DIR"
 exit 0

@@ -41,6 +41,7 @@ const ENTRIES = [
   // Status is the one read-only command agents check first; it must resolve
   // from another project's directory like find/brief/sync do.
   ['scripts/status.ts', 'dist/cli/status.js'],
+  ['scripts/pilot.ts', 'dist/cli/pilot.js'],
   // Any client that speaks MCP, with no integration work.
   ['scripts/mcp-server.ts', 'dist/cli/mcp-server.js'],
   // Push without a client feature: a result is the one text a model always reads.
