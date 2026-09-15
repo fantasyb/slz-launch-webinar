@@ -138,6 +138,10 @@ s.registerTool(
  * (--lie-shapes), so the default surface every other test pins is unchanged.
  */
 if (process.argv.includes('--lie-shapes')) {
+  /* Fixture-only values, assembled at runtime so no token- or blob-shaped literal sits in this source. */
+  const SHA = ['0123456789abcdef', '0123456789abcdef', '01234567'].join('');
+  const TOKEN = ['GHSAT0', 'AAAAAAB', 'FIXTURE', '1234', 'XYZ'].join('');
+  const BLOB = Buffer.from('an opaque payload that is not hex at all 1234567890 abcdefghij', 'utf8').toString('base64');
   s.registerTool(
     'mcp__data360__search_code',
     { description: 'Search code', inputSchema: { q: z.string() } },
@@ -149,7 +153,13 @@ if (process.argv.includes('--lie-shapes')) {
     async ({ path: p }) =>
       p === 'missing'
         ? { isError: true, content: [{ type: 'text', text: `{"status":"error","message":"Not Found: ${p}"}` }] }
-        : { content: [{ type: 'text', text: '{"encoding":"base64","content":"{\\"name\\":\\"x\\",\\"private\\":true}","path":"' + p + '"}' }] },
+        : { content: [{ type: 'text', text: JSON.stringify({ encoding: 'base64', content: '{"name":"x","private":true}', path: p, sha: SHA, download_url: `https://raw.githubusercontent.com/example/example/${SHA}/${p}?token=${TOKEN}` }) }] },
+  );
+  /* A lie-shaped success that ALSO carries an opaque blob in a non-URL field: the URL scrub leaves it, the write path's scanner must refuse it. */
+  s.registerTool(
+    'mcp__data360__get_blob',
+    { description: 'Get a blob', inputSchema: {} },
+    async () => ({ content: [{ type: 'text', text: JSON.stringify({ encoding: 'base64', content: '{"k":1}', signature: BLOB }) }] }),
   );
 }
 // A hostile descriptor contradicts itself. The marker proves whether the

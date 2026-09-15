@@ -26,7 +26,8 @@ import { spawn, type ChildProcess } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { autowriteEnabled, lieShape, gate, fill, arcKey, type PendingArc } from '../src/lib/cairn/autowrite';
+import { autowriteEnabled, lieShape, gate, fill, arcKey, scrubUrls, type PendingArc } from '../src/lib/cairn/autowrite';
+import { scanSensitive, draftSurface } from '../src/lib/cairn/safety';
 import { DERIVABLE, readsAsProse, SubmissionSchema } from '../src/lib/cairn/submission';
 import { loadCorpus } from '../src/lib/cairn/load';
 import { FindingSchema } from '../src/lib/cairn/schema';
@@ -125,6 +126,41 @@ test('the machine fill leaves nothing blank, avoids the reflex wording the write
   assert.ok(!(hostile.evidence as Array<{ output: string }>)[0].output.includes('from your Cairn corpus, not from this tool'), 'and in the evidence');
 });
 
+test('reject reasons: a wrong-path not-found logs fishing even when the gateway wrapped it; a true transient still logs transient; nothing passes', () => {
+  const corpus = loadCorpus();
+  const wrappedNotFound = 'cairn-proxy: call to "get_file_contents" failed: MCP error -32000: Not Found: src/missing.ts';
+  const fish = gate(recovered('mcp__github__get_file_contents', call({ owner: 'o', repo: 'r', path: 'src/missing.ts' }, wrappedNotFound), call({ owner: 'o', repo: 'r', path: 'src/index.ts' }, 'ok'), ['path']), corpus);
+  assert.equal(fish.verdict, 'reject');
+  assert.match(fish.reason, /^fishing/, `a proxy-wrapped not-found with only the path changed is fishing, not transient: ${fish.reason}`);
+  const closedNotFound = gate(recovered('t', call({ path: 'a' }, '{"status":"error","message":"Not Found: a"}\nConnection closed'), call({ path: 'b' }, 'ok'), ['path']), corpus);
+  assert.match(closedNotFound.reason, /^fishing/, 'fishing wins when both match');
+  const transient = gate(recovered('mcp__github__get_file_contents', call({ path: 'a' }, 'cairn-proxy: call to "get_file_contents" failed: HTTP 503 Service Unavailable'), call({ path: 'a' }, 'ok'), []), corpus);
+  assert.match(transient.reason, /^transient or outage/, 'unchanged arguments and an outage text is still transient');
+  const notFoundSameArgs = gate(recovered('t', call({ path: 'a' }, '404 Not Found'), call({ path: 'a' }, 'ok'), []), corpus);
+  assert.equal(notFoundSameArgs.verdict, 'reject');
+  assert.doesNotMatch(notFoundSameArgs.reason, /^fishing/, 'a not-found that then succeeded with the SAME arguments is not fishing');
+  for (const v of [fish, closedNotFound, transient, notFoundSameArgs]) assert.equal(v.verdict, 'reject', 'recovered arcs never pass');
+});
+
+test('the machine fill scrubs download URLs, query tokens and blob SHAs so a base64 lie-shape finding is scan-clean; a secret elsewhere is still flagged for the write path to refuse', () => {
+  const sha = ['0123456789abcdef', '0123456789abcdef', '01234567'].join('');
+  const token = ['GHSAT0', 'AAAAAAB', 'FIXTURE', '1234', 'XYZ'].join('');
+  const output = JSON.stringify({ encoding: 'base64', content: '{"name":"x"}', sha, download_url: `https://raw.githubusercontent.com/o/r/${sha}/package.json?token=${token}`, html_url: `https://github.com/o/r/blob/${sha}/package.json` });
+  assert.equal(lieShape(output), 'base64-decoded');
+  const sub = fill({ kind: 'lie-shape', key: 'k', tool: 'mcp__github__get_file_contents', at: 'now', shape: 'base64-decoded', call: call({ path: 'package.json' }, output) });
+  const surface = draftSurface(sub);
+  assert.ok(!surface.includes(token), 'the token is gone');
+  assert.ok(!/[?&]token=/.test(surface), 'no token parameter survives');
+  assert.ok(!surface.includes(sha), 'the blob SHA in the URL is gone');
+  assert.match(surface, /\?<redacted-query>/, 'the query string is replaced, not the URL');
+  assert.deepEqual(scanSensitive(surface), [], `scan-clean: ${JSON.stringify(scanSensitive(surface))}`);
+  assert.equal(scrubUrls('see https://x.test/a/b?sig=abc123&se=2026 and ?token=zzz'), 'see https://x.test/a/b?<redacted-query> and ?<redacted>'.replace('?<redacted>', '?token=<redacted>'));
+  /* Defense in depth: a blob in a non-URL field survives the scrub and the scanner flags it — the write path refuses on any flag. */
+  const blob = Buffer.from('an opaque payload that is not hex at all 1234567890 abcdefghij', 'utf8').toString('base64');
+  const withBlob = fill({ kind: 'lie-shape', key: 'k2', tool: 't', at: 'now', shape: 'base64-decoded', call: call({}, JSON.stringify({ encoding: 'base64', content: '{"k":1}', signature: blob })) });
+  assert.ok(scanSensitive(draftSurface(withBlob)).some((f) => f.pattern === 'opaque-blob'), 'still flagged after the scrub');
+});
+
 /* ---- integration ------------------------------------------------------- */
 
 type Msg = { id?: number; result?: unknown; error?: unknown; method?: string };
@@ -199,6 +235,7 @@ async function burn(g: Gateway): Promise<void> {
     await g.call('mcp__data360__get_file_contents', { path: 'package.json' }),
     await g.call('mcp__data360__unrelated'),
     await g.call('mcp__data360__unrelated'),
+    await g.call('mcp__data360__get_blob'),
   ];
   assert.equal(results[1].isError, true, 'the fish: not found first');
   assert.ok(!results[2].isError, 'then found on another path');
@@ -232,9 +269,19 @@ test('flag ON: a task ends and gate-passing findings are written by the gateway 
     assert.ok(f.check.manual, 'a prose check: never executed');
     assert.ok(!/TODO|^$/.test(f.claim) && f.claim.length >= 40);
   }
+  /* The base64 lie landed scan-clean: the fixture's download_url carried a token and a blob SHA, neither is in the finding. */
+  const b64 = written.find((f) => f.triggers?.[0] === 'mcp__data360__get_file_contents')!;
+  const b64Text = JSON.stringify(b64);
+  assert.ok(!/[?&]token=/.test(b64Text) && !b64Text.includes('GHSAT0'), 'no token in the landed finding');
+  assert.ok(!b64Text.includes('0123456789abcdef0123456789abcdef01234567'), 'no blob SHA in the landed finding');
+  assert.match(b64Text, /<redacted-query>/, 'the URL is kept, its query is not');
   const rows = ledgerOf(h);
   assert.equal(rows.filter((r) => r.source === 'mcp-proxy:record').length, 0, 'ZERO cairn_record calls: no model recorded anything');
   assert.equal(rows.filter((r) => r.source === 'mcp-proxy:autowrite').length, 2);
+  /* The opaque-blob lie gate-passed and was REFUSED by the write path's scanner: the backstop still stands. */
+  const refused = rows.filter((r) => r.source === 'mcp-proxy:autowrite-refused').map((r) => r.query);
+  assert.ok(refused.some((q) => /get_blob/.test(q) && /opaque-blob|must not be committed|Refused/.test(q)), `the blob-carrying lie is refused by the scanner, not written: ${refused.join(' | ')}`);
+  assert.ok(!written.some((f) => f.triggers?.[0] === 'mcp__data360__get_blob'), 'and no finding for it exists');
   const rejected = rows.filter((r) => r.source === 'mcp-proxy:autowrite-rejected').map((r) => r.query);
   assert.ok(rejected.some((q) => /unrelated/.test(q) && /transient or outage/.test(q)), `the crash-then-recover arc is refused as transient: ${rejected.join(' | ')}`);
   assert.ok(rejected.some((q) => /get_file_contents/.test(q) && /fishing/.test(q)), `the not-found→other-path arc is refused as fishing: ${rejected.join(' | ')}`);

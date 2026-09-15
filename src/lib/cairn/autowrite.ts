@@ -134,8 +134,17 @@ export function gate(arc: PendingArc, corpus: Finding[]): Verdict {
   const active = corpus.filter((f) => f.status === 'active');
   if (arc.kind === 'recovered') {
     const out = arc.failing.output;
-    if (THROWN_PREFIX.test(out) || TRANSIENT.test(out)) return { verdict: 'reject', reason: 'transient or outage: an outage that clears is not a trap' };
+    /*
+     * Fishing is decided FIRST. A not-found that the gateway itself wrapped
+     * ("cairn-proxy: call to … failed: … Not Found") also matches the thrown
+     * prefix, and on the crew's live corpus a wrong-path arc was logged as
+     * transient for that reason. Both reject; the reason is what a person
+     * reads in the ledger, so it names the shape that actually happened. A
+     * true transient has no where-key change (usually no change at all) and
+     * still lands on the transient branch.
+     */
     if (NOT_FOUND.test(out) && arc.differed.length > 0 && arc.differed.every((k) => WHERE_KEYS.test(k))) return { verdict: 'reject', reason: `fishing: a not-found that a different ${arc.differed.join('/')} resolved` };
+    if (THROWN_PREFIX.test(out) || TRANSIENT.test(out)) return { verdict: 'reject', reason: 'transient or outage: an outage that clears is not a trap' };
     return { verdict: 'reject', reason: 'a fail-then-succeed with changed arguments is as likely the caller\'s own input error as a trap; not auto-written' };
   }
   if (arc.kind === 'contradiction') {
@@ -152,7 +161,30 @@ export function gate(arc: PendingArc, corpus: Finding[]): Verdict {
 /* ---- machine fill ------------------------------------------------------- */
 
 const cmd = (tool: string, args: Record<string, unknown>) => `${tool} ${clip(JSON.stringify(args), 2000)}`;
-const out = (text: string) => clip(defangUpstream(text), 2000);
+
+/*
+ * URL and token shapes that ride in a contents-style result: a download_url
+ * with a signed query (`?token=…`, SAS/S3 signatures), a bare `?token=` /
+ * `&token=` parameter, and long blob/raw SHAs in a URL path. On the crew's
+ * live corpus a genuine base64 lie-shape finding gate-passed and was then
+ * REFUSED by the write path's secret scanner because the machine-filled
+ * evidence carried exactly these. Scrubbed here, so the finding lands with no
+ * token in it. Deliberately narrow: this is NOT the safety net. The write
+ * path still scans the whole submission (recordSubmission → scanSensitive)
+ * and refuses anything that survives — a secret in a result body, an opaque
+ * blob in a field — so a secret never reaches cairn/. Both halves are pinned.
+ */
+const URL_QUERY = /(https?:\/\/[^\s"'<>?]+)\?[^\s"'<>]*/g;
+const TOKEN_PARAM = /([?&](?:token|access_token|auth|key|api_key|apikey|sig|signature|X-Amz-[A-Za-z-]+|se|sv|sp|sr|st|sas)=)[^&\s"'<>]+/gi;
+const SHA_IN_URL = /(https?:\/\/[^\s"'<>]*?\/)([0-9a-f]{32,})(?=[/?"'\s<>]|$)/gi;
+/* A bare git object SHA (a `sha` field beside the URL). Not a secret — hex never
+ * trips the scanner — but it identifies a private repo's blob and adds nothing
+ * to a finding about the tool's behaviour. */
+const BARE_SHA = /\b[0-9a-f]{40}\b/g;
+export function scrubUrls(text: string): string {
+  return text.replace(URL_QUERY, '$1?<redacted-query>').replace(TOKEN_PARAM, '$1<redacted>').replace(SHA_IN_URL, '$1<sha>').replace(BARE_SHA, '<sha>');
+}
+const out = (text: string) => clip(scrubUrls(defangUpstream(text)), 2000);
 const bare = (tool: string) => tool.replace(/^mcp__[^_]+(?:_[^_]+)*__/, '');
 
 /**
