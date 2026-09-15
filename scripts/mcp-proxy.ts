@@ -1,3 +1,4 @@
+import { LocalOAuthProvider, oauthFetch } from '../src/lib/cairn/oauth';
 /**
  * Cairn as a gateway: findings ride back on the results they are about, and
  * ride ahead on the descriptions of the tools they are about.
@@ -100,6 +101,8 @@ import { standing } from '../src/lib/cairn/decay';
 /* ------------------------------------------------------------------------ */
 
 interface UpstreamSpec {
+  /** Only set by a single local guided route; never inherited by hosted tenants. */
+  oauthFile?: string;
   supervisorWorkload?: string;
   isolation?: ContainerPolicy;
   name: string;
@@ -108,8 +111,7 @@ interface UpstreamSpec {
   args?: string[];
   env?: Record<string, string>;
   /** An HTTP upstream: the URL to dial. Auth rides in `headers` (a bearer token
-   * or API key); OAuth-redirect servers need an authProvider and are not yet
-   * wrapped — see spawn(). Mutually exclusive with `command`. */
+   * or API key); guided local OAuth uses a URL-bound provider. Mutually exclusive with `command`. */
   url?: string;
   headers?: Record<string, string>;
   /** Which HTTP transport: Streamable HTTP (default) or the legacy SSE. */
@@ -177,7 +179,7 @@ function parseArgs(argv: string[]): UpstreamSpec[] {
       }
     }
     if (route.includes('--stdio-command')) return [{ name, command: take('--stdio-command'), args: end < 0 ? [] : argv.slice(end + 1), env }];
-    return [{ name, url: take('--http-upstream'), headers, transport: route.includes('--upstream-sse') ? 'sse' : 'http' }];
+    return [{ name, url: take('--http-upstream'), headers, oauthFile: process.env.CAIRN_OAUTH_FILE, transport: route.includes('--upstream-sse') ? 'sse' : 'http' }];
   }
   const specs: UpstreamSpec[] = [];
   for (let i = 0; i < argv.length; i++) {
@@ -1130,9 +1132,8 @@ const FORWARD = { timeout: 10 * 60 * 1000, resetTimeoutOnProgress: true } as con
  * URL server and a command server are identical to everything downstream — the
  * finding injection, the ledger, the resonance all work on MCP messages, not on
  * how the bytes arrive. Header/token auth rides in requestInit.headers; an
- * OAuth-redirect server (no token in the config) needs an authProvider we do
- * not supply yet, so it fails to connect here and the gateway reports it dead
- * rather than pretending — see the install, which warns before wrapping one.
+ * OAuth server uses the guided connection's local provider for saved credentials
+ * and refresh. Browser consent belongs to setup, never to a running gateway.
  */
 async function upstreamTransport(spec: UpstreamSpec) {
   if (executionMode() === 'supervisor') return new SupervisorClientTransport(spec.supervisorWorkload!);
@@ -1161,7 +1162,7 @@ async function upstreamTransport(spec: UpstreamSpec) {
         /* no undici dispatcher available: fall back to a direct connection */
       }
     }
-    const opts = Object.keys(requestInit).length ? { requestInit: requestInit as RequestInit } : undefined;
+    const opts = { requestInit: requestInit as RequestInit, ...(spec.oauthFile && HTTP_PORT === null ? { authProvider: new LocalOAuthProvider(spec.oauthFile, spec.url), fetch: oauthFetch } : {}) };
     if (spec.transport === 'sse') {
       const { SSEClientTransport } = await import('@modelcontextprotocol/sdk/client/sse.js');
       return new SSEClientTransport(url, opts);

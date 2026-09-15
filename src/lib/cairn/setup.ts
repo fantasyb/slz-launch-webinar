@@ -6,6 +6,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { atPath, editEntry, object, parseConfig, readText, type ObjectValue, type ConfigFormat } from './setup-config';
 import type { RetrievalRecord } from './ledger';
+import { oauthFile, oauthUrl, readOAuth } from './oauth';
 
 export const CLIENTS = ['claude', 'desktop', 'cursor', 'windsurf', 'vscode', 'codex'] as const;
 export type ClientKind = typeof CLIENTS[number];
@@ -30,6 +31,7 @@ export function readManifest(dir: string): Manifest {
   } catch { throw new Error('Saved Cairn setup is unreadable. Preserve it for recovery; do not reinstall over it.'); }
 }
 const wrapped = (e: ObjectValue) => Array.isArray(e.args) && e.args.some((v) => typeof v === 'string' && /(?:^|[/\\])cairn-proxy\.js$/.test(v));
+export const needsOAuth = (e: ObjectValue) => !e.command && typeof (e.url ?? e.serverUrl) === 'string' && (!object(e.headers ?? e.http_headers) || !Object.keys((e.headers ?? e.http_headers) as ObjectValue).length);
 function unsupported(e: ObjectValue, client: ClientKind): string | undefined {
   if (e.disabled === true || e.enabled === false) return 'Disabled in this client.';
   if (wrapped(e)) return 'Previously installed gateway. Use its original installer to manage or remove it before guided setup.';
@@ -48,7 +50,11 @@ function unsupported(e: ObjectValue, client: ClientKind): string | undefined {
     if (e.type !== undefined && !['http', 'sse', 'streamable-http'].includes(String(e.type))) return 'Unsupported HTTP transport.';
     if (!/^https?:\/\//.test(url)) return 'Unsupported server URL.';
     const headers = e.headers ?? e.http_headers;
-    if (!object(headers) || !Object.keys(headers).length) return 'This connection may use browser sign-in (OAuth). Keep using it directly; Cairn cannot carry that login yet.';
+    if (headers === undefined || (object(headers) && !Object.keys(headers).length)) {
+      try { oauthUrl(url); } catch { return 'Browser sign-in requires HTTPS or a local loopback URL.'; }
+      return;
+    }
+    if (!object(headers)) return 'Unsupported HTTP header settings.';
     if (Object.entries(headers).some(([k, v]) => !/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(k) || typeof v !== 'string' || /[\r\n]/.test(v))) return 'Unsupported HTTP header settings.';
     return;
   }
@@ -98,7 +104,7 @@ export function discover(options: { userHome?: string; platform?: NodeJS.Platfor
           }
         }
         if (!saved) { try { assertWritableFile(t.file); editEntry(raw, t.format, keys, entry); } catch { state = 'manual'; reason = 'This file is linked, shared, read-only, or has a layout we cannot safely edit. Left unchanged.'; } }
-        result.connections.push({ ...t, keys, id, name, entry, fingerprint: hash(raw), state, reason: reason ?? 'Ready to connect.' });
+        result.connections.push({ ...t, keys, id, name, entry, fingerprint: hash(raw), state, reason: reason ?? (needsOAuth(entry) ? 'Connection check and browser sign-in, if needed, are included in guided setup.' : 'Ready to connect.') });
       }
     } catch { result.files.push({ file: t.file, client: t.client, state: 'unreadable — fix syntax or permissions in the client and rescan' }); }
   }
@@ -115,6 +121,12 @@ export function coverage(d: Discovery, m: Manifest, records: RetrievalRecord[], 
   return { ...publicDiscovery(d), connections: d.connections.map((connection) => {
     const c = publicConnection(connection);
     const saved = m.connections.find((s) => s.id === c.id);
+    let login = 'not required';
+    const env = saved?.installed.env as ObjectValue | undefined;
+    if (saved && typeof env?.CAIRN_OAUTH_FILE === 'string') {
+      try { const r = readOAuth(env.CAIRN_OAUTH_FILE, String(saved.original.url ?? saved.original.serverUrl)); login = r.needsLogin ? 'sign-in required' : r.tokens ? 'credentials saved' : r.checkedAt ? 'public connection checked' : 'credentials need attention'; }
+      catch { login = 'credentials need attention'; }
+    }
     const seen = new Set<string>();
     const rows = records.filter((r) => {
       const at = Date.parse(r?.at), call = r?.call;
@@ -122,7 +134,7 @@ export function coverage(d: Discovery, m: Manifest, records: RetrievalRecord[], 
       seen.add(call.id); return true;
     });
     const reached = rows.filter((r) => ['tool-success', 'tool-error'].includes(r.call!.status));
-    return { ...c, verified: reached.length > 0, attempts: rows.length, responses: reached.length, errors: rows.filter((r) => ['tool-error', 'transport-error'].includes(r.call!.status)).length,
+    return { ...c, login, verified: reached.length > 0 && !['sign-in required', 'credentials need attention'].includes(login), attempts: rows.length, responses: reached.length, errors: rows.filter((r) => ['tool-error', 'transport-error'].includes(r.call!.status)).length,
       toolsUsed: [...new Set(reached.map((r) => r.call!.tool))].sort(), lastResponseAt: reached.map((r) => r.at).sort().at(-1) ?? null,
       capture: saved ? saved.installed.env && (saved.installed.env as ObjectValue).CAIRN_AUTOWRITE === '1' ? 'on after 60 seconds idle or session close' : 'off' : 'not managed' };
   }), windowDays: 7, allTrafficCovered: false };
@@ -130,12 +142,12 @@ export function coverage(d: Discovery, m: Manifest, records: RetrievalRecord[], 
 export function anonymousCoverage(report: ReturnType<typeof coverage>) {
   return { format: 'cairn-coverage-v1', windowDays: report.windowDays, allTrafficCovered: false,
     unreadableFiles: report.files.filter((f) => f.state.startsWith('unreadable') || f.state.startsWith('missing')).length,
-    connections: report.connections.map((c, i) => ({ alias: `connection-${i + 1}`, client: c.client, state: c.state, verified: c.verified, attempts: c.attempts, responses: c.responses, errors: c.errors, toolsUsedCount: c.toolsUsed.length, capture: c.capture })) };
+    connections: report.connections.map((c, i) => ({ alias: `connection-${i + 1}`, client: c.client, state: c.state, verified: c.verified, login: c.login, attempts: c.attempts, responses: c.responses, errors: c.errors, toolsUsedCount: c.toolsUsed.length, capture: c.capture })) };
 }
 
 /** Resolve only explicit environment names through the client. Command and args
  * stay separate strings in the client config, preserving its interpolation. */
-export function wrapper(c: Connection, root: string, home: string, revision: string, autowrite: boolean): ObjectValue {
+export function wrapper(c: Connection, root: string, home: string, revision: string, autowrite: boolean, stateDir?: string): ObjectValue {
   const e = c.entry, next = { ...e }, args = [path.join(root, 'bin/cairn-proxy.js'), '--upstream-name', c.name];
   const env: ObjectValue = { ...(object(e.env) ? e.env : {}), CAIRN_HOME: home, CAIRN_TRUST_MODE: 'monitor', CAIRN_CONNECTION_ID: c.id, CAIRN_CONNECTION_REVISION: revision, CAIRN_CAPTURE_IDLE_MS: '60000', ...(autowrite ? { CAIRN_AUTOWRITE: '1' } : {}) };
   const pass = [...Object.keys(object(e.env) ? e.env : {}), ...(Array.isArray(e.env_vars) ? e.env_vars as string[] : [])];
@@ -144,8 +156,12 @@ export function wrapper(c: Connection, root: string, home: string, revision: str
   else {
     args.push('--http-upstream', String(e.url ?? e.serverUrl));
     if (e.type === 'sse') args.push('--upstream-sse');
-    const headers = (e.headers ?? e.http_headers) as ObjectValue;
+    const headers = (e.headers ?? e.http_headers ?? {}) as ObjectValue;
     Object.entries(headers).forEach(([name, value], i) => { const key = `CAIRN_UPSTREAM_HEADER_${i}`; env[key] = value; args.push('--header-env', name, key); });
+    if (needsOAuth(e)) {
+      if (!stateDir) throw new Error('OAuth connections require guided sign-in.');
+      env.CAIRN_OAUTH_FILE = oauthFile(stateDir, c.id);
+    }
   }
   for (const key of ['command', 'args', 'env', 'url', 'serverUrl', 'headers', 'http_headers', 'type']) delete next[key];
   return { ...next, ...(c.client !== 'codex' ? { type: 'stdio' } : {}), command: process.execPath, args, env };
@@ -186,10 +202,13 @@ function locked<T>(dir: string, fn: () => T): T {
   try { fd = fs.openSync(lock, 'wx', 0o600); } catch { throw new Error('Another setup is running or was interrupted. Close other setup sessions; preserve manifest.json and backups before removing a stale setup.lock.'); }
   try { return fn(); } finally { fs.closeSync(fd); fs.unlinkSync(lock); }
 }
-export function connect(selected: Connection[], options: { root: string; home: string; stateDir: string; projects: string[]; autowrite: boolean }): number {
-  if (!selected.length) return 0;
+export function validateSetupStorage(options: { root: string; home: string; stateDir: string }) {
   if (!path.isAbsolute(options.home) || path.resolve(options.home) === path.resolve(options.root) || path.resolve(options.home).startsWith(path.resolve(options.root) + path.sep)) throw new Error('Choose a private corpus outside the code checkout.');
   if ([options.root, options.home].some((p) => path.resolve(options.stateDir) === path.resolve(p) || path.resolve(options.stateDir).startsWith(path.resolve(p) + path.sep))) throw new Error('Keep private setup backups outside the code checkout and corpus.');
+}
+export function connect(selected: Connection[], options: { root: string; home: string; stateDir: string; projects: string[]; autowrite: boolean }): number {
+  if (!selected.length) return 0;
+  validateSetupStorage(options);
   if (!fs.existsSync(path.join(options.root, 'dist/cli/mcp-proxy.js'))) throw new Error('Build Cairn first: npm run cairn:build-cli');
   return locked(options.stateDir, () => {
     const manifest = readManifest(options.stateDir);
@@ -201,7 +220,11 @@ export function connect(selected: Connection[], options: { root: string; home: s
       const before = readText(c.file);
       if (hash(before) !== c.fingerprint) throw new Error('Configuration changed after discovery. Rescan before connecting.');
       if (unsupported(c.entry, c.client)) throw new Error('Connection is not supported.');
-      const revision = randomUUID(), installed = wrapper(c, options.root, options.home, revision, options.autowrite);
+      if (needsOAuth(c.entry)) {
+        const auth = readOAuth(oauthFile(options.stateDir, c.id), String(c.entry.url ?? c.entry.serverUrl));
+        if (auth.needsLogin || !auth.checkedAt || auth.checkedAt > Date.now() || Date.now() - auth.checkedAt > 30 * 60_000) throw new Error('Finish the connection check and sign-in in guided setup before installing this connection.');
+      }
+      const revision = randomUUID(), installed = wrapper(c, options.root, options.home, revision, options.autowrite, options.stateDir);
       const current = edits.get(c.file) ?? { before, after: before };
       current.after = editEntry(current.after, c.format, c.keys, installed); edits.set(c.file, current);
       added.push({ client: c.client, file: c.file, scope: c.scope, keys: c.keys, format: c.format, id: c.id, name: c.name, original: c.entry, installed, revision, home: options.home, installedAt: new Date().toISOString() });

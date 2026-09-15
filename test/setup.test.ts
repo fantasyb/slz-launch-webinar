@@ -38,7 +38,7 @@ test('discovers six clients and user/local/project scopes without starting serve
   assert.equal(d.connections.length, 11);
   assert.equal(new Set(d.connections.map((c) => c.client)).size, 6);
   assert.equal(new Set(d.connections.map((c) => c.id)).size, 11);
-  assert.equal(d.connections.find((c) => c.name === 'login')!.state, 'manual');
+  assert.equal(d.connections.find((c) => c.name === 'login')!.state, 'available');
   assert.equal(d.connections.find((c) => c.name === 'disabled')!.state, 'disabled');
   assert.ok(!JSON.stringify(publicDiscovery(d)).includes('fixture-value'));
   assert.ok(!fs.existsSync(f.stateDir));
@@ -168,13 +168,13 @@ test('guided capture flushes while idle without a client Stop hook', { timeout: 
   assert.equal(count(), 1);
 });
 
-test('CLI discovery is read-only, malformed flags fail, and unsupported-only setups never report coverage', (t) => {
+test('CLI discovery is read-only, malformed flags fail, and unchecked OAuth setups never report coverage', (t) => {
   const f = fixture(t);
   f.write('.cursor/mcp.json', { mcpServers: { login: { url: 'https://example.test/mcp' } } });
   const env = { ...process.env, HOME: f.h };
   const run = (args: string[]) => execFileSync(process.execPath, ['bin/cairn-setup.js', ...args], { cwd: ROOT, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
   const report = JSON.parse(run(['--discover', '--json']));
-  assert.equal(report.connections[0].state, 'manual'); assert.ok(!fs.existsSync(path.join(f.h, '.cairn')));
+  assert.equal(report.connections[0].state, 'available'); assert.ok(!fs.existsSync(path.join(f.h, '.cairn')));
   assert.throws(() => run(['--yes']), /--all-supported/);
   assert.throws(() => run(['--check']), (e: unknown) => (e as { status: number }).status === 2);
   assert.equal(JSON.parse(run(['--share'])).allTrafficCovered, false);

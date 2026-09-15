@@ -28,7 +28,10 @@ The terminal will guide you through:
 4. Choosing whether to automatically remember supported tool problems locally.
    Answer **yes** to test learning. This is opt-in; it does not run finding checks
    or share findings.
-5. Restarting each app and accepting its MCP/trust prompts, if any.
+5. Signing in to selected browser-based tools. Cairn opens the provider login,
+   then checks the connection and lists available tools before changing the app
+   configuration. Failed connections remain unchanged and can be retried.
+6. Restarting each app and accepting its MCP/trust prompts, if any.
 
 You do not need to edit JSON or TOML yourself. Each selected configuration is
 backed up privately before it changes. Existing credentials remain on your
@@ -48,6 +51,7 @@ npm run cairn:setup -- --check
 | Available | Found but not connected. Run guided setup to choose it. |
 | Connected — waiting for traffic | Configuration is in place. Restart the app, approve the connection if prompted, and use that tool. |
 | Traffic verified | Cairn received a tool response through this exact installed connection version within seven days. |
+| Sign-in needs attention | Run guided setup again. It offers browser reconnection for the affected tool. |
 | Manual | Authentication or execution settings need another adapter. Keep using the original connection; it was not changed. |
 | Disabled | The app configuration disables this server. Cairn leaves it disabled. |
 | Legacy | A previous Cairn installer owns this connection. Manage it with that installer, or undo it there before migrating. |
@@ -66,12 +70,12 @@ lose verified status. Add other projects with `--project /your/project`.
 
 | App | Configuration discovery | Automatic routing |
 | --- | --- | --- |
-| Claude Code | User `.claude.json`, its local project entries, selected/known project `.mcp.json` | Standard stdio and HTTP/SSE with explicit headers |
-| Claude Desktop | Standard macOS/Windows desktop JSON; Linux conventional path if present | Standard stdio; supported explicit-header HTTP entries if configured |
-| Cursor | User and selected/known project `.cursor/mcp.json` | Standard stdio and explicit-header HTTP/SSE |
-| Windsurf | User `.codeium/windsurf/mcp_config.json` | Standard stdio and explicit-header HTTP/SSE |
-| VS Code | Default user profile `mcp.json`, selected/known project `.vscode/mcp.json` | Standard stdio and explicit-header HTTP/SSE; JSON comments/trailing commas retained |
-| Codex | User and selected/known project `.codex/config.toml` | Standard table-based stdio and explicit-header HTTP; client tool filters and local `env_vars` retained |
+| Claude Code | User `.claude.json`, its local project entries, selected/known project `.mcp.json` | Standard stdio and HTTP/SSE with explicit headers or browser sign-in |
+| Claude Desktop | Standard macOS/Windows desktop JSON; Linux conventional path if present | Standard stdio; supported HTTP entries if configured |
+| Cursor | User and selected/known project `.cursor/mcp.json` | Standard stdio and HTTP/SSE |
+| Windsurf | User `.codeium/windsurf/mcp_config.json` | Standard stdio and HTTP/SSE |
+| VS Code | Default user profile `mcp.json`, selected/known project `.vscode/mcp.json` | Standard stdio and HTTP/SSE; JSON comments/trailing commas retained |
+| Codex | User and selected/known project `.codex/config.toml` | Standard table-based stdio and HTTP; client tool filters and local `env_vars` retained |
 
 Command arguments and explicit environment values stay in client-interpolated
 fields. The original client resolves supported variables such as `${env:...}`,
@@ -79,7 +83,7 @@ fields. The original client resolves supported variables such as `${env:...}`,
 credential environment names; unrelated ambient credentials are not forwarded.
 Working-directory settings and supported client approval/tool filters are kept.
 
-Browser sign-in/OAuth, environment files, remote executors, managed or
+Environment files, remote executors, managed or
 plugin-provided connections, custom execution options, ambiguous TOML layouts,
 linked files and unrecognized fields are not rewritten. The discovery report
 shows these gaps where their configuration is visible. Header presence is not
@@ -96,6 +100,35 @@ alternate profiles, policy overrides and projects not selected or discovered
 can bypass this inventory. Client precedence and disabled tools may keep a
 configured server unused. Cairn never reports a percentage of all your tools.
 
+## Browser sign-in and recovery
+
+For HTTP/SSE connections without explicit headers, setup checks the endpoint and
+opens a browser if the provider requires OAuth. Sign in to the tool provider and
+approve Cairn. If the browser cannot open, setup prints a link to open on the same
+computer. `--no-browser` always prints that link. No passwords are entered in Cairn.
+
+This supports standards-based MCP authorization with dynamic client registration,
+PKCE, resource discovery, and refresh tokens. Public endpoints connect without
+consent. Providers that require a pre-registered application, administrator
+approval, a client metadata document, or proprietary authentication still need
+that provider-specific integration; Cairn leaves the original app configuration
+intact when the connection cannot be checked. It does not borrow credentials
+from another application's private login cache.
+
+Tokens live in private, URL-bound files under `~/.cairn/setup/oauth` with owner-only
+permissions, outside the app configuration and corpus. Gateways refresh expiring
+tokens without opening a browser. Revoked credentials or missing login files
+appear as **Sign-in needs attention**. Run normal guided setup to reconnect;
+`--login ID` also reconnects one configured tool. Unreadable regular credential
+files are preserved privately for recovery before a fresh sign-in attempt.
+Restart the affected app after reconnecting. Connection checks do not establish
+usage coverage; a real tool response through the gateway does.
+
+Local credentials and recovery copies remain after `--undo`, so undo can restore
+configuration without silently deleting credentials. To disconnect OAuth access
+fully, revoke Cairn in the provider's connected-app settings and remove the
+corresponding private files when they are no longer needed.
+
 ## Learning and privacy
 
 Each machine has its own private corpus, shared by its connected gateways.
@@ -107,7 +140,9 @@ when the connection has had no active tool call for 60 seconds, or when it close
 That inactivity boundary is not proof the task ended. Existing capture gates still
 admit only supported patterns; ordinary failures do not all become findings.
 
-Discovery and installation do not launch upstreams, call tools, or upload reports.
+Discovery does not launch upstreams, open sign-in, or modify files. Selected
+headerless HTTP/SSE connections are checked during installation using MCP
+initialization and tool listing. Setup never calls upstream tools or uploads reports.
 Coverage comes from normal use. To generate optional feedback:
 
 ```bash

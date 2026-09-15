@@ -641,3 +641,20 @@ tamper-evident audit log is already the crown jewel of that story.
 - Legal entity, funding, team, pricing, sales motion, support/on-call, global ops.
 - Rule of thumb: **compliance = auditable controls (code) + attestation
   (business).** We build the first; the company runs the second.
+
+## Guided OAuth connector
+
+Guided headerless HTTP/SSE routes now use `src/lib/cairn/oauth.ts`: SDK resource
+discovery, dynamic registration and PKCE, a loopback state-checked callback,
+private URL-bound credentials, refresh and sign-in recovery. `scripts/setup.ts`
+checks initialize/tools-list before `connect()` may edit these client entries.
+Read-only discovery remains read-only; setup checks never count as pilot usage.
+Runtime local guided routes alone receive the provider; hosted tenants and
+generic `--config` routes do not inherit local OAuth credentials. Normal setup
+offers repair, with `--login ID` and `--no-browser` available for diagnostics.
+
+Tests cover real OAuth consent, wrong/replayed state, cancellation, timeout,
+refresh rotation, gateway restart and actual tool calls; unit tests cover private
+storage, URL binding, parallel refresh and pre-install connection checks.
+Provider-specific registration/approval and native desktop acceptance remain
+explicit limits in GUIDED-SETUP.md.
